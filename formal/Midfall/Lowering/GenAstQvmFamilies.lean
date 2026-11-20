@@ -1157,7 +1157,13 @@ its left-hand pattern (''go [] k idx''), so ''simp only [ih]'' loops and dies at
 INSTANTIATED at the two concrete accumulators the recursion uses (''qMloadRunSingleA dst b ..'' and
 ''b ++ [yblock [loop]]''), not applied as a simp lemma - plus ''List.find?''-style case splits at the
 five nested matches. That is a bounded amount of work, not a re-spelling of QEMIT2's twin, and it is
-the route to family 4's accumulator split. -/
+the route to family 4's accumulator split.
+
+QFAM4 CLOSED IT. 'qMloadRunGoA_split' is now proved below by fuel induction with the IH pinned at
+each branch's two concrete accumulators through 'Eq.trans' and 'congrArg' - never as a 'simp'
+lemma - and 'cases' plus 'dsimp' (iota) at the five nested matches, exactly as Q1 prescribed; no
+'maxRecDepth' was raised. 'qPushMstoreMloadLiteralRunsA_value', 'qEmitPermutationStagingA_value'
+and the headline 'qEmitNativePermutationA_shape' follow. -/
 
 /-- **THE COMPACTOR'S RECURSION, SPENT OR OUT OF RANGE, RETURNS THE RUNNING BLOCK.** Two boundary
     cases of the lifted 'qMloadRunGoA', both immediate now that the recursion is a top-level 'def' and
@@ -1357,5 +1363,174 @@ theorem qEmitNativeLookupA_shape {F : Type} [BEq F] (scratchMptr : Nat)
         match hits item m with
         | ⟨body, hb2⟩ => ⟨Stmt.block body, hb2⟩
       exact (qFlatten_length_of_singleton perLookup hf1).trans hlen
+
+/-! #### QFAM4: family 4's accumulator split, the staging value lemma, and the headline shape
+
+THE Q1 CORRECTION WAS RIGHT AND THE OLD DIAGNOSIS WAS WRONG. 'qMloadRunGoA_split' - the claim
+ROW.Q.5 and QEMIT3 both recorded as unreachable - is now proved. The obstacle was NOT moving an
+append across a 'match' (two lines with 'cases' and 'dsimp', as Q1 measured); it was that the
+induction hypothesis is SELF-REWITING, so 'simp only [ih]' loops. The proof therefore never lets
+'simp' rewrite with the IH: each leaf of the compactor's nested 'match' pins the IH at that branch's
+two concrete accumulators through 'Eq.trans' and 'congrArg', and 'simp' only unfolds
+'qMloadRunSingleA' and reassociates appends. No 'maxRecDepth' was raised. -/
+
+/-- **THE COMPACTOR'S ACCUMULATOR SPLIT: EVERY BRANCH APPENDS TO THE END OF THE RUNNING BLOCK AND
+    READS NOTHING FROM IT.** For every fuel, every running block and every index, the lifted 'go'
+    splits as 'b ++ go [] fuel idx'. This is the exact equation ROW.Q.5 named as unreachable
+    ('qMloadRunGoA_split_gap'); the per-entry run decomposition ('qPushMstoreMloadLiteralRunsA_rejected',
+    '_run3') was already landed, and this closes the general form. -/
+theorem qMloadRunGoA_split (dst : String) (entries : List (Nat × Expr Op))
+    (loopPrefix : String) :
+    ∀ (fuel : Nat) (b : Block Op) (idx : Nat),
+      qMloadRunGoA dst entries loopPrefix b fuel idx =
+        b ++ qMloadRunGoA dst entries loopPrefix [] fuel idx := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro b idx
+      simp only [qMloadRunGoA, List.append_nil]
+  | succ fuel ih =>
+      intro b idx
+      by_cases hidx : idx >= entries.length
+      · simp only [qMloadRunGoA, if_pos hidx, List.append_nil]
+      · simp only [qMloadRunGoA, if_neg hidx]
+        cases qMloadLiteralA? (entries.getD idx (0, ylit 0)).2 with
+        | none =>
+            dsimp only
+            refine ((ih _ _).trans ?_).trans (congrArg (fun x => b ++ x) (ih _ _)).symm
+            simp only [qMloadRunSingleA, List.nil_append, List.append_assoc]
+        | some srcBase =>
+            cases (entries.drop (idx + 1)).head? with
+            | none =>
+                dsimp only
+                refine ((ih _ _).trans ?_).trans (congrArg (fun x => b ++ x) (ih _ _)).symm
+                simp only [qMloadRunSingleA, List.nil_append, List.append_assoc]
+            | some nextPair =>
+                dsimp only
+                cases nextPair with
+                | mk nextDst nextExpr =>
+                    split
+                    · refine ((ih _ _).trans ?_).trans (congrArg (fun x => b ++ x) (ih _ _)).symm
+                      simp only [qMloadRunSingleA, List.nil_append, List.append_assoc]
+                    · cases qMloadLiteralA? nextExpr with
+                      | none =>
+                          dsimp only
+                          refine ((ih _ _).trans ?_).trans (congrArg (fun x => b ++ x) (ih _ _)).symm
+                          simp only [qMloadRunSingleA, List.nil_append, List.append_assoc]
+                      | some nextSrc =>
+                          dsimp only
+                          cases natSubOpt nextSrc srcBase with
+                          | none =>
+                              dsimp only
+                              refine ((ih _ _).trans ?_).trans (congrArg (fun x => b ++ x) (ih _ _)).symm
+                              simp only [qMloadRunSingleA, List.nil_append, List.append_assoc]
+                          | some srcStride =>
+                              dsimp only
+                              split
+                              · refine ((ih _ _).trans ?_).trans (congrArg (fun x => b ++ x) (ih _ _)).symm
+                                simp only [qMloadRunSingleA, List.nil_append, List.append_assoc]
+                              · split
+                                · refine ((ih _ _).trans ?_).trans (congrArg (fun x => b ++ x) (ih _ _)).symm
+                                  simp only [qMloadRunSingleA, List.nil_append, List.append_assoc]
+                                · refine ((ih _ _).trans ?_).trans (congrArg (fun x => b ++ x) (ih _ _)).symm
+                                  simp only [List.nil_append, List.append_assoc]
+
+/-- **THE COMPACTOR'S VALUE LEMMA FOR EVERY RUNNING BLOCK.** The general form of
+    'qPushMstoreMloadLiteralRunsA_nil' that ROW.Q.5 could not reach: whatever the compactor emits
+    for a list of entries, it emits AFTER the block it was handed. Immediate from the split at the
+    producer's own fuel and index. -/
+theorem qPushMstoreMloadLiteralRunsA_value (block : Block Op) (dst : String)
+    (entries : List (Nat × Expr Op)) (loopPrefix : String) :
+    qPushMstoreMloadLiteralRunsA block dst entries loopPrefix =
+      block ++ qPushMstoreMloadLiteralRunsA [] dst entries loopPrefix := by
+  simp only [qPushMstoreMloadLiteralRunsA]
+  exact qMloadRunGoA_split dst entries loopPrefix (entries.length + 1) block 0
+
+/-- **FAMILY 4 (NATIVE PERMUTATION), THE FIVE-REGION STAGING VALUE LEMMA.** The staged
+    region of the permutation block is the append of the FIVE regions the five compactor calls emit
+    from the EMPTY block - the vals run, the sigmas run, the z-curve run, the z-next run and the
+    z-last run - each compacted independently. This is the 'qEmitPermutationStagingA_value' ROW.Q.5
+    named and QEMIT3 recorded as blocked on the accumulator split; the split unblocks it. NOTE the
+    split is NOT used as a 'simp' lemma: its RHS contains an instance of its own LHS pattern at
+    'block := []', exactly the self-rewriting shape the gap note warns about, so the proof peels the
+    five nested calls with 'rw' one at a time. -/
+theorem qEmitPermutationStagingA_value (pairs : List ((Nat × Expr Op) × (Nat × Expr Op)))
+    (zCur zNext zLast : List (Nat × Expr Op)) :
+    qEmitPermutationStagingA pairs zCur zNext zLast =
+      qPushMstoreMloadLiteralRunsA [] "q_perm_vals" (pairs.map Prod.fst) "q_perm_val_load" ++
+      qPushMstoreMloadLiteralRunsA [] "q_perm_sigmas" (pairs.map Prod.snd) "q_perm_sigma_load" ++
+      qPushMstoreMloadLiteralRunsA [] "q_perm_z_cur" zCur "q_perm_z_cur_load" ++
+      qPushMstoreMloadLiteralRunsA [] "q_perm_z_next" zNext "q_perm_z_next_load" ++
+      qPushMstoreMloadLiteralRunsA [] "q_perm_z_last" zLast "q_perm_z_last_load" := by
+  simp only [qEmitPermutationStagingA]
+  rw [qPushMstoreMloadLiteralRunsA_value, qPushMstoreMloadLiteralRunsA_value,
+      qPushMstoreMloadLiteralRunsA_value, qPushMstoreMloadLiteralRunsA_value,
+      qPushMstoreMloadLiteralRunsA_value]
+
+/-- **FAMILY 4 (NATIVE PERMUTATION), THE PER-ITEM VALUE LEMMA - THE HEADLINE ROW.Q.5
+    COULD NOT STATE.** The family-4 analogue of 'qEmitNativeLookupA_shape'. With the run abort-free:
+    the emitted block is ONE braced block that splits as a prefix followed by the single products
+    loop; ONE PAIR PER PERMUTATION COLUMN of the plan's meta ('ev.meta_.permutationColumns' - the
+    list the producer's own 'mapM' walks; NOTE the card brief's 'ev.cs.permutations' is not what
+    this family iterates: 'ConstraintSystem' has no 'permutations' field, and 'meta_' and 'cs' are
+    independent fields of the 'Evaluator' record, so the columns count is the honest generic
+    statement); one z-cur and one z-next entry per z triple of the FINAL state, z-last at most one
+    per triple (the 'filterMap' drops the 'none' thirds); and the staged region is the five-region
+    decomposition of 'qEmitPermutationStagingA_value'. Generic in the render and in the Evaluator
+    (D-P71); the only hypothesis is that the producer's run does not abort. -/
+theorem qEmitNativePermutationA_shape {F : Type} [BEq F] (scratchMptr : Nat)
+    (slots : QuotientStateSlots) (trace : Bool) (ev : Evaluator F) (b : Block Op)
+    (ev' : Evaluator F)
+    (h : (qEmitPermutationBlockA (F := F) scratchMptr slots trace).run ev = .ok (some b, ev')) :
+    ∃ (head tail : Block Op)
+      (pairs : List ((Nat × Expr Op) × (Nat × Expr Op)))
+      (zCur zNext zLast : List (Nat × Expr Op)),
+      b = [Stmt.block (head ++ tail)] ∧
+      tail.length = 1 ∧
+      pairs.length = ev.meta_.permutationColumns.length ∧
+      zCur.length = ev'.data.permutationZEvals.length ∧
+      zNext.length = ev'.data.permutationZEvals.length ∧
+      zLast.length ≤ ev'.data.permutationZEvals.length ∧
+      qEmitPermutationStagingA pairs zCur zNext zLast =
+        qPushMstoreMloadLiteralRunsA [] "q_perm_vals" (pairs.map Prod.fst) "q_perm_val_load" ++
+        qPushMstoreMloadLiteralRunsA [] "q_perm_sigmas" (pairs.map Prod.snd) "q_perm_sigma_load" ++
+        qPushMstoreMloadLiteralRunsA [] "q_perm_z_cur" zCur "q_perm_z_cur_load" ++
+        qPushMstoreMloadLiteralRunsA [] "q_perm_z_next" zNext "q_perm_z_next_load" ++
+        qPushMstoreMloadLiteralRunsA [] "q_perm_z_last" zLast "q_perm_z_last_load" := by
+  simp only [qEmitPermutationBlockA, StateT.run, StateT.bind, Bind.bind, Pure.pure] at h
+  have hget : (get : E F (Evaluator F)) ev = .ok (ev, ev) := rfl
+  rw [hget, Except.bind] at h
+  dsimp only at h
+  cases hdec : (ev.meta_.numPermutationZs == 0) with
+  | true =>
+      simp only [hdec, ite_true] at h
+      change (Except.ok (none, ev) = Except.ok (some b, ev')) at h
+      obtain ⟨h1, _⟩ := Prod.mk.inj (Except.ok.inj h)
+      exact absurd h1 (by simp)
+  | false =>
+      simp only [hdec, Bool.false_eq_true, reduceIte] at h
+      obtain ⟨⟨deltaChunk, sev1⟩, hdc, h1⟩ := qExcept_bind_ok_cases _ _ h
+      dsimp only at h1
+      obtain ⟨⟨delta, sev2⟩, hdd, h2⟩ := qExcept_bind_ok_cases _ _ h1
+      dsimp only at h2
+      obtain ⟨⟨pairs, sev3⟩, hp, h3⟩ := qExcept_bind_ok_cases _ _ h2
+      dsimp only at h3
+      obtain ⟨hsome, heq⟩ := Prod.mk.inj (Except.ok.inj h3)
+      let zCurA := (sev3.data.permutationZEvals.zipIdx).map fun ((c, _, _), idx) => (idx * 0x20, wordExpr c)
+      let zNextA := (sev3.data.permutationZEvals.zipIdx).map fun ((_, n, _), idx) => (idx * 0x20, wordExpr n)
+      let zLastA := (sev3.data.permutationZEvals.zipIdx).filterMap (fun t => match t with
+        | ((_, _, some l), idx) => some (idx * 0x20, wordExpr l)
+        | _ => none)
+      generalize hstg : qEmitPermutationStagingA pairs zCurA zNextA zLastA = staged at hsome
+      subst heq
+      obtain rfl := Option.some.inj hsome
+      refine ⟨_, _, pairs, zCurA, zNextA, zLastA, ⟨rfl, rfl, ?_, ?_, ?_, ?_,
+          qEmitPermutationStagingA_value pairs zCurA zNextA zLastA⟩⟩
+      · have hl := qMapM_length_stateT _ _ _ _ _ hp
+        rwa [List.length_zipIdx] at hl
+      · exact (List.length_map _).trans List.length_zipIdx
+      · exact (List.length_map _).trans List.length_zipIdx
+      · exact (List.length_filterMap_le _ _).trans (Nat.le_of_eq List.length_zipIdx)
+
 
 end Midfall.Lowering.GenAst
