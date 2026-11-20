@@ -548,5 +548,60 @@ theorem pow_256_48 : (256 : Nat) ^ 48 = 2 ^ 384 := by
 theorem pow_256_16 : (256 : Nat) ^ 16 = 2 ^ 128 := by
   rw [show (256 : Nat) = 2 ^ 8 from rfl, ← Nat.pow_mul]
 
-
 end Midfall
+
+/-! ## `BEq ByteArray` is reflexive (card BEQ · PG-G1BEQ128)
+
+`Midfall.Lowering.InvAt`'s g1_identity window is a Bool,
+
+    bytesAt st (ptrAddr M.g1IdentityMptr) 128 == Midfall.natToBytesBE 0 128
+
+and once the window EQUALITY is rewritten into it the goal is the same term on both sides:
+
+    (Midfall.natToBytesBE 0 128 == Midfall.natToBytesBE 0 128) = true
+
+That equation is not `rfl` and not `decide`: `ByteArray.beq lhs rhs = lhs.data == rhs.data`, so
+evaluating it walks the payload, and at 128 bytes the kernel gives up - measured on this tree,
+`by rfl` and `by decide` on the goal above both fail with `maximum recursion depth has been
+reached`, while the SAME `decide` at 64 bytes succeeds. Raising `maxRecDepth` is out of bounds.
+It is not `simp` either: `simp` makes no progress, because the reflexivity simp lemma for this
+shape is `BEq.rfl` / `beq_self_eq_true`, and both need `ReflBEq ByteArray`, which nothing in
+scope provides -
+
+    failed to synthesize instance of type class
+      ReflBEq ByteArray
+
+THE GAP IS IN THE INSTANCE GRAPH, NOT IN THE STATEMENT. Core does have
+`instance [DecidableEq α] : LawfulBEq α` and `ByteArray` does have `DecidableEq`, but that route
+does not reach this `BEq`: `ByteArray`'s own `instance : BEq ByteArray := ⟨ByteArray.beq⟩` wins
+for a `ByteArray` goal, whereas the `DecidableEq` route builds `instBEqOfDecidableEq`. So
+`beq_self_eq_true'` - the `DecidableEq` spelling, which does elaborate - states
+
+    @BEq.beq ByteArray instBEqOfDecidableEq b b = true
+
+while the goal says `@BEq.beq ByteArray ByteArray.instBEq b b = true`: a BEq mismatch, not a
+proof. What is missing is reflexivity of the `BEq` that `ByteArray` actually uses.
+
+It is true, and cheaply so: `ByteArray` is the one-field structure `{ data : Array UInt8 }`
+(Prelude.lean:3561), `ByteArray.beq` is `Array`'s `beq` on that field, and core proves
+`ReflBEq (Array UInt8)` (Init/Data/Array/DecidableEq.lean:175). So this is a transport along the
+projection. It adds no axiom, does not change the definition of `BEq ByteArray`, and does not
+weaken any clause: it makes a Bool that was already true reachable without evaluating 128 bytes. -/
+
+/-- **`BEq ByteArray` is reflexive.** `(b == b) = true` for a SYMBOLIC byte array, with no
+evaluation of the payload. Without this instance the equation is unprovable by `rfl`, `decide` or
+`simp` at 128 bytes - see the section note. Declared on `ByteArray` itself, not on the
+`Midfall.Bytes` abbrev, so that it is the `ReflBEq` the `ByteArray.instBEq` in scope asks for. -/
+instance byteArrayReflBEq : ReflBEq ByteArray where
+  rfl {a} := by
+    -- `ByteArray.beq a a` is `a.data == a.data`, and core has `ReflBEq (Array UInt8)`.
+    cases a with
+    | mk arr => exact (inferInstance : ReflBEq (Array UInt8)).rfl
+
+/-- The same fact as a theorem, for a caller that uses `simp only [...]` and so will not pick the
+instance up by itself: `rw [ByteArray.beq_self]` or `exact ByteArray.beq_self _`. -/
+theorem ByteArray.beq_self (b : ByteArray) : (b == b) = true := beq_self_eq_true b
+
+#print axioms byteArrayReflBEq
+#print axioms ByteArray.beq_self
+
