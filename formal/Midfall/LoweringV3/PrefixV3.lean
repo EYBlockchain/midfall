@@ -627,4 +627,75 @@ theorem prefix_prog_core {R : Render p G₁ G₂ Gₜ} (hf : PfxFacts R)
     subst hst
     exact prefix_prog_run hf hdep hentry ha hm hrun
 
+/-! ## 5. THE RUN DECOMPOSITION, V3-SIDE (ST.11 re-point) -/
+
+/- **THE RE-POINT.** A1's `run_split` and `run_join` (`LoweringV2/Stages.lean:521`, `:547`) are
+    the statements the composition spends, and they are PROVED from the V2 leaf
+    `Midfall.LoweringV2.prog_slices_decomp` - which carries NO shadow hypothesis and is therefore
+    FALSE for a valid render (findings B-5/D-13, STATUS entry 8: `constTableOf` filters only `vk`
+    and `success`, while the third cut of `asmOf` binds `r` at top level, so a model that declares
+    a constant named `r` or `quotientEvaluator` breaks it). The repair is the V3 text
+    `prog_slices_decompV3`, which ST.11 now PROVES with `hns : noShadowB R = true` - and that
+    hypothesis is PROJECTED from `ValidV3.program` by `noShadow_of_programOk`, never postulated.
+
+    `Stages.lean` may NOT import `LoweringV3` (A1b measured that import as forced-not and put its
+    own core here instead), so the re-point lives HERE and `Composition.lean`/`Totality.lean` -
+    which import both - spend it. NOTHING IS RESTATED: `scopeV3 R c g` is `R.scope c g` and
+    `slicesV3 R` is `R.slices` by `rfl`, so these two theorems have the same proposition as A1's
+    and the same proof, one premise deeper. -/
+
+/-- A1's `run_split` (`Stages.lean:521`), same statement, proved from `prog_slices_decompV3`
+    instead of the V2 leaf. PROVED. -/
+theorem run_splitV3 (R : Render p G₁ G₂ Gₜ) (hns : noShadowB R = true)
+    (vkAddr : U256) (c : ExternalCalls) (g : ExternalGas)
+    (st₀ : EvmState) (obs : Obs) (hobs : RunBody R vkAddr 0 c g st₀ obs) :
+    ∃ (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome),
+      obs = ⟨committedState st₀ st', o⟩ ∧
+        ExecStmts (Bridge.Dialect c g) (R.scope c g) [] st₀
+          (R.preBlock vkAddr ++ R.slices) V' st' o := by
+  obtain ⟨V', st', hrun, heq⟩ := hobs
+  obtain ⟨hprog, hhoist⟩ := prog_slices_decompV3 R hns vkAddr 0 c g
+  have hrun' : ExecStmt (Bridge.Dialect c g) [] [] st₀ (.block (R.prog vkAddr 0)) V' st'
+      obs.outcome := hrun
+  cases hrun' with
+  | block hstmts =>
+      rename_i Vb
+      refine ⟨Vb, st', obs.outcome, ?_, ?_⟩
+      · cases obs
+        simp only at heq ⊢
+        rw [heq]
+      · have hscope : R.scope c g = [hoist (Bridge.Dialect c g) (R.prog vkAddr 0)] := hhoist.symm
+        rw [hscope]
+        have hbody : R.preBlock vkAddr ++ R.slices = R.prog vkAddr 0 := by
+          rw [hprog]; rfl
+        rw [hbody]
+        exact hstmts
+
+/-- A1's `run_join` (`Stages.lean:547`), same statement, same re-point. PROVED. -/
+theorem run_joinV3 (R : Render p G₁ G₂ Gₜ) (hns : noShadowB R = true)
+    (vkAddr : U256) (c : ExternalCalls) (g : ExternalGas)
+    (st₀ : EvmState) (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome)
+    (hrun : ExecStmts (Bridge.Dialect c g) (R.scope c g) [] st₀
+      (R.preBlock vkAddr ++ R.slices) V' st' o) :
+    RunBody R vkAddr 0 c g st₀ ⟨committedState st₀ st', o⟩ := by
+  obtain ⟨hprog, hhoist⟩ := prog_slices_decompV3 R hns vkAddr 0 c g
+  have hscope : R.scope c g = [hoist (Bridge.Dialect c g) (R.prog vkAddr 0)] := hhoist.symm
+  have hbody : R.preBlock vkAddr ++ R.slices = R.prog vkAddr 0 := by
+    rw [hprog]; rfl
+  rw [hscope, hbody] at hrun
+  exact ⟨restore [] V', st', Step.block hrun, rfl⟩
+
+/-- The shadow hypothesis the two lemmas above want, read off the ONE text. PROVED - it is the
+    projection `noShadow_of_programOk` of `ValidV3.program`, restated at the render. -/
+theorem noShadowB_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) : noShadowB R = true :=
+  noShadow_of_programOk (programOkB_of_valid hR)
+
+#check Midfall.LoweringV3.prog_slices_decompV3
+#print axioms Midfall.LoweringV3.prog_slices_decompV3
+#cone_sorries Midfall.LoweringV3.prog_slices_decompV3
+#print axioms Midfall.LoweringV3.run_splitV3
+#print axioms Midfall.LoweringV3.run_joinV3
+#cone_sorries Midfall.LoweringV3.run_splitV3
+#cone_sorries Midfall.LoweringV3.run_joinV3
+
 end Midfall.LoweringV3

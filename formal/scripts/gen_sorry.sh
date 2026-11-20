@@ -139,7 +139,7 @@ owner() {
     Midfall.LoweringV3.prefix_live)
       echo 'V3 TOT.1 with SIM.6 (WP A12/A1) - prefix existence: the ABI guard and the memory guard each revert or pass and both are runs (Totality.lean; evidence GeneratorRows.lean:1342)' ;;
     Midfall.LoweringV2.prog_slices_decomp)
-      echo 'V3 ST.11 - the structural decomposition of R.prog into preBlock ++ slices, which run_split and run_join are proved from (Blocks.lean:234); the shared decomposition leaf of both roots' ;;
+      echo 'V3 ST.11 (retired by the re-point) - the shadow-free form of the structural decomposition. It is FALSE for a valid render (B-5/D-13) and nothing in the cone reaches it any more: run_splitV3/run_joinV3 (PrefixV3.lean §5) spend the PROVED prog_slices_decompV3 with noShadowB projected from ValidV3.program, and Composition.lean/Totality.lean cite those. The row stays OPEN as a text; Blocks.lean may not import LoweringV3, so deleting it is a V2-side edit (SIM.7 class), not this card''s' ;;
     # ---- SIM.2: the staged boundary and the staged contracts, landed in Midfall/LoweringV2/Stages.lean.
     # The two prefix rows are SIM.6's: SIM.2 lands the split form they hand over, the sequenced chains
     # they compose with, and the PROVED fit (whole_program_sim / whole_program_prog), so each hole is one

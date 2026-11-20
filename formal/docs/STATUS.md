@@ -178,6 +178,28 @@ the Python gate and `lake build`.** **Other gates it printed green: check_hypoth
    `List.filterMap_append` for `hoist`, `hoist preSlice = hoist mainLocalsInlined = []` - are emitter
    facts, not shadow facts.**
 
+    **ST.11 CLOSED THIS ROW (this work package, on `t/ST11`, base `c180a63`).`**
+    `Midfall.LoweringV3.prog_slices_decompV3` is PROVED - `[propext, Classical.choice, Quot.sound]`,
+    `#cone_sorries` 0, no `native_decide`, no new hypothesis on `ValidV3`. The proof reads the shadow
+    condition off the FLAT un-inlined program once (`noShadowCore` scans every top-level binder, so
+    every cut of the thirteen-piece block satisfies `inline_append`'s side condition), applies
+    `inline_append` at all twelve cuts by one list induction (`inline_append_many`), then pushes
+    `hoist` through `++` with `List.filterMap_append` against a new fact: the inliner rewrites a
+    statement IN PLACE and so creates no top-level `funDef` (`hoist_inline_nil`, giving
+    `hoist (preSlice) = hoist (mainLocalsInlined) = []`). The card said five cuts; that was the
+    pre-OBJ.2 shape - it is twelve.
+    **AND THE RE-POINT HAPPENED.** `run_splitV3`/`run_joinV3` (`LoweringV3/PrefixV3.lean` section 5)
+    are A1's two lemmas with the SAME statements (`scopeV3 R c g` is `R.scope c g` and `slicesV3 R`
+    is `R.slices` by `rfl`), proved from the V3 text with `noShadowB` PROJECTED by
+    `noShadow_of_programOk (programOkB_of_valid hR)`; `Composition.lean` and `Totality.lean` now
+    cite them. `Stages.lean` was NOT touched - no forbidden import, A1b's pattern.
+    **THE TWO ROOT CONES MOVED: `lowering_correct` 19 -> 18 and `lowering_sound` 9 -> 8**, and the
+    register is 87 -> 86 data rows / 19 -> 18 ROOT: one row REMOVED (`prog_slices_decompV3`, proved)
+    and one row ROOT -> `-` (`LoweringV2.prog_slices_decomp`, now unreachable from both roots). The
+    V2 text is still a sorry and still FALSE for a shadowing render; deleting it is a V2-side edit
+    (`LoweringV2/Blocks.lean` cannot import `LoweringV3`), not this card's. The header block above
+    is the pre-ST.11 `verify.sh --report` output and moves at the next report.
+
 9. **PG-WORLDEQ (ST.10/SIM.3): `twoOutcomes_of_exitDiscipline` is one Step induction behind a
    second registered hole.** Its conclusion is
    `(⟨stObs, o⟩ : Obs).view = returnView st₀ ∨ (isRevertOrHalt ∧ worldUnchanged st₀)` and BOTH arms

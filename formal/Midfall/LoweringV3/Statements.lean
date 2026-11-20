@@ -233,20 +233,298 @@ def noShadowCore (pv : PlanView) (m : Model) : Bool :=
 /-- The render-level face of `noShadowCore`. -/
 def noShadowB (R : Render p G₁ G₂ Gₜ) : Bool := noShadowCore R.pv R.model
 
+/-! ### ST.11 machinery: the shadow condition, and the shape of the inliner
+
+  Nothing below is a new assumption about a render. The hypothesis `noShadowB R = true` is
+  PROJECTED out of `ValidV3.program` by `noShadow_of_programOk` (section N), never postulated,
+  and every lemma here is a fact about the emitter and about `Inline.inlineContractConstants`.
+  D-P71: generic in `R`, no fixture in any statement, no `native_decide`. -/
+
+/-- Is this statement a top-level function definition? `hoist` is exactly the `filterMap` that
+    keeps these, so this boolean is the one `hoist` cares about. -/
+private def isFunDefStmt (s : Stmt EVM.Op) : Bool :=
+  match s with | Stmt.funDef _ _ _ _ => true | _ => false
+
+/-- THE THIRTEEN TOP-LEVEL PIECES OF THE UN-INLINED PROGRAM, in declaration order: the ABI guard,
+    the wrapper locals, the main guard, the two helper trees, the two main locals and the seven
+    slices. `asmOf` is `inlineContractConstants` of the flattening of this list. -/
+private def progPieces (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256) : List YulBlock :=
+  [abiGuardBlock R.model, wrapperLocals R.model vkAddr qAddr, mainGuardBlock,
+    GenAst.emitHelpers R.pv, GenAst.emitAccumulatorHelpers, mainLocals,
+    GenAst.emitPartialM R.pv (partialCtxOfVerifier R.model) .vkLoading,
+    GenAst.emitPartialM R.pv (partialCtxOfVerifier R.model) .transcriptParser,
+    GenAst.emitPartialM R.pv (partialCtxOfVerifier R.model) .lagrange,
+    GenAst.emitPartialM R.pv (partialCtxOfVerifier R.model) .quotientLin,
+    GenAst.emitPartialM R.pv (partialCtxOfVerifier R.model) .pcs,
+    GenAst.emitPartialM R.pv (partialCtxOfVerifier R.model) .finalPairing,
+    GenAst.emitPartialM R.pv (partialCtxOfVerifier R.model) .traceReturn]
+
+/-- `topBinders` is a `flatMap`, so it distributes over `++`. -/
+private theorem topBinders_append (a b : YulBlock) :
+    topBinders (a ++ b) = topBinders a ++ topBinders b := by
+  simp only [topBinders, List.flatMap_append]
+
+/-- THE WRAPPER LOCALS BIND THE SAME TWO NAMES whatever addresses they are given. This is what
+    lets the scan of `noShadowCore` at `(0, 0)` license the cuts of a program built at the
+    deployment addresses. -/
+private theorem topBinders_wrapperLocals (m : Model) (vkAddr qAddr : U256) :
+    topBinders (wrapperLocals m vkAddr qAddr) = topBinders (wrapperLocals m 0 0) := by
+  by_cases h1 : m.embeddedVk = none <;> by_cases h2 : m.quotientExternal.isSome <;>
+    simp [topBinders, wrapperLocals, Inline.boundOf, List.flatMap, h1, h2]
+
+/-- **THE CUT LEMMA, N WAYS.** `inline_append` at every cut of a block list at once. The
+    hypothesis is read off the FLAT block rather than off each piece, which is what makes it
+    usable: `noShadowCore` scans the flat un-inlined program, so one membership chain licenses
+    every cut. -/
+private theorem inline_append_many_aux (consts : List (String × Nat)) :
+    ∀ (l : List YulBlock), (∀ x ∈ topBinders l.flatten, x ∉ consts.map Prod.fst) →
+      Inline.inlineContractConstants consts (l.flatten) =
+        (l.map (Inline.inlineContractConstants consts)).flatten := by
+  intro l
+  induction l with
+  | nil => intro _; rfl
+  | cons b rest ih =>
+      intro h
+      have h1 : ∀ x ∈ topBinders b, x ∉ consts.map Prod.fst := by
+        intro x hx
+        refine h x ?_
+        simp only [List.flatten_cons, topBinders_append]
+        exact List.mem_append_left (topBinders rest.flatten) hx
+      have h2 : ∀ x ∈ topBinders rest.flatten, x ∉ consts.map Prod.fst := by
+        intro x hx
+        refine h x ?_
+        simp only [List.flatten_cons, topBinders_append]
+        exact List.mem_append_right (topBinders b) hx
+      rw [List.flatten_cons, List.map_cons, List.flatten_cons,
+        Midfall.LoweringV2.inline_append consts b rest.flatten h1, ih h2]
+
+private theorem inline_append_many (consts : List (String × Nat)) (l : List YulBlock)
+    (h : ∀ x ∈ topBinders l.flatten, x ∉ consts.map Prod.fst) :
+    Inline.inlineContractConstants consts (l.flatten) =
+      (l.map (Inline.inlineContractConstants consts)).flatten :=
+  inline_append_many_aux consts l h
+
+/-- The inliner rewrites a statement IN PLACE: `inlineStmtStep` maps block/cond/letDecl/assign/
+    switch/forLoop/exprStmt to the same constructor and only ever produces a `funDef` from a
+    `funDef`. So it cannot create a top-level function definition. -/
+private theorem inlineStmtStep_isFunDef
+    {rec : List String -> List (Stmt EVM.Op) -> Inline.SRes}
+    {consts : List (String × Nat)} {sh : List String} {s : Stmt EVM.Op}
+    (h : !isFunDefStmt s) : !isFunDefStmt (Inline.inlineStmtStep rec consts sh s).1 := by
+  cases s
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+  · exact h
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+  · simp only [isFunDefStmt, Inline.inlineStmtStep, Bool.not_false]
+
+/-- The fold invariant: a block with no top-level `funDef` folds to no top-level `funDef`,
+    whatever accumulator it starts from. -/
+private theorem foldl_isFunDef
+    {rec : List String -> List (Stmt EVM.Op) -> Inline.SRes}
+    {consts : List (String × Nat)}
+    (h : ∀ (sh : List String) (s : Stmt EVM.Op), !isFunDefStmt s →
+        !isFunDefStmt (Inline.inlineStmtStep rec consts sh s).1) :
+    ∀ (X : List (Stmt EVM.Op)) (acc : Inline.Acc),
+      (∀ s ∈ acc.blks, !isFunDefStmt s) → (∀ s ∈ X, !isFunDefStmt s) →
+      ∀ s ∈ (X.foldl (Inline.stepAcc rec consts) acc).blks, !isFunDefStmt s := by
+  intro X
+  induction X with
+  | nil =>
+      intro acc ha _ s hs
+      have hs' : s ∈ acc.blks := by simpa [List.foldl_nil] using hs
+      exact ha s hs'
+  | cons t r ih =>
+      intro acc ha hr s hs
+      rw [List.foldl_cons] at hs
+      have acc' : ∀ x ∈ (Inline.stepAcc rec consts acc t).blks, !isFunDefStmt x := by
+        intro x hx
+        rw [Inline.stepAcc_blks] at hx
+        simp only [List.mem_append, List.mem_singleton] at hx
+        rcases hx with hx | rfl
+        · exact ha x hx
+        · exact h acc.sh t (hr t (List.Mem.head r))
+      exact ih (Inline.stepAcc rec consts acc t) acc'
+        (fun x hx => hr x (List.Mem.tail t hx)) s hs
+
+/-- **THE INLINER CREATES NO TOP-LEVEL FUNCTION DEFINITION.** The walk is one `inlineStep`, i.e.
+    one `foldl` over the block (`Inline.inlineStep_eq_foldl`), so the fold invariant carries it. -/
+private theorem noFunDef_inline {consts : List (String × Nat)} {X : YulBlock}
+    (h : ∀ s ∈ X, !isFunDefStmt s) :
+    ∀ s ∈ Inline.inlineContractConstants consts X, !isFunDefStmt s := by
+  have hblks : Inline.inlineContractConstants consts X =
+      (X.foldl (Inline.stepAcc (Inline.inlineScan 63 consts) consts) (Inline.initAcc [])).blks := by
+    show (Inline.inlineScan Inline.inlineFuel consts [] X).blks = _
+    have h1 : Inline.inlineScan Inline.inlineFuel consts [] X =
+        Inline.inlineStep (Inline.inlineScan 63 consts) consts [] X := rfl
+    rw [h1, Inline.inlineStep_eq_foldl]
+  have hstep : ∀ (sh : List String) (s : Stmt EVM.Op), !isFunDefStmt s →
+      !isFunDefStmt (Inline.inlineStmtStep (Inline.inlineScan 63 consts) consts sh s).1 :=
+    fun sh s hs => inlineStmtStep_isFunDef hs
+  rw [hblks]
+  exact foldl_isFunDef hstep X (Inline.initAcc [])
+    (fun s hs => absurd hs (by simp [Inline.initAcc_blks])) h
+
+/-- `hoist` keeps exactly the `funDef`s, so a block with none hoists to the empty scope. -/
+private theorem hoist_nil_of_isFunDef {c : ExternalCalls} {g : ExternalGas} (X : YulBlock)
+    (h : ∀ s ∈ X, !isFunDefStmt s) : hoist (Bridge.Dialect c g) X = [] := by
+  unfold hoist
+  rw [List.filterMap_eq_nil_iff]
+  intro s hs
+  cases s with
+  | funDef n ps rs body =>
+      have h2 := h (Stmt.funDef n ps rs body) hs
+      simp [isFunDefStmt] at h2
+  | _ => rfl
+
+/-- The prefix and the main locals hoist to the EMPTY scope, inlined or not. -/
+private theorem hoist_inline_nil {c : ExternalCalls} {g : ExternalGas}
+    {consts : List (String × Nat)} {X : YulBlock} (h : ∀ s ∈ X, !isFunDefStmt s) :
+    hoist (Bridge.Dialect c g) (Inline.inlineContractConstants consts X) = [] :=
+  hoist_nil_of_isFunDef _ (noFunDef_inline h)
+
+/-- `hoist` is a `filterMap`, so it distributes over `++`. -/
+private theorem hoist_append {c : ExternalCalls} {g : ExternalGas} (a b : YulBlock) :
+    hoist (Bridge.Dialect c g) (a ++ b) =
+      hoist (Bridge.Dialect c g) a ++ hoist (Bridge.Dialect c g) b := by
+  simp only [hoist, List.filterMap_append]
+
+/-- The guard block, the wrapper locals and the main guard declare no function. -/
+private theorem noFunDef_prefix (m : Model) (vkAddr qAddr : U256) :
+    ∀ s ∈ abiGuardBlock m ++ wrapperLocals m vkAddr qAddr ++ mainGuardBlock, !isFunDefStmt s := by
+  by_cases h1 : m.embeddedVk = none <;> by_cases h2 : m.quotientExternal.isSome <;>
+    simp [isFunDefStmt, abiGuardBlock, mainGuardBlock, wrapperLocals, h1, h2]
+
+/-- The two main locals declare no function. -/
+private theorem noFunDef_mainLocals : ∀ s ∈ mainLocals, !isFunDefStmt s := by
+  simp [isFunDefStmt, mainLocals]
+
 /-- **THE STRUCTURAL DECOMPOSITION, RESTATED** (replaces `Blocks.lean:220 prog_slices_decomp`).
     Conjunct 1 is unchanged but now carries the no-shadow hypothesis it needs. Conjunct 2 was
     `hoist prog = hoist helpers` (false once the quotient functions are emitted) and is now "the
     hoisted program scope is the block scope".
 
-    OBLIGATION (WP-A2). Experiment that discharges it: `inline_append` five times against
-    `noShadowB`, `List.filterMap_append` for `hoist`, and `hoist (preSlice) = []`,
-    `hoist (mainLocalsInlined) = []` (inlining maps `cond`/`letDecl` to `cond`/`letDecl`). -/
+    PROVED (ST.11). THE SHAPE. Write the un-inlined program as the flat list of its THIRTEEN
+    top-level pieces - the ABI guard, the wrapper locals, the main guard, the two helper trees,
+    the two main locals and the seven slices - so `asmOf` is `inline` of the flat block.
+    `noShadowB R` says every top-level binder of that flat block names no constant of `R.consts`,
+    so EVERY cut of it satisfies the side condition of `inline_append`, and `inline_append_many`
+    distributes the inliner over all twelve cuts at once; regrouping the first three pieces into
+    `R.preSlice` and the next two into `R.helpers` is `inline_append` three times more. (The card
+    said five cuts: that was the pre-OBJ.2 shape, before `emitAccumulatorHelpers` joined the
+    helper tree and before the quotient region put seven separate `emitPartialM` arms where
+    `emitSlices` was one.) Conjunct 2 is conjunct 1 under `hoist`: `hoist` is a `filterMap`
+    (`hoist_append`), and neither the prefix nor the main locals contains a top-level `funDef`
+    even AFTER inlining (`hoist_inline_nil`), so what is left is exactly `scopeV3`. NOTHING WAS
+    POSTULATED: `noShadowB` is the projection `noShadow_of_programOk` of `ValidV3.program`; no
+    clause was added to `ValidV3`; and the only tree premise is
+    `Midfall.LoweringV2.inline_append` (GEN.4, proved, cone `-`). -/
 theorem prog_slices_decompV3 (R : Render p G₁ G₂ Gₜ) (hns : noShadowB R = true)
     (vkAddr qAddr : U256) (c : ExternalCalls) (g : ExternalGas) :
     R.prog vkAddr qAddr =
         R.preSlice vkAddr qAddr ++ R.helpers ++ R.mainLocalsInlined ++ slicesV3 R ∧
       [hoist (Bridge.Dialect c g) (R.prog vkAddr qAddr)] = scopeV3 R c g := by
-  sorry
+  -- THE FLAT UN-INLINED PROGRAM, and `noShadowB` in ∀ form at the addresses the scan uses.
+  have hflatB : abiGuardBlock R.model ++ wrapperLocals R.model vkAddr qAddr
+      ++ mainAsmRaw R.pv R.model = (progPieces R vkAddr qAddr).flatten := by
+    show abiGuardBlock R.model ++ wrapperLocals R.model vkAddr qAddr
+        ++ (mainGuardBlock ++ GenAst.emitHelpers R.pv ++ GenAst.emitAccumulatorHelpers
+            ++ mainLocals ++ GenAst.emitSlicesM R.pv (partialCtxOfVerifier R.model)) = _
+    rw [emitSlicesM_eq]
+    simp only [progPieces, List.flatten_cons, List.flatten_nil, List.append_nil,
+      List.append_assoc]
+  have hall0 : ∀ x ∈ topBinders (abiGuardBlock R.model ++ wrapperLocals R.model 0 0
+      ++ mainAsmRaw R.pv R.model), x ∉ R.consts.map Prod.fst := by
+    have h := List.all_eq_true.mp hns
+    intro x hx hmem
+    have hx' := h x hx
+    have h2 : ((constTableOf R.model).map Prod.fst).contains x = true :=
+      List.contains_iff_mem.mpr hmem
+    rw [h2, Bool.not_true] at hx'
+    exact Bool.noConfusion hx'
+  have hW : topBinders (abiGuardBlock R.model ++ wrapperLocals R.model vkAddr qAddr
+      ++ mainAsmRaw R.pv R.model)
+      = topBinders (abiGuardBlock R.model ++ wrapperLocals R.model 0 0
+        ++ mainAsmRaw R.pv R.model) := by
+    simp only [topBinders_append, topBinders_wrapperLocals]
+  have hall : ∀ x ∈ topBinders (abiGuardBlock R.model ++ wrapperLocals R.model vkAddr qAddr
+      ++ mainAsmRaw R.pv R.model), x ∉ R.consts.map Prod.fst := by
+    intro x hx
+    refine hall0 x ?_
+    rw [← hW]
+    exact hx
+  have hmany : ∀ x ∈ topBinders (progPieces R vkAddr qAddr).flatten,
+      x ∉ R.consts.map Prod.fst := by
+    intro x hx
+    refine hall x ?_
+    rw [hflatB]
+    exact hx
+  have hflat : R.prog vkAddr qAddr =
+      Inline.inlineContractConstants R.consts (progPieces R vkAddr qAddr).flatten := by
+    show Inline.inlineContractConstants (constTableOf R.model)
+        (abiGuardBlock R.model ++ wrapperLocals R.model vkAddr qAddr ++ mainAsmRaw R.pv R.model) = _
+    rw [hflatB]
+    simp only [Midfall.LoweringV2.Render.consts]
+  -- THE THREE SHADOW FACTS THE REGROUPING NEEDS: each piece is a sub-block of the flat program.
+  have tbSub : ∀ x ∈ topBinders (abiGuardBlock R.model),
+      x ∈ topBinders (progPieces R vkAddr qAddr).flatten := by
+    intro x hx
+    simp only [progPieces, topBinders_append, List.flatten_cons, List.flatten_nil,
+      List.append_nil, List.mem_append]
+    tauto
+  have tbSubB : ∀ x ∈ topBinders (wrapperLocals R.model vkAddr qAddr),
+      x ∈ topBinders (progPieces R vkAddr qAddr).flatten := by
+    intro x hx
+    simp only [progPieces, topBinders_append, List.flatten_cons, List.flatten_nil,
+      List.append_nil, List.mem_append]
+    tauto
+  have tbSubH : ∀ x ∈ topBinders (GenAst.emitHelpers R.pv),
+      x ∈ topBinders (progPieces R vkAddr qAddr).flatten := by
+    intro x hx
+    simp only [progPieces, topBinders_append, List.flatten_cons, List.flatten_nil,
+      List.append_nil, List.mem_append]
+    tauto
+  have hcA : ∀ x ∈ topBinders (abiGuardBlock R.model),
+      x ∉ (constTableOf R.model).map Prod.fst :=
+    fun x hx => hmany x (tbSub x hx)
+  have hcB : ∀ x ∈ topBinders (wrapperLocals R.model vkAddr qAddr),
+      x ∉ (constTableOf R.model).map Prod.fst := fun x hx => hmany x (tbSubB x hx)
+  have hcH : ∀ x ∈ topBinders (GenAst.emitHelpers R.pv),
+      x ∉ (constTableOf R.model).map Prod.fst :=
+    fun x hx => hmany x (tbSubH x hx)
+  -- CONJUNCT 1. One `simp` normalises both sides to the same right-nested concatenation of the
+  -- thirteen inlined pieces: the left unfolds `progPieces` through the N-way cut lemma, the right
+  -- unfolds `preSlice`/`helpers`/`mainLocalsInlined`/`slicesV3` and splits the two grouped blocks
+  -- with `inline_append` at the three cuts whose side condition the scan supplies.
+  have h1 : R.prog vkAddr qAddr =
+      R.preSlice vkAddr qAddr ++ R.helpers ++ R.mainLocalsInlined ++ slicesV3 R := by
+    rw [hflat, inline_append_many R.consts (progPieces R vkAddr qAddr) hmany]
+    simp only [Midfall.LoweringV2.Render.preSlice, Midfall.LoweringV2.Render.helpers,
+      Midfall.LoweringV2.Render.mainLocalsInlined, Midfall.LoweringV2.Render.slice,
+      Midfall.LoweringV2.sliceOf,
+      Midfall.LoweringV2.helpersOf, Midfall.LoweringV2.Render.consts, slicesV3, progPieces,
+      Midfall.LoweringV2.inline_append (constTableOf R.model) (abiGuardBlock R.model)
+        (wrapperLocals R.model vkAddr qAddr ++ mainGuardBlock) hcA,
+      Midfall.LoweringV2.inline_append (constTableOf R.model)
+        (wrapperLocals R.model vkAddr qAddr) mainGuardBlock hcB,
+      Midfall.LoweringV2.inline_append (constTableOf R.model) (GenAst.emitHelpers R.pv)
+        GenAst.emitAccumulatorHelpers hcH,
+      List.flatten_cons, List.map_cons, List.flatten_nil, List.map_nil, List.append_nil,
+      List.append_assoc]
+  have hpre_nil : hoist (Bridge.Dialect c g) (R.preSlice vkAddr qAddr) = [] :=
+    hoist_inline_nil (noFunDef_prefix R.model vkAddr qAddr)
+  have hml_nil : hoist (Bridge.Dialect c g) R.mainLocalsInlined = [] :=
+    hoist_inline_nil noFunDef_mainLocals
+  have h2 : [hoist (Bridge.Dialect c g) (R.prog vkAddr qAddr)] = scopeV3 R c g := by
+    rw [h1, hoist_append, hoist_append, hoist_append, hpre_nil, hml_nil]
+    simp only [List.nil_append, List.append_nil, scopeV3]
+  exact ⟨h1, h2⟩
 
 /-- CONSEQUENCE, PROVED from the obligation above: the frozen `hoist_prog_addr_indep`
     (`Blocks.lean:145`, sorried) is no longer a separate hole. -/
@@ -2366,7 +2644,9 @@ theorem cdSize_of_decodes {G : Type} (L : ProofCalldataLayout) (numInstances : N
 #print axioms soundSide_of_leanAccepts         -- no sorryAx
 #print axioms cdSize_of_decodes                -- no sorryAx
 #print axioms fail_lookupV3                    -- no sorryAx
-#print axioms hoist_prog_addr_indepV3          -- sorryAx: prog_slices_decompV3
+#check Midfall.LoweringV3.prog_slices_decompV3
+#print axioms Midfall.LoweringV3.prog_slices_decompV3   -- no sorryAx (ST.11)
+#print axioms Midfall.LoweringV3.hoist_prog_addr_indepV3  -- no sorryAx (ST.11)
 #check Midfall.LoweringV3.scans_prog_addr_indep   -- ST.12 (WP-A2): PROVED
 #print axioms scans_prog_addr_indep         -- no sorryAx
 #print axioms twoOutcomes_of_scans             -- sorryAx: twoOutcomes_of_exitDiscipline

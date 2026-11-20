@@ -21,6 +21,7 @@
   dissolution RECON.2 applied to the row bundles.
 -/
 import Midfall.LoweringV3.Statements
+import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV2.Stages
 import Midfall.Tools.ConeSorries
 set_option autoImplicit false
@@ -215,7 +216,7 @@ theorem totalV3_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
       (fun q => block_live R product hR hcodec hpc H vkAddr cd q))
   obtain ⟨V', st', o, hrun, _⟩ := hlive [] st₀ ⟨rfl, rfl⟩
   exact ⟨_, runBody_gas_oblivious R vkAddr (gasFree_of_valid R hR vkAddr) _ _ g st₀ _
-    (run_join R vkAddr _ _ st₀ V' st' o hrun)⟩
+    (run_joinV3 R (noShadowB_of_valid hR) vkAddr _ _ st₀ V' st' o hrun)⟩
 
 /-! ## 3. Cone lists and axiom prints -/
 

@@ -196,7 +196,7 @@ theorem twoOutcomesV3_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
 /-- **OBLIGATION 1, SOUNDNESS HALF: PROGRAM-LEVEL REJECTION, V3. PROVED** (PL.H0 step 3a) - it was
     RECON.2's skeleton. The proof is the evidence's `soundness_of_sims`
     (SoundnessV3.lean:804) + `rejects_of_sims` (:824) at the ONE row shape: factor the committed run
-    at the prefix/slice boundary (`run_split`, from the ST.11 leaf `prog_slices_decomp`), spend the
+    at the prefix/slice boundary (`run_splitV3`, ST.11's re-point of A1's `run_split` onto the
     sequenced `BlockSim` rows (`slices_seq_sim`) after the prefix row (`prefix_sim`, SIM.6's leaf,
     reached through `ValidV3.toV2` and `EntryFrameV3.toV2`), close the chain with `seq_final`, and
     read `LeanAccepts` off the TraceReturn exit through `leanAccepts_of_final`
@@ -206,7 +206,7 @@ theorem rejectsV3_of_sims (R : Render p G₁ G₂ Gₜ) (product : PairingProduc
     (hR : ValidV3 R) (hsim : SimRowsV3 R product) : RejectsV3 R product := by
   intro W Lyt H vkAddr cd st₀ g obs hdep hentry hpc hcodec hside hna hobs hret
   obtain ⟨V', st', o, heq, hrun⟩ :=
-    run_split R vkAddr (permissive (callsOf product)) g st₀ obs hobs
+    run_splitV3 R (noShadowB_of_valid hR) vkAddr (permissive (callsOf product)) g st₀ obs hobs
   have hall := seq_final
     (prefix_simV3 R hR W Lyt H vkAddr cd st₀ hdep hentry.toV2
       (permissive (callsOf product)) g)
@@ -221,7 +221,7 @@ theorem rejectsV3_of_sims (R : Render p G₁ G₂ Gₜ) (product : PairingProduc
 /-- **OBLIGATION 2: COMPLETENESS, V3. PROVED** (PL.H0 step 3b) - it was RECON.2's skeleton. The proof
     is the evidence's `completeness_of_progs` (SoundnessV3.lean:1212) at the ONE row shape: the
     prefix progress row and the sequenced `BlockProgS` rows compose to one total contract
-    (`total_append`, `slices_seq_prog`); existence is `run_join`, and the view half is
+    (`total_append`, `slices_seq_prog`); existence is `run_joinV3`, and the view half is
     `worldEq_of_runBody` (frozen clause 10 plus the ST.12 scan) against `run_split`. -/
 theorem completeV3_of_progs (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (hR : ValidV3 R) (hprog : ProgRowsV3 R product) : CompleteV3 R product := by
@@ -232,9 +232,10 @@ theorem completeV3_of_progs (R : Render p G₁ G₂ Gₜ) (product : PairingProd
       (fun q => hprog hR hcodec hpc H vkAddr cd hacc hcomp q))
   refine ⟨?_, ?_⟩
   · obtain ⟨V', st', o, hrun, _⟩ := htot.1 [] st₀ ⟨rfl, rfl⟩
-    exact ⟨_, run_join R vkAddr _ _ st₀ V' st' o hrun⟩
+    exact ⟨_, run_joinV3 R (noShadowB_of_valid hR) vkAddr _ _ st₀ V' st' o hrun⟩
   · intro obs hobs
-    obtain ⟨V', st', o, heq, hrun⟩ := run_split R vkAddr _ _ st₀ obs hobs
+    obtain ⟨V', st', o, heq, hrun⟩ :=
+      run_splitV3 R (noShadowB_of_valid hR) vkAddr _ _ st₀ obs hobs
     obtain ⟨ho, hh⟩ := htot.2 [] st₀ ⟨rfl, rfl⟩ V' st' o hrun
     subst ho
     rw [heq] at hobs ⊢
