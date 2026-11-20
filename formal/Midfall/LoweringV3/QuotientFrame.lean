@@ -1274,6 +1274,63 @@ theorem venvGet_set_same {D : YulSemantics.Dialect} (V : VEnv D) (x : Ident) (v 
       rw [hset, venvGet_cons_ne (VEnv.set rest x v) y x u hxy]
       exact ih hw
 
+/-- 'VEnv.set' is LENGTH-PRESERVING, including when the name is absent (at a symbolic tail neither side
+    reduces, so it has to be an induction). This is what makes 'restore' a no-op across a block that
+    only assigns. -/
+theorem venvSet_length {D : YulSemantics.Dialect} (V : VEnv D) (x : Ident) (v : D.Value) :
+    (VEnv.set V x v).length = V.length := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+    cases p with | mk y w =>
+    by_cases h : y = x
+    · subst h
+      simp [VEnv.set]
+    · rw [show VEnv.set ((y, w) :: rest) x v = (y, w) :: VEnv.set rest x v from by
+            simp [VEnv.set, h]]
+      rw [List.length_cons, List.length_cons, ih]
+
+/-- **THE LEMMA THAT UNLOCKS 'Step.block' FOR AN ASSIGNING BLOCK.** 'Step.block' concludes with
+    '.sres (restore V Vb) stb o' (BigStep.lean:227) where 'restore outer inner =
+    inner.drop (inner.length - outer.length)'. A switch case body only ASSIGNS an existing register,
+    so 'Vb = VEnv.set V x v' and the drop is by zero. QMEM proved this and recorded it in
+    'QuotientArms' but no arm it landed needed it. Checks at '[propext]' only. -/
+theorem restore_set {D : YulSemantics.Dialect} (V : VEnv D) (x : Ident) (v : D.Value) :
+    restore V (VEnv.set V x v) = VEnv.set V x v := by
+  show (VEnv.set V x v).drop ((VEnv.set V x v).length - V.length) = _
+  rw [venvSet_length, Nat.sub_self]
+  rfl
+
+/-- 'List.find?' at a list whose HEAD already satisfies the predicate: it SHORT-CIRCUITS, so the tail is
+    irrelevant - which is what makes a nine-way emitted 'switch' executable from one flag hypothesis.
+    Stated with the head as a cons pattern rather than an append so unification can whnf the emitted
+    'if flag then [a] else [] ++ rest' into it. Deliberately no 'simp': 'simp' on a symbolic 'decide'
+    reaches for 'Classical.propDecidable' and puts 'Classical.choice' in the cone. -/
+theorem find?_head {α : Type} (p : α → Bool) (a : α) (rest : List α) (h : p a = true) :
+    List.find? p (a :: rest) = some a := by
+  have h2 : List.find? p (a :: rest) =
+      match p a with | true => some a | false => List.find? p rest := rfl
+  rw [h2, h]
+
+/-- 'selectSwitch' whose case list's FIRST entry is the one whose label equals the scrutinee: the block
+    it executes is that entry's body, and neither the other entries nor the default matter. 'cases' is
+    an EXPLICIT argument so the emitted nine-way append unifies without whnf gymnastics. This is the
+    step QTOKEN's two token arms need and QMEM could not take while the flags were symbolic. -/
+theorem selectSwitch_head {D : YulSemantics.Dialect} [DecidableEq D.Value] (cv : D.Value)
+    (cases : List (Literal × Block D.Op)) (a : Literal × Block D.Op)
+    (dflt : Option (Block D.Op))
+    (h : List.find? (fun p : Literal × Block D.Op => decide (cv = D.litValue p.1)) cases = some a) :
+    selectSwitch D cv cases dflt = a.2 := by
+  rw [selectSwitch, h]
+
+/-- The 'h' of 'selectSwitch_head' discharged for the emitted token labels: 'D.litValue'
+    (Literal.number n) IS 'BitVec.ofNat 256 n' at the bridge dialect, so the head label matches the
+    pinned scrutinee by 'Eq.refl' and 'decide' is 'true' - no 'DecidableEq' computation on a symbolic
+    'tcq.mem.X' is ever required. -/
+theorem decide_litValue_number_eq_self {c : ExternalCalls} {g : ExternalGas} (n : Nat) :
+    decide (BitVec.ofNat 256 n = (Bridge.Dialect c g).litValue (Literal.number n)) = true :=
+  decide_eq_true (Eq.refl _)
+
 /-- **THE 'rfl' TIES (note 1's exception).** EVM 'addmod'/'mulmod' at the scalar modulus ARE the named
     field operations, in the same operand order, so no arithmetic lemma is needed. -/
 theorem wAddmod_eq_qvmFrAdd (a b : U256) :

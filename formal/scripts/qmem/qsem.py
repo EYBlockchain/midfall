@@ -18,6 +18,7 @@ def syn_stmt(s):
     if k == 'set':  return 'yset ' + Q + s[1] + Q + ' (' + syn(s[2]) + ')'
     if k == 'expr': return 'yexpr (' + syn(s[1]) + ')'
     if k == 'if':   return 'yif (' + syn(s[1]) + ') [' + ', '.join(syn_stmt(x) for x in s[2]) + ']'
+    if k == 'switch': return 'Stmt.switch (' + syn(s[1]) + ') (' + s[2] + ') (' + s[3] + ')'
     raise Exception(k)
 
 def syn_block(body):

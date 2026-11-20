@@ -41,6 +41,7 @@ class Gen(object):
         self.k = 0
         self.used = set()
         self.decode = {}
+        self.funs_lbl = 'funs'
         for (computed, hyp, repl) in spec.get('reads', []):
             self.decode[computed] = (hyp, repl)
 
@@ -95,7 +96,7 @@ class Gen(object):
 
     # ------------------------------------------------------------ expressions
     def step_ty(self, p, code, res):
-        return 'Step (D := ' + D + ') funs ' + P(p.V) + ' ' + P(p.st) + ' (' + code + ') (' + res + ')'
+        return 'Step (D := ' + D + ') ' + self.funs_lbl + ' ' + P(p.V) + ' ' + P(p.st) + ' (' + code + ') (' + res + ')'
 
     def ev_args(self, p, args):
         if not args:
@@ -206,46 +207,113 @@ class Arm(object):
         p = g.start()
         guards = self.spec.get('guards', {})
         for i, s in enumerate(self.body):
-            V0, st0 = p.V, p.st
-            k = s[0]
-            if k == 'let':
-                p2, v, px = g.ev_expr(p, s[2])
-                nm = g.fresh('s')
-                newV = '((' + idq(s[1]) + ', ' + v + ') :: ' + P(p.V) + ')'
-                g.have(nm, g.step_ty(p, stmt_syn(s), '.sres ' + P(newV) + ' ' + P(p2.st) + ' .normal'),
-                       'Step.letVal ' + px + ' rfl')
-                p = g.retarget(p2, 'cons', s[1], v)
-            elif k == 'set':
-                p2, v, px = g.ev_expr(p, s[2])
-                nm = g.fresh('s')
-                newV = '(VEnv.set ' + P(p.V) + ' ' + idq(s[1]) + ' ' + P(v) + ')'
-                g.have(nm, g.step_ty(p, stmt_syn(s), '.sres ' + P(newV) + ' ' + P(p2.st) + ' .normal'),
-                       'Step.assignVal (D := ' + D + ') (vars := [' + idq(s[1]) + ']) (vals := [' +
-                       v + ']) ' + px + ' (by rfl)')
-                p = g.retarget(p2, 'set', s[1], v)
-            elif k == 'expr':
-                p2, v, px = g.ev_expr(p, s[1])
-                nm = g.fresh('s')
-                g.have(nm, g.step_ty(p, stmt_syn(s), '.sres ' + P(p.V) + ' ' + P(p2.st) + ' .normal'),
-                       'Step.exprStmt ' + px)
-                p = p2
-            elif k == 'if':
-                p2, cv, pc = g.ev_expr(p, s[1])
-                hz = g.fresh('z')
-                g.have(hz, cv + ' = (' + D + ').zero', guards[i].replace('@CV@', cv))
-                nm = g.fresh('s')
-                g.have(nm, g.step_ty(p, stmt_syn(s), '.sres ' + P(p.V) + ' ' + P(p2.st) + ' .normal'),
-                       'Step.ifFalse ' + pc + ' ' + hz)
-                p = p2
-            else:
-                raise Exception('stmt ' + k)
-            self.steps.append((V0, st0, p.V, p.st, nm))
+            p, nm = self.do_stmt(p, s, guards.get(i), self.steps)
         self.final = p
         return p
 
+    def do_stmt(self, p, s, guard, sink):
+        """one statement -> (new position, name of its Step derivation). 'sink' collects the
+        (V0, st0, V1, st1, nm) records the seqCons chain at the end of the theorem needs."""
+        g = self.g
+        V0, st0 = p.V, p.st
+        k = s[0]
+        if k == 'let':
+            p2, v, px = g.ev_expr(p, s[2])
+            nm = g.fresh('s')
+            newV = '((' + idq(s[1]) + ', ' + v + ') :: ' + P(p.V) + ')'
+            g.have(nm, g.step_ty(p, stmt_syn(s), '.sres ' + P(newV) + ' ' + P(p2.st) + ' .normal'),
+                   'Step.letVal ' + px + ' rfl')
+            p = g.retarget(p2, 'cons', s[1], v)
+        elif k == 'set':
+            p2, v, px = g.ev_expr(p, s[2])
+            nm = g.fresh('s')
+            newV = '(VEnv.set ' + P(p.V) + ' ' + idq(s[1]) + ' ' + P(v) + ')'
+            g.have(nm, g.step_ty(p, stmt_syn(s), '.sres ' + P(newV) + ' ' + P(p2.st) + ' .normal'),
+                   'Step.assignVal (D := ' + D + ') (vars := [' + idq(s[1]) + ']) (vals := [' +
+                   v + ']) ' + px + ' (by rfl)')
+            p = g.retarget(p2, 'set', s[1], v)
+        elif k == 'expr':
+            p2, v, px = g.ev_expr(p, s[1])
+            nm = g.fresh('s')
+            g.have(nm, g.step_ty(p, stmt_syn(s), '.sres ' + P(p.V) + ' ' + P(p2.st) + ' .normal'),
+                   'Step.exprStmt ' + px)
+            p = p2
+        elif k == 'if':
+            p2, cv, pc = g.ev_expr(p, s[1])
+            hz = g.fresh('z')
+            g.have(hz, cv + ' = (' + D + ').zero', guard)
+            nm = g.fresh('s')
+            g.have(nm, g.step_ty(p, stmt_syn(s), '.sres ' + P(p.V) + ' ' + P(p2.st) + ' .normal'),
+                   'Step.ifFalse ' + pc + ' ' + hz)
+            p = p2
+        elif k == 'switch':
+            p, nm = self.do_switch(p, s)
+        else:
+            raise Exception('stmt ' + k)
+        sink.append((V0, st0, p.V, p.st, nm))
+        return p, nm
+
+    def seq_chain(self, recs):
+        """Step.seqCons ... Step.seqNil over a list of (V0, st0, V1, st1, nm) records."""
+        lines = []
+        n = len(recs)
+        for i, (V0, st0, V1, st1, nm) in enumerate(recs):
+            head = 'exact ' if i == n - 1 else 'refine '
+            tail = ' (Step.seqNil (D := ' + D + '))' if i == n - 1 else ' ?_'
+            lines.append(head + 'Step.seqCons (D := ' + D + ') (V1 := ' + P(V1) + ') (st1 := ' +
+                         P(st1) + ') ' + nm + tail)
+        return 'by ' + (chr(10) + '       ').join(lines)
+
+    def do_switch(self, p, s):
+        """'Stmt.switch cv CASES dflt' with the emitted 'if program.memUsage.X then [(label, body)]
+        else []' shape. Only the flag of the entry taken has to be assumed: 'List.find?' short-circuits
+        on the head, so the other eight entries and the default are irrelevant. The block that
+        'Step.switchExec' asks for is a 'Step.block', so 'restore_set' is what turns its post-environment
+        back into the 'VEnv.set' form the contract states."""
+        g = self.g
+        scrut, cases_raw, dflt_raw, ents = s[1], s[2], s[3], s[4]
+        ent = ents[self.spec.get('switch_entry', 0)]
+        body = ent['body']
+        p2, cv, px = g.ev_expr(p, scrut)
+        bsel = syn_block(body)
+        sel = 'selectSwitch (' + D + ') ' + P(cv) + ' (' + cases_raw + ') (' + dflt_raw + ')'
+        hsel = g.fresh('h')
+        flag = self.spec['switch_flag']
+        g.have(hsel, sel + ' = ' + bsel,
+               'by refine selectSwitch_head (D := ' + D + ') ' + P(cv) + ' (' + cases_raw + ') ' +
+               '(Literal.number tcq.mem.' + ent['label'] + ', ' + bsel + ') (' + dflt_raw + ') ?_' +
+               chr(10) + '       rw [' + flag + ']' + chr(10) +
+               '       exact find?_head _ _ _ (decide_litValue_number_eq_self tcq.mem.' + ent['label'] + ')')
+        hoistf = '(hoist (' + D + ') ' + bsel + ' :: funs)'
+        saved = g.funs_lbl
+        g.funs_lbl = hoistf
+        q = p2
+        inner = []
+        for s2 in body:
+            q, nm2 = self.do_stmt(q, s2, None, inner)
+        g.funs_lbl = saved
+        Vb, stb = q.V, q.st
+        bN = g.fresh('b')
+        g.have(bN, 'Step (D := ' + D + ') ' + hoistf + ' ' + P(p2.V) + ' ' + P(p2.st) +
+               ' (.stmts ' + bsel + ') (.sres ' + P(Vb) + ' ' + P(stb) + ' .normal)',
+               self.seq_chain(inner))
+        k0 = g.fresh('k')
+        g.have(k0, g.step_ty(p2, '.stmt (.block (' + sel + '))',
+               '.sres (restore ' + P(p2.V) + ' ' + P(Vb) + ') ' + P(stb) + ' .normal'),
+               'by refine Step.block (D := ' + D + ') ?_' + chr(10) + '       rw [' + hsel + ']' +
+               chr(10) + '       exact ' + bN)
+        k1 = g.fresh('k')
+        g.have(k1, g.step_ty(p2, '.stmt (.block (' + sel + '))',
+               '.sres ' + P(Vb) + ' ' + P(stb) + ' .normal'),
+               'by rw [restore_set] at ' + k0 + chr(10) + '       exact ' + k0)
+        nm = g.fresh('s')
+        g.have(nm, g.step_ty(p, '.stmt (' + syn_stmt(s) + ')', '.sres ' + P(Vb) + ' ' + P(stb) + ' .normal'),
+               'Step.switchExec (D := ' + D + ') ' + px + ' ' + k1)
+        return q, nm
+
     def pre_list(self):
         s = self.spec
-        ps = ['VEnv.get V ' + idq(reg) + ' = some ' + val for (reg, val, h) in s['pins']]
+        ps = ['VEnv.get V ' + idq(reg) + ' = some ' + P(val) for (reg, val, h) in s['pins']]
         ps += [c + ' = ' + r for (c, h, r) in s.get('reads', [])]
         return ps
 
@@ -265,7 +333,7 @@ class Arm(object):
         s = self.spec
         out = []
         for (reg, val, hyp) in s['pins']:
-            out.append('(' + hyp + ' : VEnv.get V ' + idq(reg) + ' = some ' + val + ')')
+            out.append('(' + hyp + ' : VEnv.get V ' + idq(reg) + ' = some ' + P(val) + ')')
         for (computed, hyp, repl) in s.get('reads', []):
             out.append('(' + hyp + ' : ' + computed + ' = ' + repl + ')')
         for (b, prop, name) in s.get('extras', []):

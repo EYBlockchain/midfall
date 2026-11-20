@@ -4,7 +4,13 @@
 -- QMEM - the memory-reading arm value refinements: the bulk of the 20 static arms that
 -- 'QuotientFrame' section H left open. PLAN-V3 section 4 / EXECUTION-V2 section 5 as amended by D-P75.
 --
--- THIS FILE IS THE EMITTED SIDE of ROW.Q.3's value clause for the arms that READ MEMORY.
+-- QTOKEN ADDENDUM (this card): the two SWITCH-GATED arms 'PUSH_MEM_TOKEN' and
+-- 'PUSH_MEM_TOKEN_OFFSET' are now landed here too, so the file holds 13 arm triples. They are the
+-- first arms whose emitted body contains a 'Stmt.switch'; what made them different, and the two
+-- 'QuotientFrame' lemmas ('venvSet_length', 'restore_set') plus the two switch lemmas
+-- ('find?_head', 'selectSwitch_head') that unlock them, are recorded in the section at the end.
+--
+-- -- THIS FILE IS THE EMITTED SIDE of ROW.Q.3's value clause for the arms that READ MEMORY.
 -- 'QuotientFrame' sections B and H landed the reference side ('qStepValue_X') and the first six
 -- register-only or single-read refinements (NEG, POW5, ADD, MUL, ADD_CONST_U8, MUL_CONST_U8). The
 -- triples here follow those two templates exactly - 'qArmRun_X' (a vendored 'Step' derivation
@@ -101,6 +107,9 @@ theorem qbi_shl5 {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (v : U256
 
 theorem qbi_shr224 {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (v : U256) :
     (Bridge.Dialect c g).Builtin Op.shr [BitVec.ofNat 256 224, v] st (.ok [v >>> 224] st) := rfl
+
+theorem qbi_shr216 {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (v : U256) :
+    (Bridge.Dialect c g).Builtin Op.shr [BitVec.ofNat 256 216, v] st (.ok [v >>> 216] st) := rfl
 
 theorem qbi_shr240 {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (v : U256) :
     (Bridge.Dialect c g).Builtin Op.shr [BitVec.ofNat 256 240, v] st (.ok [v >>> 240] st) := rfl
@@ -3146,40 +3155,841 @@ theorem qArmValueAll_pushConst {c : ExternalCalls} {g : ExternalGas}
 #print axioms Midfall.LoweringV3.QuotientArms.qArmValueAll_pushConst
 #cone_sorries Midfall.LoweringV3.QuotientArms.qArmValueAll_pushConst
 
-/-! ### THE FOURTEEN ARMS THIS CARD DID NOT LAND, AND EXACTLY WHY
+
+/-- **QTOKEN - THE TWO SWITCH-GATED TOKEN ARMS.** These are the first arms in the file whose emitted
+    body contains a 'Stmt.switch', and they needed three things QMEM named but could not use: the flag
+    of the case taken ('hl0 : program.memUsage.l0 = true' - 'List.find?' short-circuits on the head, so
+    the other eight memUsage flags are irrelevant), the scrutinee pinned to that case's own label
+    ('hbyte' below, discharged by 'decide_eq_true (Eq.refl _)' so no 'DecidableEq' computation on a
+    symbolic 'tcq.mem.l0' is ever demanded), and 'restore_set' to turn 'Step.block'\'s
+    'restore V Vb' back into the 'VEnv.set' form the contract states. All three are in 'QuotientFrame'.
+
+    STATE EQUATION, per arm. 'pushMemToken': 'touch(pc)' by the 'byte 0 (mload q_pc)' decode, then
+    'touch(L_0_MPTR)' by the pushed read - 'touchMemory (touchMemory st pc.toNat 32)
+    (BitVec.ofNat 256 p).toNat 32', with 'q_pc' advanced by ONE (the operand byte; the reference's
+    'consumed := 2' counts the opcode too). 'pushMemTokenOffset': same two touches but the second is at
+    '(BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat' - the u32 offset read from bytes 1..4 of the word
+    at 'q_pc' - and 'q_pc' advances by FIVE. Neither is the uniform 'st' = 'st' of the register-only arms.
+
+    CANONICITY: NEITHER arm needs it. No field operation appears in either body at all - both end in
+    'q_top := mload q_ptr', so the pushed word is a raw memory read and there is nothing to reduce mod
+    'qvmFrModulus'. That is a fact about these two arms, not a general exemption.
+
+    PRECONDITIONS: 'q_pc', 'q_sp', 'q_top', 'q_has_top = 0' and 'L_0_MPTR' pinned by 'VEnv.get', the
+    token byte and the pushed word pinned at the EMITTED expressions, and 'q_has_top = 0' so the spill
+    branch is not taken (a one-instruction identity segment starts with the reference stack '[]'). -/
+theorem qArmRun_pushMemToken {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (pc sp x : U256) (p v : Nat)
+    (hget_pc : VEnv.get V "q_pc" = some pc)
+    (hget_sp : VEnv.get V "q_sp" = some sp)
+    (hget_ht : VEnv.get V "q_has_top" = some 0)
+    (hget_top : VEnv.get V "q_top" = some x)
+    (hget_l0 : VEnv.get V "L_0_MPTR" = some (BitVec.ofNat 256 p))
+    (hbyte : (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) = BitVec.ofNat 256 tcq.mem.l0)
+    (hload : loadWord st.memory (BitVec.ofNat 256 p).toNat = BitVec.ofNat 256 v)
+    (hl0 : program.memUsage.l0 = true) :
+    ExecStmts (Bridge.Dialect c g) funs V st (GenAst.qArmBodyPushMemToken ctx program tcq)
+      (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32) .normal := by
+  have a1 :
+    Step (D := Bridge.Dialect c g) funs V st (.args []) (.eres (.vals [] st)) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have a2 :
+    Step (D := Bridge.Dialect c g) funs V st (.args []) (.eres (.vals [] st)) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x3 :
+    Step (D := Bridge.Dialect c g) funs V st (.expr (yvar "q_pc")) (.eres (.vals [pc] st)) :=
+    Step.var (D := Bridge.Dialect c g) hget_pc
+  have a4 :
+    Step (D := Bridge.Dialect c g) funs V st (.args [yvar "q_pc"]) (.eres (.vals [pc] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st) (v := pc) (st2 := st) a2 x3
+  have x5 :
+    Step (D := Bridge.Dialect c g) funs V st (.expr (yop Op.mload [yvar "q_pc"])) (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a4 (qbi_mload_at st st.memory pc rfl)
+  have w6 :
+    (touchMemory st pc.toNat 32).memory = st.memory :=
+    Midfall.Yul.Word.touchMemory_memory st pc.toNat 32
+  have a7 :
+    Step (D := Bridge.Dialect c g) funs V st (.args [yop Op.mload [yvar "q_pc"]]) (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st) (v := loadWord st.memory pc.toNat) (st2 := touchMemory st pc.toNat 32) a1 x5
+  have x8 :
+    Step (D := Bridge.Dialect c g) funs V (touchMemory st pc.toNat 32) (.expr (ylit 0)) (.eres (.vals [BitVec.ofNat 256 0] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0)
+  have a9 :
+    Step (D := Bridge.Dialect c g) funs V st (.args [ylit 0, yop Op.mload [yvar "q_pc"]]) (.eres (.vals [BitVec.ofNat 256 0, loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [yop Op.mload [yvar "q_pc"]]) (restvals := [loadWord st.memory pc.toNat]) (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 0) (st2 := touchMemory st pc.toNat 32) a7 x8
+  have x10 :
+    Step (D := Bridge.Dialect c g) funs V st (.expr (yop Op.byte [ylit 0, yop Op.mload [yvar "q_pc"]])) (.eres (.vals [(((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a9 (qbi_byte0 (touchMemory st pc.toNat 32) (loadWord st.memory pc.toNat))
+  have d11 :
+    Step (D := Bridge.Dialect c g) funs V st (.expr (yop Op.byte [ylit 0, yop Op.mload [yvar "q_pc"]])) (.eres (.vals [BitVec.ofNat 256 tcq.mem.l0] (touchMemory st pc.toNat 32))) :=
+    by rw [<- hbyte]; exact x10
+  have s12 :
+    Step (D := Bridge.Dialect c g) funs V st (.stmt (ylet "q_token" (yop Op.byte [ylit 0, yop Op.mload [yvar "q_pc"]]))) (.sres (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) (touchMemory st pc.toNat 32) .normal) :=
+    Step.letVal d11 rfl
+  have g13 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    by rw [venvGet_cons_ne V "q_token" "L_0_MPTR" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "L_0_MPTR")]; exact hget_l0
+  have g14 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_has_top" = some 0 :=
+    by rw [venvGet_cons_ne V "q_token" "q_has_top" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "q_has_top")]; exact hget_ht
+  have g15 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" = some pc :=
+    by rw [venvGet_cons_ne V "q_token" "q_pc" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "q_pc")]; exact hget_pc
+  have g16 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_sp" = some sp :=
+    by rw [venvGet_cons_ne V "q_token" "q_sp" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "q_sp")]; exact hget_sp
+  have g17 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_top" = some x :=
+    by rw [venvGet_cons_ne V "q_token" "q_top" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "q_top")]; exact hget_top
+  have g18 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_cons_eq V "q_token" (BitVec.ofNat 256 tcq.mem.l0)
+  have a19 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) (touchMemory st pc.toNat 32) (.args []) (.eres (.vals [] (touchMemory st pc.toNat 32))) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x20 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) (touchMemory st pc.toNat 32) (.expr (ylit 1)) (.eres (.vals [BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 1)
+  have a21 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) (touchMemory st pc.toNat 32) (.args [ylit 1]) (.eres (.vals [BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 1) (st2 := touchMemory st pc.toNat 32) a19 x20
+  have x22 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) (touchMemory st pc.toNat 32) (.expr (yvar "q_pc")) (.eres (.vals [pc] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g15
+  have a23 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) (touchMemory st pc.toNat 32) (.args [yvar "q_pc", ylit 1]) (.eres (.vals [pc, BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 1]) (restvals := [BitVec.ofNat 256 1]) (st1 := touchMemory st pc.toNat 32) (v := pc) (st2 := touchMemory st pc.toNat 32) a21 x22
+  have x24 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) (touchMemory st pc.toNat 32) (.expr (yop Op.add [yvar "q_pc", ylit 1])) (.eres (.vals [(pc + BitVec.ofNat 256 1)] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a23 (qbi_add (touchMemory st pc.toNat 32) pc (BitVec.ofNat 256 1))
+  have s25 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) (touchMemory st pc.toNat 32) (.stmt (yset "q_pc" (yop Op.add [yvar "q_pc", ylit 1]))) (.sres (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_pc"]) (vals := [(pc + BitVec.ofNat 256 1)]) x24 (by rfl)
+  have g26 :
+    VEnv.get (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" "L_0_MPTR" (pc + BitVec.ofNat 256 1) (BitVec.ofNat 256 p) (by decide : "q_pc" ≠ "L_0_MPTR") g13
+  have g27 :
+    VEnv.get (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_has_top" = some 0 :=
+    venvGet_set_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" "q_has_top" (pc + BitVec.ofNat 256 1) 0 (by decide : "q_pc" ≠ "q_has_top") g14
+  have g28 :
+    VEnv.get (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_sp" = some sp :=
+    venvGet_set_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" "q_sp" (pc + BitVec.ofNat 256 1) sp (by decide : "q_pc" ≠ "q_sp") g16
+  have g29 :
+    VEnv.get (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_set_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" "q_token" (pc + BitVec.ofNat 256 1) (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_pc" ≠ "q_token") g18
+  have g30 :
+    VEnv.get (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_top" = some x :=
+    venvGet_set_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" "q_top" (pc + BitVec.ofNat 256 1) x (by decide : "q_pc" ≠ "q_top") g17
+  have g31 :
+    VEnv.get (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_pc" = some (pc + BitVec.ofNat 256 1) :=
+    venvGet_set_same (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1) pc g15
+  have x32 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) (touchMemory st pc.toNat 32) (.expr (ylit 0)) (.eres (.vals [BitVec.ofNat 256 0] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0)
+  have s33 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) (touchMemory st pc.toNat 32) (.stmt (ylet "q_ptr" (ylit 0))) (.sres (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (touchMemory st pc.toNat 32) .normal) :=
+    Step.letVal x32 rfl
+  have g34 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_ptr" "L_0_MPTR" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "L_0_MPTR")]; exact g26
+  have g35 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_has_top" = some 0 :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_ptr" "q_has_top" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_has_top")]; exact g27
+  have g36 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_pc" = some (pc + BitVec.ofNat 256 1) :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_ptr" "q_pc" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_pc")]; exact g31
+  have g37 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_sp" = some sp :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_ptr" "q_sp" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_sp")]; exact g28
+  have g38 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_ptr" "q_token" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_token")]; exact g29
+  have g39 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_top" = some x :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_ptr" "q_top" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_top")]; exact g30
+  have g40 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" = some (BitVec.ofNat 256 0) :=
+    venvGet_cons_eq (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)) "q_ptr" (BitVec.ofNat 256 0)
+  have x41 :
+    Step (D := Bridge.Dialect c g) funs (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (touchMemory st pc.toNat 32) (.expr (yvar "q_token")) (.eres (.vals [BitVec.ofNat 256 tcq.mem.l0] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g38
+  have h42 :
+    selectSwitch (Bridge.Dialect c g) (BitVec.ofNat 256 tcq.mem.l0) ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yvar "L_0_MPTR"))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yvar "L_LAST_MPTR"))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yvar "L_BLIND_MPTR"))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yvar "BETA_MPTR"))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yvar "GAMMA_MPTR"))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yvar "X_MPTR"))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yvar "THETA_MPTR"))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yvar "TRASH_CHALLENGE_MPTR"))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yvar "INSTANCE_EVAL_MPTR"))])] else [])) (some [(yexpr (ycall "q_program_fail" []))]) = [yset "q_ptr" (yvar "L_0_MPTR")] :=
+    by refine selectSwitch_head (D := Bridge.Dialect c g) (BitVec.ofNat 256 tcq.mem.l0) ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yvar "L_0_MPTR"))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yvar "L_LAST_MPTR"))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yvar "L_BLIND_MPTR"))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yvar "BETA_MPTR"))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yvar "GAMMA_MPTR"))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yvar "X_MPTR"))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yvar "THETA_MPTR"))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yvar "TRASH_CHALLENGE_MPTR"))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yvar "INSTANCE_EVAL_MPTR"))])] else [])) (Literal.number tcq.mem.l0, [yset "q_ptr" (yvar "L_0_MPTR")]) (some [(yexpr (ycall "q_program_fail" []))]) ?_
+       rw [hl0]
+       exact find?_head _ _ _ (decide_litValue_number_eq_self tcq.mem.l0)
+  have x43 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yvar "L_0_MPTR")] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (touchMemory st pc.toNat 32) (.expr (yvar "L_0_MPTR")) (.eres (.vals [BitVec.ofNat 256 p] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g34
+  have s44 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yvar "L_0_MPTR")] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (touchMemory st pc.toNat 32) (.stmt (yset "q_ptr" (yvar "L_0_MPTR"))) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_ptr"]) (vals := [BitVec.ofNat 256 p]) x43 (by rfl)
+  have g45 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" "L_0_MPTR" (BitVec.ofNat 256 p) (BitVec.ofNat 256 p) (by decide : "q_ptr" ≠ "L_0_MPTR") g34
+  have g46 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_has_top" = some 0 :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" "q_has_top" (BitVec.ofNat 256 p) 0 (by decide : "q_ptr" ≠ "q_has_top") g35
+  have g47 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_pc" = some (pc + BitVec.ofNat 256 1) :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" "q_pc" (BitVec.ofNat 256 p) (pc + BitVec.ofNat 256 1) (by decide : "q_ptr" ≠ "q_pc") g36
+  have g48 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_sp" = some sp :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" "q_sp" (BitVec.ofNat 256 p) sp (by decide : "q_ptr" ≠ "q_sp") g37
+  have g49 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" "q_token" (BitVec.ofNat 256 p) (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_ptr" ≠ "q_token") g38
+  have g50 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" = some x :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" "q_top" (BitVec.ofNat 256 p) x (by decide : "q_ptr" ≠ "q_top") g39
+  have g51 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_ptr" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_same (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p) (BitVec.ofNat 256 0) g40
+  have b52 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yvar "L_0_MPTR")] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (touchMemory st pc.toNat 32) (.stmts [yset "q_ptr" (yvar "L_0_MPTR")]) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) .normal) :=
+    by exact Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p))) (st1 := (touchMemory st pc.toNat 32)) s44 (Step.seqNil (D := Bridge.Dialect c g))
+  have k53 :
+    Step (D := Bridge.Dialect c g) funs (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (touchMemory st pc.toNat 32) (.stmt (.block (selectSwitch (Bridge.Dialect c g) (BitVec.ofNat 256 tcq.mem.l0) ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yvar "L_0_MPTR"))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yvar "L_LAST_MPTR"))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yvar "L_BLIND_MPTR"))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yvar "BETA_MPTR"))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yvar "GAMMA_MPTR"))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yvar "X_MPTR"))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yvar "THETA_MPTR"))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yvar "TRASH_CHALLENGE_MPTR"))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yvar "INSTANCE_EVAL_MPTR"))])] else [])) (some [(yexpr (ycall "q_program_fail" []))])))) (.sres (restore (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p))) (touchMemory st pc.toNat 32) .normal) :=
+    by refine Step.block (D := Bridge.Dialect c g) ?_
+       rw [h42]
+       exact b52
+  have k54 :
+    Step (D := Bridge.Dialect c g) funs (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (touchMemory st pc.toNat 32) (.stmt (.block (selectSwitch (Bridge.Dialect c g) (BitVec.ofNat 256 tcq.mem.l0) ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yvar "L_0_MPTR"))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yvar "L_LAST_MPTR"))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yvar "L_BLIND_MPTR"))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yvar "BETA_MPTR"))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yvar "GAMMA_MPTR"))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yvar "X_MPTR"))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yvar "THETA_MPTR"))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yvar "TRASH_CHALLENGE_MPTR"))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yvar "INSTANCE_EVAL_MPTR"))])] else [])) (some [(yexpr (ycall "q_program_fail" []))])))) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) .normal) :=
+    by rw [restore_set] at k53
+       exact k53
+  have s55 :
+    Step (D := Bridge.Dialect c g) funs (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (touchMemory st pc.toNat 32) (.stmt (Stmt.switch (yvar "q_token") ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yvar "L_0_MPTR"))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yvar "L_LAST_MPTR"))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yvar "L_BLIND_MPTR"))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yvar "BETA_MPTR"))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yvar "GAMMA_MPTR"))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yvar "X_MPTR"))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yvar "THETA_MPTR"))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yvar "TRASH_CHALLENGE_MPTR"))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yvar "INSTANCE_EVAL_MPTR"))])] else [])) (some [(yexpr (ycall "q_program_fail" []))]))) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.switchExec (D := Bridge.Dialect c g) x41 k54
+  have x56 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) (.expr (yvar "q_has_top")) (.eres (.vals [0] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g46
+  have z57 : 0 = (Bridge.Dialect c g).zero := rfl
+  have s58 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) (.stmt (yif (yvar "q_has_top") [yif (yop Op.gt [yvar "q_sp", ylit program.guards.stackLast]) [yexpr (ycall "q_program_fail" [])], yexpr (yop Op.mstore [yvar "q_sp", yvar "q_top"]), yset "q_sp" (yop Op.add [yvar "q_sp", ylit 32])])) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.ifFalse x56 z57
+  have a59 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) (.args []) (.eres (.vals [] (touchMemory st pc.toNat 32))) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x60 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) (.expr (yvar "q_ptr")) (.eres (.vals [BitVec.ofNat 256 p] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g51
+  have a61 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) (.args [yvar "q_ptr"]) (.eres (.vals [BitVec.ofNat 256 p] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 p) (st2 := touchMemory st pc.toNat 32) a59 x60
+  have x62 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) (.expr (yop Op.mload [yvar "q_ptr"])) (.eres (.vals [loadWord st.memory (BitVec.ofNat 256 p).toNat] (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32))) :=
+    Step.builtinOk a61 (qbi_mload_at (touchMemory st pc.toNat 32) st.memory (BitVec.ofNat 256 p) w6)
+  have d63 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) (.expr (yop Op.mload [yvar "q_ptr"])) (.eres (.vals [BitVec.ofNat 256 v] (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32))) :=
+    by rw [<- hload]; exact x62
+  have w64 :
+    (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32).memory = st.memory :=
+    Eq.trans (Midfall.Yul.Word.touchMemory_memory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32) w6
+  have s65 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) (touchMemory st pc.toNat 32) (.stmt (yset "q_top" (yop Op.mload [yvar "q_ptr"]))) (.sres (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_top"]) (vals := [BitVec.ofNat 256 v]) d63 (by rfl)
+  have g66 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" "L_0_MPTR" (BitVec.ofNat 256 v) (BitVec.ofNat 256 p) (by decide : "q_top" ≠ "L_0_MPTR") g45
+  have g67 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" = some 0 :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" "q_has_top" (BitVec.ofNat 256 v) 0 (by decide : "q_top" ≠ "q_has_top") g46
+  have g68 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_pc" = some (pc + BitVec.ofNat 256 1) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" "q_pc" (BitVec.ofNat 256 v) (pc + BitVec.ofNat 256 1) (by decide : "q_top" ≠ "q_pc") g47
+  have g69 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_ptr" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" "q_ptr" (BitVec.ofNat 256 v) (BitVec.ofNat 256 p) (by decide : "q_top" ≠ "q_ptr") g51
+  have g70 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_sp" = some sp :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" "q_sp" (BitVec.ofNat 256 v) sp (by decide : "q_top" ≠ "q_sp") g48
+  have g71 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" "q_token" (BitVec.ofNat 256 v) (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_top" ≠ "q_token") g49
+  have g72 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_top" = some (BitVec.ofNat 256 v) :=
+    venvGet_set_same (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v) x g50
+  have x73 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32) (.expr (ylit 1)) (.eres (.vals [BitVec.ofNat 256 1] (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 1)
+  have s74 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32) (.stmt (yset "q_has_top" (ylit 1))) (.sres (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_has_top"]) (vals := [BitVec.ofNat 256 1]) x73 (by rfl)
+  have g75 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "L_0_MPTR" (BitVec.ofNat 256 1) (BitVec.ofNat 256 p) (by decide : "q_has_top" ≠ "L_0_MPTR") g66
+  have g76 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_pc" = some (pc + BitVec.ofNat 256 1) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_pc" (BitVec.ofNat 256 1) (pc + BitVec.ofNat 256 1) (by decide : "q_has_top" ≠ "q_pc") g68
+  have g77 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_ptr" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_ptr" (BitVec.ofNat 256 1) (BitVec.ofNat 256 p) (by decide : "q_has_top" ≠ "q_ptr") g69
+  have g78 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_sp" = some sp :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_sp" (BitVec.ofNat 256 1) sp (by decide : "q_has_top" ≠ "q_sp") g70
+  have g79 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_token" (BitVec.ofNat 256 1) (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_has_top" ≠ "q_token") g71
+  have g80 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_top" = some (BitVec.ofNat 256 v) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_top" (BitVec.ofNat 256 1) (BitVec.ofNat 256 v) (by decide : "q_has_top" ≠ "q_top") g72
+  have g81 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_has_top" = some (BitVec.ofNat 256 1) :=
+    venvGet_set_same (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1) 0 g67
+  unfold GenAst.qArmBodyPushMemToken
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V)) (st1 := (touchMemory st pc.toNat 32)) s12 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) (st1 := (touchMemory st pc.toNat 32)) s25 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1)))) (st1 := (touchMemory st pc.toNat 32)) s33 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p))) (st1 := (touchMemory st pc.toNat 32)) s55 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p))) (st1 := (touchMemory st pc.toNat 32)) s58 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v))) (st1 := (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32)) s65 ?_
+  exact Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1))) (st1 := (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32)) s74 (Step.seqNil (D := Bridge.Dialect c g))
+
+theorem qArmValue_pushMemToken {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc sp x : U256) (p v : Nat)
+    (hl0 : program.memUsage.l0 = true)
+    :
+    StmtsContract (D := Bridge.Dialect c g) funs (GenAst.qArmBodyPushMemToken ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧
+        VEnv.get V "q_sp" = some sp ∧
+        VEnv.get V "q_has_top" = some 0 ∧
+        VEnv.get V "q_top" = some x ∧
+        VEnv.get V "L_0_MPTR" = some (BitVec.ofNat 256 p) ∧
+        (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) = BitVec.ofNat 256 tcq.mem.l0 ∧
+        loadWord st.memory (BitVec.ofNat 256 p).toNat = BitVec.ofNat 256 v)
+      (fun V st V' st' o => o = .normal 
+        ∧ st' = (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32)
+        ∧ V' = (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1))) := by
+  intro V st hpre
+  have hrun := qArmRun_pushMemToken ctx program tcq funs V st pc sp x p v hpre.1 hpre.2.1 hpre.2.2.1 hpre.2.2.2.1 hpre.2.2.2.2.1 hpre.2.2.2.2.2.1 hpre.2.2.2.2.2.2 hl0
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl⟩⟩
+
+theorem qArmValueAll_pushMemToken {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc sp x : U256) (p v : Nat)
+    (hl0 : program.memUsage.l0 = true)
+    :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (GenAst.qArmBodyPushMemToken ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧
+        VEnv.get V "q_sp" = some sp ∧
+        VEnv.get V "q_has_top" = some 0 ∧
+        VEnv.get V "q_top" = some x ∧
+        VEnv.get V "L_0_MPTR" = some (BitVec.ofNat 256 p) ∧
+        (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) = BitVec.ofNat 256 tcq.mem.l0 ∧
+        loadWord st.memory (BitVec.ofNat 256 p).toNat = BitVec.ofNat 256 v)
+      (fun V st V' st' o => o = .normal 
+        ∧ st' = (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p).toNat 32)
+        ∧ V' = (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: V) "q_pc" (pc + BitVec.ofNat 256 1))) "q_ptr" (BitVec.ofNat 256 p)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1))) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (qArmValue_pushMemToken ctx program tcq funs pc sp x p v hl0)
+
+theorem qArmRun_pushMemTokenOffset {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (pc sp x : U256) (ow p v : Nat)
+    (hget_pc : VEnv.get V "q_pc" = some pc)
+    (hget_sp : VEnv.get V "q_sp" = some sp)
+    (hget_ht : VEnv.get V "q_has_top" = some 0)
+    (hget_top : VEnv.get V "q_top" = some x)
+    (hget_l0 : VEnv.get V "L_0_MPTR" = some (BitVec.ofNat 256 p))
+    (hbyte : (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) = BitVec.ofNat 256 tcq.mem.l0)
+    (hoff : (((loadWord st.memory pc.toNat) >>> 216) &&& BitVec.ofNat 256 4294967295) = BitVec.ofNat 256 ow)
+    (hload : loadWord st.memory (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat = BitVec.ofNat 256 v)
+    (hl0 : program.memUsage.l0 = true) :
+    ExecStmts (Bridge.Dialect c g) funs V st (GenAst.qArmBodyPushMemTokenOffset ctx program tcq)
+      (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32) .normal := by
+  have a1 :
+    Step (D := Bridge.Dialect c g) funs V st (.args []) (.eres (.vals [] st)) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x2 :
+    Step (D := Bridge.Dialect c g) funs V st (.expr (yvar "q_pc")) (.eres (.vals [pc] st)) :=
+    Step.var (D := Bridge.Dialect c g) hget_pc
+  have a3 :
+    Step (D := Bridge.Dialect c g) funs V st (.args [yvar "q_pc"]) (.eres (.vals [pc] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st) (v := pc) (st2 := st) a1 x2
+  have x4 :
+    Step (D := Bridge.Dialect c g) funs V st (.expr (yop Op.mload [yvar "q_pc"])) (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a3 (qbi_mload_at st st.memory pc rfl)
+  have w5 :
+    (touchMemory st pc.toNat 32).memory = st.memory :=
+    Midfall.Yul.Word.touchMemory_memory st pc.toNat 32
+  have s6 :
+    Step (D := Bridge.Dialect c g) funs V st (.stmt (ylet "q_word" (yop Op.mload [yvar "q_pc"]))) (.sres (("q_word", loadWord st.memory pc.toNat) :: V) (touchMemory st pc.toNat 32) .normal) :=
+    Step.letVal x4 rfl
+  have g7 :
+    VEnv.get (("q_word", loadWord st.memory pc.toNat) :: V) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    by rw [venvGet_cons_ne V "q_word" "L_0_MPTR" (loadWord st.memory pc.toNat) (by decide : "q_word" ≠ "L_0_MPTR")]; exact hget_l0
+  have g8 :
+    VEnv.get (("q_word", loadWord st.memory pc.toNat) :: V) "q_has_top" = some 0 :=
+    by rw [venvGet_cons_ne V "q_word" "q_has_top" (loadWord st.memory pc.toNat) (by decide : "q_word" ≠ "q_has_top")]; exact hget_ht
+  have g9 :
+    VEnv.get (("q_word", loadWord st.memory pc.toNat) :: V) "q_pc" = some pc :=
+    by rw [venvGet_cons_ne V "q_word" "q_pc" (loadWord st.memory pc.toNat) (by decide : "q_word" ≠ "q_pc")]; exact hget_pc
+  have g10 :
+    VEnv.get (("q_word", loadWord st.memory pc.toNat) :: V) "q_sp" = some sp :=
+    by rw [venvGet_cons_ne V "q_word" "q_sp" (loadWord st.memory pc.toNat) (by decide : "q_word" ≠ "q_sp")]; exact hget_sp
+  have g11 :
+    VEnv.get (("q_word", loadWord st.memory pc.toNat) :: V) "q_top" = some x :=
+    by rw [venvGet_cons_ne V "q_word" "q_top" (loadWord st.memory pc.toNat) (by decide : "q_word" ≠ "q_top")]; exact hget_top
+  have g12 :
+    VEnv.get (("q_word", loadWord st.memory pc.toNat) :: V) "q_word" = some (loadWord st.memory pc.toNat) :=
+    venvGet_cons_eq V "q_word" (loadWord st.memory pc.toNat)
+  have a13 :
+    Step (D := Bridge.Dialect c g) funs (("q_word", loadWord st.memory pc.toNat) :: V) (touchMemory st pc.toNat 32) (.args []) (.eres (.vals [] (touchMemory st pc.toNat 32))) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x14 :
+    Step (D := Bridge.Dialect c g) funs (("q_word", loadWord st.memory pc.toNat) :: V) (touchMemory st pc.toNat 32) (.expr (yvar "q_word")) (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g12
+  have a15 :
+    Step (D := Bridge.Dialect c g) funs (("q_word", loadWord st.memory pc.toNat) :: V) (touchMemory st pc.toNat 32) (.args [yvar "q_word"]) (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := touchMemory st pc.toNat 32) (v := loadWord st.memory pc.toNat) (st2 := touchMemory st pc.toNat 32) a13 x14
+  have x16 :
+    Step (D := Bridge.Dialect c g) funs (("q_word", loadWord st.memory pc.toNat) :: V) (touchMemory st pc.toNat 32) (.expr (ylit 0)) (.eres (.vals [BitVec.ofNat 256 0] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0)
+  have a17 :
+    Step (D := Bridge.Dialect c g) funs (("q_word", loadWord st.memory pc.toNat) :: V) (touchMemory st pc.toNat 32) (.args [ylit 0, yvar "q_word"]) (.eres (.vals [BitVec.ofNat 256 0, loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_word"]) (restvals := [loadWord st.memory pc.toNat]) (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 0) (st2 := touchMemory st pc.toNat 32) a15 x16
+  have x18 :
+    Step (D := Bridge.Dialect c g) funs (("q_word", loadWord st.memory pc.toNat) :: V) (touchMemory st pc.toNat 32) (.expr (yop Op.byte [ylit 0, yvar "q_word"])) (.eres (.vals [(((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a17 (qbi_byte0 (touchMemory st pc.toNat 32) (loadWord st.memory pc.toNat))
+  have d19 :
+    Step (D := Bridge.Dialect c g) funs (("q_word", loadWord st.memory pc.toNat) :: V) (touchMemory st pc.toNat 32) (.expr (yop Op.byte [ylit 0, yvar "q_word"])) (.eres (.vals [BitVec.ofNat 256 tcq.mem.l0] (touchMemory st pc.toNat 32))) :=
+    by rw [<- hbyte]; exact x18
+  have s20 :
+    Step (D := Bridge.Dialect c g) funs (("q_word", loadWord st.memory pc.toNat) :: V) (touchMemory st pc.toNat 32) (.stmt (ylet "q_token" (yop Op.byte [ylit 0, yvar "q_word"]))) (.sres (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.letVal d19 rfl
+  have g21 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    by rw [venvGet_cons_ne (("q_word", loadWord st.memory pc.toNat) :: V) "q_token" "L_0_MPTR" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "L_0_MPTR")]; exact g7
+  have g22 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_has_top" = some 0 :=
+    by rw [venvGet_cons_ne (("q_word", loadWord st.memory pc.toNat) :: V) "q_token" "q_has_top" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "q_has_top")]; exact g8
+  have g23 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_pc" = some pc :=
+    by rw [venvGet_cons_ne (("q_word", loadWord st.memory pc.toNat) :: V) "q_token" "q_pc" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "q_pc")]; exact g9
+  have g24 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_sp" = some sp :=
+    by rw [venvGet_cons_ne (("q_word", loadWord st.memory pc.toNat) :: V) "q_token" "q_sp" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "q_sp")]; exact g10
+  have g25 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_top" = some x :=
+    by rw [venvGet_cons_ne (("q_word", loadWord st.memory pc.toNat) :: V) "q_token" "q_top" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "q_top")]; exact g11
+  have g26 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_word" = some (loadWord st.memory pc.toNat) :=
+    by rw [venvGet_cons_ne (("q_word", loadWord st.memory pc.toNat) :: V) "q_token" "q_word" (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_token" ≠ "q_word")]; exact g12
+  have g27 :
+    VEnv.get (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_cons_eq (("q_word", loadWord st.memory pc.toNat) :: V) "q_token" (BitVec.ofNat 256 tcq.mem.l0)
+  have a28 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.args []) (.eres (.vals [] (touchMemory st pc.toNat 32))) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x29 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.expr (ylit 4294967295)) (.eres (.vals [BitVec.ofNat 256 4294967295] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 4294967295)
+  have a30 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.args [ylit 4294967295]) (.eres (.vals [BitVec.ofNat 256 4294967295] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 4294967295) (st2 := touchMemory st pc.toNat 32) a28 x29
+  have a31 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.args []) (.eres (.vals [] (touchMemory st pc.toNat 32))) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x32 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.expr (yvar "q_word")) (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g26
+  have a33 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.args [yvar "q_word"]) (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := touchMemory st pc.toNat 32) (v := loadWord st.memory pc.toNat) (st2 := touchMemory st pc.toNat 32) a31 x32
+  have x34 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.expr (ylit 216)) (.eres (.vals [BitVec.ofNat 256 216] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 216)
+  have a35 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.args [ylit 216, yvar "q_word"]) (.eres (.vals [BitVec.ofNat 256 216, loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_word"]) (restvals := [loadWord st.memory pc.toNat]) (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 216) (st2 := touchMemory st pc.toNat 32) a33 x34
+  have x36 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.expr (yop Op.shr [ylit 216, yvar "q_word"])) (.eres (.vals [((loadWord st.memory pc.toNat) >>> 216)] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a35 (qbi_shr216 (touchMemory st pc.toNat 32) (loadWord st.memory pc.toNat))
+  have a37 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.args [yop Op.shr [ylit 216, yvar "q_word"], ylit 4294967295]) (.eres (.vals [((loadWord st.memory pc.toNat) >>> 216), BitVec.ofNat 256 4294967295] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 4294967295]) (restvals := [BitVec.ofNat 256 4294967295]) (st1 := touchMemory st pc.toNat 32) (v := ((loadWord st.memory pc.toNat) >>> 216)) (st2 := touchMemory st pc.toNat 32) a30 x36
+  have x38 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.expr (yop Op.and [yop Op.shr [ylit 216, yvar "q_word"], ylit 4294967295])) (.eres (.vals [(((loadWord st.memory pc.toNat) >>> 216) &&& BitVec.ofNat 256 4294967295)] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a37 (qbi_and (touchMemory st pc.toNat 32) ((loadWord st.memory pc.toNat) >>> 216) (BitVec.ofNat 256 4294967295))
+  have d39 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.expr (yop Op.and [yop Op.shr [ylit 216, yvar "q_word"], ylit 4294967295])) (.eres (.vals [BitVec.ofNat 256 ow] (touchMemory st pc.toNat 32))) :=
+    by rw [<- hoff]; exact x38
+  have s40 :
+    Step (D := Bridge.Dialect c g) funs (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) (touchMemory st pc.toNat 32) (.stmt (ylet "q_off" (yop Op.and [yop Op.shr [ylit 216, yvar "q_word"], ylit 4294967295]))) (.sres (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) (touchMemory st pc.toNat 32) .normal) :=
+    Step.letVal d39 rfl
+  have g41 :
+    VEnv.get (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    by rw [venvGet_cons_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_off" "L_0_MPTR" (BitVec.ofNat 256 ow) (by decide : "q_off" ≠ "L_0_MPTR")]; exact g21
+  have g42 :
+    VEnv.get (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_has_top" = some 0 :=
+    by rw [venvGet_cons_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_off" "q_has_top" (BitVec.ofNat 256 ow) (by decide : "q_off" ≠ "q_has_top")]; exact g22
+  have g43 :
+    VEnv.get (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" = some pc :=
+    by rw [venvGet_cons_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_off" "q_pc" (BitVec.ofNat 256 ow) (by decide : "q_off" ≠ "q_pc")]; exact g23
+  have g44 :
+    VEnv.get (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_sp" = some sp :=
+    by rw [venvGet_cons_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_off" "q_sp" (BitVec.ofNat 256 ow) (by decide : "q_off" ≠ "q_sp")]; exact g24
+  have g45 :
+    VEnv.get (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    by rw [venvGet_cons_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_off" "q_token" (BitVec.ofNat 256 ow) (by decide : "q_off" ≠ "q_token")]; exact g27
+  have g46 :
+    VEnv.get (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_top" = some x :=
+    by rw [venvGet_cons_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_off" "q_top" (BitVec.ofNat 256 ow) (by decide : "q_off" ≠ "q_top")]; exact g25
+  have g47 :
+    VEnv.get (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_word" = some (loadWord st.memory pc.toNat) :=
+    by rw [venvGet_cons_ne (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_off" "q_word" (BitVec.ofNat 256 ow) (by decide : "q_off" ≠ "q_word")]; exact g26
+  have g48 :
+    VEnv.get (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_off" = some (BitVec.ofNat 256 ow) :=
+    venvGet_cons_eq (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)) "q_off" (BitVec.ofNat 256 ow)
+  have a49 :
+    Step (D := Bridge.Dialect c g) funs (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) (touchMemory st pc.toNat 32) (.args []) (.eres (.vals [] (touchMemory st pc.toNat 32))) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x50 :
+    Step (D := Bridge.Dialect c g) funs (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) (touchMemory st pc.toNat 32) (.expr (ylit 5)) (.eres (.vals [BitVec.ofNat 256 5] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 5)
+  have a51 :
+    Step (D := Bridge.Dialect c g) funs (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) (touchMemory st pc.toNat 32) (.args [ylit 5]) (.eres (.vals [BitVec.ofNat 256 5] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 5) (st2 := touchMemory st pc.toNat 32) a49 x50
+  have x52 :
+    Step (D := Bridge.Dialect c g) funs (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) (touchMemory st pc.toNat 32) (.expr (yvar "q_pc")) (.eres (.vals [pc] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g43
+  have a53 :
+    Step (D := Bridge.Dialect c g) funs (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) (touchMemory st pc.toNat 32) (.args [yvar "q_pc", ylit 5]) (.eres (.vals [pc, BitVec.ofNat 256 5] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 5]) (restvals := [BitVec.ofNat 256 5]) (st1 := touchMemory st pc.toNat 32) (v := pc) (st2 := touchMemory st pc.toNat 32) a51 x52
+  have x54 :
+    Step (D := Bridge.Dialect c g) funs (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) (touchMemory st pc.toNat 32) (.expr (yop Op.add [yvar "q_pc", ylit 5])) (.eres (.vals [(pc + BitVec.ofNat 256 5)] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a53 (qbi_add (touchMemory st pc.toNat 32) pc (BitVec.ofNat 256 5))
+  have s55 :
+    Step (D := Bridge.Dialect c g) funs (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) (touchMemory st pc.toNat 32) (.stmt (yset "q_pc" (yop Op.add [yvar "q_pc", ylit 5]))) (.sres (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_pc"]) (vals := [(pc + BitVec.ofNat 256 5)]) x54 (by rfl)
+  have g56 :
+    VEnv.get (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" "L_0_MPTR" (pc + BitVec.ofNat 256 5) (BitVec.ofNat 256 p) (by decide : "q_pc" ≠ "L_0_MPTR") g41
+  have g57 :
+    VEnv.get (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_has_top" = some 0 :=
+    venvGet_set_ne (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" "q_has_top" (pc + BitVec.ofNat 256 5) 0 (by decide : "q_pc" ≠ "q_has_top") g42
+  have g58 :
+    VEnv.get (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_off" = some (BitVec.ofNat 256 ow) :=
+    venvGet_set_ne (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" "q_off" (pc + BitVec.ofNat 256 5) (BitVec.ofNat 256 ow) (by decide : "q_pc" ≠ "q_off") g48
+  have g59 :
+    VEnv.get (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_sp" = some sp :=
+    venvGet_set_ne (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" "q_sp" (pc + BitVec.ofNat 256 5) sp (by decide : "q_pc" ≠ "q_sp") g44
+  have g60 :
+    VEnv.get (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_set_ne (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" "q_token" (pc + BitVec.ofNat 256 5) (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_pc" ≠ "q_token") g45
+  have g61 :
+    VEnv.get (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_top" = some x :=
+    venvGet_set_ne (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" "q_top" (pc + BitVec.ofNat 256 5) x (by decide : "q_pc" ≠ "q_top") g46
+  have g62 :
+    VEnv.get (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_word" = some (loadWord st.memory pc.toNat) :=
+    venvGet_set_ne (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" "q_word" (pc + BitVec.ofNat 256 5) (loadWord st.memory pc.toNat) (by decide : "q_pc" ≠ "q_word") g47
+  have g63 :
+    VEnv.get (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_pc" = some (pc + BitVec.ofNat 256 5) :=
+    venvGet_set_same (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5) pc g43
+  have x64 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) (touchMemory st pc.toNat 32) (.expr (ylit 0)) (.eres (.vals [BitVec.ofNat 256 0] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0)
+  have s65 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) (touchMemory st pc.toNat 32) (.stmt (ylet "q_ptr" (ylit 0))) (.sres (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) .normal) :=
+    Step.letVal x64 rfl
+  have g66 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_ptr" "L_0_MPTR" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "L_0_MPTR")]; exact g56
+  have g67 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_has_top" = some 0 :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_ptr" "q_has_top" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_has_top")]; exact g57
+  have g68 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_off" = some (BitVec.ofNat 256 ow) :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_ptr" "q_off" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_off")]; exact g58
+  have g69 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_pc" = some (pc + BitVec.ofNat 256 5) :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_ptr" "q_pc" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_pc")]; exact g63
+  have g70 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_sp" = some sp :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_ptr" "q_sp" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_sp")]; exact g59
+  have g71 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_ptr" "q_token" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_token")]; exact g60
+  have g72 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_top" = some x :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_ptr" "q_top" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_top")]; exact g61
+  have g73 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_word" = some (loadWord st.memory pc.toNat) :=
+    by rw [venvGet_cons_ne (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_ptr" "q_word" (BitVec.ofNat 256 0) (by decide : "q_ptr" ≠ "q_word")]; exact g62
+  have g74 :
+    VEnv.get (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" = some (BitVec.ofNat 256 0) :=
+    venvGet_cons_eq (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)) "q_ptr" (BitVec.ofNat 256 0)
+  have x75 :
+    Step (D := Bridge.Dialect c g) funs (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.expr (yvar "q_token")) (.eres (.vals [BitVec.ofNat 256 tcq.mem.l0] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g71
+  have h76 :
+    selectSwitch (Bridge.Dialect c g) (BitVec.ofNat 256 tcq.mem.l0) ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_0_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_LAST_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_BLIND_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "BETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yop EVM.Op.add [(yvar "GAMMA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yop EVM.Op.add [(yvar "X_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "THETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yop EVM.Op.add [(yvar "TRASH_CHALLENGE_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yop EVM.Op.add [(yvar "INSTANCE_EVAL_MPTR"), (yvar "q_off")]))])] else [])) (some [(yexpr (ycall "q_program_fail" []))]) = [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])] :=
+    by refine selectSwitch_head (D := Bridge.Dialect c g) (BitVec.ofNat 256 tcq.mem.l0) ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_0_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_LAST_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_BLIND_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "BETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yop EVM.Op.add [(yvar "GAMMA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yop EVM.Op.add [(yvar "X_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "THETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yop EVM.Op.add [(yvar "TRASH_CHALLENGE_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yop EVM.Op.add [(yvar "INSTANCE_EVAL_MPTR"), (yvar "q_off")]))])] else [])) (Literal.number tcq.mem.l0, [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])]) (some [(yexpr (ycall "q_program_fail" []))]) ?_
+       rw [hl0]
+       exact find?_head _ _ _ (decide_litValue_number_eq_self tcq.mem.l0)
+  have a77 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.args []) (.eres (.vals [] (touchMemory st pc.toNat 32))) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x78 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.expr (yvar "q_off")) (.eres (.vals [BitVec.ofNat 256 ow] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g68
+  have a79 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.args [yvar "q_off"]) (.eres (.vals [BitVec.ofNat 256 ow] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 ow) (st2 := touchMemory st pc.toNat 32) a77 x78
+  have x80 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.expr (yvar "L_0_MPTR")) (.eres (.vals [BitVec.ofNat 256 p] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g66
+  have a81 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.args [yvar "L_0_MPTR", yvar "q_off"]) (.eres (.vals [BitVec.ofNat 256 p, BitVec.ofNat 256 ow] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_off"]) (restvals := [BitVec.ofNat 256 ow]) (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 p) (st2 := touchMemory st pc.toNat 32) a79 x80
+  have x82 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.expr (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])) (.eres (.vals [(BitVec.ofNat 256 p + BitVec.ofNat 256 ow)] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a81 (qbi_add (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p) (BitVec.ofNat 256 ow))
+  have s83 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.stmt (yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"]))) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_ptr"]) (vals := [(BitVec.ofNat 256 p + BitVec.ofNat 256 ow)]) x82 (by rfl)
+  have g84 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" "L_0_MPTR" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) (BitVec.ofNat 256 p) (by decide : "q_ptr" ≠ "L_0_MPTR") g66
+  have g85 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_has_top" = some 0 :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" "q_has_top" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) 0 (by decide : "q_ptr" ≠ "q_has_top") g67
+  have g86 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_off" = some (BitVec.ofNat 256 ow) :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" "q_off" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) (BitVec.ofNat 256 ow) (by decide : "q_ptr" ≠ "q_off") g68
+  have g87 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_pc" = some (pc + BitVec.ofNat 256 5) :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" "q_pc" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) (pc + BitVec.ofNat 256 5) (by decide : "q_ptr" ≠ "q_pc") g69
+  have g88 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_sp" = some sp :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" "q_sp" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) sp (by decide : "q_ptr" ≠ "q_sp") g70
+  have g89 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" "q_token" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_ptr" ≠ "q_token") g71
+  have g90 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" = some x :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" "q_top" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) x (by decide : "q_ptr" ≠ "q_top") g72
+  have g91 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_word" = some (loadWord st.memory pc.toNat) :=
+    venvGet_set_ne (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" "q_word" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) (loadWord st.memory pc.toNat) (by decide : "q_ptr" ≠ "q_word") g73
+  have g92 :
+    VEnv.get (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_ptr" = some (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) :=
+    venvGet_set_same (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) (BitVec.ofNat 256 0) g74
+  have b93 :
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])] :: funs) (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.stmts [yset "q_ptr" (yop Op.add [yvar "L_0_MPTR", yvar "q_off"])]) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) .normal) :=
+    by exact Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow))) (st1 := (touchMemory st pc.toNat 32)) s83 (Step.seqNil (D := Bridge.Dialect c g))
+  have k94 :
+    Step (D := Bridge.Dialect c g) funs (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.stmt (.block (selectSwitch (Bridge.Dialect c g) (BitVec.ofNat 256 tcq.mem.l0) ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_0_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_LAST_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_BLIND_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "BETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yop EVM.Op.add [(yvar "GAMMA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yop EVM.Op.add [(yvar "X_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "THETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yop EVM.Op.add [(yvar "TRASH_CHALLENGE_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yop EVM.Op.add [(yvar "INSTANCE_EVAL_MPTR"), (yvar "q_off")]))])] else [])) (some [(yexpr (ycall "q_program_fail" []))])))) (.sres (restore (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow))) (touchMemory st pc.toNat 32) .normal) :=
+    by refine Step.block (D := Bridge.Dialect c g) ?_
+       rw [h76]
+       exact b93
+  have k95 :
+    Step (D := Bridge.Dialect c g) funs (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.stmt (.block (selectSwitch (Bridge.Dialect c g) (BitVec.ofNat 256 tcq.mem.l0) ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_0_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_LAST_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_BLIND_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "BETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yop EVM.Op.add [(yvar "GAMMA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yop EVM.Op.add [(yvar "X_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "THETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yop EVM.Op.add [(yvar "TRASH_CHALLENGE_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yop EVM.Op.add [(yvar "INSTANCE_EVAL_MPTR"), (yvar "q_off")]))])] else [])) (some [(yexpr (ycall "q_program_fail" []))])))) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) .normal) :=
+    by rw [restore_set] at k94
+       exact k94
+  have s96 :
+    Step (D := Bridge.Dialect c g) funs (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (touchMemory st pc.toNat 32) (.stmt (Stmt.switch (yvar "q_token") ((if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_0_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lLast then [(Literal.number tcq.mem.lLast, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_LAST_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.lBlind then [(Literal.number tcq.mem.lBlind, [(yset "q_ptr" (yop EVM.Op.add [(yvar "L_BLIND_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.beta then [(Literal.number tcq.mem.beta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "BETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.gamma then [(Literal.number tcq.mem.gamma, [(yset "q_ptr" (yop EVM.Op.add [(yvar "GAMMA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.x then [(Literal.number tcq.mem.x, [(yset "q_ptr" (yop EVM.Op.add [(yvar "X_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.theta then [(Literal.number tcq.mem.theta, [(yset "q_ptr" (yop EVM.Op.add [(yvar "THETA_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.trashChallenge then [(Literal.number tcq.mem.trashChallenge, [(yset "q_ptr" (yop EVM.Op.add [(yvar "TRASH_CHALLENGE_MPTR"), (yvar "q_off")]))])] else []) ++ (if program.memUsage.instanceEval then [(Literal.number tcq.mem.instanceEval, [(yset "q_ptr" (yop EVM.Op.add [(yvar "INSTANCE_EVAL_MPTR"), (yvar "q_off")]))])] else [])) (some [(yexpr (ycall "q_program_fail" []))]))) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.switchExec (D := Bridge.Dialect c g) x75 k95
+  have x97 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) (.expr (yvar "q_has_top")) (.eres (.vals [0] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g85
+  have z98 : 0 = (Bridge.Dialect c g).zero := rfl
+  have s99 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) (.stmt (yif (yvar "q_has_top") [yif (yop Op.gt [yvar "q_sp", ylit program.guards.stackLast]) [yexpr (ycall "q_program_fail" [])], yexpr (yop Op.mstore [yvar "q_sp", yvar "q_top"]), yset "q_sp" (yop Op.add [yvar "q_sp", ylit 32])])) (.sres (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.ifFalse x97 z98
+  have a100 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) (.args []) (.eres (.vals [] (touchMemory st pc.toNat 32))) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have x101 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) (.expr (yvar "q_ptr")) (.eres (.vals [(BitVec.ofNat 256 p + BitVec.ofNat 256 ow)] (touchMemory st pc.toNat 32))) :=
+    Step.var (D := Bridge.Dialect c g) g92
+  have a102 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) (.args [yvar "q_ptr"]) (.eres (.vals [(BitVec.ofNat 256 p + BitVec.ofNat 256 ow)] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := touchMemory st pc.toNat 32) (v := (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (st2 := touchMemory st pc.toNat 32) a100 x101
+  have x103 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) (.expr (yop Op.mload [yvar "q_ptr"])) (.eres (.vals [loadWord st.memory (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat] (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32))) :=
+    Step.builtinOk a102 (qbi_mload_at (touchMemory st pc.toNat 32) st.memory (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) w5)
+  have d104 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) (.expr (yop Op.mload [yvar "q_ptr"])) (.eres (.vals [BitVec.ofNat 256 v] (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32))) :=
+    by rw [<- hload]; exact x103
+  have w105 :
+    (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32).memory = st.memory :=
+    Eq.trans (Midfall.Yul.Word.touchMemory_memory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32) w5
+  have s106 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) (touchMemory st pc.toNat 32) (.stmt (yset "q_top" (yop Op.mload [yvar "q_ptr"]))) (.sres (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_top"]) (vals := [BitVec.ofNat 256 v]) d104 (by rfl)
+  have g107 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" "L_0_MPTR" (BitVec.ofNat 256 v) (BitVec.ofNat 256 p) (by decide : "q_top" ≠ "L_0_MPTR") g84
+  have g108 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" = some 0 :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" "q_has_top" (BitVec.ofNat 256 v) 0 (by decide : "q_top" ≠ "q_has_top") g85
+  have g109 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_off" = some (BitVec.ofNat 256 ow) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" "q_off" (BitVec.ofNat 256 v) (BitVec.ofNat 256 ow) (by decide : "q_top" ≠ "q_off") g86
+  have g110 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_pc" = some (pc + BitVec.ofNat 256 5) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" "q_pc" (BitVec.ofNat 256 v) (pc + BitVec.ofNat 256 5) (by decide : "q_top" ≠ "q_pc") g87
+  have g111 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_ptr" = some (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" "q_ptr" (BitVec.ofNat 256 v) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) (by decide : "q_top" ≠ "q_ptr") g92
+  have g112 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_sp" = some sp :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" "q_sp" (BitVec.ofNat 256 v) sp (by decide : "q_top" ≠ "q_sp") g88
+  have g113 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" "q_token" (BitVec.ofNat 256 v) (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_top" ≠ "q_token") g89
+  have g114 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_word" = some (loadWord st.memory pc.toNat) :=
+    venvGet_set_ne (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" "q_word" (BitVec.ofNat 256 v) (loadWord st.memory pc.toNat) (by decide : "q_top" ≠ "q_word") g91
+  have g115 :
+    VEnv.get (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_top" = some (BitVec.ofNat 256 v) :=
+    venvGet_set_same (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v) x g90
+  have x116 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32) (.expr (ylit 1)) (.eres (.vals [BitVec.ofNat 256 1] (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 1)
+  have s117 :
+    Step (D := Bridge.Dialect c g) funs (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32) (.stmt (yset "q_has_top" (ylit 1))) (.sres (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_has_top"]) (vals := [BitVec.ofNat 256 1]) x116 (by rfl)
+  have g118 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "L_0_MPTR" = some (BitVec.ofNat 256 p) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "L_0_MPTR" (BitVec.ofNat 256 1) (BitVec.ofNat 256 p) (by decide : "q_has_top" ≠ "L_0_MPTR") g107
+  have g119 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_off" = some (BitVec.ofNat 256 ow) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_off" (BitVec.ofNat 256 1) (BitVec.ofNat 256 ow) (by decide : "q_has_top" ≠ "q_off") g109
+  have g120 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_pc" = some (pc + BitVec.ofNat 256 5) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_pc" (BitVec.ofNat 256 1) (pc + BitVec.ofNat 256 5) (by decide : "q_has_top" ≠ "q_pc") g110
+  have g121 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_ptr" = some (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_ptr" (BitVec.ofNat 256 1) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow) (by decide : "q_has_top" ≠ "q_ptr") g111
+  have g122 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_sp" = some sp :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_sp" (BitVec.ofNat 256 1) sp (by decide : "q_has_top" ≠ "q_sp") g112
+  have g123 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_token" = some (BitVec.ofNat 256 tcq.mem.l0) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_token" (BitVec.ofNat 256 1) (BitVec.ofNat 256 tcq.mem.l0) (by decide : "q_has_top" ≠ "q_token") g113
+  have g124 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_top" = some (BitVec.ofNat 256 v) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_top" (BitVec.ofNat 256 1) (BitVec.ofNat 256 v) (by decide : "q_has_top" ≠ "q_top") g115
+  have g125 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_word" = some (loadWord st.memory pc.toNat) :=
+    venvGet_set_ne (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" "q_word" (BitVec.ofNat 256 1) (loadWord st.memory pc.toNat) (by decide : "q_has_top" ≠ "q_word") g114
+  have g126 :
+    VEnv.get (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_has_top" = some (BitVec.ofNat 256 1) :=
+    venvGet_set_same (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1) 0 g108
+  unfold GenAst.qArmBodyPushMemTokenOffset
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (("q_word", loadWord st.memory pc.toNat) :: V)) (st1 := (touchMemory st pc.toNat 32)) s6 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) (st1 := (touchMemory st pc.toNat 32)) s20 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V)))) (st1 := (touchMemory st pc.toNat 32)) s40 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) (st1 := (touchMemory st pc.toNat 32)) s55 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5)))) (st1 := (touchMemory st pc.toNat 32)) s65 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow))) (st1 := (touchMemory st pc.toNat 32)) s96 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow))) (st1 := (touchMemory st pc.toNat 32)) s99 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v))) (st1 := (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32)) s106 ?_
+  exact Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1))) (st1 := (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32)) s117 (Step.seqNil (D := Bridge.Dialect c g))
+
+theorem qArmValue_pushMemTokenOffset {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc sp x : U256) (ow p v : Nat)
+    (hl0 : program.memUsage.l0 = true)
+    :
+    StmtsContract (D := Bridge.Dialect c g) funs (GenAst.qArmBodyPushMemTokenOffset ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧
+        VEnv.get V "q_sp" = some sp ∧
+        VEnv.get V "q_has_top" = some 0 ∧
+        VEnv.get V "q_top" = some x ∧
+        VEnv.get V "L_0_MPTR" = some (BitVec.ofNat 256 p) ∧
+        (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) = BitVec.ofNat 256 tcq.mem.l0 ∧
+        (((loadWord st.memory pc.toNat) >>> 216) &&& BitVec.ofNat 256 4294967295) = BitVec.ofNat 256 ow ∧
+        loadWord st.memory (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat = BitVec.ofNat 256 v)
+      (fun V st V' st' o => o = .normal 
+        ∧ st' = (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32)
+        ∧ V' = (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1))) := by
+  intro V st hpre
+  have hrun := qArmRun_pushMemTokenOffset ctx program tcq funs V st pc sp x ow p v hpre.1 hpre.2.1 hpre.2.2.1 hpre.2.2.2.1 hpre.2.2.2.2.1 hpre.2.2.2.2.2.1 hpre.2.2.2.2.2.2.1 hpre.2.2.2.2.2.2.2 hl0
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl⟩⟩
+
+theorem qArmValueAll_pushMemTokenOffset {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc sp x : U256) (ow p v : Nat)
+    (hl0 : program.memUsage.l0 = true)
+    :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (GenAst.qArmBodyPushMemTokenOffset ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧
+        VEnv.get V "q_sp" = some sp ∧
+        VEnv.get V "q_has_top" = some 0 ∧
+        VEnv.get V "q_top" = some x ∧
+        VEnv.get V "L_0_MPTR" = some (BitVec.ofNat 256 p) ∧
+        (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) = BitVec.ofNat 256 tcq.mem.l0 ∧
+        (((loadWord st.memory pc.toNat) >>> 216) &&& BitVec.ofNat 256 4294967295) = BitVec.ofNat 256 ow ∧
+        loadWord st.memory (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat = BitVec.ofNat 256 v)
+      (fun V st V' st' o => o = .normal 
+        ∧ st' = (touchMemory (touchMemory st pc.toNat 32) (BitVec.ofNat 256 p + BitVec.ofNat 256 ow).toNat 32)
+        ∧ V' = (VEnv.set (VEnv.set (VEnv.set (("q_ptr", BitVec.ofNat 256 0) :: (VEnv.set (("q_off", BitVec.ofNat 256 ow) :: (("q_token", BitVec.ofNat 256 tcq.mem.l0) :: (("q_word", loadWord st.memory pc.toNat) :: V))) "q_pc" (pc + BitVec.ofNat 256 5))) "q_ptr" (BitVec.ofNat 256 p + BitVec.ofNat 256 ow)) "q_top" (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1))) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (qArmValue_pushMemTokenOffset ctx program tcq funs pc sp x ow p v hl0)
+
+#print axioms Midfall.LoweringV3.QuotientArms.qArmRun_pushMemToken
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmRun_pushMemToken
+#print axioms Midfall.LoweringV3.QuotientArms.qArmValue_pushMemToken
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmValue_pushMemToken
+#print axioms Midfall.LoweringV3.QuotientArms.qArmValueAll_pushMemToken
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmValueAll_pushMemToken
+#print axioms Midfall.LoweringV3.QuotientArms.qArmRun_pushMemTokenOffset
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmRun_pushMemTokenOffset
+#print axioms Midfall.LoweringV3.QuotientArms.qArmValue_pushMemTokenOffset
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmValue_pushMemTokenOffset
+#print axioms Midfall.LoweringV3.QuotientArms.qArmValueAll_pushMemTokenOffset
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmValueAll_pushMemTokenOffset
+
+/-! ### THE TWELVE ARMS STILL OPEN AFTER QTOKEN, AND EXACTLY WHY
 
 Of the 25 arms QARMS left open, 17 have a reference equation in 'QuotientFrame' section B and 8 do
-not. All 11 arms landed here are from the 17. The remaining six OF THE SEVENTEEN, and the eight
-outside it, are NOT the same work - the reason for each is named below so the next card does not
-re-derive it.
+not. QMEM landed 11 of the 17 and QTOKEN landed the two switch-gated token arms, so **four of the
+seventeen remain**; the eight outside it are NOT the same work. The reason for each is named below so
+the next card does not re-derive it.
 
-**SIX ARMS WITH A REFERENCE EQUATION, NOT LANDED.**
+**THE TWO SWITCH ARMS, NOW LANDED (QTOKEN).** 'PUSH_MEM_TOKEN' and 'PUSH_MEM_TOKEN_OFFSET' were
+**not "the same work with two reader equations" as the brief said** - their bodies contain
+'Stmt.switch q_token CASES (some [q_program_fail()])' where CASES is a nine-way append of
+'if program.memUsage.X then [(Literal.number tcq.mem.X, [...])] else []' terms, so 'Step.switchExec'
+asks for a 'Step' on '.stmt (.block (selectSwitch D cv CASES dflt))' (BigStep.lean:262) and
+'selectSwitch' reduces through 'CASES.find? (fun p => decide (cv = D.litValue p.1))'. QMEM was right
+that it is tractable; the corrections from actually landing it:
 
-* 'PUSH_MEM_TOKEN', 'PUSH_MEM_TOKEN_OFFSET' - **not "the same work with two reader equations" as the
-  brief said, but tractable: three extra ingredients, each checked here and none of them a wall.**
-  Their bodies contain
-  'Stmt.switch q_token CASES (some [q_program_fail()])' where CASES is a nine-way append of
-  'if program.memUsage.l0 then [(Literal.number tcq.mem.l0, [...])] else []' terms. To execute the
-  switch, 'Step.switchExec' asks for a 'Step' on '.stmt (.block (selectSwitch D cv CASES dflt))'
-  (BigStep.lean:262), and 'selectSwitch' reduces through
-  'CASES.find? (fun p => decide (cv = D.litValue p.1))'. Two things block that reduction:
-  (i) the nine 'if program.memUsage.X' guards are undecided, so CASES is not a syntactic cons - the
-  arm needs at least 'program.memUsage.l0 = true' as a per-arm hypothesis; and (ii) the labels are
-  'tcq.mem.X', SYMBOLIC template values, so 'decide (cv = D.litValue p.1)' will not reduce unless the
-  scrutinee is pinned to one of them, i.e. 'htok : q_token = BitVec.ofNat 256 tcq.mem.l0', discharged
-  by 'decide_eq_true (Eq.refl _)'. THEN the block introduces 'restore' (see the recipe below).
-  THE RECIPE, CHECKED: with 'hl0 : program.memUsage.l0 = true' and the scrutinee pinned to
-  'BitVec.ofNat 256 tcq.mem.l0',
+* **'simp only [List.find?, h2]' does not work and cannot.** 'List.find?'s' equations are marked
+  '@[backward_defeq]', so 'simp only [List.find?]' reports the argument UNUSED unless the list is
+  already a syntactic cons - and the emitted list is an append of undecided 'if's. Worse, a 'simp'
+  forced to decide a symbolic 'decide' reaches for 'Classical.propDecidable' and puts
+  'Classical.choice' IN THE CONE, which the target axiom set forbids. What works is
+  'QuotientFrame.find?_head' plus 'QuotientFrame.selectSwitch_head' with the case list as an EXPLICIT
+  argument and 'QuotientFrame.decide_litValue_number_eq_self' for the label test: no 'simp' at all,
+  and neither switch lemma depends on any axiom.
+* **'rw [hl0]' alone does not expose a cons either** - it leaves 'if true = true then [a] else []'.
+  'selectSwitch_head' therefore takes the whole case list as one explicit argument and is fed the
+  equation 'List.find? p CASES = some a', which 'find?_head' discharges after 'rw [hl0]' because
+  UNIFICATION can whnf the head into a cons even where 'rw' cannot match one.
+* **One flag really is enough**: 'find?' short-circuits on the head, so only
+  'program.memUsage.l0 = true' is assumed and the other eight flags are never looked at. The scrutinee
+  must be pinned to the SAME label the head carries - 'hbyte', the emitted 'byte 0 (mload q_pc)' -
+  which is a reader equation about the program text, not a new axiom.
+* What remained after the switch was exactly 'Step.block', hence 'restore'. 'venvSet_length' and
+  'restore_set' are now IN THE BUILD (QuotientFrame, beside the 'venvGet_*' quartet) and are what turn
+  the block's post-environment into the 'VEnv.set' the contract states. Both are '[propext]' only.
+* **No emitted/reference disagreement was found in either arm.** The reference's 'consumed := 2' and
+  'consumed := 6' count the opcode byte; the emitted 'q_pc' advance is 1 and 5, the operand bytes only.
+  That is the convention the landed PUSH_MEM_U16 arm already satisfies (reference 'readU16 ... 1',
+  emitted advance 2), so it is not a defect.
 
-    rw [hl0]
-    rw [selectSwitch]
-    have h2 : decide (BitVec.ofNat 256 tcq.mem.l0 =
-        (Bridge.Dialect c g).litValue ((Literal.number tcq.mem.l0, body).1)) = true :=
-      decide_eq_true (Eq.refl _)
-    simp only [List.find?, h2]
+**FOUR ARMS WITH A REFERENCE EQUATION, STILL NOT LANDED.**
 
-  reduces the switch to the single-statement body - 'find?' short-circuits, so the other eight flags
-  are irrelevant. What remains is 'Step.block' and so 'restore', i.e. the recipe below.
 * 'LIN7', 'BILIN7_ROW', 'BILIN7_PAIRWISE', 'MODARITH7' - **the emitted 'yfor' iterates a SYMBOLIC
   count.** 'lin7' loops while 'q_i < tcq.limbCount', and 'limbCount' is a field of
   'QuotientVmTemplateConstants' (VmTypes.lean:987), not a literal; the KAT
