@@ -1579,4 +1579,427 @@ theorem linBucket_congr (y : F) (xs ys : List (Option Nat × F)) (q q' : Option 
       by_cases hq1 : (k == q) = true
       · rw [if_pos hq1, if_pos (hk.mp hq1), h0, hv]
       · rw [if_neg hq1, if_neg (fun hh => hq1 (hk.mpr hh))]
+
+/-! ### QLIN3: the last generic pieces
+
+    Still generic (D-P71): an abstract stream of (key, gap, index, value) entries and the
+    verifier's own grouped walk; no plan, no program, no fixture. This supplies what QLIN2
+    named as remaining on the generic side: the list-index API this toolchain lacks (no
+    List.get?_map, no List.getD_map, no List.mem_iff_get?), the position lemmas a projection
+    needs, WellSpaced for a projection WITHOUT constraining the head's gap, the endIdx of a
+    consecutive list, and the grouped walk read back through linValAt so the MSM's scalar
+    list is DERIVED rather than assumed. -/
+
+theorem getD_map_of_lt {α β : Type} (f : α → β) : ∀ (xs : List α) (i : Nat) (d : β) (z : α),
+    i < xs.length → (xs.map f).getD i d = f (xs.getD i z) := by
+  intro xs
+  induction xs with
+  | nil => intro i d z h; exact absurd h (by simp)
+  | cons a as ih =>
+      intro i d z hi
+      cases i with
+      | zero => rfl
+      | succ u => exact ih u d z (by simpa using hi)
+
+theorem get?_getD {α : Type} : ∀ (xs : List α) (i : Nat) (d : α),
+    i < xs.length → xs[i]? = some (xs.getD i d) := by
+  intro xs
+  induction xs with
+  | nil => intro i d h; exact absurd h (by simp)
+  | cons a as ih =>
+      intro i d hi
+      cases i with
+      | zero => rfl
+      | succ u => exact ih u d (by simpa using hi)
+
+theorem mem_iff_get? {α : Type} (xs : List α) (a : α) :
+    a ∈ xs ↔ ∃ i < xs.length, xs[i]? = some a := by
+  constructor
+  · induction xs with
+    | nil => intro h; exact absurd h (by simp)
+    | cons x rest ih =>
+        intro h
+        rw [List.mem_cons] at h
+        rcases h with rfl | h
+        · exact ⟨0, by simp, rfl⟩
+        · obtain ⟨i, hi, he⟩ := ih h
+          exact ⟨i + 1, by simpa using hi, by simpa using he⟩
+  · rintro ⟨i, hi, he⟩
+    induction xs generalizing i with
+    | nil => exact absurd hi (by simp)
+    | cons x rest ih =>
+        cases i with
+        | zero => exact List.mem_cons.mpr (Or.inl (Option.some.inj he).symm)
+        | succ u => exact List.mem_cons.mpr (Or.inr (ih u (by simpa using hi) (by simpa using he)))
+
+/-- Two lists of the same length that agree under getD at every position are equal. -/
+theorem list_eq_of_getD {α : Type} (xs ys : List α) (d : α) (hlen : xs.length = ys.length)
+    (h : ∀ i < xs.length, xs.getD i d = ys.getD i d) : xs = ys := by
+  induction xs generalizing ys with
+  | nil =>
+      cases ys with
+      | nil => rfl
+      | cons b bs => exact absurd hlen.symm (by simp)
+  | cons a as ih =>
+      cases ys with
+      | nil => exact absurd hlen (by simp)
+      | cons b bs =>
+          have h0 : a = b := h 0 (by simp)
+          subst h0
+          have hlen' : as.length = bs.length := by simpa using hlen
+          have h' : ∀ i < as.length, as.getD i d = bs.getD i d := by
+            intro i hi
+            exact h (i + 1) (by simp [hi])
+          exact congrArg (List.cons a) (ih bs hlen' h')
+
+theorem getD_zipWith {α β γ : Type} (f : α → β → γ) :
+    ∀ (xs : List α) (ys : List β) (i : Nat) (dx : α) (dy : β) (dg : γ),
+      i < xs.length → i < ys.length →
+        (List.zipWith f xs ys).getD i dg = f (xs.getD i dx) (ys.getD i dy) := by
+  intro xs
+  induction xs with
+  | nil => intro ys i dx dy dg h _; exact absurd h (by simp)
+  | cons a as ih =>
+      intro ys i dx dy dg hi hy
+      cases ys with
+      | nil => exact absurd hy (by simp)
+      | cons b bs =>
+          cases i with
+          | zero => rfl
+          | succ u => exact ih bs u dx dy dg (by simpa using hi) (by simpa using hy)
+
+theorem get_eq_getD {α : Type} : ∀ (xs : List α) (i : Nat) (d : α) (h : i < xs.length),
+    xs[i]'h = xs.getD i d := by
+  intro xs
+  induction xs with
+  | nil => intro i d h; exact absurd h (by simp)
+  | cons a as ih =>
+      intro i d h
+      cases i with
+      | zero => rfl
+      | succ u => exact ih u d (by simpa using h)
+
+theorem getD_cons_succ {α : Type} (a : α) (as : List α) (i : Nat) (d : α) :
+    (a :: as).getD (i + 1) d = as.getD i d := rfl
+
+/-- The position a projection's entry came from: some position carrying the key. -/
+theorem exists_of_mem_proj {s : Nat} : ∀ (xs : List (Option Nat × BEntry F))
+    (e : BEntry F), e ∈ proj s xs →
+    ∃ i < xs.length, hasKey s xs i ∧ (xs.getD i noPair).2 = e := by
+  intro xs e
+  induction xs with
+  | nil => intro h; exact absurd h (by simp [proj])
+  | cons a as ih =>
+      intro h
+      cases a with
+      | mk k b =>
+      by_cases hk : (k == some s) = true
+      · have hk' : k = some s := Iff.mp obEq hk
+        subst hk'
+        rw [proj_same] at h
+        rcases List.mem_cons.mp h with he | he
+        · refine ⟨0, by simp, head_hasKey b as, ?_⟩
+          show b = e
+          exact he.symm
+        · obtain ⟨i, hi, hki, he2⟩ := ih he
+          refine ⟨i + 1, by simpa using hi, (tail_hasKey (some s) b as i).mpr hki, ?_⟩
+          rw [getD_cons_succ]
+          exact he2
+      · rw [proj_head_not (a := (k, b)) (xs := as) (notHead_hasKey k b as hk)] at h
+        obtain ⟨i, hi, hki, he2⟩ := ih h
+        refine ⟨i + 1, by simpa using hi, (tail_hasKey k b as i).mpr hki, ?_⟩
+        rw [getD_cons_succ]
+        exact he2
+
+/-- The head of a projection came from the FIRST position carrying the key. -/
+theorem exists_of_proj_cons {s : Nat} : ∀ (xs : List (Option Nat × BEntry F))
+    (e : BEntry F) (rest : List (BEntry F)),
+    proj s xs = e :: rest →
+    ∃ i < xs.length, hasKey s xs i ∧ (∀ k, k < i → ¬ hasKey s xs k) ∧
+      (xs.getD i noPair).2 = e := by
+  intro xs e rest
+  induction xs with
+  | nil => intro h; exact absurd h (by simp [proj])
+  | cons a as ih =>
+      intro h
+      cases a with
+      | mk k b =>
+      by_cases hk : (k == some s) = true
+      · have hk' : k = some s := Iff.mp obEq hk
+        subst hk'
+        rw [proj_same] at h
+        have heb : b = e := Option.some.inj (congrArg List.head? h)
+        refine ⟨0, by simp, head_hasKey b as, fun j hj => absurd hj (by omega), ?_⟩
+        show b = e
+        exact heb
+      · rw [proj_head_not (a := (k, b)) (xs := as) (notHead_hasKey k b as hk)] at h
+        obtain ⟨i, hi, hki, hfirst, he⟩ := ih h
+        refine ⟨i + 1, by simpa using hi, (tail_hasKey k b as i).mpr hki, ?_, ?_⟩
+        · intro j hj hh
+          cases j with
+          | zero => exact notHead_hasKey k b as hk hh
+          | succ u => exact hfirst u (by omega) ((tail_hasKey k b as u).mp hh)
+        · rw [getD_cons_succ]
+          exact he
+
+/-- The LAST position carrying a key, when some position does. -/
+theorem exists_last_hasKey {s : Nat} : ∀ (xs : List (Option Nat × BEntry F)),
+    (∃ i < xs.length, hasKey s xs i) →
+    ∃ j < xs.length, hasKey s xs j ∧
+      ∀ k, j < k → k < xs.length → ¬ hasKey s xs k := by
+  intro xs
+  induction xs with
+  | nil => intro h; exact absurd h (by simp)
+  | cons a as ih =>
+      intro h
+      cases a with
+      | mk k b =>
+      by_cases has : ∃ i < as.length, hasKey s as i
+      · obtain ⟨j, hj, hkj, hlast⟩ := ih has
+        refine ⟨j + 1, by simpa using hj, (tail_hasKey k b as j).mpr hkj, ?_⟩
+        intro m hm1 hm2 hh
+        cases m with
+        | zero => omega
+        | succ u =>
+            exact hlast u (by omega) (by simpa using hm2) ((tail_hasKey k b as u).mp hh)
+      · obtain ⟨i, hi, hki⟩ := h
+        cases i with
+        | zero =>
+            refine ⟨0, by simp, hki, ?_⟩
+            intro m hm1 hm2 hh
+            cases m with
+            | zero => omega
+            | succ u =>
+                exact absurd ⟨u, by simpa using hm2, (tail_hasKey k b as u).mp hh⟩ has
+        | succ u => exact absurd ⟨u, by simpa using hi, hki⟩ has
+
+/-- WellSpaced for a bucket's sub-stream. This is deliberately WEAKER than spacedAfter_proj:
+    no hypothesis constrains the HEAD's gap, because SelectorFoldConsistent's third conjunct
+    relates a selector identity's gap only to a PREVIOUS identity in the same bucket, and the
+    first identity in a bucket has none. That is sound - the head's gap multiplies the bucket's
+    initial value, which is 0 - and it is exactly what WellSpaced states. The head is skipped
+    by reading the projection as e :: rest and applying spacedAfter_proj's content to the
+    SUFFIX, whose head does have a predecessor inside the stream. -/
+theorem wellSpaced_proj {s : Nat} : ∀ (xs : List (Option Nat × BEntry F)) (P : Nat),
+    (∀ i < xs.length, idxAt xs i = P + i) →
+    (∀ i j, i < j → j < xs.length → hasKey s xs i → hasKey s xs j →
+        (∀ k, i < k → k < j → ¬ hasKey s xs k) → gapAt xs j = j - i) →
+    WellSpaced (proj s xs) := by
+  intro xs
+  induction xs with
+  | nil => intro P _ _; exact wellSpaced_nil
+  | cons a as ih =>
+      intro P hidx hcon
+      cases a with
+      | mk k b =>
+      by_cases hk : (k == some s) = true
+      · have hk' : k = some s := Iff.mp obEq hk
+        subst hk'
+        have hb : b.idx = P := by
+          have h0 : idxAt ((some s, b) :: as) 0 = P + 0 := hidx 0 (by simp)
+          rwa [head_idxAt] at h0
+        rw [proj_same]
+        show SpacedAfter b.idx (proj s as)
+        rw [hb]
+        have hidx' : ∀ i < as.length, idxAt as i = P + 1 + i := by
+          intro i hi
+          have := hidx (i + 1) (by simpa using hi)
+          rw [tail_idxAt] at this
+          exact this.trans (by omega)
+        have hcon' : ∀ i j, i < j → j < as.length → hasKey s as i → hasKey s as j →
+            (∀ kk, i < kk → kk < j → ¬ hasKey s as kk) → gapAt as j = j - i := by
+          intro i j hij hj hki hkj hmid
+          have := hcon (i + 1) (j + 1) (by omega) (by simpa using hj)
+            ((tail_hasKey (some s) b as i).mpr hki) ((tail_hasKey (some s) b as j).mpr hkj)
+            (fun kk hk1 hk2 => by
+              cases kk with
+              | zero => exact absurd hk1 (by omega)
+              | succ u => exact hmid u (by omega) (by omega))
+          rw [tail_gapAt] at this
+          exact this.trans (by omega)
+        have hwell : WellSpaced (proj s as) := ih (P + 1) hidx' hcon'
+        by_cases hnil : proj s as = []
+        · rw [hnil]
+          exact SpacedAfter.nil P
+        · cases ps : proj s as with
+          | nil => exact absurd ps hnil
+          | cons e rest =>
+              obtain ⟨j, hj, hkj, hfirst, he⟩ := exists_of_proj_cons as e rest ps
+              have hjx : j + 1 < ((some s, b) :: as).length := by simpa using hj
+              have hmid : ∀ kk, 0 < kk → kk < j + 1 → ¬ hasKey s ((some s, b) :: as) kk := by
+                intro kk hk1 hk2
+                cases kk with
+                | zero => exact absurd hk1 (by omega)
+                | succ u => exact fun hh => hfirst u (by omega) ((tail_hasKey (some s) b as u).mp hh)
+              have h1 : gapAt as j = j + 1 := by
+                have := hcon 0 (j + 1) (by omega) hjx (head_hasKey b as)
+                  ((tail_hasKey (some s) b as j).mpr hkj) hmid
+                rw [tail_gapAt] at this
+                exact this.trans (by omega)
+              have h2 : e.idx = P + 1 + j := by
+                rw [← he]
+                show (as.getD j noPair).2.idx = P + 1 + j
+                exact hidx' j (by simpa using hj)
+              have hg : e.gap = e.idx - P := by
+                rw [h2, ← he]
+                show (as.getD j noPair).2.gap = P + 1 + j - P
+                exact h1.trans (by omega)
+              have htail : SpacedAfter e.idx rest := by
+                have hw : WellSpaced (e :: rest) := ps ▸ hwell
+                exact hw
+              exact SpacedAfter.cons P e rest (by rw [h2]; omega) hg htail
+      · rw [proj_head_not (a := (k, b)) (xs := as) (notHead_hasKey k b as hk)]
+        refine ih (P + 1) ?_ ?_
+        · intro i hi
+          have := hidx (i + 1) (by simpa using hi)
+          rw [tail_idxAt] at this
+          exact this.trans (by omega)
+        · intro i j hij hj hki hkj hmid
+          have := hcon (i + 1) (j + 1) (by omega) (by simpa using hj)
+            ((tail_hasKey k b as i).mpr hki) ((tail_hasKey k b as j).mpr hkj)
+            (fun kk hk1 hk2 => by
+              cases kk with
+              | zero => exact absurd hk1 (by omega)
+              | succ u => exact hmid u (by omega) (by omega))
+          rw [tail_gapAt] at this
+          exact this.trans (by omega)
+
+/-- A list whose entries carry consecutive indices ends at the last one. -/
+theorem endIdx_of_idxAt : ∀ (ps : List (BEntry F)) (o : Nat),
+    (∀ i < ps.length, (ps.getD i ⟨0, 0, 0⟩).idx = o + i) → ps ≠ [] →
+    endIdx ps = o + ps.length - 1 := by
+  intro ps
+  induction ps with
+  | nil => intro o h hne; exact absurd hne (by simp)
+  | cons f rest ih =>
+      intro o h hne
+      cases rest with
+      | nil =>
+          have hf : f.idx = o := h 0 (by simp)
+          rw [endIdx, hf]
+          simp
+      | cons g rest' =>
+          have h1 : endIdx (f :: g :: rest') = endIdx (g :: rest') := rfl
+          have hl : (f :: g :: rest').length = (g :: rest').length + 1 := rfl
+          rw [h1, ih (o + 1) (fun i hi => by
+            have := h (i + 1) (by simpa using hi)
+            rw [getD_cons_succ] at this
+            exact this.trans (by omega)) (by simp)]
+          omega
+
+theorem getD_mainEntries : ∀ (xs : List (Option Nat × BEntry F)) (i : Nat) (d : BEntry F),
+    i < xs.length →
+    (mainEntries xs).getD i d =
+      ⟨idxAt xs i, 1, if (xs.getD i noPair).1 == none then (xs.getD i noPair).2.val else 0⟩ := by
+  intro xs
+  induction xs with
+  | nil => intro i d h; exact absurd h (by simp)
+  | cons a as ih =>
+      intro i d hi
+      cases a with
+      | mk k b =>
+      cases i with
+      | zero => rfl
+      | succ u => exact ih u d (by simpa using hi)
+
+/-- The main accumulator's own entry list is well-spaced: consecutive indices, gap 1. -/
+theorem wellSpaced_mainEntries (xs : List (Option Nat × BEntry F))
+    (hidx : ∀ i < xs.length, idxAt xs i = i) : WellSpaced (mainEntries xs) := by
+  cases xs with
+  | nil => exact wellSpaced_nil
+  | cons a as =>
+      cases a with
+      | mk k b =>
+      have hb0 : b.idx = 0 := hidx 0 (by simp)
+      have hlen : (mainEntries as).length = as.length := List.length_map _
+      have hget : ∀ i < (mainEntries as).length,
+          ((mainEntries as).getD i ⟨0, 0, 0⟩).idx = 1 + i := by
+        intro i hi
+        rw [hlen] at hi
+        have h2 : (mainEntries as).getD i ⟨0, 0, 0⟩
+            = (mainEntries ((k, b) :: as)).getD (i + 1) ⟨0, 0, 0⟩ := rfl
+        rw [h2, getD_mainEntries ((k, b) :: as) (i + 1) ⟨0, 0, 0⟩ (by simpa using hi)]
+        show idxAt ((k, b) :: as) (i + 1) = 1 + i
+        rw [tail_idxAt]
+        have := hidx (i + 1) (by simpa using hi)
+        exact this.trans (by omega)
+      have hgap : ∀ i < (mainEntries as).length,
+          ((mainEntries as).getD i ⟨0, 0, 0⟩).gap = 1 := by
+        intro i hi
+        rw [hlen] at hi
+        have h2 : (mainEntries as).getD i ⟨0, 0, 0⟩
+            = (mainEntries ((k, b) :: as)).getD (i + 1) ⟨0, 0, 0⟩ := rfl
+        rw [h2, getD_mainEntries ((k, b) :: as) (i + 1) ⟨0, 0, 0⟩ (by simpa using hi)]
+      have hsp : SpacedAfter (1 - 1) (mainEntries as) :=
+        spacedAfter_consecutive (mainEntries as) 1 (by omega) hget hgap
+      show SpacedAfter b.idx (mainEntries as)
+      rw [hb0]
+      exact hsp
+
+theorem endIdx_mainEntries (xs : List (Option Nat × BEntry F))
+    (hidx : ∀ i < xs.length, idxAt xs i = i) :
+    endIdx (mainEntries xs) = xs.length - 1 := by
+  cases xs with
+  | nil => rfl
+  | cons a as =>
+      have hlen : (mainEntries (a :: as)).length = (a :: as).length := List.length_map _
+      have hne : mainEntries (a :: as) ≠ [] := by
+        intro hbad
+        exact absurd hbad (by simp [mainEntries])
+      have hget : ∀ i < (mainEntries (a :: as)).length,
+          ((mainEntries (a :: as)).getD i ⟨0, 0, 0⟩).idx = 0 + i := by
+        intro i hi
+        have hi' : i < (a :: as).length := by rw [hlen] at hi; exact hi
+        have h3 := getD_mainEntries (a :: as) i ⟨0, 0, 0⟩ hi'
+        rw [h3]
+        show idxAt (a :: as) i = 0 + i
+        rw [hidx i hi']
+        omega
+      have hres := endIdx_of_idxAt (mainEntries (a :: as)) 0 hget hne
+      have hlen2 : (mainEntries (a :: as)).length = as.length + 1 := by rw [hlen]; simp
+      have hlen3 : (a :: as).length = as.length + 1 := rfl
+      rw [hres, hlen2, hlen3]
+      omega
+
+/-- The grouped walk's per-key totals read forward: the walk over the REVERSED list with
+    starting power 1 records for key q exactly linBucket y xs.length xs q. This is the bridge
+    between the verifier's reverse walk and the stream-indexed bucket sum. -/
+theorem groupedWalk_linValAt (y : F) (xs : List (Option Nat × F)) (q : Option Nat) :
+    linValAt q (gfoldGo y xs.reverse 1 []) = linBucket y xs.length xs q := by
+  have h1 : linValAt q (gfoldGo y xs.reverse 1 [])
+      = linValAt q ([] : List (Option Nat × F)) + gweight y xs.reverse 1 q :=
+    gfoldGo_linValAt y xs.reverse 1 [] q
+  rw [h1, linValAt_nil, zero_add]
+  exact gweight_reverse y xs q
+
+/-- The keys the empty-accumulator grouped walk records: exactly the keys that occur. -/
+theorem gfoldGo_mem_keys_nil (y : F) (xs : List (Option Nat × F)) (q : Option Nat) :
+    q ∈ (gfoldGo y xs 1 []).map Prod.fst ↔ ∃ e ∈ xs, e.1 = q := by
+  rw [gfoldGo_mem_keys y xs 1 [] q]
+  simp
+
+theorem gfoldGo_mem_keys_reverse (y : F) (xs : List (Option Nat × F)) (q : Option Nat) :
+    q ∈ (gfoldGo y xs.reverse 1 []).map Prod.fst ↔ ∃ e ∈ xs, e.1 = q := by
+  rw [gfoldGo_mem_keys_nil]
+  constructor
+  · intro h
+    obtain ⟨e, he, hqe⟩ := h
+    exact ⟨e, List.mem_reverse.mp he, hqe⟩
+  · intro h
+    obtain ⟨e, he, hqe⟩ := h
+    exact ⟨e, List.mem_reverse.mpr he, hqe⟩
+
+/-- A key-sorted list's some-values are the per-key totals over its ascending key list:
+    keySorted_tabulate followed by someSnds_map_tabulate. This is what lets the MSM's scalar
+    list be derived from linValAt rather than assumed. -/
+theorem someSnds_keySorted (as : List (Option Nat × F)) (h : KeySorted as) :
+    someSnds as = ((as.map Prod.fst).filter fun q =>
+        match q with | some _ => true | none => false).map (fun q => linValAt q as) := by
+  have h2 : someSnds ((as.map Prod.fst).map fun q => (q, linValAt q as))
+      = ((as.map Prod.fst).filter fun q =>
+          match q with | some _ => true | none => false).map (fun q => linValAt q as) :=
+    someSnds_map_tabulate (as.map Prod.fst) (fun q => linValAt q as)
+  rw [← keySorted_tabulate as h] at h2
+  exact h2
+
 end Midfall.Lowering

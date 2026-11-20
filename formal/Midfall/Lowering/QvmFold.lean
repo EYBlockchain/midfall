@@ -567,6 +567,326 @@ theorem nth?_linStream (plan : QuotientProgramPlan) (vals : List QVMFr) (i : Nat
 
 
 
+/-! ## QLIN3: the row closes by instantiation
+
+    Everything below is the wiring QLIN2 named: the stream's own position/key/gap facts, the
+    two readings of SelectorFoldConsistent's third and fifth conjuncts, the scalar-ORDER fact,
+    and the assembly. No new idea and no new hypothesis: the row's own statement is unchanged. -/
+
+/-- The stream entry at a position, as a getD (the getD form is what idxAt/gapAt/hasKey read). -/
+theorem getD_linStream (plan : QuotientProgramPlan) (vals : List QVMFr) (i : Nat)
+    (hi : i < (globalIdentities plan).length) (hi2 : i < vals.length) :
+    (linStream plan vals).getD i noPair
+      = streamEntry plan.selectorFold
+          (Prod.mk (Prod.mk ((globalIdentities plan)[i]'hi) (vals[i]'hi2)) i) :=
+  getD_eq_of_get? (linStream plan vals) i noPair _ (nth?_linStream plan vals i hi hi2)
+
+theorem streamKey_eq_some (id : QuotientIdentity) (s : Nat) :
+    streamKey id = some s ↔ id.target = QuotientTarget.selector s := by
+  obtain ⟨m1, m2, m3, target, m4⟩ := id
+  cases target with
+  | main =>
+      constructor
+      · intro h; exact absurd h (by simp [streamKey])
+      · intro h; exact absurd h (by simp)
+  | selector t =>
+      constructor
+      · intro h
+        have : t = s := Option.some.inj h
+        subst this
+        rfl
+      · intro h
+        have : t = s := QuotientTarget.selector.inj h
+        subst this
+        rfl
+
+/-- (1) The stream carries its own position as its index. -/
+theorem idxAt_linStream (plan : QuotientProgramPlan) (vals : List QVMFr) (i : Nat)
+    (hi : i < (globalIdentities plan).length) (hi2 : i < vals.length) :
+    idxAt (linStream plan vals) i = i := by
+  show ((linStream plan vals).getD i noPair).2.idx = i
+  rw [getD_linStream plan vals i hi hi2]
+  rfl
+
+/-- (1) The stream carries the plan's own gap at that position. -/
+theorem gapAt_linStream (plan : QuotientProgramPlan) (vals : List QVMFr) (i : Nat)
+    (hi : i < (globalIdentities plan).length) (hi2 : i < vals.length) :
+    gapAt (linStream plan vals) i =
+      (plan.selectorFold.gapFor ((globalIdentities plan)[i]'hi)).getD 0 := by
+  show ((linStream plan vals).getD i noPair).2.gap = _
+  rw [getD_linStream plan vals i hi hi2]
+  rfl
+
+/-- (1) The stream carries the QVM's value at that position, read in the field. -/
+theorem val_linStream (plan : QuotientProgramPlan) (vals : List QVMFr) (i : Nat)
+    (hi : i < (globalIdentities plan).length) (hi2 : i < vals.length) :
+    ((linStream plan vals).getD i noPair).2.val = qvmToFr (vals[i]'hi2) := by
+  show ((linStream plan vals).getD i noPair).2.val = _
+  rw [getD_linStream plan vals i hi hi2]
+  rfl
+
+/-- (1) The stream's bucket key at a position is the identity's own target. -/
+theorem hasKey_linStream (plan : QuotientProgramPlan) (vals : List QVMFr) (s i : Nat)
+    (hi : i < (globalIdentities plan).length) (hi2 : i < vals.length) :
+    hasKey s (linStream plan vals) i ↔
+      ((globalIdentities plan)[i]'hi).target = QuotientTarget.selector s := by
+  dsimp only [hasKey]
+  rw [getD_linStream plan vals i hi hi2]
+  exact streamKey_eq_some ((globalIdentities plan)[i]'hi) s
+
+theorem mainKey_linStream (plan : QuotientProgramPlan) (vals : List QVMFr) (i : Nat)
+    (hi : i < (globalIdentities plan).length) (hi2 : i < vals.length) :
+    ((linStream plan vals).getD i noPair).1 = none ↔
+      ((globalIdentities plan)[i]'hi).target = QuotientTarget.main := by
+  rw [getD_linStream plan vals i hi hi2]
+  obtain ⟨m1, m2, m3, target, m4⟩ := (globalIdentities plan)[i]'hi
+  cases target with
+  | main => exact ⟨fun _ => rfl, fun _ => rfl⟩
+  | selector t =>
+      constructor
+      · intro h; nomatch h
+      · intro h; nomatch h
+
+theorem idLen_exprs (plan : QuotientProgramPlan) (exprs : Array (Option Nat × FrR))
+    (vals : List QVMFr) (hcorr : IdentityCorrespondence plan exprs vals)
+    (i : Nat) (h : i < (globalIdentities plan).length) : i < exprs.toList.length := by
+  have h1 : exprs.toList.length = (globalIdentities plan).length := by
+    show exprs.size = _
+    exact hcorr.1
+  omega
+
+theorem valsLen (plan : QuotientProgramPlan) (exprs : Array (Option Nat × FrR))
+    (vals : List QVMFr) (hcorr : IdentityCorrespondence plan exprs vals) :
+    vals.length = (globalIdentities plan).length := hcorr.2.1
+
+/-- The verifier's tagged array, read at a position: its value half. -/
+theorem exprs_getD_snd (plan : QuotientProgramPlan) (exprs : Array (Option Nat × FrR))
+    (vals : List QVMFr) (hcorr : IdentityCorrespondence plan exprs vals)
+    (i : Nat) (h : i < (globalIdentities plan).length) :
+    (exprs.toList.getD i (none, 0)).2 = qvmToFr (vals.getD i 0) := by
+  have hlenE := idLen_exprs plan exprs vals hcorr i h
+  have hget : vals[i]? = some (vals.getD i 0) :=
+    get?_getD vals i 0 (by rw [valsLen plan exprs vals hcorr]; exact h)
+  have h4 := (hcorr.2.2 i h).1
+  have h5 : exprs.toList[i]?.map Prod.snd = some (qvmToFr (vals.getD i 0)) := by
+    have := h4
+    rw [← Array.getElem?_toList] at this
+    rw [this, hget]
+    simp
+  have h6 : exprs.toList[i]? =
+      some ((exprs.toList.getD i (none, 0)).1, (exprs.toList.getD i (none, 0)).2) :=
+    get?_getD exprs.toList i (none, 0) hlenE
+  rw [h6] at h5
+  exact Option.some.inj (by simpa using h5)
+
+/-- The verifier's tagged array, read at a position: its tag half, split by target. -/
+theorem exprs_getD_fst_main (plan : QuotientProgramPlan) (exprs : Array (Option Nat × FrR))
+    (vals : List QVMFr) (hcorr : IdentityCorrespondence plan exprs vals)
+    (i : Nat) (h : i < (globalIdentities plan).length)
+    (ht : ((globalIdentities plan)[i]'h).target = QuotientTarget.main)
+    (d : Option Nat × FrR) :
+    (exprs.toList.getD i d).1 = none := by
+  have hlenE := idLen_exprs plan exprs vals hcorr i h
+  have h6 : exprs.toList[i]? =
+      some ((exprs.toList.getD i d).1, (exprs.toList.getD i d).2) :=
+    get?_getD exprs.toList i d hlenE
+  have h4 := (hcorr.2.2 i h).2
+  rw [ht] at h4
+  have h5 : exprs.toList[i]?.map Prod.fst = some (none : Option Nat) := by
+    rw [Array.getElem?_toList]
+    exact h4
+  rw [h6] at h5
+  simpa using h5
+
+theorem exprs_getD_fst_sel (plan : QuotientProgramPlan) (exprs : Array (Option Nat × FrR))
+    (vals : List QVMFr) (hcorr : IdentityCorrespondence plan exprs vals)
+    (i : Nat) (h : i < (globalIdentities plan).length) (s : Nat)
+    (ht : ((globalIdentities plan)[i]'h).target = QuotientTarget.selector s)
+    (d : Option Nat × FrR) :
+    (exprs.toList.getD i d).1 = plan.sortedSimple[s]? := by
+  have hlenE := idLen_exprs plan exprs vals hcorr i h
+  have h6 : exprs.toList[i]? =
+      some ((exprs.toList.getD i d).1, (exprs.toList.getD i d).2) :=
+    get?_getD exprs.toList i d hlenE
+  have h4 := (hcorr.2.2 i h).2
+  rw [ht] at h4
+  have h5 : exprs.toList[i]?.map Prod.fst = some plan.sortedSimple[s]? := by
+    rw [Array.getElem?_toList]
+    exact h4
+  rw [h6] at h5
+  simpa using h5
+
+
+/-- Strict ascendingness bounds every entry below the head. -/
+theorem natAsc_head_le : ∀ (xs : List Nat) (h : natsAscending xs) (x : Nat), x ∈ xs →
+    xs.getD 0 0 ≤ x := by
+  intro xs
+  induction xs with
+  | nil => intro _ x hx; exact absurd hx (by simp)
+  | cons a as ih =>
+      intro h x hx
+      rw [List.mem_cons] at hx
+      rcases hx with rfl | hx
+      · exact Nat.le_refl x
+      · have h1 : a ≤ as.getD 0 0 := by
+          cases as with
+          | nil => exact absurd hx (by simp)
+          | cons b rest => exact Nat.le_of_lt h.1
+        have has : natsAscending as := by
+          cases as with
+          | nil => exact absurd hx (by simp)
+          | cons b rest => exact h.2
+        exact Nat.le_trans h1 (ih has x hx)
+
+theorem getD_eq_getD {α : Type} : ∀ (xs : List α) (i : Nat) (d d' : α), i < xs.length →
+    xs.getD i d = xs.getD i d' := by
+  intro xs
+  induction xs with
+  | nil => intro i d d' h; exact absurd h (by simp)
+  | cons a as ih =>
+      intro i d d' hi
+      cases i with
+      | zero => rfl
+      | succ u => exact ih u d d' (by simpa using hi)
+
+theorem natAsc_nodup : ∀ (xs : List Nat), natsAscending xs → xs.Nodup := by
+  intro xs
+  induction xs with
+  | nil => intro _; exact List.nodup_nil
+  | cons a as ih =>
+      intro h
+      refine List.Nodup.cons ?_ ?_
+      · cases as with
+        | nil => intro hx; exact absurd hx (by simp)
+        | cons b rest =>
+            intro hx
+            have hle : b ≤ a := natAsc_head_le (b :: rest) h.2 a hx
+            have h1 : a < b := h.1
+            omega
+      · cases as with
+        | nil => exact List.nodup_nil
+        | cons b rest => exact ih h.2
+
+/-- Duplicate-freeness makes getD injective on in-range positions. -/
+theorem nodup_getD_ne : ∀ (xs : List Nat) (i j : Nat), i < j → j < xs.length →
+    xs.getD i 0 = xs.getD j 0 → ¬ xs.Nodup := by
+  intro xs
+  induction xs with
+  | nil => intro i j _ hj _; exact absurd hj (by simp)
+  | cons a as ih =>
+      intro i j hij hj heq hnod
+      cases i with
+      | zero =>
+          cases j with
+          | zero => omega
+          | succ v =>
+              have hv : v < as.length := by simpa using hj
+              have hin : as.getD v 0 ∈ as :=
+                (mem_iff_get? _ _).mpr ⟨v, hv, get?_getD _ _ _ hv⟩
+              have heq' : a = as.getD v 0 := heq
+              cases hnod with
+              | cons hp _ => exact hp (as.getD v 0) hin heq'
+      | succ u =>
+          cases j with
+          | zero => omega
+          | succ v =>
+              cases hnod with
+              | cons _ htail =>
+                  exact ih u v (by omega) (by simpa using hj) (by simpa using heq) htail
+
+theorem nodup_getD_inj {xs : List Nat} (h : xs.Nodup) : ∀ i j, i < xs.length → j < xs.length →
+    xs.getD i 0 = xs.getD j 0 → i = j := by
+  intro i j hi hj heq
+  by_contra hne
+  have hlt : i < j ∨ j < i := by omega
+  rcases hlt with hlt | hlt
+  · exact (nodup_getD_ne xs i j hlt hj heq) h
+  · exact (nodup_getD_ne xs j i hlt hi heq.symm) h
+
+/-- Key-ascendingness of a list lifted into some: SelectorFoldConsistent's first conjunct is
+    exactly what makes plan.sortedSimple.map some ascending in the grouped walk's order. -/
+theorem keyAsc_map_some (xs : List Nat) (h : natsAscending xs) : KeyAsc (xs.map some) := by
+  induction xs with
+  | nil => exact trivial
+  | cons a as ih =>
+      refine ⟨?_, ih ?_⟩
+      · intro y hy
+        obtain ⟨c, hc, hyc⟩ := List.mem_map.mp hy
+        subst hyc
+        have h1 : a < as.getD 0 0 := by
+          cases as with
+          | nil => exact absurd hc (by simp)
+          | cons b rest => exact h.1
+        have has : natsAscending as := by
+          cases as with
+          | nil => exact absurd hc (by simp)
+          | cons b rest => exact h.2
+        have hle : as.getD 0 0 ≤ c := natAsc_head_le as has c hc
+        have hlt : a < c := Nat.lt_of_lt_of_le h1 hle
+        show Midfall.Halo2.optionNatLt (some a) (some c) = true
+        simp only [Midfall.Halo2.optionNatLt]
+        simpa using hlt
+      · cases as with
+        | nil => exact trivial
+        | cons b rest => exact h.2
+
+
+theorem foldState_buckets_len (yv : QVMFr) (sf : SelectorFoldPlan) :
+    ∀ (src : List (QuotientIdentity × QVMFr)) (st : FoldState),
+      (List.foldl (fun st a => foldStep yv sf st a.1 a.2) st src).buckets.length =
+        st.buckets.length := by
+  intro src
+  induction src with
+  | nil => intro st; rfl
+  | cons a as ih =>
+      intro st
+      show (List.foldl (fun st x => foldStep yv sf st x.1 x.2)
+          (foldStep yv sf st a.1 a.2) as).buckets.length = st.buckets.length
+      rw [ih]
+      cases a with
+      | mk id v =>
+          cases id with
+          | mk m1 m2 m3 target m4 =>
+              cases target with
+              | main => rfl
+              | selector s => exact List.length_modify _ _ _
+
+/-- (iii) Canonicity is TRIVIAL: qvmFrAdd and qvmFrMul are both '(% qvmFrModulus)', so every
+    foldStep's qn is already below the modulus and qvmToFr_neg applies directly. No new
+    hypothesis is needed and none was added. -/
+theorem qvmFrAdd_lt (a b : QVMFr) : qvmFrAdd a b < qvmFrModulus := by
+  show (a + b) % qvmFrModulus < qvmFrModulus
+  exact Nat.mod_lt _ (by decide)
+
+theorem qvmFrMul_lt (a b : QVMFr) : qvmFrMul a b < qvmFrModulus := by
+  show (a * b) % qvmFrModulus < qvmFrModulus
+  exact Nat.mod_lt _ (by decide)
+
+theorem foldStep_qn_lt (yv : QVMFr) (sf : SelectorFoldPlan) (st : FoldState)
+    (id : QuotientIdentity) (v : QVMFr) (h : st.qn < qvmFrModulus) :
+    (foldStep yv sf st id v).qn < qvmFrModulus := by
+  cases id with
+  | mk m1 m2 m3 target m4 =>
+      cases target with
+      | main =>
+          show qvmFrAdd (qvmFrMul st.qn yv) v < qvmFrModulus
+          exact qvmFrAdd_lt _ _
+      | selector s =>
+          show qvmFrMul st.qn yv < qvmFrModulus
+          exact qvmFrMul_lt _ _
+
+theorem foldl_foldStep_qn_lt (yv : QVMFr) (sf : SelectorFoldPlan) :
+    ∀ (src : List (QuotientIdentity × QVMFr)) (st : FoldState),
+      st.qn < qvmFrModulus →
+        (List.foldl (fun st a => foldStep yv sf st a.1 a.2) st src).qn < qvmFrModulus := by
+  intro src
+  induction src with
+  | nil => intro st h; exact h
+  | cons a as ih =>
+      intro st h
+      exact ih (foldStep yv sf st a.1 a.2) (foldStep_qn_lt yv sf st a.1 a.2 h)
+
+
 /-- THE HEADLINE FOLD STATEMENT. The whole-stream fold over the plan's identity values
     equals what computeLinearizationCommitment computes from the verifier's partially
     evaluated identities: the query's expected evaluation is -qn (the None bucket,
@@ -595,7 +915,459 @@ theorem quotientFold_matches_linearization {G₁ : Type} (plan : QuotientProgram
     q.eval = qvmToFr r.1 ∧
       ∃ pts labs, q.commitment = Midfall.Halo2.CommitmentReference.linear pts
         ((limbScalars limbs.size xn sf ++ r.2.map qvmToFr).toArray) labs := by
-  sorry
+  intro r
+  -- sizes: the two length conjuncts of the correspondence make every index transferable.
+  have hvl : vals.length = (globalIdentities plan).length := hcorr.2.1
+  have hlen : (linStream plan vals).length = (globalIdentities plan).length :=
+    length_linStream plan vals (by omega)
+  have hlenE : exprs.toList.length = (globalIdentities plan).length := by
+    show exprs.size = _
+    exact hcorr.1
+  have hlenS : (streamVals (linStream plan vals)).length = (globalIdentities plan).length := by
+    show (List.map (fun p => (p.1, p.2.val)) (linStream plan vals)).length = _
+    rw [List.length_map]
+    exact hlen
+  -- (1) streamFacts
+  have hidx : ∀ i < (linStream plan vals).length,
+      idxAt (linStream plan vals) i = i := by
+    intro i hi
+    exact idxAt_linStream plan vals i (by omega) (by omega)
+  have hkeyNone : ∀ i < exprs.toList.length,
+      (exprs.toList.getD i (none, 0)).1 = none ↔
+        ((streamVals (linStream plan vals)).getD i (none, 0)).1 = none := by
+    intro i hi
+    have hn : i < (globalIdentities plan).length := by omega
+    have hs : ((streamVals (linStream plan vals)).getD i (none, 0)).1 =
+        ((linStream plan vals).getD i noPair).1 := by
+      dsimp only [streamVals]
+      rw [getD_map_of_lt (fun p => (p.1, p.2.val)) (linStream plan vals) i (none, 0) noPair
+        (by rw [hlen]; omega)]
+    rw [hs, mainKey_linStream plan vals i hn (by omega)]
+    cases h : ((globalIdentities plan)[i]'hn).target with
+    | main =>
+        rw [exprs_getD_fst_main plan exprs vals hcorr i hn h]
+        exact ⟨fun _ => rfl, fun _ => rfl⟩
+    | selector s =>
+        have hslt : s < plan.sortedSimple.length := (hcons.2.2.1 i hn s h).1
+        rw [exprs_getD_fst_sel plan exprs vals hcorr i hn s h,
+          get?_getD plan.sortedSimple s 0 hslt]
+        exact ⟨fun hh => absurd hh (by simp), fun hh => absurd hh (by simp)⟩
+  have hvalNone : ∀ i < exprs.toList.length,
+      (exprs.toList.getD i (none, 0)).2 =
+        ((streamVals (linStream plan vals)).getD i (none, 0)).2 := by
+    intro i hi
+    have hn : i < (globalIdentities plan).length := by omega
+    have h1 : (exprs.toList.getD i (none, 0)).2 = qvmToFr (vals.getD i 0) :=
+      exprs_getD_snd plan exprs vals hcorr i hn
+    have h2 : ((streamVals (linStream plan vals)).getD i (none, 0)).2 =
+        ((linStream plan vals).getD i noPair).2.val := by
+      dsimp only [streamVals]
+      rw [getD_map_of_lt (fun p => (p.1, p.2.val)) (linStream plan vals) i (none, 0) noPair
+        (by rw [hlen]; omega)]
+    rw [h1, h2, val_linStream plan vals i hn (by omega)]
+    exact congrArg qvmToFr ((get_eq_getD vals i 0 (by omega)).symm)
+  -- (2) SelectorFoldConsistent's third conjunct, read at consecutive bucket positions.
+  have hgapc : ∀ s i j, i < j → j < (linStream plan vals).length →
+      hasKey s (linStream plan vals) i → hasKey s (linStream plan vals) j →
+        (∀ k, i < k → k < j → ¬ hasKey s (linStream plan vals) k) →
+        gapAt (linStream plan vals) j = j - i := by
+    intro s i j hij hj hki hkj hmid
+    have hn : j < (globalIdentities plan).length := by omega
+    have hn' : i < (globalIdentities plan).length := by omega
+    have hkj' : ((globalIdentities plan)[j]'hn).target = QuotientTarget.selector s :=
+      (hasKey_linStream plan vals s j hn (by omega)).mp hkj
+    have hki' : ((globalIdentities plan)[i]'hn').target = QuotientTarget.selector s :=
+      (hasKey_linStream plan vals s i hn' (by omega)).mp hki
+    have h4 := (hcons.2.2.1 j hn s hkj').2 i (by omega) (fun k hk hk1 hk2 =>
+      fun hh => hmid k hk1 hk2
+        ((hasKey_linStream plan vals s k hk (by omega)).mpr hh))
+    rcases h4 with hnot | hg
+    · exact absurd hki' hnot
+    · rw [gapAt_linStream plan vals j hn (by omega), hg]
+      simp
+  -- (3) SelectorFoldConsistent's fifth conjunct gives endIdx and the tail exponent.
+  have htailL : plan.selectorFold.tailExponents.length = plan.sortedSimple.length :=
+    hcons.2.2.2.1
+  have htail (t : Nat) (ht : t < plan.sortedSimple.length) :
+      plan.selectorFold.tailExponents.getD t 0 =
+        (globalIdentities plan).length - 1 - endIdx (proj t (linStream plan vals)) := by
+    have hex : ∃ x ∈ globalIdentities plan, x.target = QuotientTarget.selector t :=
+      (hcons.2.2.2.2 t ht).1
+    obtain ⟨x, hx, hxt⟩ := hex
+    obtain ⟨i, hi, hget⟩ := (mem_iff_get? (globalIdentities plan) x).mp hx
+    have hx' : ((globalIdentities plan)[i]'(by omega)) = x := by
+      have hg2 := get?_getD (globalIdentities plan) i x (by omega)
+      rw [hget] at hg2
+      exact ((get_eq_getD (globalIdentities plan) i x (by omega)).trans
+        (Option.some.inj hg2).symm)
+    have htarget : ((globalIdentities plan)[i]'(by omega)).target = QuotientTarget.selector t := by
+      rw [hx']
+      exact hxt
+    have hkey : ∃ m < (linStream plan vals).length, hasKey t (linStream plan vals) m :=
+      ⟨i, by omega, (hasKey_linStream plan vals t i (by omega) (by omega)).mpr htarget⟩
+    obtain ⟨j, hj, hkj, hlast⟩ := exists_last_hasKey (linStream plan vals) hkey
+    have hjn : j < (globalIdentities plan).length := by omega
+    have hkj' : ((globalIdentities plan)[j]'hjn).target = QuotientTarget.selector t :=
+      (hasKey_linStream plan vals t j hjn (by omega)).mp hkj
+    have h5 := (hcons.2.2.2.2 t ht).2 j hjn hkj' (fun k hk hk2 =>
+      fun hh => hlast k (by omega) (by omega)
+        ((hasKey_linStream plan vals t k hk (by omega)).mpr hh))
+    have hgt : endIdx (proj t (linStream plan vals)) = j := by
+      have := endIdx_proj (linStream plan vals) j hj hkj hlast
+      rwa [idxAt_linStream plan vals j hjn (by omega)] at this
+    have hgt2 : plan.selectorFold.tailExponents.getD t 0 =
+        (globalIdentities plan).length - 1 - j := by
+      have h : t < plan.selectorFold.tailExponents.length := by rw [htailL]; exact ht
+      have := get?_getD plan.selectorFold.tailExponents t 0 h
+      rw [h5] at this
+      exact (Option.some.inj this).symm
+    have hjle : j ≤ (globalIdentities plan).length - 1 := by omega
+    omega
+  -- the fold state, and its transport into the field
+  let init : FoldState :=
+    { qn := 0, buckets := List.replicate plan.sortedSimple.length 0 }
+  let st : FoldState := (List.zip (globalIdentities plan) vals).foldl
+      (fun st iv => foldStep y.val plan.selectorFold st iv.1 iv.2) init
+  have hr : r = (qvmFrNeg st.qn,
+      List.zipWith (fun b t => qvmFrMul b (qvmFrPow y.val t)) st.buckets
+        plan.selectorFold.tailExponents) := rfl
+  have hqnlt : st.qn < qvmFrModulus :=
+    foldl_foldStep_qn_lt y.val plan.selectorFold (List.zip (globalIdentities plan) vals) init
+      (by show 0 < qvmFrModulus; decide)
+  have hff : ffState st = List.foldl (fstep y) (ffState init) (linStream plan vals) := by
+    have h1 := ffState_foldl y.val plan.selectorFold
+      (List.zip (globalIdentities plan) vals) 0 init
+    have hz : (List.zip (globalIdentities plan) vals).length = (globalIdentities plan).length := by
+      rw [List.length_zip, Nat.min_eq_left]
+      omega
+    rw [hz] at h1
+    rw [qvmToFr_val] at h1
+    exact h1
+  have hbs : st.buckets.length = plan.sortedSimple.length := by
+    rw [foldState_buckets_len]
+    show (List.replicate plan.sortedSimple.length 0).length = plan.sortedSimple.length
+    exact List.length_replicate
+  -- (A) the expected evaluation
+  have hqn : qvmToFr st.qn = ((mainEntries (linStream plan vals)).map
+      fun e => e.val * y ^ ((globalIdentities plan).length - 1 - e.idx)).sum := by
+    calc qvmToFr st.qn = (ffState st).qn := rfl
+      _ = (List.foldl (fstep y) (ffState init) (linStream plan vals)).qn := by rw [hff]
+      _ = bfold y (mainEntries (linStream plan vals)) (ffState init).qn :=
+          ffold_qn y (linStream plan vals) (ffState init)
+      _ = bfold y (mainEntries (linStream plan vals)) 0 := by
+          refine congrArg (fun z => bfold y (mainEntries (linStream plan vals)) z) ?_
+          show (ffState init).qn = 0
+          rfl
+      _ = bfoldTarget y (mainEntries (linStream plan vals)) := bfold_zero y _
+      _ = ((mainEntries (linStream plan vals)).map fun e =>
+            e.val * y ^ (endIdx (mainEntries (linStream plan vals)) - e.idx)).sum :=
+          bfoldTarget_naive y (mainEntries (linStream plan vals))
+            (wellSpaced_mainEntries (linStream plan vals) hidx)
+      _ = ((mainEntries (linStream plan vals)).map fun e =>
+            e.val * y ^ ((globalIdentities plan).length - 1 - e.idx)).sum := by
+          rw [endIdx_mainEntries (linStream plan vals) hidx, hlen]
+  -- (4) the grouped walk, its keys, and its scalar list
+  obtain ⟨grouped, pts, labs, hgrp, heval, hcomm⟩ :=
+    computeLinearizationCommitment_ok exprs vk x y xn sf limbs q hq
+  have hgg : grouped = gfoldGo y exprs.toList.reverse 1 [] := by
+    rw [hgrp]
+    exact congrArg Prod.fst (gfoldGo_foldl y exprs.toList.reverse ([] : List (Option Nat × FrR)) 1)
+  have hksorted : KeySorted grouped := by
+    rw [hgg]
+    exact gfoldGo_keySorted y exprs.toList.reverse 1 [] keySorted_nil
+  have hlv (q' : Option Nat) : linValAt q' grouped =
+      linBucket y (globalIdentities plan).length exprs.toList q' := by
+    rw [hgg, groupedWalk_linValAt, hlenE]
+  have hnoneS : (noneSnds grouped).sum = linValAt none grouped := (linValAt_none grouped).symm
+  have hbridge_none : linBucket y (globalIdentities plan).length exprs.toList none =
+      linBucket y (globalIdentities plan).length
+        (streamVals (linStream plan vals)) none := by
+    have hc := linBucket_congr y exprs.toList (streamVals (linStream plan vals)) none none
+      (by rw [hlenE, hlenS]) hkeyNone hvalNone
+    rw [hlenE] at hc
+    rw [hlenS] at hc
+    exact hc
+  have hA : q.eval = qvmToFr r.1 := by
+    rw [hr]
+    show q.eval = qvmToFr (qvmFrNeg st.qn)
+    rw [qvmToFr_neg st.qn hqnlt, heval, hnoneS, hlv, hbridge_none]
+    have h2 : linBucket y (globalIdentities plan).length
+        (streamVals (linStream plan vals)) none
+        = ((mainEntries (linStream plan vals)).map fun e =>
+            e.val * y ^ ((globalIdentities plan).length - 1 - e.idx)).sum := by
+      have h := linBucket_stream_none y (linStream plan vals) hidx
+      rw [hlen] at h
+      exact h
+    rw [h2, hqn, zero_sub]
+  -- (4b) the scalar ORDER: the some-keys of the grouped walk are exactly sortedSimple
+  have hfilter : ((grouped.map Prod.fst).filter
+      (fun q => match q with | some _ => true | none => false))
+      = plan.sortedSimple.map some := by
+    refine keys_eq_of_sorted (keyAsc_filter _ _ (keySorted_keyAsc grouped hksorted))
+      (keyAsc_map_some _ hcons.1) (fun q => ?_)
+    rw [List.mem_filter, hgg, gfoldGo_mem_keys_reverse, List.mem_map]
+    constructor
+    · intro h
+      obtain ⟨h1, h2⟩ := h
+      cases q with
+      | none => exact absurd h2 (by simp)
+      | some c =>
+          obtain ⟨e, he, hqe⟩ := h1
+          obtain ⟨i, hi, hie⟩ := (mem_iff_get? exprs.toList e).mp he
+          have hn : i < (globalIdentities plan).length := by omega
+          have hgi : exprs.toList[i]? = some (exprs.toList.getD i (none, 0)) :=
+            get?_getD exprs.toList i (none, 0) hi
+          rw [hie] at hgi
+          have he2 : exprs.toList.getD i (none, 0) = e := (Option.some.inj hgi).symm
+          have hqe' : (exprs.toList.getD i (none, 0)).1 = some c := by rw [he2]; exact hqe
+          cases h : ((globalIdentities plan)[i]'hn).target with
+          | main =>
+              rw [exprs_getD_fst_main plan exprs vals hcorr i hn h (none, 0)] at hqe'
+              exact absurd hqe' (by simp)
+          | selector s =>
+              rw [exprs_getD_fst_sel plan exprs vals hcorr i hn s h (none, 0)] at hqe'
+              have hslt : s < plan.sortedSimple.length := (hcons.2.2.1 i hn s h).1
+              refine ⟨c, ?_, rfl⟩
+              exact (mem_iff_get? plan.sortedSimple c).mpr ⟨s, hslt, hqe'⟩
+    · intro h
+      obtain ⟨c, hc, rfl⟩ := h
+      obtain ⟨s, hs, hget⟩ := (mem_iff_get? plan.sortedSimple c).mp hc
+      have hex : ∃ x ∈ globalIdentities plan, x.target = QuotientTarget.selector s :=
+        (hcons.2.2.2.2 s hs).1
+      obtain ⟨x, hx, hxt⟩ := hex
+      obtain ⟨k, hk, hkg⟩ := (mem_iff_get? (globalIdentities plan) x).mp hx
+      have hkg2 : (globalIdentities plan)[k]? = some ((globalIdentities plan).getD k x) :=
+        get?_getD (globalIdentities plan) k x hk
+      rw [hkg] at hkg2
+      have hx' : ((globalIdentities plan)[k]'hk) = x :=
+        (get_eq_getD (globalIdentities plan) k x hk).trans (Option.some.inj hkg2).symm
+      have hsel : ((globalIdentities plan)[k]'hk).target = QuotientTarget.selector s := by
+        rw [hx']
+        exact hxt
+      have hfst : (exprs.toList.getD k (none, 0)).1 = plan.sortedSimple[s]? :=
+        exprs_getD_fst_sel plan exprs vals hcorr k hk s hsel (none, 0)
+      have hcs : plan.sortedSimple[s]? = some c := hget
+      have hmemk : exprs.toList.getD k (none, 0) ∈ exprs.toList :=
+        (mem_iff_get? exprs.toList _).mpr ⟨k, by omega, get?_getD exprs.toList k (none, 0)
+          (by omega)⟩
+      have hP : (exprs.toList.getD k (none, 0)).1 = some c := by rw [hfst, hcs]
+      exact ⟨⟨exprs.toList.getD k (none, 0), hmemk, hP⟩, by simp⟩
+  have hr2 : r.2 = List.zipWith (fun b t => qvmFrMul b (qvmFrPow y.val t)) st.buckets
+      plan.selectorFold.tailExponents := by
+    rw [hr]
+  have hrl : r.2.length = plan.sortedSimple.length := by
+    rw [hr2, List.length_zipWith, hbs, htailL, Nat.min_self]
+  have hrep : ∀ (n i : Nat), i < n → (List.replicate n (0 : QVMFr)).getD i 0 = 0 := by
+    intro n
+    induction n with
+    | zero => intro i h; exact absurd h (by simp)
+    | succ m ih =>
+        intro i hi
+        cases i with
+        | zero => rw [List.replicate_succ]; rfl
+        | succ u =>
+            rw [List.replicate_succ]
+            exact ih u (by simpa using hi)
+  have hfi_len : (ffState init).buckets.length = plan.sortedSimple.length := by
+    dsimp only [ffState, init]
+    rw [List.length_map, List.length_replicate]
+  have hkeyBridge (t : Nat) (ht : t < plan.sortedSimple.length) :
+      ∀ i < (streamVals (linStream plan vals)).length,
+        ((streamVals (linStream plan vals)).getD i (some t, 0)).1 = some t ↔
+          (exprs.toList.getD i (some (plan.sortedSimple.getD t 0), 0)).1 =
+            some (plan.sortedSimple.getD t 0) := by
+    intro i hi
+    have hn : i < (globalIdentities plan).length := by
+      rw [hlenS] at hi
+      exact hi
+    have hs : ((streamVals (linStream plan vals)).getD i (some t, 0)).1 =
+        ((linStream plan vals).getD i noPair).1 := by
+      dsimp only [streamVals]
+      rw [getD_map_of_lt (fun p => (p.1, p.2.val)) (linStream plan vals) i (some t, 0) noPair
+        (by rw [hlen]; omega)]
+    rw [hs]
+    show hasKey t (linStream plan vals) i ↔
+      (exprs.toList.getD i (some (plan.sortedSimple.getD t 0), 0)).1 =
+        some (plan.sortedSimple.getD t 0)
+    rw [hasKey_linStream plan vals t i hn (by omega)]
+    constructor
+    · intro hsel
+      rw [exprs_getD_fst_sel plan exprs vals hcorr i hn t hsel
+            (some (plan.sortedSimple.getD t 0), 0)]
+      exact get?_getD plan.sortedSimple t 0 ht
+    · intro h
+      cases h2 : ((globalIdentities plan)[i]'hn).target with
+      | main =>
+          rw [exprs_getD_fst_main plan exprs vals hcorr i hn h2
+            (some (plan.sortedSimple.getD t 0), 0)] at h
+          exact absurd h (by simp)
+      | selector s =>
+          rw [exprs_getD_fst_sel plan exprs vals hcorr i hn s h2
+                (some (plan.sortedSimple.getD t 0), 0)] at h
+          have hslt : s < plan.sortedSimple.length := (hcons.2.2.1 i hn s h2).1
+          have hgs : plan.sortedSimple[s]? = some (plan.sortedSimple.getD s 0) :=
+            get?_getD plan.sortedSimple s 0 hslt
+          rw [hgs] at h
+          have hst : s = t :=
+            nodup_getD_inj (natAsc_nodup plan.sortedSimple hcons.1) s t hslt ht
+              (Option.some.inj h)
+          exact congrArg QuotientTarget.selector hst
+  have hbkt (t : Nat) (ht : t < plan.sortedSimple.length) :
+      (r.2.map qvmToFr).getD t 0 =
+        linBucket y (globalIdentities plan).length exprs.toList
+          (some (plan.sortedSimple.getD t 0)) := by
+    have h1 : (r.2.map qvmToFr).getD t 0 = qvmToFr (r.2.getD t 0) :=
+      getD_map_of_lt qvmToFr r.2 t 0 0 (by rw [hrl]; exact ht)
+    have h2 : r.2.getD t 0 = qvmFrMul (st.buckets.getD t 0)
+        (qvmFrPow y.val (plan.selectorFold.tailExponents.getD t 0)) :=
+      getD_zipWith (fun b t => qvmFrMul b (qvmFrPow y.val t)) st.buckets
+        plan.selectorFold.tailExponents t 0 0 0 (by rw [hbs]; exact ht) (by rw [htailL]; exact ht)
+    have h3 : qvmToFr (r.2.getD t 0) = qvmToFr (st.buckets.getD t 0)
+        * y ^ (plan.selectorFold.tailExponents.getD t 0) := by
+      rw [h2, qvmToFr_mul, qvmToFr_pow]
+    have h4 : qvmToFr (st.buckets.getD t 0) = (ffState st).buckets.getD t 0 := by
+      rw [show (ffState st).buckets = st.buckets.map qvmToFr from rfl,
+        getD_map_of_lt qvmToFr st.buckets t 0 0 (by rw [hbs]; exact ht)]
+    have h5 : (ffState st).buckets.getD t 0
+        = (List.foldl (fstep y) (ffState init) (linStream plan vals)).buckets.getD t 0 := by
+      rw [hff]
+    have h6 : (List.foldl (fstep y) (ffState init) (linStream plan vals)).buckets.getD t 0
+        = bfold y (proj t (linStream plan vals)) ((ffState init).buckets.getD t 0) :=
+      ffold_buckets y (linStream plan vals) t (ffState init)
+        (by rw [hfi_len]; exact ht)
+    have h7 : (ffState init).buckets.getD t 0 = 0 := by
+      rw [show (ffState init).buckets =
+            (List.replicate plan.sortedSimple.length 0).map qvmToFr from rfl,
+        getD_map_of_lt qvmToFr (List.replicate plan.sortedSimple.length 0) t 0 0
+          (by rw [List.length_replicate]; exact ht)]
+      show qvmToFr ((List.replicate plan.sortedSimple.length 0).getD t 0) = 0
+      rw [hrep plan.sortedSimple.length t ht]
+      rfl
+    have hidx0 : ∀ i < (linStream plan vals).length,
+        idxAt (linStream plan vals) i = 0 + i := by
+      intro i hi
+      rw [hidx i hi]
+      omega
+    have hw : WellSpaced (proj t (linStream plan vals)) :=
+      wellSpaced_proj (linStream plan vals) 0 hidx0 (hgapc t)
+    have hle : ∀ e ∈ proj t (linStream plan vals),
+        e.idx ≤ (globalIdentities plan).length - 1 := by
+      intro e he
+      obtain ⟨i, hi, hki, hre⟩ := exists_of_mem_proj (linStream plan vals) e he
+      have hn : i < (globalIdentities plan).length := by rw [← hlen]; exact hi
+      have hei : ((linStream plan vals).getD i noPair).2.idx = i :=
+        idxAt_linStream plan vals i hn (by omega)
+      rw [← hre, hei]
+      omega
+    have h9 : bfoldTarget y (proj t (linStream plan vals))
+        * y ^ ((globalIdentities plan).length - 1 - endIdx (proj t (linStream plan vals)))
+        = ((proj t (linStream plan vals)).map fun e =>
+            e.val * y ^ ((globalIdentities plan).length - 1 - e.idx)).sum :=
+      bfoldTarget_at y (proj t (linStream plan vals))
+        ((globalIdentities plan).length - 1) hw hle
+    have h10 : ((proj t (linStream plan vals)).map fun e =>
+          e.val * y ^ ((globalIdentities plan).length - 1 - e.idx)).sum
+        = linBucket y (globalIdentities plan).length
+            (streamVals (linStream plan vals)) (some t) := by
+      have := linBucket_stream y t (linStream plan vals) hidx
+      rw [hlen] at this
+      exact this.symm
+    have h11 : linBucket y (globalIdentities plan).length
+          (streamVals (linStream plan vals)) (some t)
+        = linBucket y (globalIdentities plan).length exprs.toList
+            (some (plan.sortedSimple.getD t 0)) := by
+      have hvalB : ∀ i < (streamVals (linStream plan vals)).length,
+          ((streamVals (linStream plan vals)).getD i (some t, 0)).2 =
+            (exprs.toList.getD i (some (plan.sortedSimple.getD t 0), 0)).2 := by
+        intro i hi
+        have hn : i < (globalIdentities plan).length := by
+          rw [hlenS] at hi
+          exact hi
+        have hs : ((streamVals (linStream plan vals)).getD i (some t, 0)).2 =
+            ((linStream plan vals).getD i noPair).2.val := by
+          dsimp only [streamVals]
+          rw [getD_map_of_lt (fun p => (p.1, p.2.val)) (linStream plan vals) i (some t, 0) noPair
+            (by rw [hlen]; omega)]
+        have he : (exprs.toList.getD i (some (plan.sortedSimple.getD t 0), 0)).2 =
+            (exprs.toList.getD i (none, 0)).2 :=
+          (getD_eq_getD exprs.toList i (some (plan.sortedSimple.getD t 0), 0) (none, 0)
+            (by rw [hlenE]; exact hn)).symm ▸ rfl
+        rw [hs, he, val_linStream plan vals i hn (by omega),
+          exprs_getD_snd plan exprs vals hcorr i hn]
+        show qvmToFr (vals[i]'(by omega)) = qvmToFr (vals.getD i 0)
+        exact congrArg qvmToFr (get_eq_getD vals i 0 (by omega))
+      have hc := linBucket_congr y (streamVals (linStream plan vals)) exprs.toList
+        (some t) (some (plan.sortedSimple.getD t 0))
+        (by rw [hlenS, hlenE]) (hkeyBridge t ht) hvalB
+      rw [hlenS] at hc
+      rw [hlenE] at hc
+      exact hc
+    calc (r.2.map qvmToFr).getD t 0 = qvmToFr (r.2.getD t 0) := h1
+      _ = qvmToFr (st.buckets.getD t 0) * y ^ (plan.selectorFold.tailExponents.getD t 0) := h3
+      _ = (ffState st).buckets.getD t 0 * y ^ (plan.selectorFold.tailExponents.getD t 0) := by rw [h4]
+      _ = (List.foldl (fstep y) (ffState init) (linStream plan vals)).buckets.getD t 0
+            * y ^ (plan.selectorFold.tailExponents.getD t 0) := by rw [h5]
+      _ = bfold y (proj t (linStream plan vals)) ((ffState init).buckets.getD t 0)
+            * y ^ (plan.selectorFold.tailExponents.getD t 0) := by rw [h6]
+      _ = bfold y (proj t (linStream plan vals)) 0
+            * y ^ (plan.selectorFold.tailExponents.getD t 0) := by rw [h7]
+      _ = bfoldTarget y (proj t (linStream plan vals))
+            * y ^ (plan.selectorFold.tailExponents.getD t 0) := by rw [bfold_zero y _]
+      _ = bfoldTarget y (proj t (linStream plan vals))
+            * y ^ ((globalIdentities plan).length - 1 - endIdx (proj t (linStream plan vals))) := by
+            rw [htail t ht]
+      _ = ((proj t (linStream plan vals)).map fun e =>
+            e.val * y ^ ((globalIdentities plan).length - 1 - e.idx)).sum := h9
+      _ = linBucket y (globalIdentities plan).length
+            (streamVals (linStream plan vals)) (some t) := h10
+      _ = linBucket y (globalIdentities plan).length exprs.toList
+            (some (plan.sortedSimple.getD t 0)) := h11
+  have hsg0 : someSnds grouped
+      = (plan.sortedSimple.map some).map (fun q => linValAt q grouped) :=
+    (someSnds_keySorted grouped hksorted).trans
+      (congrArg (fun K => List.map (fun q => linValAt q grouped) K) hfilter)
+  have hcomp : ∀ (xs : List Nat),
+      (xs.map some).map (fun q => linValAt q grouped)
+        = xs.map (fun s => linValAt (some s) grouped) := by
+    intro xs
+    induction xs with
+    | nil => rfl
+    | cons c rest ih =>
+        rw [List.map_cons, List.map_cons, List.map_cons, ih]
+  have hsg1 : someSnds grouped
+      = plan.sortedSimple.map (fun s => linValAt (some s) grouped) :=
+    hsg0.trans (hcomp plan.sortedSimple)
+  have hsome : someSnds grouped = r.2.map qvmToFr := by
+    refine list_eq_of_getD (someSnds grouped) (r.2.map qvmToFr) 0 ?_ ?_
+    · simp only [hsg1, List.length_map, hrl]
+    · intro t ht
+      have hlt : t < plan.sortedSimple.length := by
+        simp only [hsg1, List.length_map] at ht
+        exact ht
+      have h1 : (someSnds grouped).getD t 0
+          = (plan.sortedSimple.map (fun s => linValAt (some s) grouped)).getD t 0 :=
+        congrArg (fun l => l.getD t 0) hsg1
+      have h2 : (plan.sortedSimple.map (fun s => linValAt (some s) grouped)).getD t 0
+          = linValAt (some (plan.sortedSimple.getD t 0)) grouped := by
+        rw [getD_map_of_lt (fun s => linValAt (some s) grouped) plan.sortedSimple t 0 0 hlt]
+      have h3 : linValAt (some (plan.sortedSimple.getD t 0)) grouped
+          = linBucket y (globalIdentities plan).length exprs.toList
+              (some (plan.sortedSimple.getD t 0)) := hlv _
+      have h4 : (r.2.map qvmToFr).getD t 0 =
+          linBucket y (globalIdentities plan).length exprs.toList
+            (some (plan.sortedSimple.getD t 0)) := hbkt t hlt
+      rw [h1, h2, h3, ← h4]
+  have hB : ∃ pts labs, q.commitment = Midfall.Halo2.CommitmentReference.linear pts
+      ((limbScalars limbs.size xn sf ++ r.2.map qvmToFr).toArray) labs := by
+    refine ⟨pts.toArray, labs.toArray, ?_⟩
+    refine hcomm.trans ?_
+    rw [hsome]
+    show Midfall.Halo2.CommitmentReference.linear pts.toArray
+        ((limbScalars limbs.size xn sf ++ r.2.map qvmToFr).toArray) labs.toArray =
+      Midfall.Halo2.CommitmentReference.linear pts.toArray
+        ((limbScalars limbs.size xn sf ++ r.2.map qvmToFr).toArray) labs.toArray
+    rfl
+  exact ⟨hA, hB⟩
 
 /-- The exclusion D-P20's gap names, spelled as a hypothesis rather than implied by a
     fixture: the plan's stream is interpreted-only, i.e. no inline prefix, no structured
