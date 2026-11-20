@@ -104,6 +104,17 @@ the Python gate and `lake build`.** **Other gates it printed green: check_hypoth
 7 exhibited / 23 spec bundles), check_statement_fingerprints (375 fragments), verify.sh --quick with
 `assert_axioms lowering_correct` AND `lowering_sound` both `ok (4 named, 0 native)`.**
 
+7. **PG-VKMEMORYFIT - THE CLASS IS TOO WIDE, AND THIS IS THE CRITICAL PATH.** A3b proved
+   (`wrap_breaks_payload_clause`, `[propext, Quot.sound]`) that a render with
+   `ptrAddr pv.memory.vkMptr >= 2^256` copies to the WRAPPED address, exits `.normal` with `success = 1`,
+   and satisfies NEITHER `Inv .vk` NOR `Poisoned`. `ValidV3` bounds calldata length, the transcript
+   region, the g1 floor and neg-Lagranges, but NOTHING bounds a memory address or a payload size. So
+   `vk_blockSim` is FALSE for some valid render. **Options: (1) derive fit1/fit2 from the `generated`
+   clause - no frozen change, PREFERRED and flagged viable; (2) add a `memoryFitB` conjunct to
+   `programOkCore` - needs a signed decision AND one of W15's five re-hashes (three spent: ST.4, ST.6,
+   OBJ.8); (3) state the row with the bound as a hypothesis - REFUSED on the record.** Once ruled, about
+   1 h of reassembly closes `vk_blockSim` from what is already proved.
+   **Blocks: A3 (then `vk_blockProgS`), and by extension A4-A12.**
 ## 5. Last three merges
 - 077a3c5 B2 - reference gate green (nativeReplay_ok, 21 checks, 0 failures); a section-6 gate met
 - 930c33c A0/PL.H0 - root lowering_correct UNREACHABLE/10 -> 22 OPEN leaves, native 0; ROOT re-keyed
