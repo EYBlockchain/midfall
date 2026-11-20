@@ -29,6 +29,16 @@ commit; I regenerated and cross-checked the register myself at 90 rows / 22 ROOT
 1 REFUTED, frozen hashes verify) - **but the full-`verify.sh` PROGRESS block is still not sourced,**
 so it must be re-run with no other gate in flight before any number below is called a verify.sh
 copy.
+**KAT VERIFIED at `444df14` (round 143).** After a plain `lake build` (5293 jobs, green),
+`python3 scripts/kat_gate.py` printed:
+`ok: 1633 annotated known-answer checks pass across 118 files (both pinned: 1633 and 118)` - exit 0.
+**An earlier attempt was RED (`KAT_EXIT=1`)** with `NativeReplay.lean` missing an object file,
+`ChallengeStream.lean` failing to elaborate and `poseidonPermutationQueries` returning false.
+**All of it was the damaged `.lake` left by the SIGTERM'd `verify.sh`, not a regression.** Two lessons,
+both already in the prompt and both worth repeating: a killed build silently corrupts `.lake` and
+produces false gate reds; and `kat_gate.py` needs `ELAN_HOME=$HOME/.elan` plus
+`PATH=$HOME/.elan/bin:$PATH` exported or it cannot find `lean`. The same clean build re-printed
+`NativeReplay.lean:432:0: []` - B2's reference gate still reporting zero failures on the merged tree.
 ## 2. In flight
 - **A3** (vkLoading INTEGRATED, calibration B) - /Users/julian/midfall-b - t/A3 - since 18:55 - 8 h strongest
 - **B2** MERGED at 077a3c5. One slot free: B1 (4 h Sonnet) or C1 (8 h strongest) are READY.
