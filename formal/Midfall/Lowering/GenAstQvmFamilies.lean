@@ -1144,7 +1144,20 @@ has it OUTSIDE the match, and there is no Lean lemma that moves an append across
 five-region staging decomposition would follow from, and it needs either a hand-written congruence
 lemma per 'match' arm or a re-spelling of the compactor with the emitted region as a separate
 accumulator - the second being a rewrite of QEMIT2's twin, which this card forbids. Recorded here
-rather than hidden behind a 'sorry'. -/
+rather than hidden behind a 'sorry'.
+
+Q1 RE-READS THIS NOTE, AND ONE SENTENCE IN IT IS WRONG. 'there is no Lean lemma that moves an append
+across a ''match'' on an ''Option''' is true of Mathlib and irrelevant: the congruence is two lines -
+''cases o <;> rfl'' proves ''b ++ (match o with | none => f () | some a => g a) = match o with
+| none => b ++ f () | some a => b ++ g a'', and the same ''split'' works for the ''if'' levels. So the
+distributivity is NOT the obstacle. The obstacle is one level up: the induction hypothesis
+''go b k idx = b ++ go [] k idx'' is SELF-REWITING - its own right-hand side contains an instance of
+its left-hand pattern (''go [] k idx''), so ''simp only [ih]'' loops and dies at ''maxRecDepth''
+(measured: 3.9 s, 'maximum recursion depth has been reached'). The split therefore needs the IH
+INSTANTIATED at the two concrete accumulators the recursion uses (''qMloadRunSingleA dst b ..'' and
+''b ++ [yblock [loop]]''), not applied as a simp lemma - plus ''List.find?''-style case splits at the
+five nested matches. That is a bounded amount of work, not a re-spelling of QEMIT2's twin, and it is
+the route to family 4's accumulator split. -/
 
 /-- **THE COMPACTOR'S RECURSION, SPENT OR OUT OF RANGE, RETURNS THE RUNNING BLOCK.** Two boundary
     cases of the lifted 'qMloadRunGoA', both immediate now that the recursion is a top-level 'def' and

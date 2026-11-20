@@ -187,7 +187,34 @@ NAMED LEAVES (card steps 3 and 4; a filled proof's cone is exactly these):
     unreachable and 'qPushMstoreMloadLiteralRunsA_rejected' and 'qPushMstoreMloadLiteralRunsA_run3' are the
     family-4 per-entry run decomposition (one store for a rejected entry, one loop for a run of
     three). WHAT IS NOT LANDED, NAMED: the accumulator split for an ARBITRARY running block - see
-    'qMloadRunGoA_split_gap' in that file. -/
+    'qMloadRunGoA_split_gap' in that file.
+
+Q1 STATUS (this box: what landed, what is measured-blocked, and where the leaves now live - see
+'Midfall/LoweringV3/QuotientFrame.lean'):
+  * ROW.Q.4 is LANDED. The frame valuation is 'AgreesFrame_memOfρ' and its converse
+    'AgreesFrame_memOfρ_only_if' - 'AgreesFrame' at a 'memOfρ' memory IS the ρ-clause, both ways -
+    and 'Agrees_memOfρ_nonvacuous' exhibits all three agreement clauses on a NON-EMPTY frame window.
+    The per-arm value equations are 'qStepValue_*' for 23 of the 26 identity arms (the 22 static arms of Qvm.lean:1197 plus MODARITH7); and the reference
+    loop has an equational theory ('qLoop_go_live', 'qLoop_go_pos', 'qLoop_go_done') that yields
+    'evalQuotientIdentity_one' - the first theorem in the tree to name the reference VM's output -
+    including 'evalQuotientIdentity_empty', which is the exact equation QuotientInterp.lean:354
+    records as FAILING by 'rfl'.
+  * ROW.Q.3 is LANDED ON THE DISPATCH SIDE and blocked on the EMITTER SIDE, and the block is now
+    measured rather than assumed. 'selectSwitch' does not reduce under 'simp' even at a literal
+    label, because its 'decide' is on 'D.litValue (Literal.number n)'; 'qDialect_litValue_number' is
+    'rfl', and with 'decide_eq_true' the dispatch reduces at a SYMBOLIC template table
+    ('qSwitch_arm', 'qSwitch_failClosed' - the latter is the prose fail-closed claim at
+    QuotientInterp.lean:102, now a theorem). But the arm BODIES are not reachable from the emitter:
+    'simp only [qvmOpcodeArms, qvmNativeArms, qvmFoldArms]' with all 31 'opUsage' flags pinned dies
+    with a deterministic timeout at 'whnf' (200000 heartbeats, ~11 s), because unfolding the
+    definition normalises all 31 bodies before 'List.lookup' can act. An arm lemma therefore cannot
+    name the emitted block. The fix is the QEMIT3 precedent - lift each arm body to a top-level 'def'
+    in 'GenAstQvm.lean' so a lemma can state the arm generically - which is an emitter change this
+    card does not make unasked. NONE of the eight 'QArmFamily' arms is closed.
+  * ROW.Q.1 is UNTOUCHED. The invariant is 'x_pow_2i = x^(2^i)' and 'x_pow_2i_minus1 = x^(2^i - 1)'
+    modulo 'r' after 'i' iterations of the two-statement body at GenAst.lean:1033-1036; it needs a
+    'Step.forLoop' induction with a 'mulmod' arithmetic step over 'wSplit'. That is a loop-invariant
+    proof, not a missing idea, and it did not fit this box alongside ROW.Q.4. -/
 theorem q_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
