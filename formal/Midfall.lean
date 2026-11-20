@@ -183,6 +183,8 @@ import Midfall.LoweringV3.QuotientRows
 import Midfall.LoweringV3.Rows
 import Midfall.LoweringV3.VkRow
 import Midfall.LoweringV3.MemoryPairs
+import Midfall.LoweringV3.VkWindow
+import Midfall.LoweringV3.VkClean
 import Midfall.LoweringV3.GeneratorTheorem
 import Midfall.Instances.StatementsV3Deploy
 import Midfall.Instances.StatementsV3Falsifiers
