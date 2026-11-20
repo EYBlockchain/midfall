@@ -223,6 +223,39 @@ the Python gate and `lake build`.** **Other gates it printed green: check_hypoth
     keeps out of this cone. **Blocks: 1 ROOT row of both roots; needs a decision - accept the replay
     gate as the evidence and retire the row, or port `prepare`'s schedule onto the phase records.**
 
+**ITEM 7 CORRECTED TO ITS DEFENSIBLE FORM (VKFIT, proved negative).** I had written that `vk_blockSim`
+"is FALSE for some valid render". **VKFIT could not exhibit a render (that needs WP B4), so existence is
+NOT proved. The defensible statement is: `vk_blockSim` is NOT PROVABLE from `ValidV3` as written, because
+`ValidV3` carries no bound that would make it true.** Recorded in `VkClean.lean` section 5b.
+
+**fit1/fit2 are settled as a genuine human decision, with 15 new sorry-free lemmas**
+(`MemoryPairs.lean` section 10, cone 0, axioms within the standard three):
+- `ofNat_toNat_iff_lt` reduces them to plain bounds: fit1 <-> `ptrAddr R.pv.memory.vkMptr < 2^256`,
+  fit2 <-> `R.pv.vk.len < 2^256`. **Nothing weaker can close the row.**
+- **Route 1 (arena chain) REFUTED** - `new_vkMptr_image_unbounded`, `generated_face_allows_fit1_to_fail`.
+  `VerifierMemoryLayout.new` does NOT emit `vkMptr`, it copies its argument (`new_vkMptr` is `rfl`), and
+  `ptrAddr_valueFromNat` makes `ptrAddr` surjective onto `Nat`. **My brief's premise that every emitted
+  `ptrAddr` is a sum of small literals was simply false - that is what made route 1 look viable.**
+- **Route 3 (payload length) REFUTED** - `extendVk_len`, `vkLen_unbounded`, `fit2_can_fail`; and
+  `vkCarriesBuild_extend` proves the ONE payload gate on the ok-path (`PlanNew.lean:773`) is INVARIANT
+  under padding the constant table. **OBJ.4's `runtimeBytes.size = vk.len + 1` is an equation between two
+  unbounded Nats, not a bound.**
+- Route 2 was already refuted by LAYOUT (`layout_windows_not_tied_to_the_map`).
+
+> **THE SENTENCE FOR THE HUMAN: the tree CAN bound a layout pointer from above - `transcriptMptr_lt` does,
+> via `validate`'s `fixedLowMemory` loop - but it cannot reach `vkMptr`, because `new_transcriptMptr_eq`
+> emits the LITERAL while `new_vkMptr_eq_arg` emits the ARGUMENT. `vk_mptr` is the eighth pointer, the
+> reservation loop's output (`VK:535-544`), and `validate` ties it only to `scalarInvScratchMptr`, which
+> `new` builds from the same `vkStart` - a tautology, not a bound. ROOT CAUSE IS FAITHFUL-PORT RULE R5:
+> `usize` became `Nat`, and a 64-bit `usize` cannot wrap a 256-bit word.** **That is a real Lean/Rust
+> divergence in the model, not a missing lemma.**
+
+**Only STATUS option 2 remains: a `memoryFitB`-style conjunct on `programOkCore` - a frozen edit needing a
+signed decision plus one of W15's two remaining re-hashes.** VKFIT did NOT add it, did NOT state the row
+with the bound as a hypothesis, and left `fit1_of_bound`/`fit2_of_bound` ready so whoever signs it gets
+A3b's ~1 h of reassembly. **Gates: verify.sh --quick exit 0 x3; cones 18/8 unchanged (correct - the row did
+not close); register 86/18 with `git diff SORRY.md` EMPTY; KAT 1633/118 ran clean, which is also the
+fingerprint assertion.**
 ## 5. Last three merges
 - 077a3c5 B2 - reference gate green (nativeReplay_ok, 21 checks, 0 failures); a section-6 gate met
 - 930c33c A0/PL.H0 - root lowering_correct UNREACHABLE/10 -> 22 OPEN leaves, native 0; ROOT re-keyed

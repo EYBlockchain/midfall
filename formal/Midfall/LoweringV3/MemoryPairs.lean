@@ -598,6 +598,198 @@ theorem row_premises_of_generated {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ
   ⟨vkPins_numInst_of_generated h hinputs,
     (generated_model_facts h).2 hsep,
     vkPins_disjoint_of_generated h⟩
+/-! ## 10. PG-VKMEMORYFIT: ARE 'fit1' AND 'fit2' THEOREMS OF 'generated'? -/
+
+/-- **THE REDUCTION - BOTH FITS ARE EXACTLY A WORD-FIT BOUND, AND NOTHING WEAKER WILL DO.** The
+    semantics writes the copy at '(BitVec.ofNat 256 m).toNat', which is 'm % 2 ^ 256'
+    ('BitVec.toNat_ofNat'); 'Inv' reads at the 'Nat' 'm'. The two agree exactly when 'm' fits a
+    word. So 'fit1' is not a bit-vector lemma a cleverer peel might supply: it IS the statement
+    'ptrAddr R.pv.memory.vkMptr < 2 ^ 256', and 'fit2' IS 'R.pv.vk.len < 2 ^ 256'. For
+    'm >= 2 ^ 256' the destination is a DIFFERENT address - that is
+    'VkClean.wrap_breaks_payload_clause'. -/
+theorem ofNat_toNat_iff_lt (n : Nat) :
+    (BitVec.ofNat 256 n).toNat = n ↔ n < 2 ^ 256 := by
+  rw [BitVec.toNat_ofNat]
+  constructor
+  · intro h
+    have h2 : n % 2 ^ 256 < 2 ^ 256 := Nat.mod_lt n (by decide : 0 < 2 ^ 256)
+    rw [h] at h2
+    exact h2
+  · intro h
+    exact Nat.mod_eq_of_lt h
+
+/-- The two goals of PG-VKMEMORYFIT at the render, each equivalent to its bound. These are the two
+    implications the reassembly needs once a bound exists: 'fit1_of_bound' and 'fit2_of_bound' turn
+    a '< 2 ^ 256' hypothesis into exactly the two equations the walk stops on. -/
+theorem fit1_of_bound {R : Render p G₁ G₂ Gₜ}
+    (h : ptrAddr R.pv.memory.vkMptr < 2 ^ 256) :
+    (BitVec.ofNat 256 (ptrAddr R.pv.memory.vkMptr)).toNat = ptrAddr R.pv.memory.vkMptr :=
+  (ofNat_toNat_iff_lt _).mpr h
+
+theorem fit2_of_bound {R : Render p G₁ G₂ Gₜ} (h : R.pv.vk.len < 2 ^ 256) :
+    (BitVec.ofNat 256 R.pv.vk.len).toNat = R.pv.vk.len := (ofNat_toNat_iff_lt _).mpr h
+
+/-- **ROUTE 1 (THE ARENA CHAIN) - REFUTED.** The brief's hypothesis was that
+    'VerifierMemoryLayout.new' allocates a 30-allocation chain over concrete 'Nat' offsets, so
+    every emitted 'ptrAddr' is a sum of small literals and is below '2 ^ 256' by arithmetic. That
+    is true of the TWENTY-NINE pointers the arena DERIVES and false of 'vkMptr', which 'new'
+    copies straight out of its own argument ('new_vkMptr', proved 'rfl' in §4) - and 'ptrAddr'
+    is surjective onto 'Nat' ('ptrAddr_valueFromNat': 'ptrAddr (ptrMemory (valueFromNat n)) = n'
+    for EVERY 'n'). So for every bound there is a legal argument to 'new' whose VK address
+    exceeds it. The constructor equation 'plan_memory_eq_new' is the WHOLE of what 'generated'
+    says about the memory, and it bounds the address by nothing. This is the same species of
+    finding as 'layout_windows_not_tied_to_the_map': the construction pins the RELATIONS between
+    pointers, not their magnitude. -/
+theorem new_vkMptr_image_unbounded (B : Nat) (meta_ : ConstraintSystemMeta)
+    (vk : Halo2VerifyingKey) (config : VerifierMemoryLayoutConfig) :
+    B ≤ ptrAddr (VerifierMemoryLayout.new meta_ vk (ptrMemory (valueFromNat B)) config).vkMptr := by
+  rw [new_vkMptr, ptrAddr_valueFromNat]
+
+/-- So the 'generated' face admits a wrapping destination outright: for every meta, payload and
+    configuration there is a legal 'vkMptr' argument for which 'fit1' is FALSE. -/
+theorem generated_face_allows_fit1_to_fail (meta_ : ConstraintSystemMeta)
+    (vk : Halo2VerifyingKey) (config : VerifierMemoryLayoutConfig) :
+    ¬ (BitVec.ofNat 256
+         (ptrAddr (VerifierMemoryLayout.new meta_ vk (ptrMemory (valueFromNat (2 ^ 256)))
+           config).vkMptr)).toNat =
+      ptrAddr (VerifierMemoryLayout.new meta_ vk (ptrMemory (valueFromNat (2 ^ 256))) config).vkMptr := by
+  rw [new_vkMptr, ptrAddr_valueFromNat, ofNat_toNat_iff_lt]
+  exact Nat.lt_irrefl _
+
+/-- **WHY 'transcriptMptr_lt' WORKS AND NO 'vkMptr_lt' CAN.** 'PrefixV3.transcriptMptr_lt'
+    (PrefixV3.lean:475-495) is the ONE place in the tree that bounds a memory pointer from above by
+    '2 ^ 256', and it is the template the brief should be measured against: 'validate's
+    'fixedLowMemory' loop (Layout.lean:1026-1035) pins SEVEN pointers to literals -
+    'constructorSmokeScratch', 'transcript', 'pcsPairingScratch', 'verifierReturn', 'quotientReturn',
+    'accumulatorPairingBatch', 'finalPairingScratch' - and the constructor emits them as the same
+    literals, by 'rfl': the first equation below is that fact. 'vkMptr' is the EIGHTH pointer and is
+    deliberately NOT pinned: it is the output of the reservation loop at VK:535-544, the second
+    equation below is that fact, and 'validate's only other use of it - 'expectedScalarInv' - is a
+    tautology on a 'new' output because 'new' sets 'scalarInvScratchMptr := vkStart -
+    modexpScratchBytes' from the SAME 'vkStart' it registers the payload at
+    (LayoutMemory.lean:190-194). So the one route in the tree that bounds a layout pointer from
+    above cannot reach 'vkMptr', and 'supported.layout' is silent about its magnitude. -/
+theorem new_transcriptMptr_eq (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey)
+    (vkMptr : Ptr) (config : VerifierMemoryLayoutConfig) :
+    (VerifierMemoryLayout.new meta_ vk vkMptr config).transcriptMptr = transcriptBufferStart := rfl
+
+theorem new_vkMptr_eq_arg (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey)
+    (vkMptr : Ptr) (config : VerifierMemoryLayoutConfig) :
+    (VerifierMemoryLayout.new meta_ vk vkMptr config).vkMptr = vkMptr := rfl
+
+/-- **ROUTE 3 (THE PAYLOAD LENGTH) - REFUTED.** 'Halo2VerifyingKey.len' is
+    'constants.length * 32 + (fixedComms.length + permutationComms.length) * 128'
+    ('Models.lean:461-462'): three 'List.length's, and a 'List' carries no size bound -
+    'List.replicate n' is a total function into the type for every 'n'. OBJ.4's
+    'payloadLen'/'vkLen' route runs the OTHER way: it proves 'runtimeBytes.size = vk.len + 1' FROM
+    'constsCoherent', an equation between two unbounded 'Nat's, not a bound on either. Appending
+    to the constant table raises 'len' by 32 bytes per word ('extendVk_len'), and the ONE payload
+    condition the generator's ok-path enforces cannot see the growth: 'vkCarriesBuild_extend' proves
+    'vkCarriesBuild' is INVARIANT under 'extendVk' whenever the two quotient slices end inside the
+    original prefix. So no clause of 'ValidV3' and no gate on the generated path bounds 'vk.len'. -/
+def extendVk (vk : Halo2VerifyingKey) (xs : List (String × Word256)) : Halo2VerifyingKey :=
+  { vk with constants := vk.constants ++ xs }
+
+theorem extendVk_len (vk : Halo2VerifyingKey) (xs : List (String × Word256)) :
+    (extendVk vk xs).len = vk.len + 32 * xs.length := by
+  show (vk.constants ++ xs).length * 32 + (vk.fixedComms.length + vk.permutationComms.length) * 128 =
+    (vk.constants.length * 32 + (vk.fixedComms.length + vk.permutationComms.length) * 128)
+      + 32 * xs.length
+  rw [List.length_append]
+  ring
+
+theorem vkLen_unbounded (B : Nat) (vk : Halo2VerifyingKey) :
+    B ≤ (extendVk vk (List.replicate B (("", 0)))).len := by
+  rw [extendVk_len, List.length_replicate]
+  omega
+
+/-- A payload whose length is at least '2 ^ 256': one extra constant word per unit of the bound. -/
+def hugeVk (vk : Halo2VerifyingKey) : Halo2VerifyingKey :=
+  extendVk vk (List.replicate (2 ^ 256) (("", 0)))
+
+theorem hugeVk_len_ge (vk : Halo2VerifyingKey) : 2 ^ 256 ≤ (hugeVk vk).len :=
+  vkLen_unbounded (2 ^ 256) vk
+
+/-- And 'fit2' fails of the padded payload: the length crosses the word boundary. -/
+theorem fit2_can_fail (vk : Halo2VerifyingKey) :
+    ¬ (BitVec.ofNat 256 (hugeVk vk).len).toNat = (hugeVk vk).len := by
+  rw [ofNat_toNat_iff_lt]
+  intro h
+  exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le h (hugeVk_len_ge vk))
+
+/-- **THE GATE DOES NOT SEE THE GROWTH.** 'vkCarriesBuild' (PlanNew.lean:680-689) is the ONE payload
+    condition the generator's ok-path enforces: 'newFromVk' refuses a payload that fails it
+    (PlanNew.lean:773, the VK:457 panic). It reads two slices of the constant table,
+    '(constants.map Prod.snd).drop o |>.take n', and a slice that ENDS inside the original prefix is
+    unchanged by whatever is appended after it. So the gate is invariant under 'extendVk' while
+    'len' grows by 32 bytes per word: 'vk.len' is bounded by nothing the generator enforces. -/
+theorem extendVk_constants (vk : Halo2VerifyingKey) (xs : List (String × Word256)) :
+    (extendVk vk xs).constants = vk.constants ++ xs := rfl
+
+theorem extendVk_qc (vk : Halo2VerifyingKey) (xs : List (String × Word256)) :
+    (extendVk vk xs).quotientConstOffsetWords = vk.quotientConstOffsetWords := rfl
+
+theorem extendVk_qp (vk : Halo2VerifyingKey) (xs : List (String × Word256)) :
+    (extendVk vk xs).quotientProgramOffsetWords = vk.quotientProgramOffsetWords := rfl
+
+theorem extendVk_qcw (vk : Halo2VerifyingKey) (xs : List (String × Word256)) :
+    (extendVk vk xs).quotientConstWords = vk.quotientConstWords := rfl
+
+theorem extendVk_qpw (vk : Halo2VerifyingKey) (xs : List (String × Word256)) :
+    (extendVk vk xs).quotientProgramWords = vk.quotientProgramWords := rfl
+
+/-- A slice of an append that ends inside the first list is a slice of the first list. -/
+theorem slice_extend {α : Type} (l l' : List α) (o n : Nat) (h : o + n ≤ l.length) :
+    ((l ++ l').drop o).take n = (l.drop o).take n := by
+  have hle : o ≤ l.length := Nat.le_trans (Nat.le_add_right o n) h
+  have hnt : n ≤ (l.drop o).length := by
+    rw [List.length_drop]
+    omega
+  rw [List.drop_append_of_le_length hle, List.take_append_of_le_length hnt]
+
+theorem vkCarriesBuild_extend (vk : Halo2VerifyingKey) (build : QuotientProgramBuild)
+    (xs : List (String × Word256))
+    (h1 : vk.quotientConstOffsetWords.getD 0 + vk.quotientConstWords ≤ vk.constants.length)
+    (h2 : vk.quotientProgramOffsetWords.getD 0 + vk.quotientProgramWords ≤ vk.constants.length) :
+    vkCarriesBuild (extendVk vk xs) build = vkCarriesBuild vk build := by
+  cases hco : vk.quotientConstOffsetWords with
+  | none => simp only [vkCarriesBuild, extendVk_qc, hco]
+  | some qc =>
+    cases hpo : vk.quotientProgramOffsetWords with
+    | none => simp only [vkCarriesBuild, extendVk_qc, extendVk_qp, hco, hpo]
+    | some qp =>
+        simp only [vkCarriesBuild, extendVk_constants, extendVk_qc, extendVk_qp, extendVk_qcw,
+          extendVk_qpw, hco, hpo, List.map_append]
+        rw [slice_extend (vk.constants.map Prod.snd) (xs.map Prod.snd) qc vk.quotientConstWords
+          (by simpa [hco] using h1),
+          slice_extend (vk.constants.map Prod.snd) (xs.map Prod.snd) qp vk.quotientProgramWords
+          (by simpa [hpo] using h2)]
+
+/-- **THE ANSWER TO THE CARD.** 'fit1' and 'fit2' are NOT theorems of the 'generated' clause.
+    Route 1 is refuted by 'new_vkMptr_image_unbounded' (the arena chain does not bound the pointer
+    it is handed) and route 3 by 'vkLen_unbounded' (a 'List.length' is an arbitrary 'Nat'); route 2
+    was refuted outright by 'layout_windows_not_tied_to_the_map'. The tree DOES know how to bound a
+    layout pointer from above - 'PrefixV3.transcriptMptr_lt' does it from 'validate's fixedLowMemory
+    loop - and the reason it cannot do it for 'vkMptr' is now proved: 'new_transcriptMptr_eq' (the
+    constructor emits the literal for the transcript pointer) against 'new_vkMptr_eq_arg' (it emits
+    the ARGUMENT for the VK pointer). 'vk_mptr' is the eighth pointer, the reservation loop's output,
+    and 'validate' pins it only against 'scalarInvScratchMptr', which 'new' builds from the same
+    'vkStart' (LayoutMemory.lean:190-194) - a tautology, not a bound. The only '2 ^ 256' conjunct in
+    the clause table is 'cdBoundB', on 'proofLayout.proofEnd + 32 + 32 * numInstances'
+    ('Statements.lean:2057-2058', projected as 'cdBound_of_valid'), and it speaks of the CALLDATA
+    layout, not of 'memory.vkMptr'. So PG-VKMEMORYFIT is a genuine class-width gap: closing the vk
+    row needs a NEW bound, and the only place to put it is a 'programOkCore' conjunct (STATUS.md
+    option 2) - a signed decision and one of W15's two remaining re-hashes, not this card. Option 3,
+    stating the row with the bound as a hypothesis, stays refused on the record; 'fit1_of_bound' and
+    'fit2_of_bound' are the two equations the reassembly needs the moment option 2 is signed. -/
+theorem fit1_iff_bound {R : Render p G₁ G₂ Gₜ} :
+    ((BitVec.ofNat 256 (ptrAddr R.pv.memory.vkMptr)).toNat = ptrAddr R.pv.memory.vkMptr) ↔
+      ptrAddr R.pv.memory.vkMptr < 2 ^ 256 := ofNat_toNat_iff_lt _
+
+theorem fit2_iff_bound {R : Render p G₁ G₂ Gₜ} :
+    ((BitVec.ofNat 256 R.pv.vk.len).toNat = R.pv.vk.len) ↔ R.pv.vk.len < 2 ^ 256 :=
+  ofNat_toNat_iff_lt _
+
 end Midfall.LoweringV3.MemoryPairs
 
 /-! ## 8. AXIOMS AND CONE -/
@@ -623,3 +815,20 @@ end Midfall.LoweringV3.MemoryPairs
 #print axioms Midfall.LoweringV3.MemoryPairs.vkCodehashArm_of_generated
 #print axioms Midfall.LoweringV3.MemoryPairs.row_premises_of_generated
 #cone_sorries Midfall.LoweringV3.MemoryPairs.row_premises_of_generated
+#print axioms Midfall.LoweringV3.MemoryPairs.ofNat_toNat_iff_lt
+#print axioms Midfall.LoweringV3.MemoryPairs.fit1_of_bound
+#print axioms Midfall.LoweringV3.MemoryPairs.fit2_of_bound
+#print axioms Midfall.LoweringV3.MemoryPairs.new_vkMptr_image_unbounded
+#print axioms Midfall.LoweringV3.MemoryPairs.generated_face_allows_fit1_to_fail
+#print axioms Midfall.LoweringV3.MemoryPairs.new_transcriptMptr_eq
+#print axioms Midfall.LoweringV3.MemoryPairs.new_vkMptr_eq_arg
+#print axioms Midfall.LoweringV3.MemoryPairs.extendVk_len
+#print axioms Midfall.LoweringV3.MemoryPairs.vkLen_unbounded
+#print axioms Midfall.LoweringV3.MemoryPairs.slice_extend
+#print axioms Midfall.LoweringV3.MemoryPairs.vkCarriesBuild_extend
+#print axioms Midfall.LoweringV3.MemoryPairs.hugeVk_len_ge
+#print axioms Midfall.LoweringV3.MemoryPairs.fit2_can_fail
+#print axioms Midfall.LoweringV3.MemoryPairs.fit1_iff_bound
+#print axioms Midfall.LoweringV3.MemoryPairs.fit2_iff_bound
+#cone_sorries Midfall.LoweringV3.MemoryPairs.fit1_iff_bound
+

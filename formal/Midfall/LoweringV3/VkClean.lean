@@ -852,6 +852,74 @@ theorem wrap_breaks_payload_clause :
   rw [hw]
   decide
 
+/-! ## 5b. PG-VKMEMORYFIT - SETTLED: 'fit1' AND 'fit2' ARE NOT THEOREMS OF 'generated' (WP VKFIT).
+
+  The card that opened this gap recorded it as needing a HUMAN CHOICE between '(1) derive the two
+  fits from the `generated` clause' and '(2) add a frozen conjunct', and flagged (1) as viable
+  because LAYOUT had just derived three facts of the same species from the same clause. This card
+  tried (1) and PROVED IT FALSE. All three routes the brief named are now closed:
+
+  * ROUTE 1, THE ARENA CHAIN - REFUTED at `MemoryPairs.new_vkMptr_image_unbounded`. The premise
+    was that `VerifierMemoryLayout.new` emits only sums of small literals, so every `ptrAddr` is
+    below `2 ^ 256` by arithmetic. `vkMptr` is not emitted by the arena: `new_vkMptr` is `rfl`, the
+    field is the ARGUMENT, and `ptrAddr_valueFromNat` makes `ptrAddr` surjective onto `Nat`. For
+    every bound `B` the constructor image contains a layout with `B <= ptrAddr L.vkMptr`, so the
+    equation `plan_memory_eq_new` - which is the whole of what `generated` says about the memory -
+    cannot bound `fit1`. `generated_face_allows_fit1_to_fail` states the wrap outright.
+  * ROUTE 1 DEEPER - the pointer the planner hands `new` is `ptrMemory (valueFromNat n)` where `n`
+    is `staticWorkingMemorySizeForMeta` (Vk.lean:971-990, reached through
+    `metaDataForStableStaticLayout` at VK:535 and the loop's rebind at :543), i.e. a maximum of six
+    ends of the shape `literal + (Nat field of the meta) * 32`. Those fields are `Nat`s and `List`
+    lengths of an arbitrary constraint system, so no peel of `generated` bounds them either. NOT
+    formalised as a theorem: the witness would need a constraint system with `2 ^ 256` selectors,
+    which no decidable procedure in this tree can evaluate. Stated as the measured reason, not as a
+    claim.
+  * ROUTE 2, `supported.layout` - REFUTED by LAYOUT at `MemoryPairs.layout_windows_not_tied_to_the_map`.
+    `MemoryMap.wellFormedBool` (Layout.lean:1114)
+    bounds a region START only from BELOW (`solidityReservedMemoryBytes <= start`) and by alignment,
+    and `validate` (Layout.lean:1023) compares the seven fixed low pointers, the spill floor, the
+    scalar-inversion scratch and four PCS capacities. Nothing bounds an address from above.
+  * ROUTE 3, THE PAYLOAD LENGTH - REFUTED at `MemoryPairs.vkLen_unbounded`.
+    `Halo2VerifyingKey.len` is three `List.length`s (`Models.lean:461-462`) and `List.replicate`
+    shows the type carries no size bound; `extendVk` appends to the constant table and raises `len`
+    by 32 bytes per word (`extendVk_len`), and `fit2_can_fail` crosses the boundary. OBJ.4's
+    `payloadLen`/`vkLen` route proves `runtimeBytes.size = vk.len + 1` FROM `constsCoherent` - an
+    equation between two unbounded `Nat`s, not a bound on either. And the ONE payload gate the
+    generator's ok-path enforces cannot see the growth: `MemoryPairs.vkCarriesBuild_extend` proves
+    `vkCarriesBuild` is INVARIANT under `extendVk` whenever the two quotient slices end inside the
+    original prefix. So nothing on the generated path bounds `vk.len`.
+  * THE CONTRAST THAT MAKES IT PRECISE. The tree already bounds a layout pointer from above:
+    `PrefixV3.transcriptMptr_lt` gets `R.pv.memory.transcriptMptr < 2 ^ 256` from `validate`'s
+    `fixedLowMemory` loop, because the constructor EMITS the literal for that pointer
+    (`MemoryPairs.new_transcriptMptr_eq`, `rfl`). It EMITS THE ARGUMENT for the VK pointer
+    (`MemoryPairs.new_vkMptr_eq_arg`, also `rfl`): `vk_mptr` is the eighth pointer, the output of
+    the reservation loop at VK:535-544, and `validate` ties it only to `scalarInvScratchMptr`, which
+    `new` builds from the same `vkStart` (LayoutMemory.lean:190-194) - a tautology, not a bound.
+    That is the exact reason the class is too wide, and it is a faithful-port fact: rule R5 made the
+    reference's `usize` into `Nat`, and a 64-bit `usize` could not wrap a 256-bit word.
+
+  THE ONLY `2 ^ 256` FACT IN THE CLAUSE TABLE is `cdBoundB` (Statements.lean:2057-2058, projected as
+  `cdBound_of_valid`), and it bounds `R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances` -
+  the CALLDATA layout, a different field of the plan from `memory.vkMptr`. So the gap is real class
+  width, not a missing lemma.
+
+  WHAT IS, AND IS NOT, CLAIMED. What is proved is that NOTHING IN `ValidV3` RULES THE WRAP OUT: the
+  clause's own content about the memory is the constructor equation, and the constructor image
+  contains wrapping addresses (`generated_face_allows_fit1_to_fail`), while the payload gate is blind
+  to the growth (`vkCarriesBuild_extend`). What is NOT proved - and cannot be, until WP B4 exhibits a
+  render - is that a `ValidV3` render with `2 ^ 256 <= ptrAddr pv.memory.vkMptr` EXISTS. STATUS.md
+  row 7 currently says `vk_blockSim` 'is FALSE for some valid render'; the defensible form is 'is not
+  provable from `ValidV3` as written, because `ValidV3` carries no bound that would make it true'.
+  `wrap_breaks_payload_clause` above is the mechanism that makes the row false of any such render.
+
+  WHAT THIS DOES NOT DO. No hypothesis was added to `ValidV3`, to `programOkCore`, to a row, to a
+  pin bundle or to the root, and no frozen file was touched: the fix is a new `memoryFitB`-style
+  conjunct, which is a signed decision plus one of W15's two remaining re-hashes and therefore the
+  human's call. Nor is the row stated with the bound as a hypothesis - option (3) is refused on the
+  record. What IS left ready for whoever closes it: `MemoryPairs.fit1_of_bound` and
+  `MemoryPairs.fit2_of_bound` turn the two `2 ^ 256` bounds into exactly the two equations this
+  walk stops on, and `MemoryPairs.row_premises_of_generated` already supplies hdisj, hnum and hcode.
+  No new `sorry` is introduced anywhere in this section, so W12 does not bite. -/
 #print axioms Midfall.LoweringV3.VkClean.wrap_breaks_payload_clause
 #print axioms Midfall.LoweringV3.VkClean.vkBody_clean_walk
 #print axioms Midfall.LoweringV3.VkClean.vkS1_peelT
