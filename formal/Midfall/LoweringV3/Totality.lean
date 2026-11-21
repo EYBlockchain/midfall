@@ -24,6 +24,7 @@ import Midfall.LoweringV3.Statements
 import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV2.Stages
 import Midfall.Tools.ConeSorries
+import Midfall.Tools.Done
 set_option autoImplicit false
 
 namespace Midfall.LoweringV3
@@ -178,6 +179,123 @@ theorem block_live (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR 
     (vkAddr : U256) (cd : Bytes) (q : Partial) : BlockLive R q H vkAddr product cd := by
   sorry
 
+/-! ### 2b. THE REVERT RUNS THE PREFIX LEAVES TOT.1 NEEDS
+
+`pfxFailBody_run` (Stages.lean:1505) classifies a run of the guard body; it does not construct one.
+The two constructions below are the missing existence half, built from the same `pfxOk*` step
+equations the classification uses. Together with `prefix_prog_core` (the both-guards-silent case,
+PROVED) they cover all three cases of the prefix: ABI guard fires, memory guard fires, or both are
+silent. -/
+
+/-- The guard body `mstore(0, shl(224, err)); revert(0, 4)` HAS a run: two `Step` constructors and
+    the pure builtins. Proved, no `wp_run`, no fuel. -/
+theorem pfxRevertBody_exists {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (err : Nat) (st : EvmState) :
+    ∃ (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState),
+      ExecStmts (Bridge.Dialect c g) funs V st (pfxRevertBody err) V' st' .halt := by
+  let shlE : Expr EVM.Op := Expr.builtin Op.shl [lit 224, lit err]
+  let stM : EvmState :=
+    { touchMemory st 0 32 with memory := storeWord st.memory 0 (BitVec.ofNat 256 err <<< 224) }
+  let stR : EvmState :=
+    { touchMemory stM 0 4 with halted := some (.revert, readBytes stM.memory 0 4) }
+  have hShl : PfxEv funs V st shlE
+      (BitVec.ofNat 256 err <<< 224) st := by
+    exact pfxEv2 pfxDetShl (pfxEvLit err) (pfxEvLit 224)
+      (pfxOkShl (BitVec.ofNat 256 224) (BitVec.ofNat 256 err))
+  have hMstore : Step (Bridge.Dialect c g) funs V st
+      (.expr (Expr.builtin Op.mstore [lit 0, shlE])) (.eres (.vals [] stM)) := by
+    refine Step.builtinOk (D := Bridge.Dialect c g) (args := [lit 0, shlE])
+      (argvals := [(0 : U256), (BitVec.ofNat 256 err <<< 224)]) (st1 := st) (rets := []) (st2 := stM) ?_ ?_
+    · exact Step.argsCons (D := Bridge.Dialect c g) (rest := [shlE])
+        (restvals := [BitVec.ofNat 256 err <<< 224])
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := [])
+          (Step.argsNil (D := Bridge.Dialect c g)) hShl.ev)
+        (Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0))
+    · show (Bridge.Dialect c g).Builtin Op.mstore [0, BitVec.ofNat 256 err <<< 224] st (.ok [] stM)
+      rfl
+  have hMstoreStmt : Step (Bridge.Dialect c g) funs V st
+      (.stmt (.exprStmt (Expr.builtin Op.mstore [lit 0, shlE]))) (.sres V stM .normal) :=
+    Step.exprStmt hMstore
+  have hRevert : Step (Bridge.Dialect c g) funs V stM
+      (.expr (Expr.builtin Op.revert [lit 0, lit 4])) (.eres (.halt stR)) := by
+    refine Step.builtinHalt (D := Bridge.Dialect c g) (args := [lit 0, lit 4])
+      (argvals := [(0 : U256), (4 : U256)]) (st1 := stM) (st2 := stR) ?_ ?_
+    · exact Step.argsCons (D := Bridge.Dialect c g) (rest := [lit 4]) (restvals := [(4 : U256)])
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := [])
+          (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.lit (D := Bridge.Dialect c g) (l := Literal.number 4)))
+        (Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0))
+    · show (Bridge.Dialect c g).Builtin Op.revert [0, 4] stM (.halt stR)
+      rfl
+  have hRevertStmt : Step (Bridge.Dialect c g) funs V stM
+      (.stmt (.exprStmt (Expr.builtin Op.revert [lit 0, lit 4]))) (.sres V stR .halt) :=
+    Step.exprStmtHalt hRevert
+  refine ⟨V, stR, ?_⟩
+  show Step (Bridge.Dialect c g) funs V st
+      (.stmts (pfxRevertBody err)) (.sres V stR .halt)
+  simp only [pfxRevertBody, shlE, stM, stR] at hMstoreStmt hRevertStmt ⊢
+  exact Step.seqCons hMstoreStmt (Step.seqStop hRevertStmt (by decide))
+
+theorem pfxHead_eq (R : Render p G₁ G₂ Gₜ) (vkAddr : U256) :
+    pfxHead R vkAddr =
+      [Stmt.cond (pfxAbiCondNum R.pv.proofLayout.proofEnd) (pfxRevertBody 0x1b99e37c),
+       Stmt.letDecl ["vk"] (some (lit vkAddr.toNat)),
+       Stmt.cond (pfxMemCondNum R.pv.memory.transcriptMptr) (pfxRevertBody 0xc9888d23)] := rfl
+
+/-- THE ABI GUARD FIRES: the head has a run that halts at the revert. -/
+theorem pfxHead_abi_revert_exists {R : Render p G₁ G₂ Gₜ} {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {vkAddr : U256} {st₀ : EvmState}
+    (h : pfxAbiWord st₀.env.calldata R.pv.proofLayout.proofEnd ≠ 0) :
+    ∃ (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState),
+      ExecStmts (Bridge.Dialect c g) funs V st₀ (pfxHead R vkAddr) V' st' .halt := by
+  obtain ⟨Vb, stR, hbody⟩ := pfxRevertBody_exists (c := c) (g := g)
+    (hoist (Bridge.Dialect c g) (pfxRevertBody 0x1b99e37c) :: funs) V 0x1b99e37c st₀
+  have hcond : Step (Bridge.Dialect c g) funs V st₀
+      (.stmt (Stmt.cond (pfxAbiCondNum R.pv.proofLayout.proofEnd) (pfxRevertBody 0x1b99e37c)))
+      (.sres (restore V Vb) stR .halt) :=
+    Step.ifTrue (pfxAbiEv R.pv.proofLayout.proofEnd).ev h
+      (Step.block (D := Bridge.Dialect c g) hbody)
+  refine ⟨restore V Vb, stR, ?_⟩
+  rw [pfxHead_eq]
+  exact Step.seqStop hcond (by decide)
+
+/-- THE MEMORY GUARD FIRES: the ABI guard is silent, the `let vk` runs, then the second guard halts. -/
+theorem pfxHead_mem_revert_exists {R : Render p G₁ G₂ Gₜ} {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {vkAddr : U256} {st₀ : EvmState}
+    (ha : pfxAbiWord st₀.env.calldata R.pv.proofLayout.proofEnd = 0)
+    (hm : pfxMemWord st₀.memory R.pv.memory.transcriptMptr ≠ 0) :
+    ∃ (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState),
+      ExecStmts (Bridge.Dialect c g) funs V st₀ (pfxHead R vkAddr) V' st' .halt := by
+  have h1 : Step (Bridge.Dialect c g) funs V st₀
+      (.stmt (Stmt.cond (pfxAbiCondNum R.pv.proofLayout.proofEnd) (pfxRevertBody 0x1b99e37c)))
+      (.sres V st₀ .normal) :=
+    Step.ifFalse (pfxAbiEv R.pv.proofLayout.proofEnd).ev ha
+  have h2 : Step (Bridge.Dialect c g) funs V st₀
+      (.stmt (Stmt.letDecl ["vk"] (some (lit vkAddr.toNat))))
+      (.sres (List.zip ["vk"] [vkAddr] ++ V) st₀ .normal) := by
+    have hh := Step.letVal (D := Bridge.Dialect c g) (funs := funs) (V := V) (st := st₀)
+      (vars := ["vk"]) (e := lit vkAddr.toNat)
+      (vals := [(Bridge.Dialect c g).litValue (Literal.number vkAddr.toNat)])
+      (Step.lit (D := Bridge.Dialect c g) (V := V) (st := st₀)) (by simp)
+    rw [litValue_number vkAddr] at hh
+    exact hh
+  obtain ⟨Vb, stR, hbody⟩ :=
+    pfxRevertBody_exists (c := c) (g := g)
+      (hoist (Bridge.Dialect c g) (pfxRevertBody 0xc9888d23) :: funs)
+      (List.zip ["vk"] [vkAddr] ++ V) 0xc9888d23 (touchMemory st₀ 0x40 32)
+  have h3 : Step (Bridge.Dialect c g) funs (List.zip ["vk"] [vkAddr] ++ V) st₀
+      (.stmt (Stmt.cond (pfxMemCondNum R.pv.memory.transcriptMptr) (pfxRevertBody 0xc9888d23)))
+      (.sres (restore (List.zip ["vk"] [vkAddr] ++ V) Vb) stR .halt) :=
+    Step.ifTrue (pfxMemEv (funs := funs) (V := List.zip ["vk"] [vkAddr] ++ V)
+      R.pv.memory.transcriptMptr).ev hm
+      (Step.block (D := Bridge.Dialect c g) hbody)
+  refine ⟨restore (List.zip ["vk"] [vkAddr] ++ V) Vb, stR, ?_⟩
+  rw [pfxHead_eq]
+  exact Step.seqCons h1 (Step.seqCons h2 (Step.seqStop h3 (by decide)))
+
 /-- **LEAF (TOT.1 with SIM.6): PREFIX EXISTENCE.** The ABI guard and the memory guard each revert or
     pass, and both are runs. Owner: TOT.1 (WP A12) with SIM.6 (WP A1). WITNESS:
     `gap_lowering_correct_witness_unexhibited`. FALSIFIER: `stageInv_start_not_vacuous`
@@ -189,7 +307,30 @@ theorem prefix_live (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
       (R.scope _ _) (R.preBlock vkAddr)
       (fun V st => V = [] ∧ st = st₀)
       (fun V st => LivePre R H vkAddr cd Checkpoint.start V st) := by
-  sorry
+  intro V st hpre
+  obtain ⟨hV, hst⟩ := hpre
+  subst V
+  subst st
+  have hf := pfxFacts_of_validV3 hR
+  by_cases ha : pfxAbiWord st₀.env.calldata R.pv.proofLayout.proofEnd = 0
+  · by_cases hm : pfxMemWord st₀.memory R.pv.memory.transcriptMptr = 0
+    · -- both guards silent: the PROVED progress core supplies the normal run at `.start`
+      have htotal := prefix_prog_core (c := callsOf product)
+        (g := ExternalGas.ofFun fun _ => 0) hf hdep hentry.toV2 ha hm
+      obtain ⟨V', st', o, hrun, hpost⟩ := htotal.1 [] st₀ ⟨rfl, rfl⟩
+      exact ⟨V', st', o, hrun, Or.inl ⟨hpost.1, by simpa [LivePre] using hpost.2⟩⟩
+    · -- the memory guard fires
+      obtain ⟨V', st', hrun⟩ :=
+        pfxHead_mem_revert_exists (c := callsOf product)
+          (g := ExternalGas.ofFun fun _ => 0) (R.scope _ _) [] (vkAddr := vkAddr) ha hm
+      rw [preBlock_of_facts hf vkAddr, List.append_assoc]
+      exact ⟨V', st', .halt, stmts_append_stop hrun (by decide), Or.inr (by decide)⟩
+  · -- the ABI guard fires
+    obtain ⟨V', st', hrun⟩ :=
+      pfxHead_abi_revert_exists (c := callsOf product)
+        (g := ExternalGas.ofFun fun _ => 0) (R.scope _ _) [] (vkAddr := vkAddr) ha
+    rw [preBlock_of_facts hf vkAddr, List.append_assoc]
+    exact ⟨V', st', .halt, stmts_append_stop hrun (by decide), Or.inr (by decide)⟩
 
 /-- The seven slices are live. PROVED from `block_live` (evidence `GeneratorRows.lean:1352`). -/
 theorem slices_live (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (H : Hash)
@@ -221,8 +362,14 @@ theorem totalV3_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
 /-! ## 3. Cone lists and axiom prints -/
 
 #cone_sorries Midfall.LoweringV3.totalV3_correct
+#cone_sorries Midfall.LoweringV3.prefix_live
 #cone_sorries Midfall.LoweringV3.slices_live
 #cone_sorries Midfall.LoweringV3.live_append
+#print axioms Midfall.LoweringV3.prefix_live
+#print axioms Midfall.LoweringV3.pfxRevertBody_exists
+#print axioms Midfall.LoweringV3.pfxHead_abi_revert_exists
+#print axioms Midfall.LoweringV3.pfxHead_mem_revert_exists
+#assert_axioms Midfall.LoweringV3.prefix_live [propext, Classical.choice, Quot.sound] native []
 
 #print axioms Midfall.LoweringV3.totalV3_correct
 #print axioms Midfall.LoweringV3.slices_live
