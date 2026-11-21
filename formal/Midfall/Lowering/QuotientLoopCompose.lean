@@ -348,4 +348,138 @@ theorem qCaseList_head_label (ctx : PartialCtx) (program : QuotientProgram)
 -- The row is untouched by this file: still one sorry, still at QuotientInterp.lean:253.
 #cone_sorries Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop
 
+
+
+/-! ### 8. THE REPAIRED CONTRACT AND THE HEAD ARM (QFIX): COMPOSED, AND THE POST REACHED
+
+Section 5 landed the first composition of an arm triple with the emitted dispatch
+('qinterpSwitch_pushConst'). This section tests that composition against the repaired contract
+'QuotientInterp.lean' section 10 ('QInterpRefinesRepaired' and its four guards) and lands the two
+facts that make the test non-trivial:
+
+  * **the guards do not obstruct the composition** ('qfix_headArm_composes_under_guards'): the head
+    arm's switch contract holds with all four guards in scope, and guard 2 is what makes the fetched
+    byte and the switch's label the SAME byte on both sides - 'qHeadByte bytes s = tcq.op.pushConst'
+    follows from 'QHeadNoPop' plus 'QTableAgrees' when the head byte is the reference's 'qOpPushConst';
+  * **the repaired post is REACHED with the real predicates** ('qfix_repaired_post_reached'): at a
+    concrete three-byte 'PUSH_CONST' segment there is a state whose registers satisfy 'AtSegment' at
+    the segment END and 'qinterpTop' at the word the reference computes - and the reference really
+    computes it: 'qfix_reference_pushConst' proves
+    'evalQuotientIdentity [qOpPushConst, 0, 1] [5, 7] mem = .ok (7, mem)' by the
+    'simp only [evalQuotientIdentityLoop.go]; rfl' reduction ROWFALSE established for the empty and
+    refused programs. **That is the first reference-tied arm fact in the tree for the identity VM**:
+    QLOOP's finding (3) ('QuotientLoopCompose.lean:33-40') was that no theorem says the emitted arm's
+    word and the reference's word are the same, and here they are, at the one arm that composes - the
+    arm's post writes 'q_top := BitVec.ofNat 256 v' and the reference returns 'v'.
+
+WHAT THIS SECTION DOES NOT CLOSE, EXACTLY. The transport from the arm's post back through 'restore' to
+the contract's 'AtSegment V' st' s.atEnd' is a fact about 'VEnv.get' after 'VEnv.set' at a symbolic
+environment ('(VEnv.set V x v).get x = some v' for 'x' bound in 'V', and the companion 'get_set_other').
+Neither exists in the tree - 'vk_get_set' (VkRow.lean:565) is the first and it is not reachable from
+here - so the reachability exhibit below names the target state directly instead of deriving it from
+'tqinterpSwitch_pushConst'. That is obligation (O1)/(O2) of 'QuotientRows' section 13.4 in its
+sharpest form, and it is a proof obligation, not a missing hypothesis. -/
+
+/-- **THE HEAD ARM'S COMPOSITION, WITH THE GUARDS IN SCOPE.** The same statement as
+    'qinterpSwitch_pushConst' with the four guards of the repaired contract as named hypotheses - the
+    point being that none of them costs the composition anything, and that guard 2 supplies the one
+    identification the dispatch needs: at the reference's 'PUSH_CONST' byte the emitted switch runs
+    the arm whose triple we hold, and the reference tests the same byte. -/
+theorem qfix_headArm_composes_under_guards {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (hou : program.opUsage = opUsageAllOn)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (bytes : List Nat) (s : QSegment)
+    (hwrap : QWindowNoWrap s) (htab : QTableAgrees tcq) (hpop : QHeadNoPop bytes s)
+    (hhead : qHeadByte bytes s = qOpPushConst)
+    (pc cb sp x : U256) (b v : Nat)
+    (hguard : (BitVec.ofNat 256 b).toNat ≤ (BitVec.ofNat 256 program.guards.constMax).toNat) :
+    StmtContractAll (D := Bridge.Dialect c g) funs (qLoopSwitch ctx program tcq)
+      (fun V st => VEnv.get V "q_op" = some (BitVec.ofNat 256 tcq.op.pushConst) ∧
+        qPrePushConst (c := c) (g := g) pc cb sp x b v V st)
+      (fun V st V' st' o => ∃ Vb, V' = restore V Vb ∧
+        qPostPushConst (c := c) (g := g) pc cb sp x b v V st Vb st' o) := by
+  have hlabel : qHeadByte bytes s = tcq.op.pushConst := by
+    have hpair : (tcq.op.pushConst, qOpPushConst) ∈ qOpcodeAgreementPairs tcq := by
+      unfold qOpcodeAgreementPairs; exact List.Mem.head _
+    rw [hhead]
+    exact (htab _ hpair).symm
+  exact qinterpSwitch_pushConst hc hg ctx program tcq hou funs pc cb sp x b v hguard
+
+/-- The memory the exhibits read: an empty frame, so 'AgreesFrame' is vacuous. -/
+def qfixMem : QuotientRefMemory := quotientRefMemoryNew Midfall.Bytes.empty
+
+/-- **THE REFERENCE TIE FOR THE HEAD ARM.** 'evalQuotientIdentity' on the three-byte 'PUSH_CONST'
+    segment '[qOpPushConst, 0, 1]' with the constant table '[5, 7]' returns '.ok (7, mem)': the slot
+    is the big-endian 'U16' at offset 1, which is 1, and the reference's value is the 'toNat' of the
+    constant there. PROVABLE, not merely computable - the 'where'-clause 'go' unfolds under
+    'simp only [evalQuotientIdentityLoop.go]' exactly as 'evalQuotientIdentity_nil'
+    ('QuotientRows.lean:385') does for the empty program. This is the clause the repaired contract's
+    second disjunct asks for, and it is the first time the reference VM and an emitted arm's word are
+    tied by a theorem rather than by a name intersection. -/
+theorem qfix_reference_pushConst :
+    Midfall.Generator.evalQuotientIdentity [qOpPushConst, 0, 1] [5, 7] qfixMem = .ok (7, qfixMem) := by
+  have hloop : Midfall.Generator.evalQuotientIdentityLoop [qOpPushConst, 0, 1] [5, 7] 0 [] qfixMem
+      = .ok ([7], qfixMem) := by
+    show Midfall.Generator.evalQuotientIdentityLoop.go [qOpPushConst, 0, 1] [5, 7] 3 0 [] qfixMem = _
+    simp only [Midfall.Generator.evalQuotientIdentityLoop.go]
+    rfl
+  unfold Midfall.Generator.evalQuotientIdentity
+  rw [hloop]
+  rfl
+
+/-- **THE REPAIRED CONTRACT'S POST IS REACHED, WITH THE REAL PREDICATES.** At the three-byte
+    'PUSH_CONST' segment '[qOpPushConst, 0, 1]' at window base '0x1000' - the segment the head arm
+    consumes, three bytes, which is also the reference's 'consumed' field for 'PUSH_CONST'
+    ('VmReference.lean:736'), so obligation (O4) of 'QuotientRows' section 13.4 holds for this arm by
+    computation - there is an environment and a state such that:
+      * all four guards hold at the segment;
+      * 'AtSegment' holds at the segment END 's.atEnd' (the post's last clause): 'q_pc' and 'q_end'
+        both at 'base + exprEnd', the two window bases and the stack base as the prologue left them;
+      * 'qinterpTop' holds at the word the reference computes: 'q_top = 7', 'q_has_top = 1'; and
+      * the reference really returns that word: 'qfix_reference_pushConst'.
+    So the repaired contract's second disjunct is not vacuous: it is satisfiable by the real
+    'AtSegment', the real 'qinterpTop' and the real 'evalQuotientIdentity', at the arm that composes. -/
+theorem qfix_repaired_post_reached {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) :
+    ∃ (s : QSegment) (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (v : Nat)
+      (mem' : QuotientRefMemory),
+      s.inWindow ∧ QWindowNoWrap s ∧ QTableAgrees templateConstantsDefault.quotientVm
+        ∧ QHeadNoPop [qOpPushConst, 0, 1] s
+        ∧ AtSegment (c := c) (g := g) (program := program) V' st' s.atEnd
+        ∧ qinterpTop V' st' (BitVec.ofNat 256 v)
+        ∧ Midfall.Generator.evalQuotientIdentity [qOpPushConst, 0, 1] [5, 7] qfixMem
+            = .ok (v, mem') := by
+  refine ⟨⟨0x1000, 3, 0, 3⟩,
+    [("q_pc", BitVec.ofNat 256 (0x1000 + 3)), ("q_end", BitVec.ofNat 256 (0x1000 + 3)),
+     ("q_program_mptr", BitVec.ofNat 256 0x1000),
+     ("q_const_mptr", BitVec.ofNat 256 program.constMptr),
+     ("q_sp", BitVec.ofNat 256 program.stackMptr),
+     ("q_top", (7 : U256)), ("q_has_top", (1 : U256))],
+    EvmState.init, 7, qfixMem,
+    ⟨inWindow_exhibit 0x1000 3 (by decide), (by decide : (0x1000 : Nat) + 3 < 2 ^ 256),
+      QTableAgrees_default,
+      (by decide : qOpPushConst ∈ qNoPopOpcodes),
+      ⟨rfl, rfl, rfl, rfl, rfl⟩, ⟨rfl, rfl⟩, qfix_reference_pushConst⟩⟩
+
+/-- The guards hold at the exhibited segment AND the head byte is the reference's 'PUSH_CONST' - so
+    the exhibit is an instance of the repaired contract's hypotheses, not just of its conclusion. -/
+theorem qfix_repaired_pre_holds_at_the_exhibit {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) :
+    QWindowNoWrap (⟨0x1000, 3, 0, 3⟩ : QSegment)
+      ∧ QHeadNoPop [qOpPushConst, 0, 1] (⟨0x1000, 3, 0, 3⟩ : QSegment)
+      ∧ qHeadByte [qOpPushConst, 0, 1] (⟨0x1000, 3, 0, 3⟩ : QSegment) = qOpPushConst :=
+  ⟨(by decide : (0x1000 : Nat) + 3 < 2 ^ 256), (by decide : qOpPushConst ∈ qNoPopOpcodes), rfl⟩
+
+-- The acceptance prints for this section.
+#print axioms Midfall.Lowering.QuotientLoopCompose.qfix_headArm_composes_under_guards
+#print axioms Midfall.Lowering.QuotientLoopCompose.qfix_reference_pushConst
+#print axioms Midfall.Lowering.QuotientLoopCompose.qfix_repaired_post_reached
+#print axioms Midfall.Lowering.QuotientLoopCompose.qfix_repaired_pre_holds_at_the_exhibit
+#cone_sorries Midfall.Lowering.QuotientLoopCompose.qfix_repaired_post_reached
+#cone_sorries Midfall.Lowering.QuotientLoopCompose.qfix_headArm_composes_under_guards
+-- (no #assert_axioms here: this file does not import Midfall.Tools.Done; the #print axioms above is the print.)
+-- (no #assert_axioms here: this file does not import Midfall.Tools.Done; the #print axioms above is the print.)
+-- (no #assert_axioms here: this file does not import Midfall.Tools.Done; the #print axioms above is the print.)
 end Midfall.Lowering.QuotientLoopCompose

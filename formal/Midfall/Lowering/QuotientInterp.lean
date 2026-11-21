@@ -792,3 +792,247 @@ theorem qinterpRefines_falsifier_operand_width {c : ExternalCalls} {g : External
 #print axioms Midfall.Lowering.QuotientInterp.qinterpRefines_falsifier_no_fallthrough
 #print axioms Midfall.Lowering.QuotientInterp.qinterpRefines_falsifier_window_bound
 #print axioms Midfall.Lowering.QuotientInterp.qinterpRefines_falsifier_operand_width
+
+
+/-! ### 10. THE REPAIRED CONTRACT (QFIX): 'QInterpRefines' PLUS ROWFALSE'S THREE GUARDS
+
+**THIS SECTION ADDS A NEW 'Prop' ALONGSIDE THE REFUTED ROW. IT DOES NOT AMEND IT.** The committed
+'QInterpRefines' (section 3) and the sorried row 'qinterpRefines_qvmLoop' (section 5, ':270') are
+UNTOUCHED here: no hypothesis was added to a row, to 'ValidV3', to a bundle or to the root (RULES),
+and the refuted row keeps its sorry - deleting it is the human ruling W13 reserves, because it moves
+SORRY.md, the 375-fragment fingerprint pin and the 'kat_gate.py' note that names this hole. What
+follows is the repair ROWFALSE asked for, STATED and TESTED, so the human can rule on each guard
+separately instead of on a paragraph.
+
+ROWFALSE proved the row's universal closure FALSE ('QuotientRows.lean' sections 11 and 12) and named
+three candidate repairs: the window no-wrap, the table agreement, and a stack/cached-top
+correspondence in the pre. This section states all three - and splits the third into the two clauses
+the material actually needs, because they do different work:
+
+  * **GUARD 1 ('QWindowNoWrap')** - 's.base + s.exprEnd < 2^256'. 'AtSegment' writes 'q_pc' and 'q_end'
+    as 256-bit words, so without this the two registers WRAP, the guard 'q_pc < q_end' is false, and
+    the loop exits normally having run no arm while the reference errors. This is ROWFALSE's artefact
+    1, and it is the R5 'usize'-to-'Nat' root cause one more time.
+  * **GUARD 2 ('QTableAgrees')** - every emitted opcode label equals the reference's own 'qOpX'
+    constant for that arm. The card asked for agreement "for the arms in play"; the full 31-way form
+    is stated because it is decidable, it HOLDS at the default table ('QTableAgrees_default', proved
+    by 'decide' over the pairs), and it is the form the human can weaken clause by clause. 'PG_limbCountAgrees'
+    (QuotientArms.lean:4425) is the limb-count member of the same family and is left where it is.
+  * **GUARD 3a ('QPreCachedTop')** - the pre pins the emitted cached top: 'q_has_top = 0' and 'q_top'
+    bound. This is what the ARM LEMMAS need and 'AtSegment' does not give: 'qPrePushConst'
+    (QuotientLoopCompose.lean:159) asks for 'q_has_top = some 0' and 'q_top = some x', and 'AtSegment'
+    deliberately omits both (its own docstring: 'q_top'/'q_has_top' are not there because one
+    predicate cannot pin a segment start and a segment end). Without 3a the head arm's contract cannot
+    even be fed.
+  * **GUARD 3b ('QHeadNoPop')** - the byte at the segment's start is one of the reference's TEN no-pop
+    opcodes (the six pushes and the four limb forms), i.e. the reference's first step is defined on
+    the EMPTY stack it starts with. This is the correspondence between the emitted cached top and the
+    reference's operand stack, and it is the guard that ROWFALSE's second refutation turns on: at the
+    DEFAULT table, with the segment '[qOpNeg]' and 'q_has_top = 0', the emitted neg arm runs on a
+    garbage cached top and exits NORMALLY while the reference pops an empty stack and ERRORS. Guards
+    1 and 2 both HOLD there - so 3b is not decoration, it is the only thing that closes that witness.
+
+**THE REPAIR IS A RELAXATION, NOT AN EXTENSION.** 'qinterpRepaired_of_committed' proves the committed
+contract IMPLIES the repaired one: every guard is a hypothesis on the quantified segment, and the only
+clause added to the pre ('QPreCachedTop') strengthens the assumption the proof gets, never the
+conclusion. So anything provable of the refuted form is provable of this one, and the four witnesses
+that refute the refuted form do not apply here (proved in 'QuotientRows.lean' section 13).
+
+**AND IT IS SATISFIABLE.** 'qinterpRepaired_pre_satisfiable' exhibits a segment at which all four
+guards and the whole pre hold together, and
+'qinterpRepaired_satisfied_by_the_fail_closed_block' exhibits a block that SATISFIES the repaired
+contract - so the guards have not been chosen to make the statement vacuously true of an impossible
+pre. Whether they are JOINTLY SUFFICIENT for the emitted loop is a separate question, answered at
+'QuotientRows.lean' section 13.4: they are not known to be, and the residue is named there. -/
+
+/-- **GUARD 1 - THE WINDOW DOES NOT WRAP.** 'AtSegment' stores 'q_pc' and 'q_end' as 'BitVec.ofNat 256'
+    of 's.base + s.cursor' and 's.base + s.exprEnd'. Yul memory is addressed by an unbounded 'Nat' and
+    the registers are not, so unless the true end fits in a word the two disagree and the loop's guard
+    'q_pc < q_end' is decided by the WRAPPED pair. 'ROWFALSE' artefact 1 is exactly this: at
+    's.base = 2^256 - 1' the guard is false, no arm runs, and the reference errors.
+
+    Stated as a hypothesis on the segment, NOT folded into 'AtSegment' - 'AtSegment' is the committed
+    predicate and belongs to the refuted row. -/
+def QWindowNoWrap (s : QSegment) : Prop := s.base + s.exprEnd < 2 ^ 256
+
+/-- The emitted table's thirty-one opcode labels paired with the reference's own 'qOpX' constants, in
+    'qArmNames' order. A list of pairs rather than thirty-one conjuncts so that agreement is one
+    'decide'-able proposition and so a rejected clause is a named pair. -/
+def qOpcodeAgreementPairs (tcq : QuotientVmTemplateConstants) : List (Nat × Nat) :=
+  [(tcq.op.pushConst, qOpPushConst), (tcq.op.pushMemLiteral, qOpPushMemLiteral),
+   (tcq.op.pushMemToken, qOpPushMemToken), (tcq.op.pushMemTokenOffset, qOpPushMemTokenOffset),
+   (tcq.op.pushMemU16, qOpPushMemU16), (tcq.op.add, qOpAdd), (tcq.op.mul, qOpMul),
+   (tcq.op.neg, qOpNeg), (tcq.op.pushConstU8, qOpPushConstU8), (tcq.op.foldMain, qOpFoldMain),
+   (tcq.op.foldSelector, qOpFoldSelector), (tcq.op.addConstU8, qOpAddConstU8),
+   (tcq.op.mulConstU8, qOpMulConstU8), (tcq.op.addConst, qOpAddConst),
+   (tcq.op.mulConst, qOpMulConst), (tcq.op.addMemU16, qOpAddMemU16),
+   (tcq.op.mulMemU16, qOpMulMemU16), (tcq.op.addMulMemMemConstU8, qOpAddMulMemMemConstU8),
+   (tcq.op.addMulConstU8MemU16, qOpAddMulConstU8MemU16), (tcq.op.addMulMemMem, qOpAddMulMemMem),
+   (tcq.op.runAddMulMemMemConstU8, qOpRunAddMulMemMemConstU8),
+   (tcq.op.runAddMulConstU8MemU16, qOpRunAddMulConstU8MemU16),
+   (tcq.op.affineSum, qOpAffineSum), (tcq.op.nativePermutation, qOpNativePermutation),
+   (tcq.op.nativeLookup, qOpNativeLookup), (tcq.op.nativeIdentity, qOpNativeIdentity),
+   (tcq.op.lin7, qOpLin7), (tcq.op.bilin7Row, qOpBilin7Row),
+   (tcq.op.bilin7Pairwise, qOpBilin7Pairwise), (tcq.op.modarith7, qOpModarith7),
+   (tcq.op.pow5, qOpPow5)]
+
+/-- **GUARD 2 - TABLE AGREEMENT.** Every label the emitter puts in its switch is the byte the reference
+   's interpreter tests for that arm. Without it a table can label byte 6 'neg' while the reference
+    reads it as 'add', and the loop runs an arm the reference does not have. QLOOP's sketch
+    ('QuotientLoopCompose.lean:47-62') and ROWFALSE's third witness are this gap; 'PG_limbCountAgrees'
+    is the limb-count member of the same family. -/
+def QTableAgrees (tcq : QuotientVmTemplateConstants) : Prop :=
+  ∀ x ∈ qOpcodeAgreementPairs tcq, x.1 = x.2
+
+/-- **GUARD 2 IS TRUE OF THE DEFAULT TABLE**, computed by 'decide' over the thirty-one pairs - no
+    fixture enters a statement (D-P71: this is a theorem ABOUT the default table, which the row
+    quantifies over, and it is the evidence that the guard does not exclude the deployment). -/
+theorem QTableAgrees_default : QTableAgrees templateConstantsDefault.quotientVm := by
+  unfold QTableAgrees
+  decide
+
+/-- The byte the loop's first fetch reads: the segment's head, as the reference's
+    'bytes.getD idx 0' reads it. -/
+def qHeadByte (bytes : List Nat) (s : QSegment) : Nat := bytes.getD s.cursor 0
+
+/-- The reference's NO-POP opcodes: the six pushes ('VmReference.lean:733-757') and the four limb
+    forms (':850-866'), each of which pushes onto the stack it is handed. Every other reference opcode
+    either pops ('add', 'mul', 'neg', 'pow5', the fused and run forms) or is refused inside an identity
+    (the five stream opcodes, ':867-871'). -/
+def qNoPopOpcodes : List Nat :=
+  [qOpPushConst, qOpPushConstU8, qOpPushMemLiteral, qOpPushMemU16,
+   qOpPushMemToken, qOpPushMemTokenOffset, qOpLin7, qOpBilin7Row, qOpBilin7Pairwise,
+   qOpModarith7]
+
+/-- **GUARD 3b - THE HEAD STEP NEEDS NO STACK OPERAND.** 'evalQuotientIdentity' starts every identity
+    with an EMPTY stack ('VmReference.lean:905'), so the first byte of a segment the reference accepts
+    must be one of the ten no-pop opcodes; if it is a popping one the reference errors at
+    'popStack' and no post-state exists for the contract's second disjunct. On the emitted side the
+    same fact is what makes the arm enabled: the push arms are the ones whose precondition is the
+    EMPTY cached top ('qPrePushConst': 'q_has_top = some 0'), and a popping arm run with
+    'q_has_top = 0' computes on a garbage 'q_top' and exits normally - which is precisely ROWFALSE's
+    witness 2, at the default table and with guard 1 satisfied. -/
+def QHeadNoPop (bytes : List Nat) (s : QSegment) : Prop := qHeadByte bytes s ∈ qNoPopOpcodes
+
+/-- **GUARD 3a - THE PRE PINS THE CACHED TOP.** 'AtSegment' pins five registers and deliberately not
+    'q_top'/'q_has_top'. The arm lemmas need them: 'qPrePushConst' asks for 'q_has_top = some 0' and
+    'q_top = some x'. So the repaired contract's pre carries the correspondence explicitly - the
+    cached top is EMPTY at a segment start, which is the emitted image of the reference's empty stack
+    (guard 3b is the other half of the same correspondence, read from the program side). -/
+def QPreCachedTop {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g)) : Prop :=
+  VEnv.get V "q_has_top" = some (0 : U256) ∧ ∃ x : U256, VEnv.get V "q_top" = some x
+
+/-- **THE REPAIRED CONTRACT.** The committed 'QInterpRefines' with ROWFALSE's three repairs, each a
+    NAMED hypothesis of the quantified segment rather than a clause folded into a predicate, so the
+    human can accept or reject them one at a time:
+
+  * 'QWindowNoWrap s' - guard 1, the window does not wrap;
+  * 'QTableAgrees tcq' - guard 2, the emitted labels are the reference's constants;
+  * 'QHeadNoPop bytes s' - guard 3b, the head byte is a reference no-pop opcode;
+  * 'QPreCachedTop V' - guard 3a, in the pre: the cached top is empty and bound.
+
+    The post is the committed post, unchanged - same disjunction, same reference call on the same
+    slice, same 'Top' and 'AtSegment' positions. The contract is instantiated at the emitter's loop by
+    'qinterpRefinesRepaired_qvmLoop' in 'QuotientRows.lean' section 13, which is a THEOREM about the
+    guards holding, not a row: the row itself stays sorried and refuted until the human rules.
+
+    Unlike 'QInterpRefines' this is fixed at 'Bridge.Dialect c g' and at 'word := fun w => w', i.e. at
+    the row's own instantiation: guards 3a and 3b speak about 'U256' registers and about the
+    reference's opcode bytes, so a dialect-generic form would have to parameterise both and say less. -/
+def QInterpRefinesRepaired {c : ExternalCalls} {g : ExternalGas}
+    (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (interp : Block EVM.Op)
+    (reverts : EvmState → Prop)
+    (bytes : List Nat) (consts : List Midfall.Word256)
+    (Agrees : EvmState → QuotientRefMemory → QSegment → Prop)
+    (AtSegment : VEnv (Bridge.Dialect c g) → EvmState → QSegment → Prop)
+    (Top : VEnv (Bridge.Dialect c g) → EvmState → U256 → Prop) : Prop :=
+  ∀ (s : QSegment) (mem : QuotientRefMemory),
+    s.inWindow → QWindowNoWrap s → QTableAgrees tcq → QHeadNoPop bytes s →
+    StmtsContractAll (D := Bridge.Dialect c g) funs interp
+      (fun V st => AtSegment V st s ∧ Agrees st mem s ∧ QPreCachedTop (c := c) (g := g) V)
+      (fun _ _ V' st' o => (o = .halt ∧ reverts st') ∨
+        (o = .normal ∧ ∃ v mem',
+          Midfall.Generator.evalQuotientIdentity
+            ((bytes.drop s.cursor).take (s.exprEnd - s.cursor)) consts mem = .ok (v, mem') ∧
+          Top V' st' (BitVec.ofNat 256 v) ∧ AtSegment V' st' s.atEnd))
+
+/-- **THE REPAIR IS A RELAXATION OF THE REFUTED CLAIM, NOT A STRONGER ONE.** Every guard is a
+    hypothesis on the quantified segment, and the one clause added to the pre ('QPreCachedTop') makes
+    the assumption stronger, never the conclusion. So the committed contract - the refuted row's
+    statement - would still imply the repaired form. That is what makes the exercise meaningful: the
+    repaired form is not a new demand on the emitter, it is the old demand restricted to the windows,
+    tables and start states where the reference and the registers can disagree about nothing. -/
+theorem qinterpRepaired_of_committed {c : ExternalCalls} {g : ExternalGas}
+    (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (interp : Block EVM.Op)
+    (reverts : EvmState → Prop)
+    (bytes : List Nat) (consts : List Midfall.Word256)
+    (Agrees : EvmState → QuotientRefMemory → QSegment → Prop)
+    (AtSegment : VEnv (Bridge.Dialect c g) → EvmState → QSegment → Prop)
+    (Top : VEnv (Bridge.Dialect c g) → EvmState → U256 → Prop)
+    (h : QInterpRefines (D := Bridge.Dialect c g) (reverts := reverts) (word := fun w => w)
+        (AtSegment := AtSegment) (Top := Top) (Agrees := Agrees) funs interp bytes consts) :
+    QInterpRefinesRepaired tcq funs interp reverts bytes consts Agrees AtSegment Top :=
+  fun s mem hw _hwrap _htab _hhead V st hpre =>
+    h s mem hw V st ⟨hpre.1, hpre.2.1⟩
+
+/-- **THE FOUR GUARDS HOLD TOGETHER.** A contract whose pre is unsatisfiable is worth nothing, and
+    four conjoined guards are exactly the shape that risks it. This exhibits, at ANY program and ANY
+    reference memory, a legal three-byte window '[PUSH_CONST, 0, 7]' at base 0 whose segment satisfies
+    'inWindow', guard 1, guard 2 (at the default table), guard 3b and guard 3a simultaneously, together
+    with the five 'AtSegment' register clauses and the three 'Agrees' clauses. PROVED; no
+    'native_decide'; no fixture. -/
+theorem qinterpRepaired_pre_satisfiable {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (mem : QuotientRefMemory) :
+    ∃ (s : QSegment) (V : VEnv (Bridge.Dialect c g)) (st : EvmState),
+      s.inWindow ∧ QWindowNoWrap s ∧ QTableAgrees templateConstantsDefault.quotientVm
+        ∧ QHeadNoPop [qOpPushConst, 0, 7] s ∧ QPreCachedTop (c := c) (g := g) V
+        ∧ AtSegment (c := c) (g := g) (program := program) V st s
+        ∧ Agrees [] program.constMptr 0 0 [qOpPushConst, 0, 7] st mem s := by
+  refine ⟨⟨0, 3, 0, 3⟩, segmentV (c := c) (g := g) (program := program) ⟨0, 3, 0, 3⟩ 0 false,
+    { EvmState.init with memory := fun a => if a = 0 then 1 else if a = 2 then 7 else 0 },
+    ⟨inWindow_exhibit 0 3 (by decide), (by decide : (0 : Nat) + 3 < 2 ^ 256),
+      QTableAgrees_default, (by decide : qOpPushConst ∈ qNoPopOpcodes), ⟨rfl, 0, rfl⟩,
+      ⟨rfl, rfl, rfl, rfl, rfl⟩, ?_⟩⟩
+  · refine ⟨?_, ?_, ?_⟩
+    · intro i hi
+      have hlen : ({ base := 0, len := 3, cursor := 0, exprEnd := 3 } : QSegment).len = 3 := rfl
+      rw [hlen] at hi
+      have : i = 0 ∨ i = 1 ∨ i = 2 := by omega
+      rcases this with rfl | rfl | rfl <;> rfl
+    · intro k hk; exact absurd hk (Nat.not_lt_zero k)
+    · intro a ha; exact absurd ha (Nat.not_lt_zero a)
+
+/-- **THE REPAIRED CONTRACT IS SATISFIED, WITH THE REAL PREDICATES.** Same shape as section 7's
+    witness 2 and the same block - the fail-closed default the emitted switch runs on an unknown
+    opcode - but now under all four guards and with the strengthened pre. Its only runs revert, so the
+    post's first disjunct always holds and no guard has to be discharged by the block at all. This is
+    the evidence that the repaired form is not vacuous-by-impossible-pre: it is satisfiable by a block
+    the emitter really prints, at every window, table and segment whose guards hold. -/
+theorem qinterpRepaired_satisfied_by_the_fail_closed_block {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (bytes : List Nat) (consts : List Midfall.Word256)
+    (tcq : QuotientVmTemplateConstants) :
+    QInterpRefinesRepaired (c := c) (g := g) tcq [] [yexpr (yop Op.revert [ylit 0, ylit 0])]
+      Midfall.Lowering.Reverted bytes consts (fun _ _ _ => True)
+      (AtSegment (c := c) (g := g) (program := program)) qinterpTop := by
+  intro s mem hw hwrap htab hhead V st hpre V' st' o hrun
+  have key : Midfall.Yul.WpTac.AllRuns [] V st
+      [yexpr (yop Op.revert [ylit 0, ylit 0])]
+      (fun _ st' o => o = .halt ∧ Midfall.Lowering.Reverted st') := by
+    refine Midfall.Yul.WpTac.allRuns_of_wp 20 ?_
+    wp_run
+    all_goals (first | exact ⟨rfl, rfl⟩ | rfl)
+  exact Or.inl (key V' st' o hrun)
+
+-- The repaired form's own acceptance prints.
+#print axioms Midfall.Lowering.QuotientInterp.QTableAgrees_default
+#print axioms Midfall.Lowering.QuotientInterp.qinterpRepaired_of_committed
+#print axioms Midfall.Lowering.QuotientInterp.qinterpRepaired_pre_satisfiable
+#print axioms Midfall.Lowering.QuotientInterp.qinterpRepaired_satisfied_by_the_fail_closed_block
+#check @Midfall.Lowering.QuotientInterp.QInterpRefinesRepaired
+#check @Midfall.Lowering.QuotientInterp.QWindowNoWrap
+#check @Midfall.Lowering.QuotientInterp.QTableAgrees
+#check @Midfall.Lowering.QuotientInterp.QHeadNoPop
+#check @Midfall.Lowering.QuotientInterp.QPreCachedTop
+

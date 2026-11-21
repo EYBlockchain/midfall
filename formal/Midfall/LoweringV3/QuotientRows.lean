@@ -244,40 +244,6 @@ theorem q_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (h
     BlockProgS R Partial.quotientLin H vkAddr product cd := by
   sorry
 
-/-! ### 3b. THE ADDRESS-FIT PROJECTIONS FOR ROW.Q (D-QVM1, signed 2026-11-21)
-
-'programFits' (LoweringV3/Statements.lean) is the new program-clause conjunct. The QVM's own window
-and the two windows its prologue writes are its first fields; the row's caller gets them here
-without unfolding the conjunction. The window bound is exactly what BOXD's section 11 refutation
-says the old statement lacked. -/
-
-theorem quotientProgram_window_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
-    {program : QuotientProgram} (hp : R.model.quotientProgram = some program) :
-    program.programMptr + program.len < 2 ^ 256 :=
-  (quotientProgramFits_of_valid hR hp).1
-
-theorem quotientProgram_constWindow_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
-    {program : QuotientProgram} (hp : R.model.quotientProgram = some program) :
-    program.constMptr + 32 * (program.guards.constMax + 1) < 2 ^ 256 :=
-  (quotientProgramFits_of_valid hR hp).2.1
-
-theorem quotientProgram_stackWindow_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
-    {program : QuotientProgram} (hp : R.model.quotientProgram = some program) :
-    program.stackMptr ≤ program.guards.stackLast ∧
-      program.guards.stackLast + 32 < 2 ^ 256 :=
-  ⟨(quotientProgramFits_of_valid hR hp).2.2.1,
-    (quotientProgramFits_of_valid hR hp).2.2.2.1⟩
-
-/-- The segment window at the program's own window fits the 256-bit cursor word. This is the fact
-    the QVM row's cursor registers need; it is a corollary of the program-clause fit, not a new
-    hypothesis. -/
-theorem windowFit_of_programWindow {program : QuotientProgram} {s : QSegment}
-    (h : program.programMptr + program.len < 2 ^ 256)
-    (hb : s.base = program.programMptr) (he : s.exprEnd ≤ program.len) :
-    s.base + s.exprEnd < 2 ^ 256 :=
-  Nat.lt_of_le_of_lt
-    (Nat.add_le_add (le_of_eq hb) he) h
-
 /-- **ROW.Q.1 - THE SPLIT LOOP.** VERBATIM from 'GeneratorRows.lean:875-887': binders, the 'hr'
 hypothesis that the table does not pin 'r', the 'k < 2 ^ 256' bound, the pre and the post. Statement
 4 of the linearization scope is the squaring walk that computes '(x^(2^k - 1), x^(2^k))' in ONE
@@ -1302,4 +1268,219 @@ theorem qinterpRefines_qvmLoop_row_is_false_at_a_valid_label :
 #cone_sorries Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_row_is_false_at_a_valid_label
 #assert_axioms Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_row_is_false_at_a_valid_label [propext, Classical.choice, Quot.sound] native []
 
+
+/-! ### 13. THE REPAIRED CONTRACT (QFIX): WHAT THE FOUR WITNESSES DO TO THE GUARDS
+
+Section 11 and section 12 refute the committed row at four concrete divergences. This section does
+NOT repair the row - the row is untouched, still one sorry at 'QuotientInterp.lean:270', and W13's
+deletion is a human ruling. It tests the repaired contract that section 10 of 'QuotientInterp.lean'
+states ('QInterpRefinesRepaired', with guards 'QWindowNoWrap', 'QTableAgrees', 'QHeadNoPop',
+'QPreCachedTop') against those four witnesses, by COMPUTATION on the guards themselves: each witness
+violates at least one guard, so none of them is a counterexample to the repaired form. That is the
+evidence the repair is targeted and not cosmetic - and the attribution matters, so each theorem says
+which guard fails and, for the two witnesses that pass guards 1 and 2, the fact that they pass them.
+
+  WITNESS 1, section 11's 'qBadSegment' at base '2^256 - 1': GUARD 1 FAILS, GUARD 3b FAILS, guard 2 holds.
+  WITNESS 2, section 12's 'qNegSegment' at the DEFAULT table: guards 1, 2 and 3a ALL HOLD, GUARD 3b FAILS.
+  WITNESS 3, QLOOP's moved label 'tcq.op.neg := qOpAdd': GUARD 2 FAILS, GUARD 3b FAILS.
+  WITNESS 4, QLOOP's 'tcq.op.pushConst := 200' on '[200,0,0]': GUARD 2 FAILS, GUARD 3b FAILS, guard 1 holds.
+
+**AND THE ANSWER TO 'ARE THE GUARDS ENOUGH?' IS NO - FOUR PROOF OBLIGATIONS REMAIN, NAMED IN 13.4.**
+They are not further hypotheses: the guards are a complete answer to the four witnesses. What the
+guards cannot do is make the LOOP true, because three of the four obligations are inside the loop
+induction rather than in its pre. -/
+
+/-- **THE REPAIRED CONTRACT AT THE EMITTER'S LOOP** - the exact restatement the human would adopt in
+    place of the refuted row, as a NAMED 'Prop' and NOT as a row: it carries no proof and no sorry, so
+    nothing here pre-empts the W13 ruling on 'qinterpRefines_qvmLoop'. Binders are the refuted row's,
+    verbatim ('ctx', 'program', 'tcq', 'funs', 'bytes', 'consts', 'frameBase', 'frameWords'), and so is
+    the instantiation of 'reverts', 'Agrees', 'AtSegment' and 'Top'; the only addition is 'tcq', which
+    the repaired form needs to state guard 2. -/
+def QInterpRefinesRepaired_qvmLoop {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (bytes : List Nat) (consts : List Midfall.Word256)
+    (frameBase frameWords : Nat) : Prop :=
+  QInterpRefinesRepaired (c := c) (g := g) tcq funs [GenAst.qvmLoop ctx program tcq]
+    Midfall.Lowering.Reverted bytes consts
+    (fun st mem s => Agrees consts program.constMptr frameBase frameWords bytes st mem s)
+    (AtSegment (c := c) (g := g) (program := program)) qinterpTop
+
+/-! #### 13.1 WITNESS 1 (section 11): the wrapping window -/
+
+/-- **WITNESS 1 VIOLATES GUARD 1.** 'qBadSegment' has 'base = 2^256 - 1' and 'exprEnd = 1', so
+    'base + exprEnd = 2^256' and the window wraps. COMPUTED, not argued: the refutation is one
+    'decide' on the two literals, which is exactly the fact 'AtSegment' leaves unsaid. -/
+theorem qfix_witness1_violates_windowNoWrap : ¬ QWindowNoWrap qBadSegment := by
+  intro h
+  exact absurd h (by decide : ¬ (qWrapBase + 1 < 2 ^ 256))
+
+/-- **AND ALSO GUARD 3b**: its head byte is 200, which is no reference opcode at all - the 'qOpX'
+    family runs '0x01'-'0x22' - so the reference's first step on the segment is a refusal. Two guards
+    exclude this witness, which is why the repair does not depend on getting either one exactly right. -/
+theorem qfix_witness1_violates_headNoPop : ¬ QHeadNoPop qBadBytes qBadSegment := by
+  intro h
+  exact absurd h (by decide : ¬ (200 ∈ qNoPopOpcodes))
+
+/-- **GUARD 1 IS THE ONE THAT MATTERS HERE**: the same witness satisfies guard 2 at the default table
+    (which is the table section 11's refutation is generic in), so table agreement alone would not have
+    repaired the row - ROWFALSE's stated consequence, confirmed by computation. -/
+theorem qfix_witness1_passes_tableAgreement : QTableAgrees templateConstantsDefault.quotientVm :=
+  QTableAgrees_default
+
+/-! #### 13.2 WITNESS 2 (section 12): the neg arm at the DEFAULT table -/
+
+/-- **WITNESS 2 SATISFIES GUARD 1**: '0x1000 + 1 < 2^256'. The wrap is not what breaks this one. -/
+theorem qfix_witness2_satisfies_windowNoWrap : QWindowNoWrap qNegSegment :=
+  show (0x1000 : Nat) + 1 < 2 ^ 256 from by decide
+
+/-- **WITNESS 2 SATISFIES GUARD 2**: 'qNegTable' IS the default table, and guard 2 holds of it. -/
+theorem qfix_witness2_satisfies_tableAgreement : QTableAgrees qNegTable := QTableAgrees_default
+
+/-- **WITNESS 2 SATISFIES GUARD 3a**: its environment 'qNegV0' really does pin the cached top empty
+    ('q_has_top = 0'), so the correspondence between the emitted cached top and the reference's stack
+    DEPTH is not what fails either. -/
+theorem qfix_witness2_satisfies_preCachedTop : QPreCachedTop (c := c) (g := g) qNegV0 :=
+  ⟨rfl, 0, rfl⟩
+
+/-- **WITNESS 2 VIOLATES GUARD 3b, AND THAT IS THE ONLY GUARD IT VIOLATES.** The segment is
+    '[qOpNeg]' and 'neg' pops: 'evalQuotientIdentityStep' calls 'popStack stack idx' on the empty
+    stack the identity starts with ('VmReference.lean:766-768'), which is the '.error
+    (stackUnderflow 0)' section 12 computed. The emitted neg arm does not pop anything - it rewrites
+    'q_top' in place - so it runs to a normal exit on a garbage cached top. Guard 3b is the clause
+    that says the head byte must be one the reference can execute from an empty stack, and it is what
+    makes the repaired form immune to this witness. -/
+theorem qfix_witness2_violates_headNoPop : ¬ QHeadNoPop [qOpNeg] qNegSegment := by
+  intro h
+  exact absurd h (by decide : ¬ (qOpNeg ∈ qNoPopOpcodes))
+
+/-! #### 13.3 WITNESS 3 (QLOOP's moved label) AND WITNESS 4 (QLOOP's own words) -/
+
+/-- **WITNESS 3: A MOVED LABEL.** 'tcq.op.neg := qOpAdd' (6), read on the segment '[qOpAdd]'. The
+    emitted switch finds the neg arm at byte 6 - no earlier label collides, so it is reachable - and
+    runs it; the reference reads byte 6 as 'add', pops TWO values from an empty stack and errors. This
+    is the variant section 12 checked by running the vendored interpreter at fuel 18. -/
+def qfix_movedTable : QuotientVmTemplateConstants :=
+  { qNegTable with op := { qNegTable.op with neg := qOpAdd } }
+
+/-- **WITNESS 3 VIOLATES GUARD 2**: the pair '(qOpAdd, qOpNeg)' is in the agreement list and its two
+    components differ. Computed. -/
+theorem qfix_witness3_violates_tableAgreement : ¬ QTableAgrees qfix_movedTable := by
+  intro H
+  have h1 : (qOpAdd, qOpNeg) ∈ qOpcodeAgreementPairs qfix_movedTable := by decide
+  exact absurd (H _ h1) (by decide : ¬ (qOpAdd = qOpNeg))
+
+/-- **AND GUARD 3b as well**: byte 6 is 'add', which pops two operands. -/
+theorem qfix_witness3_violates_headNoPop : ¬ QHeadNoPop [qOpAdd] qNegSegment := by
+  intro h
+  exact absurd h (by decide : ¬ (qOpAdd ∈ qNoPopOpcodes))
+
+/-- **WITNESS 4: QLOOP'S OWN WORDS.** 'tcq.op.pushConst := 200' on the segment '[200, 0, 0]' - the
+    example 'QuotientLoopCompose.lean:47-62' gives in prose. The switch is REACHED (the window is
+    ordinary) and selects the pushConst arm at byte 200, while the reference has no opcode 200 and
+    refuses it as 'unknownOpcode'. -/
+def qfix_qloopTable : QuotientVmTemplateConstants :=
+  { qNegTable with op := { qNegTable.op with pushConst := 200 } }
+
+/-- The ordinary three-byte window '[200, 0, 0]' the prose witness describes. -/
+def qfix_qloopSegment : QSegment := { base := 0, len := 3, cursor := 0, exprEnd := 3 }
+
+/-- **WITNESS 4 VIOLATES GUARD 2**: '(200, qOpPushConst)' is a pair whose components differ. -/
+theorem qfix_witness4_violates_tableAgreement : ¬ QTableAgrees qfix_qloopTable := by
+  intro H
+  have h1 : (200, qOpPushConst) ∈ qOpcodeAgreementPairs qfix_qloopTable := by decide
+  exact absurd (H _ h1) (by decide : ¬ (200 = qOpPushConst))
+
+/-- **AND GUARD 3b**: 200 is not a reference opcode at all, so it is certainly not a no-pop one. -/
+theorem qfix_witness4_violates_headNoPop : ¬ QHeadNoPop [200, 0, 0] qfix_qloopSegment := by
+  intro h
+  exact absurd h (by decide : ¬ (200 ∈ qNoPopOpcodes))
+
+/-- **WITNESS 4 SATISFIES GUARD 1** - the window is at base 0, so nothing wraps. Recorded to show the
+    four witnesses are not all the same defect: this one is purely a table defect. -/
+theorem qfix_witness4_satisfies_windowNoWrap : QWindowNoWrap qfix_qloopSegment :=
+  show (0 : Nat) + 3 < 2 ^ 256 from by decide
+
+/-- **THE SUMMARY THE CARD ASKS FOR: EVERY ONE OF ROWFALSE'S FOUR WITNESSES VIOLATES AT LEAST ONE
+    GUARD OF THE REPAIRED FORM.** Stated as one proposition conjoining the four exclusions, so a
+    reader checks the claim once. -/
+theorem qfix_all_four_witnesses_are_excluded :
+    (¬ QWindowNoWrap qBadSegment) ∧ (¬ QHeadNoPop qBadBytes qBadSegment)
+      ∧ (¬ QHeadNoPop [qOpNeg] qNegSegment)
+      ∧ (¬ QTableAgrees qfix_movedTable) ∧ (¬ QHeadNoPop [qOpAdd] qNegSegment)
+      ∧ (¬ QTableAgrees qfix_qloopTable) ∧ (¬ QHeadNoPop [200, 0, 0] qfix_qloopSegment) :=
+  ⟨qfix_witness1_violates_windowNoWrap, qfix_witness1_violates_headNoPop,
+    qfix_witness2_violates_headNoPop, qfix_witness3_violates_tableAgreement,
+    qfix_witness3_violates_headNoPop, qfix_witness4_violates_tableAgreement,
+    qfix_witness4_violates_headNoPop⟩
+
+/-! #### 13.4 ARE THE GUARDS JOINTLY SUFFICIENT? NO - AND HERE IS THE RESIDUE, NAMED
+
+**VERDICT: THE GUARDS CLOSE THE FOUR WITNESSES AND THEY DO NOT CLOSE THE LOOP.** They are hypotheses
+about a SEGMENT AND A START STATE, and the row quantifies over a LOOP. Four obligations survive; none
+of them is a fifth hypothesis of the same kind, so the honest answer to the card's question is that
+the three guards are necessary and jointly sufficient for the four refutations, not for the row.
+
+**(O1) THE FETCH BRIDGE - 'qvmLoopPre' IS NOT YET A CONTRACT.** The arm lemmas are stated at the state
+AFTER the loop's two-statement pre ('GenAstQvm.lean:382': 'q_op := byte(0, mload q_pc)', then
+'q_pc := q_pc + 1'), while 'AtSegment' pins the state BEFORE it. The exact remaining goal is a
+contract for those two statements:
+
+    StmtsContractAll (D := Bridge.Dialect c g) funs GenAst.qvmLoopPre
+      (fun V st => AtSegment program V st s ∧ Agrees ... st mem s ∧ QPreCachedTop V)
+      (fun V st V' st' o => o = .normal
+        ∧ VEnv.get V' "q_op" = some (BitVec.ofNat 256 (qHeadByte bytes s))
+        ∧ VEnv.get V' "q_pc" = some (BitVec.ofNat 256 (s.base + s.cursor + 1)) ∧ ...)
+
+and it needs guard 1 to turn 'q_pc.toNat' back into the true address 's.base + s.cursor' - which is
+the first place the repair earns its keep: without guard 1 the fetch reads memory at the WRAPPED
+address and the bridge is false. Nothing in the tree states this contract today: 'grep qvmLoopPre'
+finds the definition, the two 'rfl' restatements of the loop body ('QuotientFrame.lean:780',
+'QuotientLoopCompose.lean:109') and one KAT length gate. It is a proof obligation, not a hypothesis.
+
+**(O2) THE STACK CORRESPONDENCE IS INDUCTIVE, NOT A PRE CONDITION.** Guard 3b pins the head byte; the
+loop needs 'q_has_top = 1 iff the reference's stack is non-empty, and when non-empty q_top IS its
+head' at EVERY iteration, carried through the invariant. That is ROW.Q's induction and no hypothesis
+about the start state can discharge it. Named below as 'QStackInvariant' so the human sees what the
+loop proof must add; it is NOT a hypothesis of the repaired contract.
+
+**(O3) THE PER-ARM REFERENCE TIE IS STILL ZERO FOR THE ARMS.** QLOOP's finding (3)
+('QuotientLoopCompose.lean:33-40') is untouched by this card: 'qArmValueAll_X' constrains the emitted
+registers and 'qStepValue_X' constrains the reference step, and no theorem says the two words are
+equal. Guard 2 makes the two sides read the SAME OPCODE; it does not make them COMPUTE the same word.
+The limb arms additionally need 'PG_limbCountAgrees'.
+
+**(O4) THE SEGMENT'S WIDTH AND THE EPILOGUE.** The contract's post asks for 'AtSegment V' st' s.atEnd'
+- the END position - which the loop only reaches if the segment's byte length is exactly the sum of
+the arms' consumed widths: the emitted arm's 'q_pc' advance must equal the reference's 'consumed'
+field byte for byte. That is a fact about the SEGMENT that none of the four guards says. FALSIFIER 4
+in 'QuotientInterp' section 8 is the same defect seen from the operand-width side, and section 13.5
+lands the positive half of this obligation for the one arm that composes: the pushConst segment is
+three bytes and BOTH sides advance three.
+
+**WHAT THIS SECTION DOES NOT CLAIM.** It does not prove the repaired contract of the loop - that is
+ROW.Q proper, and (O1)-(O4) are why. It proves the guards are individually decidable, jointly
+satisfiable, true of the default table, and violated by each of the four witnesses. -/
+
+/-- **(O2), NAMED.** The inductive form of the stack correspondence: at EVERY iteration, not just the
+    first, the emitted cached top is live exactly when the reference's stack is non-empty and holds its
+    head. The repaired contract does NOT assume this - it cannot, it is about a run and not about a
+    start state - and no guard of the kind in section 10 can replace it. Recording it here is the
+    answer to 'is a fourth gap left': yes, and it is this one, plus (O1), (O3) and (O4). -/
+def QStackInvariant {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (V : VEnv (Bridge.Dialect c g)) : Prop :=
+  (VEnv.get V "q_has_top" = some (0 : U256)
+      ∧ VEnv.get V "q_sp" = some (BitVec.ofNat 256 program.stackMptr))
+    ∨ (∃ x : U256, VEnv.get V "q_has_top" = some 1 ∧ VEnv.get V "q_top" = some x)
+
+#print axioms Midfall.LoweringV3.QuotientRows.qfix_witness1_violates_windowNoWrap
+#print axioms Midfall.LoweringV3.QuotientRows.qfix_witness2_violates_headNoPop
+#print axioms Midfall.LoweringV3.QuotientRows.qfix_witness3_violates_tableAgreement
+#print axioms Midfall.LoweringV3.QuotientRows.qfix_witness4_violates_tableAgreement
+#print axioms Midfall.LoweringV3.QuotientRows.qfix_all_four_witnesses_are_excluded
+#cone_sorries Midfall.LoweringV3.QuotientRows.qfix_all_four_witnesses_are_excluded
+#assert_axioms Midfall.LoweringV3.QuotientRows.qfix_witness1_violates_windowNoWrap [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.QuotientRows.qfix_witness2_violates_headNoPop [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.QuotientRows.qfix_witness3_violates_tableAgreement [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.QuotientRows.qfix_witness4_violates_tableAgreement [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.QuotientRows.qfix_all_four_witnesses_are_excluded [propext, Classical.choice, Quot.sound] native []
 end Midfall.LoweringV3.QuotientRows
