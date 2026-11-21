@@ -68,8 +68,9 @@ Tracks: **A** the headline rows (critical path) · **B** reference, artifact, no
 
 > **2026-11-21, D-QVM1 (signed; design.md).** `programOk` gained `programFits`; `fit1_of_valid` /
 > `fit2_of_valid` are now theorems, so A3's VKFIT fit blocker is closed. A8 is still blocked on
-> the two ROW.Q.3 statement changes named in STATUS.md item 4 (table agreement and segment
-> validation), not on the fit. A0 and B2 are merged; A1/A2 are partial (see the git log).
+> the ROW.Q.3 restatement authorized by D-QVM2, not on the fit. A12's `prefix_live` is PROVED
+> (`76ccfe5`): root 18 -> 17, register 85 -> 84; `totalV3_correct` cone 6 -> 3. A0 and B2 are
+> merged; A1/A2 are partial (see the git log).
 
 ## V3 — THE LIVE ORDER (PLAN-V3 §5; cut over by PL.0, 2026-11-17)
 

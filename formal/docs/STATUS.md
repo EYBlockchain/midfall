@@ -1,14 +1,13 @@
 # STATUS - midfall
 
-**As of:** `f7070e2` + D-QVM1 on `t/QVMFIT` (2026-11-21). Report copied from the last full
-`verify.sh --quick`; the full `verify.sh` has not been run on this branch.
+**As of:** `76ccfe5` (2026-11-21). Report copied from the last full `verify.sh --quick`; the full
+`verify.sh` has not been run on this branch.
 
 ## 1. Verified - PROGRESS
 
-    root lowering_correct .... 18 OPEN sorried leaves (snapshotOf_prepareMsgs, q_blockProgS,
+    root lowering_correct .... 17 OPEN sorried leaves (snapshotOf_prepareMsgs, q_blockProgS,
                                q_blockSim, block_live, fp_*, gasFree_of_valid, lag_*, pcs_*,
-                               prefix_live, runBody_gas_oblivious, tp_*, twoOutcomes_of_exitDiscipline,
-                               vk_*)
+                               runBody_gas_oblivious, tp_*, twoOutcomes_of_exitDiscipline, vk_*)
     root lowering_sound ...... 8 OPEN sorried leaves (the sim rows, prefix_sim, run_split,
                                twoOutcomes_of_exitDiscipline, snapshotOf_prepareMsgs)
     block rows ............... 1 INTEGRATED of 7 (traceReturn); 2 SORRY, 4 NONE
@@ -17,10 +16,16 @@
                                payload point half OPEN (B3)
     root lowering_correctW ... not reported (C0 not started)
     root generator_correct ... not reported (D2 not started)
-    register ................. 85 rows / 18 ROOT; 1 REFUTED (poseidon_valid), 1 VACUOUS
+    register ................. 84 rows / 17 ROOT; 1 REFUTED (poseidon_valid), 1 VACUOUS
     KAT ...................... 1640/118 pinned (last known; not run on this branch)
     frozen axioms ............ 5 named + 159 native_decide; roots are standard three + sorryAx,
                                native []
+
+**PREFIXLIVE (this session):** `Midfall.LoweringV3.prefix_live` is PROVED - cone 0, standard
+three - and the root cone moved 18 -> 17 (register 85 -> 84). The proof covers the three prefix
+cases: both guards silent (the PROVED `prefix_prog_core`), the ABI guard fires, or the memory guard
+fires; the two firing cases are new `Step` constructions, `pfxRevertBody_exists` plus the two head
+lemmas. `totalV3_correct`'s cone moved 6 -> 3.
 
 **D-QVM1 (signed 2026-11-21, design.md):** `programOk` now carries `programFits` - the VK payload
 windows and, when the model has a `QuotientProgram`, the interpreter's program/const/stack windows
@@ -32,7 +37,7 @@ conjunct; the headline signature is unchanged.
 ## 2. In flight / QVM
 
 - **QVM agent (ROW.Q.3, `qinterpRefines_qvmLoop`).** The row is **FALSE as stated**, not merely
-  unprovable. `t/BOXd` has two PROVED refutations (not merged): (i) `qBadSegment` at base
+  unprovable. `t/BOXd`'s two PROVED refutations are now on `formal/baseline` via ROWFALSE (`0955bac`): (i) `qBadSegment` at base
   `2^256 - 1` wraps `q_pc`/`q_end`, the loop exits normally, the reference errors
   (`qinterpRefines_qvmLoop_row_is_false`); (ii) at an ordinary window the `neg` arm runs with
   `q_has_top = 0` while the reference returns `stackUnderflow`
@@ -44,9 +49,11 @@ conjunct; the headline signature is unchanged.
   agreement (`tcq` = the emitted table, one structure equality); (3) a segment-level stack/operand
   validity hypothesis, the row counterpart of `qvm_validated_noBoundsFault` (the validator rejects
   `[NEG]` at depth 0, so the emitted loop and the reference agree only on validated segments).
-  (2) and (3) are statement changes on the ROW; they need a signed decision before a worker adds
-  them. The alternative - fixing the `neg`/`pow5` emitter arms - is a generated-contract change
-  (Rust + Lean artifacts) and is not authorized.
+  **D-QVM2, signed 2026-11-21, authorizes the fixed-segment restatement** (design.md): the old
+  universal row is retired under W13, and the QVM agent states the replacement over a fixed
+  `QSegment` with the fit, table agreement, validation, and the prologue's start stack. The fold
+  output predicate is the agent's statement to design. The alternative - fixing the `neg`/`pow5`
+  emitter arms - is a generated-contract change (Rust + Lean artifacts) and is not authorized.
 - **`qvm_validated_noBoundsFault`** also has SEGLEG's exact cursor-alignment hypothesis
   (`PG_segleg_shiftAligned` + `PG_segleg_readsAligned`, and `segleg_repaired_suffices` proves it
   sufficient). The remaining SEGLEG obstacle is the MODARITH7 arm of
@@ -77,6 +84,6 @@ conjunct; the headline signature is unchanged.
 
 ## 5. Last three merges
 
-- `f7070e2` SEGLEG final - the fourth decision has an exact cursor-alignment hypothesis
-- `6577087` WORKER-RULES - `decide` does reduce walk facts at fixture size
-- `8833b6d` SEGLEG - both validator-side legs are FALSE; (A2) cannot be closed in-tree
+- `76ccfe5` PREFIXLIVE - `prefix_live` PROVED; root 18 -> 17, register 85 -> 84
+- `88ea7a3` D-QVM2 - ROW.Q.3 restated over a fixed validated segment (signed)
+- `7044b5a` QVMFIT - address-fit clause; VKFIT bounds are theorems (D-QVM1)
