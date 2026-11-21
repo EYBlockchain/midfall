@@ -885,7 +885,6 @@ def validateQuotientProgramGo (bytes : List Nat) :
         let (op, len) ← decodeByteQuotientInstruction bytes idx
         let (depth', maxStack') ← applyQuotientStackEffect op idx depth maxStack
         validateQuotientProgramGo bytes fuel (idx + len) depth' maxStack'
-termination_by fuel => fuel
 
 /-- rust: QVM:2009 (`validate_quotient_program`), the entry point. The byte-domain
     guard is the port's own (see `notAByteProgram`); everything past it is the Rust. -/
@@ -1764,7 +1763,6 @@ def checkedOpsGo (bytes : List Nat) :
       else do
         let (op, len) ← decodeByteQuotientInstruction bytes idx
         checkedOpsGo bytes fuel (idx + len) ((idx, op, len) :: acc)
-termination_by fuel => fuel
 
 /-- The checked walk, entered at byte 0 with one more step of fuel than the program
     has bytes, so it can only stop by reaching the end. -/
