@@ -1111,6 +1111,148 @@ def NoWriters (b : Block Op) : Prop := ∃ n, noWritersFuel n b = true
     hypothesis the caller pays for, not a free 'True'. -/
 theorem noWritersFuel_zero (b : Block Op) : noWritersFuel 0 b = false := rfl
 
+/-- The scan-clean predicate at an arbitrary syntactic position. The Step induction carries this
+    rather than the fuel itself, so the subterm facts are projections. -/
+def ScanClean (sc : Scan) : Prop := ∃ n, noWritersScan n sc = true
+
+/-- The `Step` code positions as scan positions. The loop code is scanned as a `for` with an empty
+    `init`: the `init` has already run when the `.loop` code is reached, and scanning it again is
+    harmless (the scan is an over-approximation of the reachable writer set). -/
+def codeScan : Code Op → Scan
+  | .expr e => .e e
+  | .args es => .es es
+  | .stmt s => .s s
+  | .stmts ss => .b ss
+  | .loop c post body => .s (.forLoop [] c post body)
+
+def ScanCleanCode (code : Code Op) : Prop := ScanClean (codeScan code)
+
+/-- Every function in the environment has a clean body. `Step.block`/`Step.forLoop` extend the
+    environment with `hoist` of the block being run; the scan of that block sees the same bodies. -/
+def ScanCleanFuns {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Dialect c g)) : Prop :=
+  ∀ scope ∈ funs, ∀ p ∈ scope, ScanClean (.b p.2.body)
+
+theorem scanClean_nil : ScanClean (.b ([] : Block Op)) := ⟨1, rfl⟩
+
+theorem scanClean_b_cons {s : Stmt Op} {ss : Block Op} (h : ScanClean (.b (s :: ss))) :
+    ScanClean (.s s) ∧ ScanClean (.b ss) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n =>
+      simp only [noWritersScan, noWritersStep, Bool.and_eq_true] at hn
+      exact ⟨⟨n, hn.1⟩, ⟨n, hn.2⟩⟩
+
+theorem scanClean_s_block {body : Block Op} (h : ScanClean (.s (.block body))) : ScanClean (.b body) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n => exact ⟨n, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_s_funDef {n : Ident} {ps rs : List Ident} {body : Block Op}
+    (h : ScanClean (.s (.funDef n ps rs body))) : ScanClean (.b body) := by
+  obtain ⟨f, hf⟩ := h
+  cases f with
+  | zero => simp [noWritersScan] at hf
+  | succ f => exact ⟨f, by simpa [noWritersScan, noWritersStep] using hf⟩
+
+theorem scanClean_s_exprStmt {e : Expr Op} (h : ScanClean (.s (.exprStmt e))) : ScanClean (.e e) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n => exact ⟨n, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_s_letDecl_some {xs : List Ident} {e : Expr Op}
+    (h : ScanClean (.s (.letDecl xs (some e)))) : ScanClean (.e e) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n => exact ⟨n, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_s_assign {xs : List Ident} {e : Expr Op}
+    (h : ScanClean (.s (.assign xs e))) : ScanClean (.e e) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n => exact ⟨n, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_s_cond {c : Expr Op} {body : Block Op} (h : ScanClean (.s (.cond c body))) :
+    ScanClean (.e c) ∧ ScanClean (.b body) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n =>
+      simp only [noWritersScan, noWritersStep, Bool.and_eq_true] at hn
+      exact ⟨⟨n, hn.1⟩, ⟨n, hn.2⟩⟩
+
+theorem scanClean_s_switch {c : Expr Op} {cs : List (Literal × Block Op)} {dflt : Option (Block Op)}
+    (h : ScanClean (.s (.switch c cs dflt))) :
+    ScanClean (.e c) ∧ ScanClean (.cs cs) ∧ (match dflt with | none => True | some d => ScanClean (.b d)) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n =>
+      simp only [noWritersScan, noWritersStep, Bool.and_eq_true] at hn
+      exact ⟨⟨n, hn.1.1⟩, ⟨n, hn.1.2⟩,
+        by cases dflt with
+           | none => trivial
+           | some d => exact ⟨n, by simpa using hn.2⟩⟩
+
+theorem scanClean_s_forLoop {init : Block Op} {c : Expr Op} {post body : Block Op}
+    (h : ScanClean (.s (.forLoop init c post body))) :
+    ScanClean (.b init) ∧ ScanClean (.e c) ∧ ScanClean (.b post) ∧ ScanClean (.b body) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n =>
+      simp only [noWritersScan, noWritersStep, Bool.and_eq_true] at hn
+      exact ⟨⟨n, hn.1.1.1⟩, ⟨n, hn.1.1.2⟩, ⟨n, hn.1.2⟩, ⟨n, hn.2⟩⟩
+
+theorem scanClean_e_builtin {op : Op} {args : List (Expr Op)} (h : ScanClean (.e (.builtin op args))) :
+    Op.isWriter op = false ∧ ScanClean (.es args) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n =>
+      simp only [noWritersScan, noWritersStep, Bool.and_eq_true, Bool.not_eq_true'] at hn
+      exact ⟨hn.1, ⟨n, hn.2⟩⟩
+
+theorem scanClean_e_call {fn : Ident} {args : List (Expr Op)} (h : ScanClean (.e (.call fn args))) :
+    ScanClean (.es args) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n => exact ⟨n, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_es_cons {e : Expr Op} {es : List (Expr Op)} (h : ScanClean (.es (e :: es))) :
+    ScanClean (.e e) ∧ ScanClean (.es es) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n =>
+      simp only [noWritersScan, noWritersStep, Bool.and_eq_true] at hn
+      exact ⟨⟨n, hn.1⟩, ⟨n, hn.2⟩⟩
+
+theorem scanClean_cs_cons {p : Literal} {b : Block Op} {rest : List (Literal × Block Op)}
+    (h : ScanClean (.cs ((p, b) :: rest))) : ScanClean (.b b) ∧ ScanClean (.cs rest) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [noWritersScan] at hn
+  | succ n =>
+      simp only [noWritersScan, noWritersStep, Bool.and_eq_true] at hn
+      exact ⟨⟨n, hn.1⟩, ⟨n, hn.2⟩⟩
+
+theorem scanCleanCode_stmt_block {prog : Block Op} :
+    ScanCleanCode (.stmt (.block prog)) ↔ NoWriters prog := by
+  constructor
+  · rintro ⟨n, hn⟩
+    cases n with
+    | zero => simp [noWritersScan] at hn
+    | succ n => exact ⟨n, by simpa [codeScan, noWritersScan, noWritersStep, noWritersFuel] using hn⟩
+  · rintro ⟨n, hn⟩
+    exact ⟨n + 1, by simpa [codeScan, noWritersScan, noWritersStep, noWritersFuel] using hn⟩
+
 /-- SATISFIABILITY WITNESS (D-P23, first half). The shape every precompile wrapper in
     the generated verifier has - one staticcall bound to a local, then a memory write
     that reads it - is clean, and twelve is not a magic number: the staticcall carries
@@ -1254,6 +1396,102 @@ theorem finishCall_staticcall_worldEq (st : EvmState) (response : CallResponse)
     (io is oo os : Nat) :
     WorldEq st (finishCall .staticcall st response io is oo os) := by
   simp [finishCall, WorldEq, touchMemory2, touchMemory]
+
+/-- A non-writer builtin preserves the world on its `.ok` result. The local ops are the
+    `stepOp` table above; `gas` leaves the state alone; `staticcall` installs no response world.
+    `call`/`callcode`/`delegatecall`/`create`/`create2` are `isWriter`, so they are excluded. -/
+theorem builtin_worldEq_ok {c : ExternalCalls} {g : ExternalGas} {op : Op}
+    (h : Op.isWriter op = false) {args : List U256} {st : EvmState} {rets : List U256}
+    {st' : EvmState} (hb : (Dialect c g).Builtin op args st (.ok rets st')) :
+    WorldEq st st' := by
+  change builtinWithExternal c ExternalCreates.none g op args st (.ok rets st') at hb
+  cases op with
+  | call => unfold Op.isWriter at h; cases h
+  | callcode => unfold Op.isWriter at h; cases h
+  | delegatecall => unfold Op.isWriter at h; cases h
+  | create => unfold Op.isWriter at h; cases h
+  | create2 => unfold Op.isWriter at h; cases h
+  | staticcall =>
+      unfold builtinWithExternal at hb
+      cases args with
+      | nil => change False at hb; exact hb.elim
+      | cons gas rest =>
+          cases rest with
+          | nil => change False at hb; exact hb.elim
+          | cons target rest =>
+              cases rest with
+              | nil => change False at hb; exact hb.elim
+              | cons io rest =>
+                  cases rest with
+                  | nil => change False at hb; exact hb.elim
+                  | cons is rest =>
+                      cases rest with
+                      | nil => change False at hb; exact hb.elim
+                      | cons oo rest =>
+                          cases rest with
+                          | nil => change False at hb; exact hb.elim
+                          | cons os rest =>
+                              cases rest with
+                              | nil =>
+                                  obtain ⟨response, _, hres⟩ := hb
+                                  cases hres
+                                  exact finishCall_staticcall_worldEq st response _ _ _ _
+                              | cons extra rest => change False at hb; exact hb.elim
+  | gas =>
+      unfold builtinWithExternal at hb
+      cases args with
+      | nil =>
+          obtain ⟨w, _, hres⟩ := hb
+          cases hres; simp [WorldEq]
+      | cons a rest => change False at hb; exact hb.elim
+  | _ => exact stepOp_worldEq_ok h (hr := hb)
+
+/-- The `.halt` half of the same table. A non-writer builtin's halt is `revert`/`invalid`/`stop`
+    (or a static violation for the writer call family, excluded by `h`); every one leaves the eleven
+    `WorldEq` components unchanged. `staticcall`/`gas` have no `.halt`. -/
+theorem builtin_worldEq_halt {c : ExternalCalls} {g : ExternalGas} {op : Op}
+    (h : Op.isWriter op = false) {args : List U256} {st : EvmState} {st' : EvmState}
+    (hb : (Dialect c g).Builtin op args st (.halt st')) : WorldEq st st' := by
+  change builtinWithExternal c ExternalCreates.none g op args st (.halt st') at hb
+  cases op with
+  | call => unfold Op.isWriter at h; cases h
+  | callcode => unfold Op.isWriter at h; cases h
+  | delegatecall => unfold Op.isWriter at h; cases h
+  | create => unfold Op.isWriter at h; cases h
+  | create2 => unfold Op.isWriter at h; cases h
+  | staticcall =>
+      unfold builtinWithExternal at hb
+      cases args with
+      | nil => change False at hb; exact hb.elim
+      | cons gas rest =>
+          cases rest with
+          | nil => change False at hb; exact hb.elim
+          | cons target rest =>
+              cases rest with
+              | nil => change False at hb; exact hb.elim
+              | cons io rest =>
+                  cases rest with
+                  | nil => change False at hb; exact hb.elim
+                  | cons is rest =>
+                      cases rest with
+                      | nil => change False at hb; exact hb.elim
+                      | cons oo rest =>
+                          cases rest with
+                          | nil => change False at hb; exact hb.elim
+                          | cons os rest =>
+                              cases rest with
+                              | nil =>
+                                  obtain ⟨response, _, hres⟩ := hb
+                                  cases hres
+                              | cons extra rest => change False at hb; exact hb.elim
+  | gas =>
+      unfold builtinWithExternal at hb
+      cases args with
+      | nil =>
+          obtain ⟨w, _, hres⟩ := hb
+          cases hres
+      | cons a rest => change False at hb; exact hb.elim
+  | _ => exact stepOp_worldEq_halt h (hr := hb)
 
 
 /-! ### MF-4: a failed staticcall reverts with the pinned selector
