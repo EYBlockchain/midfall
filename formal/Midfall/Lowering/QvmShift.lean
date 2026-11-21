@@ -38,12 +38,16 @@
 -- of the two per-arm packages that were stuck at index 0, 'readsWithinStride_at' and
 -- 'consumed_agrees_at' (section 5).
 --
--- WHAT IS NOT HERE, named: the congruences for BILIN7_PAIRWISE, BILIN7_ROW, MODARITH7, and the two
--- RUN arms and AFFINE_SUM - see section 6 for the exact remaining goal in each case. Those six are
--- arms plus BILIN7_ROW/BILIN7_PAIRWISE, and the latter two ARE among the 22 arms of 'evalQuotientIdentityStep_readsWithinStride' or
--- 'evalQuotientIdentityStep_consumed_agrees', so nothing in this file is blocked on them: the RUN
--- pair and AFFINE_SUM already have general-cursor read bounds from QvmWalk ('runAddMul*_noRF',
--- 'affineSum_noRF' are stated at an arbitrary 'idx' over 'bytes', not at index 0).
+-- WHAT IS NOT HERE, named: MODARITH7 is the only identity arm with no step congruence in this file;
+-- its exact remaining goal on each of the three families is named in 'PG_stepNoRF_validated_cs_-
+-- modarith7' (const-slot) and in the three 'PG_stepNoRF_validated_shif2_modarith7_*' Props (read
+-- bound, width agreement, and the congruence both depend on). Everything else is here: the flat
+-- arms and LIN7 in sections 1-3, the two RUN arms and AFFINE_SUM in section 7, and the two
+-- nested/counted limb arms BILIN7_ROW and BILIN7_PAIRWISE in section 9 - 25 of the 26 identity
+-- arms. The general-cursor packages 'readsWithinStride_at_22' and 'consumed_agrees_at_22' (section
+-- 9) reach the same 22 arms as the index-0 statements they transport, and with QvmWalk's
+-- 'runAddMul*_noRF' / 'affineSum_noRF' and 'consumed_agrees_at_affineSum' both families now stand
+-- at 25 of 26.
 --
 -- NOTHING HERE ADDS A HYPOTHESIS TO A ROW, to 'ValidV3', a bundle or the root (RULES); no statement
 -- names a fixture (D-P71); no 'native_decide'; the file has no sorry.
@@ -926,11 +930,16 @@ theorem NamesSlot_shiftFault_slot_ok {α : Type} {x : Except QVMFault α} {S : L
   section 7 below, so what was still missing from this file was BILIN7_ROW, BILIN7_PAIRWISE and
   MODARITH7.
 
-  LANDED SINCE (card CSLOT): BILIN7_ROW and BILIN7_PAIRWISE now have their step congruences too -
-  see section 8, whose authoritative content is the set of 'constSlot_*' theorems plus
-  'evalQuotientIdentityStep_shift' extended by 'evalQuotientIdentityStep_constSlot_namedByWalker_-
-  folded'. MODARITH7 remains the only identity arm with neither a step congruence nor a const-slot
-  correspondence in this file; its exact goal state is named in 'PG_stepNoRF_validated_cs_modarith7'. -/
+  LANDED SINCE (card CSLOT): BILIN7_ROW and BILIN7_PAIRWISE now have their CONST-SLOT
+  correspondence - section 8's authoritative content is the set of 'constSlot_*' theorems plus
+  'evalQuotientIdentityStep_constSlot_namedByWalker_folded'. CORRECTION, card SHIF2: what CSLOT
+  wrote here claimed those two arms had their STEP CONGRUENCES from section 8, and they did not -
+  section 8 works on the slot axis, where 'NamesSlot' is a forall over the fault and no transport
+  is needed. The step congruences for those two arms are the axes' other obligation and landed in
+  section 9 (card SHIF2), which is what the two general-cursor packages needed. MODARITH7 remains
+  the only identity arm with neither a step congruence nor a const-slot correspondence in this
+  file; its exact goal state is named in 'PG_stepNoRF_validated_cs_modarith7' and, for the other
+  two families, in the 'PG_stepNoRF_validated_shif2_modarith7_*' Props. -/
 
 
 theorem shift_remaining_arms_are_the_dynamic_and_pairwise_ones : True := trivial
@@ -2468,5 +2477,375 @@ theorem evalQuotientIdentityStep_constSlot_namedByWalker_25
   · exact evalQuotientIdentityStep_constSlot_namedByWalker bytes consts idx op stack mem hflat hw
   · exact evalQuotientIdentityStep_constSlot_namedByWalker_folded bytes consts idx op stack mem h6 hw
 
+
+/-! ### Section 9: the two nested/counted limb arms on the SHIFT axis, and the AFFINE_SUM width
+    agreement (card SHIF2)
+
+    CSLOT closed family 3 (const-slot) for six of its seven arms and left two corrections that this
+    section acts on. FIRST, the axes are INDEPENDENT: LIN7 already had 'step_shift_lin7' and still
+    needed a slot correspondence, so a congruence on one axis buys nothing on the other. That cuts
+    the other way too - BILIN7_ROW and BILIN7_PAIRWISE had their slot correspondence from section 8
+    but NO shift congruence, which is why they were the two arms 'readsWithinStride_at' and
+    'consumed_agrees_at' could not reach even though their index-0 forms were proved long ago. This
+    section supplies those two congruences, and the two general-cursor packages immediately widen
+    from 20 arms to 22.
+
+    SECOND, the match-auxiliary trap is real but it is a TOOL, not an obstacle, on this axis. Both
+    arms are counted folds whose per-iteration body is a generated lambda inside 'VmReference', so
+    'rw' cannot see the goal's copy of it. The fix is NBF's: state the transport about a VARIABLE
+    body and bridge the concrete arm to it by 'rfl'. Here the bridges already existed - CSLOT wrote
+    'limbRowForm_unfold', 'pwInnerBody_unfold', 'pwOuterBody_unfold' and
+    'limbPairwiseForm_unfold' for the slot axis - so this section adds no new body definitions at
+    all; it reuses them on the shift axis. 'pwInnerBody'/'pwOuterBody' are the interpreter's own
+    nested-fold bodies (section 8), and the outer state '(acc, mem)' has NO cursor component, so
+    the outer transport is 'foldRangeIdxM_shift_id' with the inner body's transport as its
+    hypothesis - exactly the shape section 6 predicted.
+
+    WHAT THIS SECTION LANDS, counted:
+      * family 1 (general-cursor READ BOUND): 20 arms -> 22 via 'evalQuotientIdentityStep_shift_22'
+        and 'evalQuotientIdentityStep_readsWithinStride_at_22'. With QvmWalk's 'runAddMul*_noRF' and
+        'affineSum_noRF' (already stated at an arbitrary cursor) that is 25 of the 26 identity arms;
+        MODARITH7 alone is left, named in 'PG_stepNoRF_validated_shif2_modarith7_read'.
+      * family 2 (general-cursor WIDTH AGREEMENT): 20 arms -> 22 via
+        'evalQuotientIdentityStep_consumed_agrees_at_22', plus the two RUN arms (NBF) and AFFINE_SUM
+        ('consumed_agrees_at_affineSum', whose index-0 form 'consumed_agrees_affineSum' is proved
+        here because the counted-block bodies it needs - 'runFoldL'/'runFoldP' and
+        'foldRangeIdxM_runL_cursor' - are this file's, not QvmWalk's). That is 25 of 26; MODARITH7
+        alone is left, named in 'PG_stepNoRF_validated_shif2_modarith7_width' together with the
+        congruence it depends on, 'PG_stepNoRF_validated_shif2_modarith7_shift'.
+
+    NOTHING HERE ADDS A HYPOTHESIS TO A ROW, to 'ValidV3', a bundle or the root (RULES); no
+    statement names a fixture (D-P71); no 'native_decide'; this section adds no sorry. -/
+
+/-- THE ROW BLOCK's transport. 'limbRowForm' is a u16 read, then a memory hit, then the linear
+    limb block at 'k + 2'. Section 6 named the cost correctly: the memory hit's pair-pattern sits
+    BETWEEN the two reads, so the transport has to be pushed past it before the inner congruence can
+    be cited. Measured: 'simp only [bind, Except.bind]' resolves the pair-pattern to projections,
+    which is what lets 'limbLinearForm_shift' be cited under 'conv_lhs' (the dropped side would
+    otherwise be reachable by the same pattern with a different instantiation). -/
+theorem limbRowForm_shift (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (idx k : Nat) :
+    Midfall.Generator.limbRowForm bytes consts mem (idx + k)
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.limbRowForm (bytes.drop idx) consts mem k) := by
+  rw [limbRowForm_unfold bytes consts mem (idx + k),
+      limbRowForm_unfold (bytes.drop idx) consts mem k]
+  rw [readU16_shift bytes idx k]
+  cases h : Midfall.Generator.readU16 (bytes.drop idx) k with
+  | error e => simp only [mapErr, bind, Except.bind]
+  | ok lhs =>
+      rw [mapErr_ok]
+      simp only [bind, Except.bind]
+      conv_lhs => rw [show idx + k + 2 = idx + (k + 2) by omega,
+                      limbLinearForm_shift bytes consts (mem.literal lhs).2 idx (k + 2)]
+      cases h2 : Midfall.Generator.limbLinearForm (bytes.drop idx) consts (mem.literal lhs).2 (k + 2) with
+      | ok x => simp only [mapErr_ok, bind, Except.bind]
+      | error e => simp only [mapErr, bind, Except.bind]
+
+/-- ARM BILIN7_ROW's step congruence: the same three lines as 'step_shift_lin7', one layer out. -/
+theorem step_shift_bilin7Row (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpBilin7Row stack mem
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0
+          qOpBilin7Row stack mem) := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := { decide := true }) only [reduceIte]
+  rw [limbRowForm_shift bytes consts mem idx 1]
+  simp only [← mapErr_bind]
+  simp only [mapErr_ok]
+
+/-- THE INNER PAIRWISE BLOCK's transport: the coefficient read ('indexOrPanic') and the const lookup
+    both move with the cursor; the two memory hits do not depend on 'bytes' at all, so the pair
+    pattern is resolved to projections and the same congruence holds with the SAME 'lhsValue' and
+    'rhsBase' on both sides - which is legitimate precisely because 'readU16_shift'/'indexOrPanic_shift'
+    return the same VALUE on the ok branch and only the fault moves. -/
+theorem pwInnerBody_shift (bytes : List Nat) (consts : List Word256)
+    (idx K rhsBase i : Nat) (lhsValue : QVMFr) :
+    ∀ j s, pwInnerBody bytes consts (idx + K) rhsBase i lhsValue j s
+      = mapErr (shiftFault idx)
+        (pwInnerBody (bytes.drop idx) consts K rhsBase i lhsValue j s) := by
+  intro j s
+  obtain ⟨acc, m⟩ := s
+  rw [pwInnerBody_unfold bytes consts (idx + K) rhsBase i lhsValue j acc m,
+      pwInnerBody_unfold (bytes.drop idx) consts K rhsBase i lhsValue j acc m]
+  simp only [bind, Except.bind]
+  conv_lhs => rw [show idx + K + i + j = idx + (K + i + j) by omega,
+                  indexOrPanic_shift bytes idx (K + i + j)]
+  cases h : Midfall.Generator.indexOrPanic (bytes.drop idx) (K + i + j) with
+  | error e => simp only [mapErr, bind, Except.bind]
+  | ok slot =>
+      simp only [mapErr_ok, bind, Except.bind]
+      conv_lhs => rw [constAt_shift consts slot idx K]
+      cases h2 : Midfall.Generator.constAt consts slot K with
+      | ok c => simp only [mapErr_ok, bind, Except.bind]
+      | error e => simp only [mapErr, bind, Except.bind]
+
+/-- THE OUTER PAIRWISE BLOCK's transport. The outer state is '(acc, mem)' with no cursor component,
+    so the fold transport is the 'S = id' form and the whole obligation is the inner fold's own
+    transport - the shape section 6 called 'mechanically the same as limbLinBody_shift'. -/
+theorem pwOuterBody_shift (bytes : List Nat) (consts : List Word256)
+    (idx K lhsBase rhsBase : Nat) :
+    ∀ i s, pwOuterBody bytes consts (idx + K) lhsBase rhsBase i s
+      = mapErr (shiftFault idx)
+        (pwOuterBody (bytes.drop idx) consts K lhsBase rhsBase i s) := by
+  intro i s
+  obtain ⟨acc, m⟩ := s
+  rw [pwOuterBody_unfold bytes consts (idx + K) lhsBase rhsBase i acc m,
+      pwOuterBody_unfold (bytes.drop idx) consts K lhsBase rhsBase i acc m]
+  simp only [bind, Except.bind]
+  exact foldRangeIdxM_shift_id (shiftFault idx) quotientVmLimbs _ _ _
+    (pwInnerBody_shift bytes consts idx K rhsBase i _)
+
+/-- THE PAIRWISE BLOCK's transport: two u16 reads, the up-front bounds check on the coefficient
+    block, then the nested fold. The bounds check is the third read and it shifts too, which is the
+    hazard-5 pair (VmReference.lean:606-632) this arm is the interpreter-side half of. -/
+theorem limbPairwiseForm_shift (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (idx k : Nat) :
+    Midfall.Generator.limbPairwiseForm bytes consts mem (idx + k)
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.limbPairwiseForm (bytes.drop idx) consts mem k) := by
+  rw [limbPairwiseForm_unfold bytes consts mem (idx + k),
+      limbPairwiseForm_unfold (bytes.drop idx) consts mem k]
+  rw [readU16_shift bytes idx k]
+  cases h1 : Midfall.Generator.readU16 (bytes.drop idx) k with
+  | error e => simp only [mapErr, bind, Except.bind]
+  | ok lhsBase =>
+      rw [mapErr_ok]
+      simp only [bind, Except.bind]
+      rw [show idx + k + 2 = idx + (k + 2) by omega, readU16_shift bytes idx (k + 2)]
+      cases h2 : Midfall.Generator.readU16 (bytes.drop idx) (k + 2) with
+      | error e => simp only [mapErr, bind, Except.bind]
+      | ok rhsBase =>
+          rw [mapErr_ok]
+          simp only [bind, Except.bind]
+          rw [show idx + k + 4 + quotientVmPairwiseCoeffs - 1 =
+                  idx + (k + 4 + quotientVmPairwiseCoeffs - 1) by omega,
+              byteAt_shift bytes idx (k + 4 + quotientVmPairwiseCoeffs - 1)]
+          cases h3 : Midfall.Generator.byteAt (bytes.drop idx)
+              (k + 4 + quotientVmPairwiseCoeffs - 1) with
+          | error e => simp only [mapErr, bind, Except.bind]
+          | ok _ =>
+              rw [mapErr_ok]
+              simp only [bind, Except.bind]
+              rw [show idx + k + 4 = idx + (k + 4) by omega]
+              conv_lhs => rw [foldRangeIdxM_shift_id (shiftFault idx) quotientVmLimbs
+                    (qvmFrZero, mem)
+                    (pwOuterBody bytes consts (idx + (k + 4)) lhsBase rhsBase)
+                    (pwOuterBody (bytes.drop idx) consts (k + 4) lhsBase rhsBase)
+                    (pwOuterBody_shift bytes consts idx (k + 4) lhsBase rhsBase)]
+              cases hf : Midfall.Generator.foldRangeIdxM quotientVmLimbs (qvmFrZero, mem)
+                  (pwOuterBody (bytes.drop idx) consts (k + 4) lhsBase rhsBase) with
+              | ok y => simp only [mapErr_ok, bind, Except.bind]
+              | error e => simp only [mapErr, bind, Except.bind]
+
+/-- ARM BILIN7_PAIRWISE's step congruence. -/
+theorem step_shift_bilin7Pairwise (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpBilin7Pairwise stack mem
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0
+          qOpBilin7Pairwise stack mem) := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := { decide := true }) only [reduceIte]
+  rw [limbPairwiseForm_shift bytes consts mem idx 1]
+  simp only [← mapErr_bind]
+  simp only [mapErr_ok]
+
+/-- THE COMBINED CONGRUENCE, 22 ARMS: section 5's 20 plus the two nested/counted limb arms this
+    section proves. Stated as a union rather than by editing section 5 in place because
+    'pwInnerBody'/'pwOuterBody' are section 8's definitions, so the two new arm congruences cannot
+    be cited before them - the same reason CSLOT unioned the slot axis as '_25' instead of widening
+    the 19-arm statement. The authoritative list of 'step_shift_*' theorems is now: section 5's 20,
+    section 7's three, and these two - 25 of the 26 identity arms, MODARITH7 alone left. -/
+theorem evalQuotientIdentityStep_shift_22 (op : Nat)
+    (hop : (op = qOpPushConst \/ op = qOpPushMemLiteral \/ op = qOpPushMemToken \/ op = qOpPushMemTokenOffset \/ op = qOpPushMemU16 \/ op = qOpAdd \/ op = qOpMul \/ op = qOpNeg \/ op = qOpPushConstU8 \/ op = qOpAddConstU8 \/ op = qOpMulConstU8 \/ op = qOpAddConst \/ op = qOpMulConst \/ op = qOpAddMemU16 \/ op = qOpMulMemU16 \/ op = qOpAddMulMemMem \/ op = qOpPow5 \/ op = qOpAddMulMemMemConstU8 \/ op = qOpAddMulConstU8MemU16 \/ op = qOpLin7)
+      \/ op = qOpBilin7Row \/ op = qOpBilin7Pairwise)
+    (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx op stack mem
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0 op stack mem) := by
+  rcases hop with (h20 | hpair)
+  · exact evalQuotientIdentityStep_shift op h20 bytes idx consts stack mem
+  · rcases hpair with (h|h) <;> subst h
+    · exact step_shift_bilin7Row bytes idx consts stack mem
+    · exact step_shift_bilin7Pairwise bytes idx consts stack mem
+
+/-- FAMILY 1 AT A GENERAL CURSOR, 22 ARMS. The index-0 form
+    'evalQuotientIdentityStep_readsWithinStride' already covered BILIN7_ROW and BILIN7_PAIRWISE; what
+    was missing was never the read bound, only the congruence to transport it along. With QvmWalk's
+    'runAddMul*_noRF' and 'affineSum_noRF' this is 25 of the 26 identity arms. -/
+theorem evalQuotientIdentityStep_readsWithinStride_at_22
+    (op : Nat)
+    (hop : (op = qOpPushConst \/ op = qOpPushMemLiteral \/ op = qOpPushMemToken \/ op = qOpPushMemTokenOffset \/ op = qOpPushMemU16 \/ op = qOpAdd \/ op = qOpMul \/ op = qOpNeg \/ op = qOpPushConstU8 \/ op = qOpAddConstU8 \/ op = qOpMulConstU8 \/ op = qOpAddConst \/ op = qOpMulConst \/ op = qOpAddMemU16 \/ op = qOpMulMemU16 \/ op = qOpAddMulMemMem \/ op = qOpPow5 \/ op = qOpAddMulMemMemConstU8 \/ op = qOpAddMulConstU8MemU16 \/ op = qOpLin7)
+      \/ op = qOpBilin7Row \/ op = qOpBilin7Pairwise)
+    (bytes : List Nat) (idx : Nat) (rest : List Nat)
+    (hdrop : bytes.drop idx = op :: rest)
+    (len : Nat)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen (op :: rest) 0 = .ok len)
+    (hfit : len ≤ (op :: rest).length)
+    (consts : List Word256) (stack : List QVMFr) (mem : QuotientRefMemory) :
+    NoRF (Midfall.Generator.evalQuotientIdentityStep bytes consts idx op stack mem) := by
+  rw [evalQuotientIdentityStep_shift_22 op hop bytes idx consts stack mem,
+      NoRF_mapErr_shiftFault]
+  rw [hdrop]
+  refine evalQuotientIdentityStep_readsWithinStride op ?_ rest len hlen hfit consts stack mem
+  tauto
+
+/-- FAMILY 2 AT A GENERAL CURSOR, 22 ARMS: the cursor-shifted twin of
+    'evalQuotientIdentityStep_consumed_agrees' (Qvm.lean:1197), which already covered these two arms
+    at index 0. -/
+theorem evalQuotientIdentityStep_consumed_agrees_at_22
+    (op : Nat)
+    (hop : (op = qOpPushConst \/ op = qOpPushMemLiteral \/ op = qOpPushMemToken \/ op = qOpPushMemTokenOffset \/ op = qOpPushMemU16 \/ op = qOpAdd \/ op = qOpMul \/ op = qOpNeg \/ op = qOpPushConstU8 \/ op = qOpAddConstU8 \/ op = qOpMulConstU8 \/ op = qOpAddConst \/ op = qOpMulConst \/ op = qOpAddMemU16 \/ op = qOpMulMemU16 \/ op = qOpAddMulMemMem \/ op = qOpPow5 \/ op = qOpAddMulMemMemConstU8 \/ op = qOpAddMulConstU8MemU16 \/ op = qOpLin7)
+      \/ op = qOpBilin7Row \/ op = qOpBilin7Pairwise)
+    (bytes : List Nat) (idx : Nat) (rest : List Nat)
+    (hdrop : bytes.drop idx = op :: rest)
+    (consts : List Word256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep bytes consts idx op stack mem = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen (op :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  have h2 : Midfall.Generator.evalQuotientIdentityStep (op :: rest) consts 0 op stack mem
+      = .ok step := by
+    have h3 := step_ok_congr bytes idx consts stack mem step op
+      (evalQuotientIdentityStep_shift_22 op hop bytes idx consts stack mem)
+    rw [hdrop] at h3
+    exact (h3.mp hstep)
+  refine evalQuotientIdentityStep_consumed_agrees op ?_ rest consts stack mem step len h2 hlen
+  tauto
+
+/-- ARM AFFINE_SUM'S WIDTH AGREEMENT AT INDEX 0 - the third of the four family-2 arms and the last
+    of the three that needed no new congruence (section 7 landed 'step_shift_affineSum'). The
+    interpreter's consumed is '5 + used' over TWO chained counted blocks and the validator's stride
+    for the same bytes is '1 + 2*2 + linCount*3 + productCount*5'; the two blocks advance by 3 and
+    5 per term, so the two measurements agree by 'foldRangeIdxM_runL_cursor' and
+    'foldRangeIdxM_runP_cursor'. It is proved HERE rather than in QvmWalk because the counted-block
+    bodies it needs are this file's 'runFoldL'/'runFoldP' and their cursor lemmas. The zero-count
+    refusal is discharged as a fault that names no width, not by a hypothesis - cf. QvmWalk's header. -/
+theorem consumed_agrees_affineSum (rest : List Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep (qOpAffineSum :: rest) consts 0
+      qOpAffineSum stack mem = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen (qOpAffineSum :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  have h0 := step_eq_affineSumArmBody (qOpAffineSum :: rest) 0 consts stack mem
+  rw [h0] at hstep
+  unfold affineSumArmBody at hstep
+  obtain ⟨lc, hlc, hstep⟩ := peel_bind hstep
+  obtain ⟨pc, hpc, hstep⟩ := peel_bind hstep
+  by_cases hc : (lc != 0 && pc != 0) = true
+  · rw [if_pos hc] at hstep
+    obtain ⟨p, hps, hstep⟩ := peel_bind hstep
+    obtain ⟨a, ha, hstep⟩ := peel_bind hstep
+    obtain ⟨b, hb, hstep⟩ := peel_bind hstep
+    have hrec := Except.ok.inj hstep
+    subst hrec
+    have hcurA : a.2.1 = 0 + 3 * lc :=
+      foldRangeIdxM_runL_cursor (qOpAffineSum :: rest) consts 5 lc 0 p.1 0 mem a ha
+    have hcurB : b.2.1 = a.2.1 + 5 * pc :=
+      foldRangeIdxM_runP_cursor (qOpAffineSum :: rest) consts 5 pc 0 a.1 a.2.1 a.2.2 b hb
+    have hlen' : len = 1 + 2 * quotientVmByteU16Bytes
+        + lc * (quotientVmByteU16Bytes + 1) + pc * (2 * quotientVmByteU16Bytes + 1) := by
+      unfold Midfall.Generator.QuotientValidator.quotientOpLen at hlen
+      have hb : Midfall.Generator.QuotientValidator.byteAtPanic (qOpAffineSum :: rest) 0 3009
+          = .ok qOpAffineSum := rfl
+      rw [hb] at hlen
+      simp only [bind, Except.bind] at hlen
+      rw [if_neg (by decide), if_neg (by decide), if_pos (by decide)] at hlen
+      unfold Midfall.Generator.QuotientValidator.quotientAffineSumOpLen at hlen
+      have h1 : Midfall.Generator.QuotientValidator.readU16 (qOpAffineSum :: rest) (0 + 1) = .ok lc :=
+        (readU16_iff_readU16 (bytes := qOpAffineSum :: rest) (k := 0 + 1)).mp hlc
+      have h2 : Midfall.Generator.QuotientValidator.readU16 (qOpAffineSum :: rest) (0 + 3) = .ok pc :=
+        (readU16_iff_readU16 (bytes := qOpAffineSum :: rest) (k := 0 + 3)).mp hpc
+      rw [h1, h2] at hlen
+      simp only [bind, Except.bind] at hlen
+      exact (Except.ok.inj hlen).symm
+    show 5 + b.2.1 = len
+    rw [hcurB, hcurA, hlen']
+    have hq : quotientVmByteU16Bytes = 2 := rfl
+    rw [hq]
+    ring
+  · rw [if_neg hc] at hstep
+    cases hstep
+
+/-- THE WIDTH AGREEMENT AT A GENERAL CURSOR for ARM AFFINE_SUM: the index-0 form above transported
+    along section 7's congruence, exactly NBF's pattern for the RUN pair. -/
+theorem consumed_agrees_at_affineSum (bytes : List Nat) (idx : Nat) (rest : List Nat)
+    (hdrop : bytes.drop idx = qOpAffineSum :: rest)
+    (consts : List Word256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+      qOpAffineSum stack mem = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen
+      (qOpAffineSum :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  have h2 : Midfall.Generator.evalQuotientIdentityStep (qOpAffineSum :: rest)
+      consts 0 qOpAffineSum stack mem = .ok step := by
+    have h3 := step_ok_congr bytes idx consts stack mem step qOpAffineSum
+      (step_shift_affineSum bytes idx consts stack mem)
+    rw [hdrop] at h3
+    exact h3.mp hstep
+  exact consumed_agrees_affineSum rest consts stack mem step len h2 hlen
+
+/-- PG_SHIF2 - THE MODARITH7 REMAINDER ON BOTH REMAINING FAMILIES, named as three Props and NOT
+    added to the row, to a bundle, to 'ValidV3' or to the root (RULES: "if a fact is missing, STOP,
+    record a PG_* row with the exact goal state"). CSLOT named this arm's family-3 remainder in
+    'PG_stepNoRF_validated_cs_modarith7'; these are the family-1 and family-2 remainders, and the
+    reason all three are still open is the same single missing fact, so it is named first:
+
+    (i) 'PG_..._shift' - the STEP CONGRUENCE for the arm. Unlike the other 25 arms, MODARITH7 has
+        no 'step_shift_*' anywhere: its header's branch points ('afterCond', 'afterConst') are
+        computed from a flag byte read AT the cursor, so the transport needs the header congruence
+        section 6 describes ('afterCond'/'afterConst' at 'idx + k' are 'idx +' the values at 'k'),
+        proved inside the do-block under the binders.
+    (ii) family 1 needs (i) plus the index-0 read bound, which Qvm.lean:1861 also does not supply
+        (five chained counted blocks, 'fold_chain_step' iterated five times with a different body
+        each time).
+    (iii) family 2 needs (i) plus the index-0 width agreement, which does not exist either; the
+        validator's 'quotientModarith7OpLen' is a sum over five blocks whose initial cursors are
+        the previous blocks' outputs.
+
+    Each Prop below is the GENERAL-CURSOR form, which subsumes the index-0 one (take 'idx = 0' and
+    'bytes = op :: rest'), so nothing is hidden by the phrasing. NO CONTRACT DEFECT WAS FOUND ON
+    THIS ARM: nothing here exhibits a validated program whose step faults, and nothing here rules
+    one out - the arm was not measured. -/
+def PG_stepNoRF_validated_shif2_modarith7_shift : Prop :=
+  ∀ (bytes : List Nat) (idx : Nat) (consts : List Word256) (stack : List QVMFr)
+    (mem : QuotientRefMemory),
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpModarith7 stack mem
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0
+          qOpModarith7 stack mem)
+
+/-- PG_SHIF2 (ii) - the family-1 remainder for MODARITH7 at a general cursor. -/
+def PG_stepNoRF_validated_shif2_modarith7_read : Prop :=
+  ∀ (bytes : List Nat) (consts : List Word256) (idx : Nat) (rest : List Nat)
+    (_hdrop : bytes.drop idx = qOpModarith7 :: rest) (len : Nat)
+    (_hlen : Midfall.Generator.QuotientValidator.quotientOpLen (qOpModarith7 :: rest) 0 = .ok len)
+    (_hfit : len ≤ (qOpModarith7 :: rest).length)
+    (stack : List QVMFr) (mem : QuotientRefMemory),
+    NoRF (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpModarith7 stack mem)
+
+/-- PG_SHIF2 (iii) - the family-2 remainder for MODARITH7 at a general cursor. -/
+def PG_stepNoRF_validated_shif2_modarith7_width : Prop :=
+  ∀ (bytes : List Nat) (idx : Nat) (rest : List Nat)
+    (_hdrop : bytes.drop idx = qOpModarith7 :: rest)
+    (consts : List Word256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (step : IdentityStep) (len : Nat),
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpModarith7 stack mem = .ok step →
+    Midfall.Generator.QuotientValidator.quotientOpLen (qOpModarith7 :: rest) 0 = .ok len →
+    step.consumed = len
+
+#print axioms Midfall.Lowering.QvmShift.limbRowForm_shift
+#print axioms Midfall.Lowering.QvmShift.limbPairwiseForm_shift
+#print axioms Midfall.Lowering.QvmShift.step_shift_bilin7Row
+#print axioms Midfall.Lowering.QvmShift.step_shift_bilin7Pairwise
+#print axioms Midfall.Lowering.QvmShift.evalQuotientIdentityStep_shift_22
+#print axioms Midfall.Lowering.QvmShift.evalQuotientIdentityStep_readsWithinStride_at_22
+#print axioms Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22
+#print axioms Midfall.Lowering.QvmShift.consumed_agrees_affineSum
+#print axioms Midfall.Lowering.QvmShift.consumed_agrees_at_affineSum
 
 end Midfall.Lowering.QvmShift

@@ -30,7 +30,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
 - Never hand-edit SORRY.md.
 - Baseline: register 85 data rows / 18 ROOT (a main-tree reading of 86 is stale oleans, not a
   contradiction); cones lowering_correct 18, lowering_sound 8; fingerprint 14,109 tokens /
-  0x3149ae4f...bef176; KAT 1633/118.
+  0x3149ae4f...bef176; KAT 1640/118 (pin moved 1633->1640 by QSTREAM's 7 new gates).
 
 ## Hard bounds
 - D-P71: theorems are generic in the render, program, context and template table. No fixture in a

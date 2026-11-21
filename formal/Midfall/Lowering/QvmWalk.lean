@@ -28,10 +28,15 @@
 -- a chain of single-block applications rather than a new induction.
 --
 -- LANDED HERE: the chaining tool, the AFFINE_SUM read bound (the first of the two gaps at
--- Qvm.lean:1861), and the width agreement for both RUN arms. STILL OPEN after this file, named
--- precisely: the MODARITH7 read bound, the AFFINE_SUM and MODARITH7 width agreements, and the
--- seven missing const-slot correspondences (the three folded static arms LIN7 / BILIN7_ROW /
--- BILIN7_PAIRWISE plus the four dynamic ones) - see the package report.
+-- Qvm.lean:1861), and the width agreement for both RUN arms. LANDED SINCE (card CSLOT): the seven
+-- const-slot correspondences, six of the seven (MODARITH7 named in QvmShift's
+-- 'PG_stepNoRF_validated_cs_modarith7'). LANDED SINCE (card SHIF2): the AFFINE_SUM width
+-- agreement - 'consumed_agrees_affineSum' at index 0 and 'consumed_agrees_at_affineSum' at a
+-- cursor, both in QvmShift section 9, because the counted-block bodies it needs are QvmShift's
+-- 'runFoldL'/'runFoldP' and their cursor lemmas, not anything in this file. STILL OPEN after all
+-- of that, named precisely: the MODARITH7 read bound and the MODARITH7 width agreement, both at a
+-- general cursor - QvmShift's 'PG_stepNoRF_validated_shif2_modarith7_read' and
+-- '..._width', plus the step congruence both depend on, '..._shift'. See the package reports.
 --
 -- CONDITIONAL BY CONSTRUCTION, exactly as section 7 and the RUN pair are. Each lemma takes the
 -- arm's own decoded counts as reader equations ('readU16 bytes (idx+1) = .ok n') rather than
