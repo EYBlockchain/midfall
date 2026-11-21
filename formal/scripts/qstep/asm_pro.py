@@ -223,7 +223,7 @@ def ind(s, n):
 def dne(a, b):
     return "(by decide : (" + q + a + q + " : Ident) " + ne + " " + q + b + q + ")"
 
-E15ENV = B[6]["env"]
+E15ENV = "(" + B[6]["env"] + ")"  # MOD7D fix 6: spliced bare after funs
 E15ST = B[6]["state"]
 
 # the values the two optional branches assign, read back out of the generated environment strings
@@ -363,6 +363,7 @@ S4 = nl.join([
     "              venvSet_set_same ((\"q_flags\", fl) :: V) " + q + "q_pc" + q + " pc1 " + Y4 + ",",
     "              venvSet_cons_ne V " + q + "q_flags" + q + " " + q + "q_pc" + q + " fl " + Y4 + " " +
         dne("q_flags", "q_pc") + "]",
+    "          exact rfl",
     "        rw [← hnorm4]",
     "        exact Step.block (D := Bridge.Dialect c g) (body := " + BODY4 + ") hchain4",
 ])
@@ -387,16 +388,13 @@ S6 = nl.join([
     "    · refine Step.ifTrue (D := Bridge.Dialect c g) " + P["COND_AND1_NAME"] + " ?_ ?_",
     "      · rw [hb1]; exact (by decide : (BitVec.ofNat 256 2 : U256) ≠ 0)",
     "      · " + ind(P["SEG_G"], 6).strip(),
-    "      have hchain6 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) " + BODY6 + " :: funs) E5 stA (.stmts " + BODY6 + ")",
-    "          (.sres (" + G[2]["env"] + ") " + G[2]["state"] + " .normal) := by",
-    "        refine Step.seqCons (D := Bridge.Dialect c g) (V1 := " + G[0]["env"] + ") (st1 := " +
-        G[0]["state"] + ") " + G[0]["name"] + " ?_",
-    "        refine Step.seqCons (D := Bridge.Dialect c g) (V1 := " + G[1]["env"] + ") (st1 := " +
-        G[1]["state"] + ") " + G[1]["name"] + " ?_",
-    "        exact Step.seqCons (D := Bridge.Dialect c g) (V1 := " + G[2]["env"] + ") (st1 := " +
-        G[2]["state"] + ") " + G[2]["name"] + " (Step.seqNil (D := Bridge.Dialect c g))",
-    "      have hnorm6 : restore E5 (" + G[2]["env"] + ") = E6 := by",
-    "        rw [venvSet_cons_ne E5 " + q + "qconst" + q + " " + q + "q_pc" + q + " " + Q6 + " " + PCB6 + " " +
+    "        have hchain6 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) " + BODY6 + " :: funs) E5 stA (.stmts " + BODY6 + ")",
+    "            (.sres (" + G[2]["env"] + ") " + G[2]["state"] + " .normal) := by",
+    "          exact Step.seqCons (D := Bridge.Dialect c g) (V1 := " + G[0]["env"] + ") (st1 := " + G[0]["state"] + ") " + G[0]["name"] + " (",
+    "            Step.seqCons (D := Bridge.Dialect c g) (V1 := " + G[1]["env"] + ") (st1 := " + G[1]["state"] + ") " + G[1]["name"] + " (",
+    "              Step.seqCons (D := Bridge.Dialect c g) (V1 := " + G[2]["env"] + ") (st1 := " + G[2]["state"] + ") " + G[2]["name"] + " (Step.seqNil (D := Bridge.Dialect c g))))",
+    "        have hnorm6 : restore E5 (" + G[2]["env"] + ") = E6 := by",
+    "          rw [venvSet_cons_ne E5 " + q + "qconst" + q + " " + q + "q_pc" + q + " " + Q6 + " " + PCB6 + " " +
         dne("qconst", "q_pc") + ",",
     "            venvSet_cons_ne (VEnv.set E5 " + q + "q_pc" + q + " " + PCB6 + ") " + q + "qconst" + q + " " +
         q + "q_acc" + q + " " + Q6 + " " + ACC6 + " " + dne("qconst", "q_acc") + ",",
@@ -412,8 +410,9 @@ S6 = nl.join([
     "            venvSet_cons_ne (VEnv.set V \"q_pc\" pcA) \"q_flags\" \"q_pc\" fl " + PCB6 + " " +
         dne("q_flags", "q_pc") + ",",
     "            venvSet_set_same V \"q_pc\" pcA " + PCB6 + "]",
-    "      rw [← hnorm6]",
-    "      exact Step.block (D := Bridge.Dialect c g) (body := " + BODY6 + ") hchain6",
+    "          exact rfl",
+    "        rw [← hnorm6]",
+    "        exact Step.block (D := Bridge.Dialect c g) (body := " + BODY6 + ") hchain6",
 ])
 
 S14 = nl.join([
@@ -425,6 +424,13 @@ S14 = nl.join([
     "      (.sres " + E15ENV + " " + E15ST + " .normal) :=",
     "    Step.ifFalse (Step.var (D := Bridge.Dialect c g) hhtE15) rfl",
 ])
+
+# MOD7D fix 5 (NOT in MOD7C's list of four): segment A's 'have h1..h17' and segment B's
+# 'have h1..h47' are BOTH emitted at the theorem's top level, and B comes last, so B's h10/h17
+# SHADOW A's and the chain's first two links were handed segment B's derivations. Rename A's.
+P["SEG_A"] = re.sub(r"\bh(\d+)\b", r"aH\1", P["SEG_A"])
+for _a in A:
+    _a["name"] = re.sub(r"\bh(\d+)\b", r"aH\1", _a["name"])
 
 LINKS = [(A[0]["env"], A[0]["state"], A[0]["name"]),
          (A[1]["env"], A[1]["state"], A[1]["name"]),
@@ -453,5 +459,10 @@ for _pass in range(3):
         T = T.replace("@@" + k + "@@", v)
 left = sorted(set(re.findall(r"@@[A-Za-z0-9_]+@@", T)))
 assert not left, left
+# MOD7D fix 3c: pin the byte-mask literal. With the env ascribed the expected type is
+# '(Bridge.Dialect c g).Value', which type-class search will not unfold to 'BitVec 256', so
+# 'x &&& 0xff' leaves 'failed to synthesize HAnd (BitVec 256) Nat (Bridge.Dialect c g).Value'.
+# '(0xff : U256)' elaborates to the same term and removes the search.
+T = T.replace("&&& 0xff", "&&& (0xff : U256)")
 open(os.path.join(HERE, "pro_lean.txt"), "w").write(T)
 print("pro_lean.txt chars", len(T), "lines", len(T.split(nl)))

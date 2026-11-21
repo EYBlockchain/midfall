@@ -18,6 +18,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gs3 import *  # noqa: E402
 
+import gs3 as _gs3
+# MOD7D: gs3.ASCRIBE stays None. Ascribing EVERY rendered environment corrupts the proof-term
+# arguments (X4/Y4/F[1]["env"] are spliced into rw lists, where a trailing ": VEnv (...)" is a
+# syntax error). Only the lk() 'VEnv.get' statements below need the ascription.
+_gs3.ASCRIBE = None
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "pro_parts.py")
 
@@ -233,8 +240,20 @@ stepsH = list(gH.steps)
 # ------------------------------------------------- the 'VEnv.get' chains the assembly needs
 def lk(gen, layers, x, hyp, env=None):
     vv, prf = gen.lookup(layers, x)
-    e = env if env is not None else "(" + render(layers, gen.base) + ")"
-    return "  have %s : VEnv.get %s %s = some %s := (%s)" % (hyp, e, q(x), vv, prf)
+    if env is not None:
+        e = env
+    else:
+        # MOD7D fix 3: the env must be ASCRIBED, or the '&&& 0xff' in the cons values leaves
+        # 'Dialect.Value ?m' unsolved ('failed to synthesize HAnd (BitVec 256) Nat ...').
+        e = "((%s) : VEnv (Bridge.Dialect c g))" % render(layers, gen.base)
+    # MOD7D fix 3b: the VALUE must be parenthesised - 'some BitVec.ofNat 256 0' parses as
+    # '(some BitVec.ofNat) 256 0'.
+    # MOD7D fix 3d: the base VALUE is also spliced BARE into the proof term, as
+    # (venvGet_set_ne ... <val> ...); an unparenthesised BitVec.ofNat 256 0 there
+    # parses as (BitVec.ofNat 256 0) applied to the NEXT argument.
+    if vv != "frModulusWord":
+        prf = prf.replace(" " + vv + " ", " (" + vv + ") ")
+    return "  have %s : VEnv.get %s %s = some (%s) := (%s)" % (hyp, e, q(x), vv, prf)
 
 LOOK_B = "\n".join([
     lk(gB, layersB, "q_has_top", "hhtE15"),

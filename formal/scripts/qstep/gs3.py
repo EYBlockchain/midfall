@@ -18,6 +18,10 @@ class Layer:
     def __init__(self, kind, name, val):
         self.kind = kind; self.name = name; self.val = val
 
+ASCRIBE = None   # when set (e.g. "VEnv (Bridge.Dialect c g)"), render ascribes every env term.
+                 # MODARITH7's prologue needs it: its cons values contain '&&& 0xff', whose result
+                 # type is 'Dialect.Value D' and cannot be recovered unless D is pinned by the env.
+
 def render(layers, base):
     s = base
     for L_ in reversed(layers):
@@ -25,6 +29,8 @@ def render(layers, base):
             s = "(%s, %s) :: %s" % (q(L_.name), L_.val, s)
         else:
             s = "VEnv.set %s %s %s" % (P(s), q(L_.name), L_.val)
+    if ASCRIBE is not None:
+        s = "(%s : %s)" % (s, ASCRIBE)
     return s
 
 class Gen:
