@@ -4641,3 +4641,249 @@ def constSlots_differential_sweep_ok : Bool :=
 #eval constSlots_differential_sweep_ok -- expect true
 end Midfall.Lowering.QvmKats
 
+namespace Midfall.Lowering
+
+open Midfall
+open Midfall.Generator
+open Midfall.Generator (QVMFr QVMFault QuotientRefMemory)
+open Midfall.Generator.QuotientBuilder
+open Midfall.Generator.QuotientCertify
+open Midfall.Generator.QuotientValidator
+
+/-! ### SEGLEG: the two validator-side legs of 'PG_valp2_walkAlignment' - BOTH ARE FALSE
+
+    THE JOB, verbatim (card SEGLEG, the two legs 'ITEMST' printed after discharging
+    'PG_align_itemStartsNamed'):
+
+      SHIFT_LEG: bytes seg : List Nat, model : QuotientOperandModel, cursor : Nat,
+                 hval : validateQuotientProgramOperands bytes model = .ok ()
+           |- forall (i op : Nat), (i, op) in bytecodeOpList seg ->
+                    (cursor + i, op) in bytecodeOpList bytes
+      READS_LEG: same context
+           |- forall (i op : Nat), (i, op) in bytecodeOpList seg ->
+                    operandList seg i op = operandList bytes (cursor + i) op
+
+    **THE FINDING: NEITHER LEG IS A THEOREM OF 'hval'. BOTH ARE FALSE, NOT MERELY UNPROVED.** The
+    printed context relates 'seg' and 'cursor' to 'bytes' by NOTHING: 'hval' mentions only 'bytes' and
+    'model'. So the legs quantify over an ARBITRARY buffer 'seg' and an ARBITRARY 'cursor' and claim
+    they re-embed into 'bytes'. They cannot. 'segleg_bytes' (the empty program, which validates) beside
+    'segleg_seg' (a two-byte program that names one instruction) refutes both at once.
+
+    THE STRONGER HALF, and the one that matters for the row: the legs stay FALSE even after the missing
+    relation is restored by hand - 'seg := (bytes.drop cursor).take (exprEnd - cursor)' - on VALP2's OWN
+    committed fixture, where the whole program validates and the cursor sits inside an instruction
+    ('segleg_shift_false_of_a_real_segment', 'segleg_alignment_not_free'). So (A2) is not an induction
+    waiting to be written; it is a HYPOTHESIS THE ROW DOES NOT HAVE - which is VALP2's original reading
+    and not ALIGN's "the tree was only missing theorems". 'PG_valp2_walkAlignment' is therefore NOT
+    dischargeable from 'hval', and 'operands_ok_of_validated_segment' keeps its hypothesis unless the
+    row is given a cursor-alignment hypothesis it does not carry - which RULES forbid.
+
+    WHAT THE LEGS ACTUALLY NEED, named so the next card has one address: the segment cursor must be an
+    offset the whole-program walk NAMES, and so must the segment END - otherwise the 'take' truncates an
+    instruction the segment walk still names and the 'reads' congruence FAILS rather than going vacuous.
+    **The vacuity argument in the committed doc comment on 'PG_valp2_walkAlignment' (Qvm.lean:2875-2878)
+    is WRONG**: the SEGMENT side of the equation is empty, the WHOLE-program side is not, so the equation
+    is false, not vacuous - 'segleg_reads_false_of_a_truncated_take'. -/
+
+/-- **SHIFT_LEG, EXACTLY AS 'ITEMST' PRINTED IT**, frozen as a 'def : Prop' so the refutation has one
+    address in the tree and cannot be accused of proving a different statement. -/
+def PG_segleg_shift : Prop :=
+  ∀ (bytes seg : List Nat) (model : QuotientOperandModel) (cursor : Nat),
+    validateQuotientProgramOperands bytes model = .ok () →
+      ∀ (i op : Nat), (i, op) ∈ bytecodeOpList seg → (cursor + i, op) ∈ bytecodeOpList bytes
+
+/-- **READS_LEG, EXACTLY AS 'ITEMST' PRINTED IT.** -/
+def PG_segleg_reads : Prop :=
+  ∀ (bytes seg : List Nat) (model : QuotientOperandModel) (cursor : Nat),
+    validateQuotientProgramOperands bytes model = .ok () →
+      ∀ (i op : Nat), (i, op) ∈ bytecodeOpList seg →
+        operandList seg i op = operandList bytes (cursor + i) op
+
+/-- The empty program validates against VALP2's model, and names no instruction at all. -/
+def segleg_bytes : List Nat := []
+
+/-- 'PUSH_CONST_U8 5' on its own: the walk NAMES it - the stride comes from the opcode table, which does
+    not read the payload byte - so its instruction list is non-empty. -/
+def segleg_seg : List Nat := [0x09, 0x05]
+
+/-- The cursor of the as-printed refutation: 0, so the shift is the identity and the failure is not an
+    artefact of a weird offset. -/
+def segleg_cursor : Nat := 0
+
+/-- **THE EMPTY PROGRAM VALIDATES.** Stated through '.isOk' because 'Decidable' is not synthesized for
+    equality on 'VResult Unit' (the fault type has no 'DecidableEq'), and inverted by the pattern
+    'operands_ok_of_supported' already uses in this file. -/
+theorem segleg_hval :
+    validateQuotientProgramOperands segleg_bytes valp2CounterModel = .ok () := by
+  have h : (validateQuotientProgramOperands segleg_bytes valp2CounterModel).isOk = true := by decide
+  cases hx : validateQuotientProgramOperands segleg_bytes valp2CounterModel with
+  | ok u => cases u; rfl
+  | error f =>
+      rw [hx] at h
+      exact absurd h (by intro hh; cases hh)
+
+/-- The segment names one instruction at its own cursor 0. -/
+theorem segleg_segMem : (0, qOpPushConstU8) ∈ bytecodeOpList segleg_seg := by decide
+
+/-- The whole program names NOTHING, so no shift of the segment's instruction can land in it. -/
+theorem segleg_bytesNotMem :
+    (segleg_cursor + 0, qOpPushConstU8) ∉ bytecodeOpList segleg_bytes := by decide
+
+/-- **SHIFT_LEG IS FALSE.** -/
+theorem segleg_shift_false : ¬ PG_segleg_shift := by
+  intro h
+  exact segleg_bytesNotMem
+    (h segleg_bytes segleg_seg valp2CounterModel segleg_cursor segleg_hval 0 qOpPushConstU8 segleg_segMem)
+
+/-- **READS_LEG IS FALSE.** The segment reads its one operand; the empty program reads none. Stated
+    through 'length' because 'QuotientOperand' has no 'DecidableEq' either. -/
+theorem segleg_reads_false : ¬ PG_segleg_reads := by
+  intro h
+  have hne : operandList segleg_seg 0 qOpPushConstU8 ≠
+      operandList segleg_bytes (segleg_cursor + 0) qOpPushConstU8 := by
+    intro he
+    have hl := congrArg List.length he
+    rw [show (operandList segleg_seg 0 qOpPushConstU8).length = 1 from by decide,
+        show (operandList segleg_bytes (segleg_cursor + 0) qOpPushConstU8).length = 0 from by decide] at hl
+    exact absurd hl (by decide)
+  exact hne (h segleg_bytes segleg_seg valp2CounterModel segleg_cursor segleg_hval
+    0 qOpPushConstU8 segleg_segMem)
+
+/-! #### The stronger refutation: the legs fail even for a GENUINE drop-take segment -/
+
+theorem segleg_realMem :
+    (0, qOpPushConstU8) ∈
+      bytecodeOpList ((valp2WholeBytes.drop valp2Cursor).take (valp2ExprEnd - valp2Cursor)) := by
+  decide
+
+theorem segleg_realNotMem :
+    (valp2Cursor + 0, qOpPushConstU8) ∉ bytecodeOpList valp2WholeBytes := by decide
+
+theorem segleg_wholeValidates :
+    validateQuotientProgramOperands valp2WholeBytes valp2CounterModel = .ok () := by
+  have h : (validateQuotientProgramOperands valp2WholeBytes valp2CounterModel).isOk = true := by decide
+  cases hx : validateQuotientProgramOperands valp2WholeBytes valp2CounterModel with
+  | ok u => cases u; rfl
+  | error f =>
+      rw [hx] at h
+      exact absurd h (by intro hh; cases hh)
+
+/-- **THE SHIFT LEG FAILS WITH THE MISSING RELATION RESTORED.** 'bytes' is VALP2's committed four-byte
+    program, 'cursor' its committed cursor 1 and 'exprEnd' 4, so the segment is a real drop-take segment
+    of a real validating program - and the shift leg still fails, because the segment's first instruction
+    is 'PUSH_CONST_U8' at segment offset 0 while the whole walk never visits whole offset 1. -/
+theorem segleg_shift_false_of_a_real_segment :
+    ∃ (bytes seg : List Nat) (model : QuotientOperandModel) (cursor exprEnd : Nat),
+      validateQuotientProgramOperands bytes model = .ok () ∧
+        seg = (bytes.drop cursor).take (exprEnd - cursor) ∧
+          ∃ i op, (i, op) ∈ bytecodeOpList seg ∧ (cursor + i, op) ∉ bytecodeOpList bytes :=
+  ⟨valp2WholeBytes, (valp2WholeBytes.drop valp2Cursor).take (valp2ExprEnd - valp2Cursor),
+    valp2CounterModel, valp2Cursor, valp2ExprEnd, segleg_wholeValidates, rfl,
+    0, qOpPushConstU8, segleg_realMem, segleg_realNotMem⟩
+
+/-- **AND SO IS 'PG_valp2_walkAlignment' ITSELF, FOR A REAL SEGMENT.** The committed Prop that
+    'operands_ok_of_validated_segment' asks for is not a consequence of validation: on the same fixture
+    its FIRST conjunct fails. This is the precise answer to whether the hypothesis can be discharged:
+    IT CANNOT, not by this card and not by the induction 'ITEMST' described. -/
+theorem segleg_alignment_not_free :
+    ∃ (bytes seg : List Nat) (model : QuotientOperandModel) (cursor : Nat),
+      validateQuotientProgramOperands bytes model = .ok () ∧
+        ¬ PG_valp2_walkAlignment bytes seg cursor :=
+  ⟨valp2WholeBytes, (valp2WholeBytes.drop valp2Cursor).take (valp2ExprEnd - valp2Cursor),
+    valp2CounterModel, valp2Cursor, segleg_wholeValidates,
+    fun hal => segleg_realNotMem (hal.1 0 qOpPushConstU8 segleg_realMem)⟩
+
+/-- A validating three-byte program cut at 'exprEnd = 1', which truncates its first instruction. -/
+def segleg_truncBytes : List Nat := [0x09, 0x05, 0x0a]
+
+theorem segleg_truncValidates :
+    validateQuotientProgramOperands segleg_truncBytes valp2CounterModel = .ok () := by
+  have h : (validateQuotientProgramOperands segleg_truncBytes valp2CounterModel).isOk = true := by decide
+  cases hx : validateQuotientProgramOperands segleg_truncBytes valp2CounterModel with
+  | ok u => cases u; rfl
+  | error f =>
+      rw [hx] at h
+      exact absurd h (by intro hh; cases hh)
+
+/-- **THE 'take' BITES 'reads', AND THE COMMITTED VACUITY ARGUMENT IS WRONG.** The doc comment on
+    'PG_valp2_walkAlignment' says a truncated read "errors and 'operandList' - the TOTAL reading - is
+    then empty and the obligation is vacuous". The SEGMENT side is empty; the WHOLE-program side is not,
+    so the EQUATION fails rather than going vacuous. -/
+theorem segleg_reads_false_of_a_truncated_take :
+    ∃ (bytes seg : List Nat) (model : QuotientOperandModel) (cursor exprEnd : Nat),
+      validateQuotientProgramOperands bytes model = .ok () ∧
+        seg = (bytes.drop cursor).take (exprEnd - cursor) ∧
+          ∃ i op, (i, op) ∈ bytecodeOpList seg ∧
+            operandList seg i op ≠ operandList bytes (cursor + i) op :=
+  ⟨segleg_truncBytes, (segleg_truncBytes.drop 0).take 1, valp2CounterModel, 0, 1,
+    segleg_truncValidates, rfl, 0, qOpPushConstU8,
+    by decide,
+    fun he => absurd (congrArg List.length he) (by decide)⟩
+
+/-! #### THE REPAIRED SHAPE, stated so the obligation has one address -/
+
+/-- **WHAT THE SHIFT LEG HAS TO BE.** The segment cursor must be an offset the whole-program walk names,
+    and so must the segment end. With both guards the statement is the segment-walk-vs-whole-walk
+    induction 'ITEMST' described, and it is true; it is not what 'ITEMST' printed, and it is not a
+    theorem of 'hval' alone. -/
+def PG_segleg_shiftAligned : Prop :=
+  ∀ (bytes : List Nat) (model : QuotientOperandModel) (cursor exprEnd : Nat),
+    validateQuotientProgramOperands bytes model = .ok () →
+    cursor ≤ exprEnd → exprEnd ≤ bytes.length →
+    (∃ op, (cursor, op) ∈ bytecodeOpList bytes) →
+    (∃ op, (exprEnd, op) ∈ bytecodeOpList bytes) →
+      ∀ i op, (i, op) ∈ bytecodeOpList ((bytes.drop cursor).take (exprEnd - cursor)) →
+        (cursor + i, op) ∈ bytecodeOpList bytes
+
+/-- The 'reads' twin, with the same two guards. -/
+def PG_segleg_readsAligned : Prop :=
+  ∀ (bytes : List Nat) (model : QuotientOperandModel) (cursor exprEnd : Nat),
+    validateQuotientProgramOperands bytes model = .ok () →
+    cursor ≤ exprEnd → exprEnd ≤ bytes.length →
+    (∃ op, (cursor, op) ∈ bytecodeOpList bytes) →
+    (∃ op, (exprEnd, op) ∈ bytecodeOpList bytes) →
+      ∀ i op, (i, op) ∈ bytecodeOpList ((bytes.drop cursor).take (exprEnd - cursor)) →
+        operandList ((bytes.drop cursor).take (exprEnd - cursor)) i op
+          = operandList bytes (cursor + i) op
+
+/-- **THE REPAIRED PAIR IS EXACTLY WHAT 'PG_valp2_walkAlignment' ASKS FOR**, so nothing here invents a
+    stronger demand: the two repaired Props, instantiated at the segment, give the committed conjunction.
+    The guards are what the printed legs were missing. -/
+theorem segleg_repaired_suffices (bytes : List Nat) (model : QuotientOperandModel)
+    (cursor exprEnd : Nat) (hval : validateQuotientProgramOperands bytes model = .ok ())
+    (hle : cursor ≤ exprEnd) (hge : exprEnd ≤ bytes.length)
+    (hcs : ∃ op, (cursor, op) ∈ bytecodeOpList bytes)
+    (hes : ∃ op, (exprEnd, op) ∈ bytecodeOpList bytes)
+    (hs : PG_segleg_shiftAligned) (hr : PG_segleg_readsAligned) :
+    PG_valp2_walkAlignment bytes ((bytes.drop cursor).take (exprEnd - cursor)) cursor :=
+  ⟨hs bytes model cursor exprEnd hval hle hge hcs hes,
+    hr bytes model cursor exprEnd hval hle hge hcs hes⟩
+
+/-- **THE ONE LEMMA BOTH REPAIRED LEGS REDUCE TO**, and the only thing standing between them and a
+    proof: the validator's stride function is shift-invariant along a 'drop'. Three of the five arms
+    ('byteAtPanic', 'readU16', 'readU32') are VALP2's and already proved; 'seg_affineSum_drop' below
+    lands the AFFINE_SUM arm. THE EXACT REMAINING OBSTACLE is the MODARITH7 arm: its six 'byteAtPanic'
+    reads sit under two 'if's on the flag byte, so once the readers are shifted the two sides differ by
+    'c + (x + 1)' against 'c + x + 1' nested around an 'ite', which 'simp' will not normalise and 'omega'
+    cannot see through. That is a normalisation problem on a 'do' block, not a mathematical gap. -/
+def PG_segleg_opLenShift : Prop :=
+  ∀ (bytes : List Nat) (c idx : Nat),
+    Midfall.Generator.QuotientValidator.quotientOpLen (bytes.drop c) idx =
+      Midfall.Generator.QuotientValidator.quotientOpLen bytes (c + idx)
+
+/-- The AFFINE_SUM arm of 'PG_segleg_opLenShift': both counts are 'readU16', and VALP2's
+    'quotientReadU16_drop' plus right-associating the index arithmetic makes the two sides identical. -/
+theorem seg_affineSum_drop (bytes : List Nat) (c idx : Nat) :
+    Midfall.Generator.QuotientValidator.quotientAffineSumOpLen (bytes.drop c) idx =
+      Midfall.Generator.QuotientValidator.quotientAffineSumOpLen bytes (c + idx) := by
+  unfold Midfall.Generator.QuotientValidator.quotientAffineSumOpLen
+  simp only [Midfall.Generator.QuotientValidator.quotientReadU16_drop, Nat.add_assoc]
+
+#print axioms Midfall.Lowering.segleg_shift_false
+#print axioms Midfall.Lowering.segleg_reads_false
+#print axioms Midfall.Lowering.segleg_alignment_not_free
+#print axioms Midfall.Lowering.segleg_reads_false_of_a_truncated_take
+#print axioms Midfall.Lowering.seg_affineSum_drop
+#print axioms Midfall.Lowering.segleg_repaired_suffices
+
+end Midfall.Lowering
