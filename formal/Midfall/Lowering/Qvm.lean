@@ -4887,3 +4887,131 @@ theorem seg_affineSum_drop (bytes : List Nat) (c idx : Nat) :
 #print axioms Midfall.Lowering.segleg_repaired_suffices
 
 end Midfall.Lowering
+
+/-! ### OLENS: the MODARITH7 arm of 'PG_segleg_opLenShift' — LANDED
+
+SEGLEG left exactly one arm of 'PG_segleg_opLenShift' open and called it "a normalisation problem on a
+'do' block, not a mathematical gap". **ON THE ARM ITSELF THAT DIAGNOSIS IS EXACTLY RIGHT**, and the arm
+falls to two facts SEGLEG did not have. No case split, no 'by_cases', no 'repeat split': one 'unfold' and
+one 'simp only'.
+
+**(1) 'add_ite' is the missing normaliser, and the direction is the REVERSE one.** Mathlib proves
+'add_ite : a + (if P then b else c) = if P then a + b else a + c' at
+'Mathlib/Algebra/Notation/Defs.lean:112' and **deliberately does not put it in the simp set** — the
+comment four lines below says so ("We make 'mul_ite' and 'ite_mul' simp lemmas, but not 'add_ite' or
+'ite_add'"). That is why every 'add_assoc' formulation SEGLEG tried left a different parenthesisation:
+'simp' never reached the one lemma that moves a '+' across an 'ite'. The direction that works is
+'← add_ite', which **collects** 'c +' back OUT of the two flag-gated 'ite's on the right-hand side, where
+the walker has already substituted 'c + idx' inside them; 'Nat.add_assoc' then reassociates the branches
+so both sides meet at 'c + (idx + (2 + (U16 + ...)))'. Forward 'add_ite' does the opposite — it smears
+'c +' into the LEFT side's 'ite's — and that is the divergence SEGLEG measured.
+
+**(2) The one real difference is NOT an 'ite' problem and 'omega' cannot see it.** After (1) the two sides
+agree at every one of the six 'byteAtPanic' reads and at both scrutinees; what is left is the final
+'.ok (cursor - idx)', where the left cursor is measured from 'idx' and the right cursor from 'c + idx'.
+Concretely the two sides are 'A - idx' against 'c + A - (c + idx)' with the SAME 'A' — and 'A' is an 'ite',
+which is precisely what 'omega' cannot enter. The fact is truncated subtraction, not associativity:
+'add_sub_sub_cancel_left_ite_safe' below, proved once on atoms and cited as a simp lemma. It fires with
+the 'ite' as an opaque argument, so all six reads are discharged at once and the 'ite' is never entered.
+
+**WHAT THAT DOES NOT BUY: 'PG_segleg_opLenShift' AS COMMITTED IS FALSE**, and not for anything to do with
+MODARITH7 — see 'seg_opLenShift_false' at the end of this section. So the MODARITH7 arm is landed and the
+one remaining obstacle SEGLEG named is gone, but the full Prop it is an arm of cannot be proved and the
+repaired legs are NOT derivable from it. The honest statement of what is left is in
+'PG_segleg_opLenShiftOption'. -/
+
+namespace Midfall.Lowering
+
+open Midfall
+open Midfall.Generator
+open Midfall.Generator (QVMFr QVMFault QuotientRefMemory)
+open Midfall.Generator.QuotientBuilder
+open Midfall.Generator.QuotientCertify
+open Midfall.Generator.QuotientValidator
+
+/-- **THE REUSABLE NORMALISATION FACT, AND THE ONE THING SEGLEG WAS MISSING.** Adding the same amount to
+    BOTH sides of a truncated subtraction leaves it unchanged. Stated on atoms it fires INSIDE an 'ite'
+    that 'omega' cannot enter: the 'ite' is carried along as an opaque argument rather than resolved, so
+    one citation discharges every branch at once. 'Nat.add_sub_sub_cancel_left' does not exist in this
+    toolchain, which is why this is proved here instead of cited. -/
+theorem add_sub_sub_cancel_left_ite_safe (c a b : Nat) : c + a - (c + b) = a - b := by omega
+
+/-- **THE MODARITH7 ARM OF 'PG_segleg_opLenShift', LANDED.** This is the arm SEGLEG named as the only
+    thing standing between 'PG_segleg_shiftAligned' / 'PG_segleg_readsAligned' and a proof, and measured
+    as 'c + (x + 1)' against 'c + x + 1' nested around an 'ite'. It is one 'unfold' and one 'simp only':
+    'byteAtPanic_drop' moves every read onto the whole-program buffer, 'Nat.add_assoc' + '← add_ite'
+    reassociate and COLLECT so the six shifted reads and both flag scrutinees become literally the same
+    terms on the two sides, and 'add_sub_sub_cancel_left_ite_safe' absorbs the 'c' that the final
+    '- idx' still carries. No 'by_cases', no 'repeat split', no 'omega' on the goal itself, no heartbeat
+    or recursion bump. -/
+theorem seg_modarith7_drop (bytes : List Nat) (c idx : Nat) :
+    Midfall.Generator.QuotientValidator.quotientModarith7OpLen (bytes.drop c) idx =
+      Midfall.Generator.QuotientValidator.quotientModarith7OpLen bytes (c + idx) := by
+  unfold Midfall.Generator.QuotientValidator.quotientModarith7OpLen
+  simp only [Midfall.Generator.QuotientValidator.byteAtPanic_drop, Nat.add_assoc, ← add_ite,
+    Midfall.Lowering.add_sub_sub_cancel_left_ite_safe]
+
+/-- **THE FOURTH ARM, FOR THE RECORD: the two RUN arms shift too**, so every named arm of 'quotientOpLen'
+    is now individually known shift-invariant. The 'readU16' is VALP2's 'quotientReadU16_drop'; the
+    '.ok' payload of both RUN arms mentions only 'n', never 'idx', so nothing else has to move. -/
+theorem seg_runAddMulMemMem_drop (bytes : List Nat) (c idx : Nat) :
+    Midfall.Generator.QuotientValidator.readU16 (bytes.drop c) (idx + 1) =
+      Midfall.Generator.QuotientValidator.readU16 bytes (c + idx + 1) := by
+  simp only [Midfall.Generator.QuotientValidator.quotientReadU16_drop, Nat.add_assoc]
+
+/-- **'PG_segleg_opLenShift' AS COMMITTED IS FALSE, AND THE CAUSE IS NOT MODARITH7.** The last arm of
+    'quotientOpLen' is 'match quotientOpcodeByteLen op with | none => vPanic (siteUnknownQuotientOp op
+    idx)', and 'siteUnknownQuotientOp' puts 'toString idx' INTO THE FAULT STRING. So for a byte that is
+    not a known opcode the two sides are two DIFFERENT panics — 'unknown quotient op FF at byte 0' against
+    'unknown quotient op FF at byte 1' — and no normalisation can equate them. This is the same class of
+    finding as SEGLEG's own two refutations, and it means SEGLEG's "one lemma away" framing is right about
+    the MODARITH7 arm and wrong about the Prop it is an arm of: the obstacle was never only arithmetic. -/
+def segleg_unknownOpBytes : List Nat := [0x00, 0xff]
+
+theorem seg_opLenShift_false :
+    ∃ (bytes : List Nat) (c idx : Nat),
+      Midfall.Generator.QuotientValidator.quotientOpLen (bytes.drop c) idx ≠
+        Midfall.Generator.QuotientValidator.quotientOpLen bytes (c + idx) :=
+  ⟨segleg_unknownOpBytes, 1, 0, fun h => by
+    have h1 : Midfall.Generator.QuotientValidator.quotientOpLen
+        (Midfall.Lowering.segleg_unknownOpBytes.drop 1) 0 =
+        .error (Midfall.Generator.QuotientValidator.QuotientValidationFault.panic
+          (Midfall.Generator.QuotientValidator.siteUnknownQuotientOp 0xff 0)) := rfl
+    have h2 : Midfall.Generator.QuotientValidator.quotientOpLen
+        Midfall.Lowering.segleg_unknownOpBytes (1 + 0) =
+        .error (Midfall.Generator.QuotientValidator.QuotientValidationFault.panic
+          (Midfall.Generator.QuotientValidator.siteUnknownQuotientOp 0xff 1)) := rfl
+    rw [h1, h2] at h
+    exact (by decide :
+        Midfall.Generator.QuotientValidator.siteUnknownQuotientOp 0xff 0 ≠
+          Midfall.Generator.QuotientValidator.siteUnknownQuotientOp 0xff 1)
+      (QuotientValidationFault.panic.inj (Except.error.inj h))⟩
+
+/-- **THE SHAPE THAT IS TRUE, STATED SO THE ASK HAS ONE ADDRESS — NOT PROVED HERE, AND NOT SORRIED.**
+    The fault payload is the only thing that breaks 'PG_segleg_opLenShift', and the two legs never look at
+    the payload: 'bytecodeOpList' is the walk's SUCCESS list, so a shift lemma about the walk's 'toOption'
+    is what the legs actually need. Every arm of it is now landed above — 'byteAtPanic_drop',
+    'quotientReadU16_drop', 'seg_affineSum_drop', 'seg_modarith7_drop' — and on the witness above the two
+    'toOption's do agree ('none' on both sides).
+
+    EXACT REMAINING GOAL STATE (measured, not inferred): after 'unfold quotientOpLen' and
+    'simp only [byteAtPanic_drop, Nat.add_assoc, quotientReadU16_drop, seg_affineSum_drop,
+    seg_modarith7_drop]' followed by 'congr_arg' on the bind and 'funext op', the two sides are identical
+    except the final arm, which is
+
+        'Except.toOption (Except.error (QuotientValidationFault.panic (siteUnknownQuotientOp op idx)))'
+      = 'Except.toOption (Except.error (QuotientValidationFault.panic (siteUnknownQuotientOp op (c + idx))))'
+
+    i.e. 'none = none'. It is one 'cases hq : quotientOpcodeByteLen op' away from closing once the four
+    opcode equalities are split; that case split is left to a follow-up rather than attempted here. -/
+def PG_segleg_opLenShiftOption : Prop :=
+  ∀ (bytes : List Nat) (c idx : Nat),
+    (Midfall.Generator.QuotientValidator.quotientOpLen (bytes.drop c) idx).toOption =
+      (Midfall.Generator.QuotientValidator.quotientOpLen bytes (c + idx)).toOption
+
+#print axioms Midfall.Lowering.add_sub_sub_cancel_left_ite_safe
+#print axioms Midfall.Lowering.seg_modarith7_drop
+#print axioms Midfall.Lowering.seg_runAddMulMemMem_drop
+#print axioms Midfall.Lowering.seg_opLenShift_false
+
+end Midfall.Lowering
