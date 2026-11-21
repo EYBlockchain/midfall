@@ -1,7 +1,9 @@
 # STATUS - midfall
 
-**As of:** `76ccfe5` (2026-11-21). Report copied from the last full `verify.sh --quick`; the full
-`verify.sh` has not been run on this branch.
+**As of:** `1460013` (2026-11-21). **FULL GATE GREEN at `29be14f`:** `verify.sh: ok (full)`,
+EXIT=0, KAT 1640/118, root `lowering_correct` 17 leaves, register 84. The additive EXITSOUND
+per-op `WorldEq` table at `1460013` was checked with `verify.sh --quick` (green). Five parallel
+workers are on the non-QVM components; the QVM lane stays with its existing agent (midfall-c/d).
 
 ## 1. Verified - PROGRESS
 
@@ -82,8 +84,23 @@ conjunct; the headline signature is unchanged.
    existing pins; a D.2 coherence change, not a silent absorption. Blocks B4.
 5. **R.6 re-hash** - PLAN-V3 marks it subsumed at ST.6; confirm it is closed.
 
+## 4b. Parallel workers (2026-11-21)
+
+- **EXITSOUND** (`midfall-f`, `t/EXITSOUND`): `Run_worldEq_of_noWriters` Step induction, then
+  `twoOutcomes_of_exitDiscipline`. Per-op/WorldEq table and `ScanClean` infrastructure landed at
+  `1460013`; the Step induction is the remaining work.
+- **GASFREE** (`midfall-g`, `t/GASFREE`): `gasFree_of_valid` / `runBody_gas_oblivious`.
+- **EXHIBITS** (`midfall-h`, `t/EXHIBITS`): the two missing Poseidon exhibits.
+- **C1/WID.2** (`midfall-i`, `t/C1`): port the IVC partial KATs; WID.3/WID.4 depend on cargo.
+- **B1/B5 audit** (read-only): the full B1/B5 state is in the worker report; the short version is
+  below. B1 is not met: `poseidon_valid` is still a registered REFUTED row, DG.6 is not wired,
+  DG.3's pinned zone is unsigned (the card's 972 is stale; current fingerprint 4823 decls / 526
+  external leaves / `5d8c45843135d536`), DG.7 needs the human's branch permission, and S.10's
+  stale "11 clauses"/"1792" prose remains. B5 is not met: OBJ.10/OBJ.12/T3.3 are absent, OBJ.11
+  needs cargo and a human/Rust re-export decision.
+
 ## 5. Last three merges
 
+- `1460013` EXITSOUND - per-op `WorldEq` table + `ScanClean` infrastructure (root unchanged)
+- `29be14f` STATUS/QUEUE - PREFIXLIVE landed; D-QVM2 signed
 - `76ccfe5` PREFIXLIVE - `prefix_live` PROVED; root 18 -> 17, register 85 -> 84
-- `88ea7a3` D-QVM2 - ROW.Q.3 restated over a fixed validated segment (signed)
-- `7044b5a` QVMFIT - address-fit clause; VKFIT bounds are theorems (D-QVM1)
