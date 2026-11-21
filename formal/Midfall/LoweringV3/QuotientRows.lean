@@ -847,4 +847,425 @@ theorem q_rowQ5_families_agree (ids : List QuotientIdentity) (k : Nat) (fold : S
 #assert_axioms Midfall.Lowering.GenAst.qEmitLookupRegionA_items [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.Lowering.GenAst.qEmitNativeLookupA_shape [propext, Classical.choice, Quot.sound] native []
 
+/-! ### 11. THE ROW 'qinterpRefines_qvmLoop' IS FALSE AS STATED (BOXD)
+
+QLOOP recorded at 'QuotientLoopCompose.lean:47-62' that the row LOOKS false for a symbolic template
+table and did NOT exhibit it, because the sketched route needs a concrete NORMAL RUN of the emitted
+loop - one iteration of the switch over the emitter's own 31-entry case list, which is ROW.Q's
+induction. This section lands a PROVED refutation of the row. It is NOT QLOOP's sketch: it is cheaper,
+and it bites harder, because it needs no table disagreement at all and no arm body.
+
+THE DEFECT, IN ONE SENTENCE. 'AtSegment' writes the loop's two cursor registers as
+'BitVec.ofNat 256 (s.base + s.cursor)' and 'BitVec.ofNat 256 (s.base + s.exprEnd)', and NOTHING in the
+contract requires 's.base + s.exprEnd < 2^256'. At 's.base = 2^256 - 1' the two words WRAP, to
+'allOnes' and to '0', so the loop guard 'q_pc < q_end' is FALSE: the body never runs, the loop exits
+NORMALLY at the segment's own start, and the state is the state it was handed. Meanwhile the segment is
+non-empty and inside the window, and the reference VM has no opcode 200, so 'evalQuotientIdentity'
+errors. NEITHER disjunct of the post holds: the exit is not a halt, so it is not a revert, and the
+reference returns no '.ok', so the second disjunct's witness does not exist. The row is therefore FALSE
+as stated - for EVERY context, EVERY program and EVERY template table, the default one included.
+
+SAME ROOT FAMILY AS QLOOP'S SKETCH, AND THAT IS THE POINT. Both come from the post being satisfied by
+ANY revert: the contract is sound only if the emitted loop runs an arm for every segment the reference
+rejects. QLOOP's route makes the loop run the WRONG ARM (a table agreeing with some opcode labels and
+not others); this route makes the loop run NO ARM at all (a window base that overflows the 256-bit word
+the registers hold). Either one refutes the row. In particular the sentence the tree relies on -
+'QuotientInterp.lean:99-102', "every non-empty garbage segment is fine, because every emitted switch is
+fail-closed on an unknown opcode" - is FALSE as written: fail-closure needs the switch to be REACHED,
+and the loop guard decides before the switch is.
+
+WHAT A HUMAN MUST DECIDE, AND WHAT THIS FILE DOES NOT DO. The repair is a hypothesis on the window
+('s.base + s.exprEnd < 2^256', or 'AtSegment' carrying the un-wrapped pair), or a hypothesis on the
+table ('tcq.op = the reference's opcode constants', QLOOP's repair hypothesis, of which
+'PG_limbCountAgrees' is the limb-count member). RULES forbid adding a hypothesis to a row, to
+'ValidV3', to a bundle or to the root, so NOTHING HERE CHANGES THE ROW: 'qinterpRefines_qvmLoop' is
+untouched, still at 'QuotientInterp.lean:253', still one sorry. W13 says a sorry whose negation is
+proved must be DELETED and the row restated; that is a human ruling, and moving it also moves the sorry
+register, the statement-fingerprint pin and the 'kat_gate.py' note that names this row as the card's one
+named hole - none of which a worker may move. LOUDLY: **ROW.Q.3 IS REFUTED, NOT OPEN.**
+
+NO AXIOM BEYOND THE THREE, NO 'native_decide', NO RAISED HEARTBEAT OR RECURSION LIMIT. The emitted run
+is built from the vendored 'Step' rules through 'forLoop_false' (section 4), which never looks at the
+body - so nothing here unrolls the interpreter's arms. The reference side is the same
+'simp [evalQuotientIdentityLoop.go]' reduction 'evalQuotientIdentity_nil' (section 5) already used. -/
+
+/-- **THE WRAPPING WINDOW BASE**: '2^256 - 1', the largest word the interpreter's 256-bit 'q_pc' can
+    hold. 'q_pc' is 'BitVec.ofNat 256 (base + cursor)' and 'q_end' is 'BitVec.ofNat 256 (base +
+    exprEnd)', so at this base the two wrap to 'allOnes' and '0' for ANY legal non-empty segment. -/
+def qWrapBase : Nat := 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+
+/-- A one-byte program window whose only byte is 200. No reference opcode is 200 - the 'qOpX' family
+    runs 0x01-0x22 - so 'evalQuotientIdentity' refuses it as 'unknownOpcode'. -/
+def qBadBytes : List Nat := [200]
+
+/-- The legal non-empty segment at the wrapping base: 'cursor < exprEnd <= len' holds as NATURAL
+    numbers, which is all 'QSegment.inWindow' asks. -/
+def qBadSegment : QSegment :=
+  { base := qWrapBase, len := 1, cursor := 0, exprEnd := 1 }
+
+/-- Yul memory that agrees with 'qBadBytes' at that window. Addresses are 'Nat' and unbounded, so the
+    address space and the interpreter's 256-bit registers disagree - which is exactly the gap the
+    contract leaves open. -/
+def qBadState : EvmState := { EvmState.init with memory := fun a => if a = qWrapBase then 200 else 0 }
+
+/-- The reference memory: an empty frame, which makes 'AgreesFrame' vacuous. -/
+def qBadMemory : QuotientRefMemory := quotientRefMemoryNew Midfall.Bytes.empty
+
+/-- The environment 'AtSegment' pins at the wrapping window: the five registers the prologue writes,
+    with the two cursor registers already wrapped. -/
+def qBadV {c : ExternalCalls} {g : ExternalGas} (program : QuotientProgram) :
+    VEnv (Bridge.Dialect c g) :=
+  segmentV (c := c) (g := g) (program := program) qBadSegment 0 false
+
+theorem qBadSegment_inWindow : QSegment.inWindow qBadSegment := ⟨Nat.zero_lt_one, Nat.le_refl 1⟩
+
+/-- The three agreement clauses hold at the wrapping window: the program window by construction, the
+    constant and frame windows vacuously ('consts = []', 'frameWords = 0'). -/
+theorem qBad_Agrees (program : QuotientProgram) :
+    Agrees [] program.constMptr 0 0 qBadBytes qBadState qBadMemory qBadSegment := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro i hi
+    have : i = 0 := by simpa [qBadSegment] using hi
+    subst this
+    rfl
+  · intro k hk; exact absurd hk (Nat.not_lt_zero k)
+  · intro a ha; exact absurd ha (Nat.not_lt_zero a)
+
+/-- **THE GUARD IS FALSE AT THE WRAPPING WINDOW.** 'q_pc' holds 'allOnes' and 'q_end' holds '0', so
+    'lt' yields zero - the single fact the refutation turns on. Built from the vendored 'Step' rules
+    exactly as 'eval_lt_same' (section 4) is; this is the 'hcond' 'forLoop_false' consumes. -/
+theorem qvmLoop_guard_wraps {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (funs : FunEnv (Bridge.Dialect c g)) :
+    EvalExpr (Bridge.Dialect c g) ([] :: funs) (qBadV (c := c) (g := g) (program := program))
+      qBadState (yop Op.lt [yvar "q_pc", yvar "q_end"]) (.vals [0] qBadState) := by
+  refine Step.builtinOk (D := Bridge.Dialect c g) (op := Op.lt)
+      (args := [yvar "q_pc", yvar "q_end"]) (argvals := [BitVec.ofNat 256 qWrapBase, 0])
+      (st1 := qBadState) (rets := [0]) (st2 := qBadState) ?_ ?_
+  · exact Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_end"]) (e := yvar "q_pc")
+      (restvals := [0]) (v := BitVec.ofNat 256 qWrapBase) (st2 := qBadState)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (e := yvar "q_end") (restvals := [])
+        (v := (0 : U256)) (st1 := qBadState) (st2 := qBadState)
+        (Step.argsNil (D := Bridge.Dialect c g)) (Step.var (D := Bridge.Dialect c g) rfl))
+      (Step.var (D := Bridge.Dialect c g) rfl)
+  · show stepOp Op.lt [BitVec.ofNat 256 qWrapBase, 0] qBadState = some (.ok [0] qBadState)
+    rfl
+
+/-- **THE EMITTED LOOP EXITS NORMALLY WITHOUT RUNNING A SINGLE ITERATION** at the wrapping window, for
+    EVERY context, program and table. 'forLoop_false' is body-independent, so this says nothing about
+    the thirty-one arms and costs no unrolling: the guard is false, so the loop's only run is the one
+    that returns the state it was handed, with outcome 'normal'. -/
+theorem qvmLoop_no_iteration {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) :
+    ExecStmts (Bridge.Dialect c g) funs (qBadV (c := c) (g := g) (program := program)) qBadState
+      [GenAst.qvmLoop ctx program tcq]
+      (qBadV (c := c) (g := g) (program := program)) qBadState .normal := by
+  obtain ⟨body, hbody⟩ : ∃ body, GenAst.qvmLoop ctx program tcq =
+      Stmt.forLoop [] (yop Op.lt [yvar "q_pc", yvar "q_end"]) [] body := ⟨_, rfl⟩
+  rw [hbody]
+  exact forLoop_false "q_pc" "q_end" funs body _ qBadState (qvmLoop_guard_wraps program funs)
+
+/-- **THE REFERENCE VM REFUSES THE SEGMENT.** 'evalQuotientIdentity [200] [] mem' ends in
+    'QVMFault.unknownOpcode 200 0'. PROVABLE, not just computable: the 'where'-clause 'go' does not
+    unfold under 'rfl' but does under 'simp [evalQuotientIdentityLoop.go]', exactly as
+    'evalQuotientIdentity_nil' (section 5) established for the empty program. -/
+theorem evalQuotientIdentity_badBytes :
+    Midfall.Generator.evalQuotientIdentity qBadBytes [] qBadMemory =
+      .error (QVMFault.unknownOpcode 200 0) := by
+  have hloop : Midfall.Generator.evalQuotientIdentityLoop qBadBytes [] 0 [] qBadMemory
+      = .error (QVMFault.unknownOpcode 200 0) := by
+    show Midfall.Generator.evalQuotientIdentityLoop.go qBadBytes [] 1 0 [] qBadMemory = _
+    simp only [Midfall.Generator.evalQuotientIdentityLoop.go]
+    rfl
+  unfold Midfall.Generator.evalQuotientIdentity
+  rw [hloop]
+  rfl
+
+/-- **THE ROW 'qinterpRefines_qvmLoop' IS FALSE AS STATED.** At the row's OWN instantiation of the
+    contract - the real 'Midfall.Lowering.Reverted', the real 'AtSegment program', the real
+    'qinterpTop', the real windowed 'Agrees' - the emitted loop has a run whose post fails. Generic in
+    the context, the program and the table (D-P71: no fixture in the statement), so it refutes the row
+    at EVERY table, the default one included: the defect is the window, not the table. The window is
+    'qBadSegment', the program bytes are 'qBadBytes', and the constant table, frame base and frame
+    length are the vacuous '[]', '0', '0' the row quantifies over. -/
+theorem qinterpRefines_qvmLoop_row_is_false {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) :
+    ¬ QInterpRefines (D := Bridge.Dialect c g)
+      (reverts := Midfall.Lowering.Reverted) (word := fun w => w)
+      (AtSegment := AtSegment program) (Top := qinterpTop)
+      (Agrees := fun st mem s => Agrees [] program.constMptr 0 0 qBadBytes st mem s)
+      funs [GenAst.qvmLoop ctx program tcq] qBadBytes [] := by
+  intro H
+  have hrun : ExecStmts (Bridge.Dialect c g) funs (qBadV (c := c) (g := g) (program := program))
+      qBadState [GenAst.qvmLoop ctx program tcq]
+      (qBadV (c := c) (g := g) (program := program)) qBadState .normal :=
+    qvmLoop_no_iteration ctx program tcq funs
+  have h := H qBadSegment qBadMemory qBadSegment_inWindow
+    (qBadV (c := c) (g := g) (program := program)) qBadState
+    ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, qBad_Agrees program⟩
+    (qBadV (c := c) (g := g) (program := program)) qBadState .normal hrun
+  cases h with
+  | inl h => exact absurd h.1 (by decide : ¬ ((Outcome.normal : Outcome) = Outcome.halt))
+  | inr h =>
+      obtain ⟨v, mem', hv, _, _⟩ := h.2
+      have hseg : ((qBadBytes.drop qBadSegment.cursor).take
+          (qBadSegment.exprEnd - qBadSegment.cursor)) = qBadBytes := rfl
+      rw [hseg, evalQuotientIdentity_badBytes] at hv
+      cases hv
+
+/-- The same refutation in the shape a reader checks against the row: the row's universal closure,
+    verbatim, is FALSE. The witnesses 'quotientCtx' and 'quotientDeployedProgram' appear in the PROOF
+    only - the statement is the row's own quantifier prefix, negated. -/
+theorem qinterpRefines_qvmLoop_is_false_as_stated {c : ExternalCalls} {g : ExternalGas} :
+    ¬ (∀ (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+        (funs : FunEnv (Bridge.Dialect c g)) (bytes : List Nat) (consts : List Midfall.Word256)
+        (frameBase frameWords : Nat),
+        QInterpRefines (D := Bridge.Dialect c g)
+          (reverts := Midfall.Lowering.Reverted) (word := fun w => w)
+          (AtSegment := AtSegment program) (Top := qinterpTop)
+          (Agrees := fun st mem s => Agrees consts program.constMptr frameBase frameWords bytes st mem s)
+          funs [GenAst.qvmLoop ctx program tcq] bytes consts) := by
+  intro Hall
+  have H := Hall Midfall.Generator.quotientCtx Midfall.Generator.quotientDeployedProgram
+    templateConstantsDefault.quotientVm [] qBadBytes [] 0 0
+  exact qinterpRefines_qvmLoop_row_is_false (c := c) (g := g) Midfall.Generator.quotientCtx
+    Midfall.Generator.quotientDeployedProgram templateConstantsDefault.quotientVm [] H
+
+#print axioms Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_row_is_false
+#print axioms Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_is_false_as_stated
+#cone_sorries Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_row_is_false
+#assert_axioms Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_row_is_false [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_is_false_as_stated [propext, Classical.choice, Quot.sound] native []
+
+
+/-! ### 12. AND QLOOP'S SKETCH IS CONSTRUCTIBLE: AN ARM RUNS, THE REFERENCE REFUSES IT (BOXD)
+
+Section 11 refutes the row without running an arm. QLOOP's sketch (recorded at
+'QuotientLoopCompose.lean:47-62' and NOT exhibited there) makes the loop RUN an arm whose reference
+step fails, and said exhibiting it needs 'a concrete normal run of the emitted loop, which is ROW.Q's
+loop induction'. THIS SECTION EXHIBITS SUCH A RUN, PROVED FROM THE 'Step' RULES - so the sketch is
+constructible, and the obstacle QLOOP named is not a barrier, just work: about ninety lines of vendored
+'Step' terms, no fuel, no 'wp_run', no 'native_decide', no raised heartbeat or recursion limit.
+
+THE WITNESS. A program whose 'opUsage' is all OFF except 'neg' - so the emitter's case list is the
+SINGLETON neg arm and no selection inequality is needed - the DEFAULT template table, and the one-byte
+segment '[qOpNeg]' at an ordinary window base '0x1000'. The emitted loop takes one iteration: the pre
+fetches 'q_op = byte(0, mload q_pc) = qOpNeg', advances 'q_pc' by one, the switch selects the neg arm,
+and the arm rewrites the cached top ('q_top := addmod(0, r - q_top, r)') without touching 'q_pc' again -
+so 'q_pc = q_end' and the loop exits NORMALLY. The reference's 'qOpNeg' step POPS THE STACK, which is
+empty, and returns '.error (QVMFault.stackUnderflow 0)'. Neither disjunct of the post holds.
+
+NOTE WHAT THIS DOES AND DOES NOT SHOW. It does NOT need a disagreeing table: the arm and the reference
+agree on the OPCODE and still diverge, because the contract's pre pins 'q_pc', 'q_end' and the two
+window bases but says NOTHING about the emitted cached top ('q_has_top = 0', 'q_top' arbitrary)
+corresponding to the reference's stack. QLOOP's moved-label variant (set 'tcq.op.neg' to a byte the
+reference does not know, e.g. 'op.neg := qOpAdd' and read the segment '[qOpAdd]') is the same shape
+again - it was CHECKED by running the vendored interpreter at fuel 18 on both variants, and it needs
+this same derivation with the label swapped. So the row is refuted on THREE independent axes: the
+window bound (section 11), the unpinned operand stack (this section), and the disagreeing table
+(QLOOP's sketch, same machinery). All three are the same human ruling: what hypothesis on the window,
+the table and the start state makes the row true. NONE is added here.
+
+The emitted run is built at 'Bridge.Dialect c g' for ARBITRARY oracles, so it refutes the row's own
+'funs := []' instantiation without naming a fixture (D-P71). -/
+
+def qNegUsage : QuotientVmOpcodeUsage :=
+  { pushConst := false, pushMemLiteral := false, pushMemToken := false, pushMemTokenOffset := false,
+    pushMemU16 := false, add := false, mul := false, neg := true, pushConstU8 := false,
+    foldMain := false, foldSelector := false, addConstU8 := false, mulConstU8 := false,
+    addConst := false, mulConst := false, addMemU16 := false, mulMemU16 := false,
+    addMulMemMemConstU8 := false, addMulConstU8MemU16 := false, addMulMemMem := false,
+    runAddMulMemMemConstU8 := false, runAddMulConstU8MemU16 := false, affineSum := false,
+    nativePermutation := false, nativeLookup := false, nativeIdentity := false,
+    lin7 := false, bilin7Row := false, bilin7Pairwise := false, modarith7 := false, pow5 := false }
+
+def qNegProgram : QuotientProgram :=
+  { len := 1, opUsage := qNegUsage, memUsage := memUsageAllOn,
+    constMptr := 0x4000, evalNumerMptr := 0, traceIdMptr := 0,
+    selectorPowerMptr := 0, selectorMaxPower := 0, selectorTailUpdates := [],
+    stackMptr := 0x2000, programMptr := 0x1000,
+    guards := { constMax := 7, numSelectorBuckets := 0, stackLast := 0x2000 } }
+def qNegTable : QuotientVmTemplateConstants := templateConstantsDefault.quotientVm
+
+def qNegCases : List (Literal × Block EVM.Op) :=
+  GenAst.qvmOpcodeArms quotientCtx qNegProgram qNegTable ++ GenAst.qvmNativeArms quotientCtx qNegProgram qNegTable
+    ++ GenAst.qvmFoldArms quotientCtx qNegProgram qNegTable
+def qNegDflt : Option (Block EVM.Op) := some [yexpr (ycall "q_program_fail" [])]
+def qNegArm : Block EVM.Op := qArmBodyNeg quotientCtx qNegProgram qNegTable
+def qNegFetch : Expr EVM.Op := yop Op.byte [(ylit 0), (yop Op.mload [(yvar "q_pc")])]
+def qNegInc : Expr EVM.Op := yop Op.add [(yvar "q_pc"), (ylit 1)]
+def qNegNegE : Expr EVM.Op := yop Op.addmod [(ylit 0), (yop Op.sub [yvar "r", yvar "q_top"]), yvar "r"]
+def qNegBody : Block EVM.Op := [ylet "q_op" qNegFetch, yset "q_pc" qNegInc, Stmt.switch (yvar "q_op") qNegCases qNegDflt]
+
+def qNegState : EvmState := { EvmState.init with memory := fun a => if a = 0x1000 then 0x08 else 0 }
+def qNegWord : U256 := loadWord qNegState.memory 0x1000
+def qNegTouched : EvmState := touchMemory qNegState 0x1000 32
+def qNegV0 : VEnv (Bridge.Dialect c g) :=
+  [("q_pc", (0x1000 : U256)), ("q_end", (0x1001 : U256)), ("q_program_mptr", (0x1000 : U256)),
+   ("q_const_mptr", (0x4000 : U256)), ("q_sp", (0x2000 : U256)), ("q_top", (0 : U256)),
+   ("q_has_top", (0 : U256)), ("r", (7 : U256))]
+def qNegV1 : VEnv (Bridge.Dialect c g) := (("q_op", (0x08 : U256)) :: qNegV0)
+def qNegV2 : VEnv (Bridge.Dialect c g) := VEnv.setMany qNegV1 ["q_pc"] [(0x1001 : U256)]
+def qNegV3 : VEnv (Bridge.Dialect c g) := VEnv.setMany qNegV2 ["q_top"] [(0 : U256)]
+def qNegVb : VEnv (Bridge.Dialect c g) :=
+  [("q_pc", (0x1001 : U256)), ("q_end", (0x1001 : U256)), ("q_program_mptr", (0x1000 : U256)),
+   ("q_const_mptr", (0x4000 : U256)), ("q_sp", (0x2000 : U256)), ("q_top", (0 : U256)),
+   ("q_has_top", (0 : U256)), ("r", (7 : U256))]
+
+def qNegF0 : FunEnv (Bridge.Dialect c g) := []
+def qNegFLoop : FunEnv (Bridge.Dialect c g) := hoist (Bridge.Dialect c g) [] :: qNegF0
+def qNegFBody : FunEnv (Bridge.Dialect c g) := hoist (Bridge.Dialect c g) qNegBody :: qNegFLoop
+def qNegFArm : FunEnv (Bridge.Dialect c g) := hoist (Bridge.Dialect c g) qNegArm :: qNegFBody
+def qNegCond : Expr EVM.Op := yop Op.lt [yvar "q_pc", yvar "q_end"]
+
+
+def qNegSegment : QSegment := { base := 0x1000, len := 1, cursor := 0, exprEnd := 1 }
+theorem qNegSegment_inWindow : QSegment.inWindow qNegSegment := ⟨Nat.zero_lt_one, Nat.le_refl 1⟩
+
+theorem qvmLoop_neg_arm_runs :
+    ∃ (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState), ExecStmts (Bridge.Dialect c g) [] qNegV0 qNegState
+      [GenAst.qvmLoop quotientCtx qNegProgram qNegTable] V' st' .normal := by
+  have hMload : Step (Bridge.Dialect c g) qNegFBody qNegV0 qNegState (.expr (yop Op.mload [yvar "q_pc"])) (.eres (.vals [qNegWord] qNegTouched)) :=
+    Step.builtinOk (D := (Bridge.Dialect c g)) (op := Op.mload) (args := [yvar "q_pc"]) (argvals := [0x1000])
+      (st1 := qNegState) (rets := [qNegWord]) (st2 := qNegTouched)
+      (Step.argsCons (D := (Bridge.Dialect c g)) (rest := []) (e := yvar "q_pc") (restvals := []) (v := (0x1000 : U256))
+        (st1 := qNegState) (st2 := qNegState) (Step.argsNil (D := (Bridge.Dialect c g))) (Step.var (D := (Bridge.Dialect c g)) rfl))
+      (by show stepOp Op.mload [0x1000] qNegState = some (.ok [qNegWord] qNegTouched); rfl)
+  have hByte : Step (Bridge.Dialect c g) qNegFBody qNegV0 qNegState (.expr qNegFetch) (.eres (.vals [0x08] qNegTouched)) :=
+    Step.builtinOk (D := (Bridge.Dialect c g)) (op := Op.byte) (args := [ylit 0, yop Op.mload [yvar "q_pc"]])
+      (argvals := [0, qNegWord]) (st1 := qNegTouched) (rets := [0x08]) (st2 := qNegTouched)
+      (Step.argsCons (D := (Bridge.Dialect c g)) (rest := [yop Op.mload [yvar "q_pc"]]) (e := ylit 0) (restvals := [qNegWord])
+        (v := (0 : U256)) (st1 := qNegTouched) (st2 := qNegTouched)
+        (Step.argsCons (D := (Bridge.Dialect c g)) (rest := []) (e := yop Op.mload [yvar "q_pc"]) (restvals := [])
+          (v := qNegWord) (st1 := qNegState) (st2 := qNegTouched) (Step.argsNil (D := (Bridge.Dialect c g))) hMload)
+        (Step.lit (D := (Bridge.Dialect c g)) (l := Literal.number 0)))
+      (by show stepOp Op.byte [0, qNegWord] qNegTouched = some (.ok [0x08] qNegTouched); rfl)
+  have hLet : Step (Bridge.Dialect c g) qNegFBody qNegV0 qNegState (.stmt (ylet "q_op" qNegFetch)) (.sres qNegV1 qNegTouched .normal) :=
+    Step.letVal hByte rfl
+  have hAddpc : Step (Bridge.Dialect c g) qNegFBody qNegV1 qNegTouched (.expr qNegInc) (.eres (.vals [0x1001] qNegTouched)) :=
+    Step.builtinOk (D := (Bridge.Dialect c g)) (op := Op.add) (args := [yvar "q_pc", ylit 1]) (argvals := [0x1000, 1])
+      (st1 := qNegTouched) (rets := [0x1001]) (st2 := qNegTouched)
+      (Step.argsCons (D := (Bridge.Dialect c g)) (rest := [ylit 1]) (e := yvar "q_pc") (restvals := [1])
+        (v := (0x1000 : U256)) (st1 := qNegTouched) (st2 := qNegTouched)
+        (Step.argsCons (D := (Bridge.Dialect c g)) (rest := []) (e := ylit 1) (restvals := []) (v := (1 : U256))
+          (st1 := qNegTouched) (st2 := qNegTouched) (Step.argsNil (D := (Bridge.Dialect c g))) (Step.lit (D := (Bridge.Dialect c g)) (l := Literal.number 1)))
+        (Step.var (D := (Bridge.Dialect c g)) rfl))
+      (by show stepOp Op.add [0x1000, 1] qNegTouched = some (.ok [0x1001] qNegTouched); rfl)
+  have hSetpc : Step (Bridge.Dialect c g) qNegFBody qNegV1 qNegTouched (.stmt (yset "q_pc" qNegInc)) (.sres qNegV2 qNegTouched .normal) :=
+    Step.assignVal hAddpc rfl
+  have hVarop : Step (Bridge.Dialect c g) qNegFBody qNegV2 qNegTouched (.expr (yvar "q_op")) (.eres (.vals [0x08] qNegTouched)) :=
+    Step.var (D := (Bridge.Dialect c g)) rfl
+  have hSub : Step (Bridge.Dialect c g) qNegFArm qNegV2 qNegTouched (.expr (yop Op.sub [yvar "r", yvar "q_top"])) (.eres (.vals [7] qNegTouched)) :=
+    Step.builtinOk (D := (Bridge.Dialect c g)) (op := Op.sub) (args := [yvar "r", yvar "q_top"]) (argvals := [7, 0])
+      (st1 := qNegTouched) (rets := [7]) (st2 := qNegTouched)
+      (Step.argsCons (D := (Bridge.Dialect c g)) (rest := [yvar "q_top"]) (e := yvar "r") (restvals := [0])
+        (v := (7 : U256)) (st1 := qNegTouched) (st2 := qNegTouched)
+        (Step.argsCons (D := (Bridge.Dialect c g)) (rest := []) (e := yvar "q_top") (restvals := []) (v := (0 : U256))
+          (st1 := qNegTouched) (st2 := qNegTouched) (Step.argsNil (D := (Bridge.Dialect c g))) (Step.var (D := (Bridge.Dialect c g)) rfl))
+        (Step.var (D := (Bridge.Dialect c g)) rfl))
+      (by show stepOp Op.sub [7, 0] qNegTouched = some (.ok [7] qNegTouched); rfl)
+  have hAddmod : Step (Bridge.Dialect c g) qNegFArm qNegV2 qNegTouched (.expr qNegNegE) (.eres (.vals [0] qNegTouched)) :=
+    Step.builtinOk (D := (Bridge.Dialect c g)) (op := Op.addmod)
+      (args := [ylit 0, yop Op.sub [yvar "r", yvar "q_top"], yvar "r"]) (argvals := [0, 7, 7])
+      (st1 := qNegTouched) (rets := [0]) (st2 := qNegTouched)
+      (Step.argsCons (D := (Bridge.Dialect c g)) (rest := [yop Op.sub [yvar "r", yvar "q_top"], yvar "r"]) (e := ylit 0)
+        (restvals := [7, 7]) (v := (0 : U256)) (st1 := qNegTouched) (st2 := qNegTouched)
+        (Step.argsCons (D := (Bridge.Dialect c g)) (rest := [yvar "r"]) (e := yop Op.sub [yvar "r", yvar "q_top"])
+          (restvals := [7]) (v := (7 : U256)) (st1 := qNegTouched) (st2 := qNegTouched)
+          (Step.argsCons (D := (Bridge.Dialect c g)) (rest := []) (e := yvar "r") (restvals := []) (v := (7 : U256))
+            (st1 := qNegTouched) (st2 := qNegTouched) (Step.argsNil (D := (Bridge.Dialect c g))) (Step.var (D := (Bridge.Dialect c g)) rfl))
+          hSub)
+        (Step.lit (D := (Bridge.Dialect c g)) (l := Literal.number 0)))
+      (by show stepOp Op.addmod [0, 7, 7] qNegTouched = some (.ok [0] qNegTouched); rfl)
+  have hSettop : Step (Bridge.Dialect c g) qNegFArm qNegV2 qNegTouched (.stmt (yset "q_top" qNegNegE)) (.sres qNegV3 qNegTouched .normal) :=
+    Step.assignVal hAddmod rfl
+  have hArmSS : Step (Bridge.Dialect c g) qNegFArm qNegV2 qNegTouched (.stmts qNegArm) (.sres qNegV3 qNegTouched .normal) :=
+    Step.seqCons hSettop Step.seqNil
+  have hArmBlk : Step (Bridge.Dialect c g) qNegFBody qNegV2 qNegTouched (.stmt (.block qNegArm)) (.sres (restore qNegV2 qNegV3) qNegTouched .normal) :=
+    Step.block hArmSS
+  have hSwitch : Step (Bridge.Dialect c g) qNegFBody qNegV2 qNegTouched (.stmt (Stmt.switch (yvar "q_op") qNegCases qNegDflt))
+      (.sres (restore qNegV2 qNegV3) qNegTouched .normal) := Step.switchExec hVarop hArmBlk
+  have hBodySS : Step (Bridge.Dialect c g) qNegFBody qNegV0 qNegState (.stmts qNegBody) (.sres (restore qNegV2 qNegV3) qNegTouched .normal) :=
+    Step.seqCons hLet (Step.seqCons hSetpc (Step.seqCons hSwitch Step.seqNil))
+  have hBodyBlk : Step (Bridge.Dialect c g) qNegFLoop qNegV0 qNegState (.stmt (.block qNegBody)) (.sres qNegVb qNegTouched .normal) :=
+    Step.block hBodySS
+  have hC1 : Step (Bridge.Dialect c g) qNegFLoop qNegV0 qNegState (.expr qNegCond) (.eres (.vals [1] qNegState)) :=
+    Step.builtinOk (D := (Bridge.Dialect c g)) (op := Op.lt) (args := [yvar "q_pc", yvar "q_end"])
+      (argvals := [0x1000, 0x1001]) (st1 := qNegState) (rets := [1]) (st2 := qNegState)
+      (Step.argsCons (D := (Bridge.Dialect c g)) (rest := [yvar "q_end"]) (e := yvar "q_pc") (restvals := [0x1001])
+        (v := (0x1000 : U256)) (st1 := qNegState) (st2 := qNegState)
+        (Step.argsCons (D := (Bridge.Dialect c g)) (rest := []) (e := yvar "q_end") (restvals := []) (v := (0x1001 : U256))
+          (st1 := qNegState) (st2 := qNegState) (Step.argsNil (D := (Bridge.Dialect c g))) (Step.var (D := (Bridge.Dialect c g)) rfl))
+        (Step.var (D := (Bridge.Dialect c g)) rfl))
+      (by show stepOp Op.lt [0x1000, 0x1001] qNegState = some (.ok [1] qNegState); rfl)
+  have hC2 : Step (Bridge.Dialect c g) qNegFLoop qNegVb qNegTouched (.expr qNegCond) (.eres (.vals [0] qNegTouched)) :=
+    Step.builtinOk (D := (Bridge.Dialect c g)) (op := Op.lt) (args := [yvar "q_pc", yvar "q_end"])
+      (argvals := [0x1001, 0x1001]) (st1 := qNegTouched) (rets := [0]) (st2 := qNegTouched)
+      (Step.argsCons (D := (Bridge.Dialect c g)) (rest := [yvar "q_end"]) (e := yvar "q_pc") (restvals := [0x1001])
+        (v := (0x1001 : U256)) (st1 := qNegTouched) (st2 := qNegTouched)
+        (Step.argsCons (D := (Bridge.Dialect c g)) (rest := []) (e := yvar "q_end") (restvals := []) (v := (0x1001 : U256))
+          (st1 := qNegTouched) (st2 := qNegTouched) (Step.argsNil (D := (Bridge.Dialect c g))) (Step.var (D := (Bridge.Dialect c g)) rfl))
+        (Step.var (D := (Bridge.Dialect c g)) rfl))
+      (by show stepOp Op.lt [0x1001, 0x1001] qNegTouched = some (.ok [0] qNegTouched); rfl)
+  have hPost : Step (Bridge.Dialect c g) qNegFLoop qNegVb qNegTouched (.stmt (.block [])) (.sres qNegVb qNegTouched .normal) :=
+    Step.block (D := (Bridge.Dialect c g)) (Vb := qNegVb) (Step.seqNil (D := (Bridge.Dialect c g)))
+  have hDone : Step (Bridge.Dialect c g) qNegFLoop qNegVb qNegTouched (.loop qNegCond [] qNegBody) (.sres qNegVb qNegTouched .normal) :=
+    Step.loopDone hC2 rfl
+  have hLoop : Step (Bridge.Dialect c g) qNegFLoop qNegV0 qNegState (.loop qNegCond [] qNegBody) (.sres qNegVb qNegTouched .normal) :=
+    Step.loopStep hC1 (by show (1 : U256) ≠ 0; decide) hBodyBlk (Or.inl rfl) hPost hDone
+  have hFor : Step (Bridge.Dialect c g) qNegF0 qNegV0 qNegState (.stmt (Stmt.forLoop [] qNegCond [] qNegBody))
+      (.sres (restore qNegV0 qNegVb) qNegTouched .normal) :=
+    Step.forLoop (Step.seqNil (D := (Bridge.Dialect c g))) hLoop
+  have hfinal : ExecStmts (Bridge.Dialect c g) [] qNegV0 qNegState [GenAst.qvmLoop quotientCtx qNegProgram qNegTable]
+      (restore qNegV0 qNegVb) qNegTouched .normal :=
+    Step.seqCons hFor Step.seqNil
+  exact ⟨_, _, hfinal⟩
+
+theorem qNeg_Agrees (program : QuotientProgram) :
+    Agrees [] program.constMptr 0 0 [qOpNeg] qNegState qBadMemory qNegSegment := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro i hi
+    have : i = 0 := by simpa [qNegSegment] using hi
+    subst this
+    rfl
+  · intro k hk; exact absurd hk (Nat.not_lt_zero k)
+  · intro a ha; exact absurd ha (Nat.not_lt_zero a)
+
+theorem evalQuotientIdentity_negEmptyStack :
+    Midfall.Generator.evalQuotientIdentity [qOpNeg] [] qBadMemory =
+      .error (QVMFault.stackUnderflow 0) := by
+  have hloop : Midfall.Generator.evalQuotientIdentityLoop [qOpNeg] [] 0 [] qBadMemory
+      = .error (QVMFault.stackUnderflow 0) := by
+    show Midfall.Generator.evalQuotientIdentityLoop.go [qOpNeg] [] 1 0 [] qBadMemory = _
+    simp only [Midfall.Generator.evalQuotientIdentityLoop.go]
+    rfl
+  unfold Midfall.Generator.evalQuotientIdentity
+  rw [hloop]
+  rfl
+
+theorem qinterpRefines_qvmLoop_row_is_false_at_a_valid_label :
+    ¬ QInterpRefines (D := (Bridge.Dialect c g))
+      (reverts := Midfall.Lowering.Reverted) (word := fun w => w)
+      (AtSegment := AtSegment qNegProgram) (Top := qinterpTop)
+      (Agrees := fun st mem s => Agrees [] qNegProgram.constMptr 0 0 [qOpNeg] st mem s)
+      [] [GenAst.qvmLoop quotientCtx qNegProgram qNegTable] [qOpNeg] [] := by
+  intro H
+  obtain ⟨V', st', hrun⟩ := qvmLoop_neg_arm_runs
+  have h := H qNegSegment qBadMemory qNegSegment_inWindow qNegV0 qNegState
+    ⟨⟨rfl, rfl, rfl, rfl, rfl⟩, qNeg_Agrees qNegProgram⟩ V' st' .normal hrun
+  cases h with
+  | inl h => exact absurd h.1 (by decide : ¬ ((Outcome.normal : Outcome) = Outcome.halt))
+  | inr h =>
+      obtain ⟨v, mem', hv, _, _⟩ := h.2
+      have hseg : (([qOpNeg].drop qNegSegment.cursor).take (qNegSegment.exprEnd - qNegSegment.cursor))
+          = [qOpNeg] := rfl
+      rw [hseg, evalQuotientIdentity_negEmptyStack] at hv
+      cases hv
+
+#print axioms Midfall.LoweringV3.QuotientRows.qvmLoop_neg_arm_runs
+#print axioms Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_row_is_false_at_a_valid_label
+#cone_sorries Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_row_is_false_at_a_valid_label
+#assert_axioms Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_row_is_false_at_a_valid_label [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV3.QuotientRows

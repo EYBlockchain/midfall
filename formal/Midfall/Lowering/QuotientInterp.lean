@@ -230,6 +230,23 @@ def segmentV {c : ExternalCalls} {g : ExternalGas} (program : QuotientProgram)
 
 /-! ### 5. THE ROW: the contract instantiated at the emitter's loop, for every program -/
 
+/-! **BOXD: THIS ROW IS REFUTED, NOT MERELY OPEN.** The statement below is UNCHANGED - no hypothesis
+    was added to it, to 'ValidV3', a bundle or the root (RULES) - but its universal closure is FALSE,
+    and 'Midfall.LoweringV3.QuotientRows.qinterpRefines_qvmLoop_is_false_as_stated' PROVES the negation:
+    at the window base '2^256 - 1' the loop's two cursor registers wrap, the guard 'q_pc < q_end' is
+    false, the loop exits NORMALLY having run no arm, and the reference errors on the segment's bytes,
+    so neither disjunct of the post holds. QLOOP's sketched route (a table that agrees with some opcode
+    labels and not others, making the loop run the WRONG arm) is a second, independent route to the
+    same failure, and 'QuotientRows.lean' section 12 now PROVES that route too: at the DEFAULT table, a
+    program whose only emitted arm is 'neg' and the segment '[qOpNeg]', the loop runs the neg arm to a
+    NORMAL exit ('q_pc = q_end') while the reference pops an empty stack and errors - the arm's own
+    precondition (a live cached top, a non-empty reference stack) is simply not pinned by the pre. So
+    the row fails on three independent axes: the window bound, the unpinned operand stack, and the
+    disagreeing table. W13 says a sorry whose negation is proved is
+    deleted and the row restated - a HUMAN ruling, because it moves the register, the fingerprint pin
+    and the 'kat_gate.py' note naming this hole. Until then the sorry stays, and it stays honest: it is
+    a refuted statement, not an unproved one. -/
+
 /-- **THE CONTRACT AT THE EMITTER'S LOOP, FOR EVERY PROGRAM (card step 2).** 'GenAst.qvmLoop ctx
     program tcq' is the interpreter loop OBJ.15's structured emitter prints - the opcode fetch
     'qvmLoopPre', the switch over 'qvmOpcodeArms ++ qvmNativeArms ++ qvmFoldArms' in template order,
