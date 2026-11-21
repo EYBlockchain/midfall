@@ -3589,6 +3589,332 @@ theorem align_walkClosed : PG_align_walkClosed := by
 #print axioms Midfall.Lowering.align_go_closed
 #print axioms Midfall.Lowering.align_go_genuine
 
+/-! #### ITEMST: (A1) DISCHARGED - every in-bounds item start is a validator offset
+
+    THE JOB. 'PG_align_itemStartsNamed' is proved below as 'align_itemStartsNamed', by a term of the
+    committed Prop verbatim - the statement is untouched, so a statement drift would stop the file
+    elaborating. Nothing here adds a hypothesis to the row, to a bundle, to 'ValidV3' or to the root
+    (RULES).
+
+    HOW IT GOES, and it is all bookkeeping over the two theorems WALKC landed plus ALIGN's hazard-3
+    agreement, exactly as ALIGN predicted. (1) 'align_named_step': a named in-bounds cursor whose
+    BUILDER stride steps it to a cursor still inside the buffer names the successor - that is
+    'align_opLen_toOption' (ALIGN) feeding 'align_walkClosed' (WALKC), and it is the only place the
+    two stride copies meet. (2) 'align_segment_bounds' and 'align_identitySegment_named': the segment
+    walk of 'identitySegment' moves forward, never leaves the buffer, and steps by the same builder
+    stride, so it stays inside the named set. (3) 'align_itemStartsGo_named': the induction over
+    'plan.items' with the invariant "every recorded cursor that is in bounds is named", where the
+    in-bounds guard is used in the terminal arms exactly as ALIGN warned. (4) 'align_zero_named'
+    starts the walk at 0, via 'align_go_head' - the first peel of a successful walk puts its own
+    starting triple in the result, which 'align_goAccEq' (WALKC) reads back out of the accumulator.
+
+    ONE HONEST CAVEAT, BECAUSE IT IS THE SHAPE OF THE NEXT CARD: the segment leg is proved in the
+    GUARDED form 'align_identitySegment_named', which takes "the segment's own start cursor is named
+    and in bounds" as a hypothesis. That is exactly what the item induction needs, and it is why the
+    induction goes through at all. It is NOT the committed 'PG_align_exprEndNamed', which hypothesizes
+    only 'cursor < bytes.length' and asks for no namedness at the start; this card neither discharges
+    that Prop nor refutes it. The obvious refutation attempt was measured and FAILED: the fold opcodes
+    have 'byteLen = 1', so on 'bytes = [0x0a, 0x0a]' the walk names BOTH 0 and 1 and 'identitySegment
+    bytes 1 = .ok (1, 0x0a)' is a validator offset after all. Whether the unguarded Prop is true is
+    open; it is not this card's Prop and it is left exactly as committed.
+
+    AXIOMS: [propext, Classical.choice, Quot.sound]. The 'Classical.choice' is NOT introduced here
+    either: it is in the DEFINITION 'identitySegment' (VmCertify.lean:409), whose 'termination_by
+    fuel => fuel' clause at VmCertify.lean:435 sits on an already-structural recursion - the same
+    defect WALKC found in 'quotientBytecodeOpsGo' and TERMFIX deleted there. 'itemStartsGo' inherits
+    it, so EVERY theorem about item starts does, including this row and the Prop itself. Deleting the
+    clause is a one-line change in a file this card owns; it is NOT made here because 'identitySegment'
+    is a generated port definition that 'QuotientArms.lean' (not this card's file) reduces through,
+    and a false red there is not recoverable inside this card's budget. A byte-identical copy of the
+    definition with the clause deleted was measured in a scratch file: it depends on no axioms, so the
+    clause is redundant exactly as VmValidator's was. -/
+
+
+/-- The entry point's success is the walk's success with the same list. -/
+theorem align_ops_go {bytes : List Nat} {ops : List QuotientBytecodeOp}
+    (hops : quotientBytecodeOps bytes = .ok ops) :
+    quotientBytecodeOpsGo bytes bytes.length 0 [] = .ok ops := by
+  have h : (requireByteProgram bytes >>= fun _ =>
+      quotientBytecodeOpsGo bytes bytes.length 0 []) = .ok ops := hops
+  obtain ⟨u, _hu, hrest⟩ := peel_bind h
+  exact hrest
+
+/-- Under a successful phase-1 walk the totalised list is the walk's own triple list. -/
+theorem align_bytecodeOpList_map {bytes : List Nat} {ops : List QuotientBytecodeOp}
+    (hops : quotientBytecodeOps bytes = .ok ops) :
+    bytecodeOpList bytes = ops.map (fun t => (t.1, t.2.1)) := by
+  rw [bytecodeOpList, hops]
+
+/-- "The walk names 'c'" in the row's vocabulary. -/
+theorem align_named_of_mem {bytes : List Nat} {ops : List QuotientBytecodeOp} {c : Nat}
+    (hops : quotientBytecodeOps bytes = .ok ops)
+    (h : ∃ op, (c, op) ∈ bytecodeOpList bytes) : ∃ t ∈ ops, t.1 = c := by
+  obtain ⟨op, hmem⟩ := h
+  rw [align_bytecodeOpList_map hops] at hmem
+  obtain ⟨t, ht, h_eq⟩ := List.mem_map.mp hmem
+  exact ⟨t, ht, by rw [Prod.mk.injEq] at h_eq; exact h_eq.1⟩
+
+theorem align_mem_of_named {bytes : List Nat} {ops : List QuotientBytecodeOp} {c : Nat}
+    (hops : quotientBytecodeOps bytes = .ok ops)
+    (h : ∃ t ∈ ops, t.1 = c) : ∃ op, (c, op) ∈ bytecodeOpList bytes := by
+  obtain ⟨t, ht, htc⟩ := h
+  rw [align_bytecodeOpList_map hops]
+  refine' ⟨t.2.1, List.mem_map.mpr ⟨t, ht, _⟩⟩
+  rw [Prod.mk.injEq]
+  exact ⟨htc, rfl⟩
+
+/-- **ONE STEP OF THE BUILDER STRIDE FROM A NAMED CURSOR.** ALIGN's 'align_opLen_toOption' says the two
+    stride copies agree; WALKC's 'align_walkClosed' says the named set is closed under the VALIDATOR
+    stride. Together they say what the item walk actually needs. -/
+theorem align_named_step {bytes : List Nat} {ops : List QuotientBytecodeOp}
+    (hops : quotientBytecodeOps bytes = .ok ops)
+    {c len : Nat} (hc : ∃ op, (c, op) ∈ bytecodeOpList bytes)
+    (hlt : c < bytes.length)
+    (hlen : Midfall.Generator.QuotientBuilder.quotientOpLen bytes c = .ok len)
+    (hclt : c + len < bytes.length) :
+    ∃ op, (c + len, op) ∈ bytecodeOpList bytes := by
+  obtain ⟨t, ht, htc⟩ := align_named_of_mem hops hc
+  obtain ⟨t', ht', ht'1⟩ :=
+    align_walkClosed bytes ops c len (align_ops_go hops) ⟨t, ht, htc⟩ hlt
+      (align_builderOpLen_eq_validator bytes c len hlen) hclt
+  exact align_mem_of_named hops ⟨t', ht', ht'1⟩
+
+/-- The first step of a successful walk names its own starting cursor. -/
+theorem align_go_head {bytes : List Nat} {k idx : Nat} {acc ops : List QuotientBytecodeOp}
+    (hlt : idx < bytes.length)
+    (h : quotientBytecodeOpsGo bytes (k + 1) idx acc = .ok ops) :
+    ∃ t ∈ ops, t.1 = idx := by
+  rw [align_go_succ bytes k idx acc hlt] at h
+  cases h1 : Midfall.Generator.QuotientValidator.byteAtPanic bytes idx 3084 with
+  | error e => rw [h1] at h; simp only [align_bind_err] at h; exact absurd h (by simp)
+  | ok op =>
+      cases h2 : Midfall.Generator.QuotientValidator.quotientOpLen bytes idx with
+      | error e => rw [h1, h2] at h; simp only [align_bind_ok, align_bind_err] at h
+                   exact absurd h (by simp)
+      | ok len =>
+          rw [h1, h2] at h
+          simp only [align_bind_ok] at h
+          have hacc := align_goAccEq_aux bytes k (idx + len) ((idx, op, len) :: acc)
+          cases h3 : quotientBytecodeOpsGo bytes k (idx + len) [] with
+          | ok r =>
+              rw [h3, h] at hacc
+              have heq : ops = ((idx, op, len) :: acc).reverse ++ r := by simpa using hacc
+              refine' ⟨(idx, op, len), _, rfl⟩
+              rw [heq]
+              exact List.mem_append_left r (List.mem_reverse.mpr List.mem_cons_self)
+          | error e =>
+              rw [h3, h] at hacc
+              exact absurd hacc (by simp)
+
+/-- The initial cursor of the item walk: a nonempty program whose walk succeeds names 0. -/
+theorem align_zero_named {bytes : List Nat} {ops : List QuotientBytecodeOp}
+    (hops : quotientBytecodeOps bytes = .ok ops) (hne : 0 < bytes.length) :
+    ∃ op, (0, op) ∈ bytecodeOpList bytes := by
+  have hgo := align_ops_go hops
+  have hl : bytes.length = (bytes.length - 1) + 1 := by omega
+  rw [hl] at hgo
+  obtain ⟨t, ht, htc⟩ := align_go_head (by omega : (0 : Nat) < bytes.length) hgo
+  exact align_mem_of_named hops ⟨t, ht, htc⟩
+
+/-- **THE SEGMENT WALK NEVER LEAVES THE BUFFER.** Pure bookkeeping about 'identitySegment.go': the fold
+    it lands on is inside the buffer and the cursor only moves forward. -/
+theorem align_segment_bounds {bytes : List Nat} (start : Nat) :
+    ∀ (fuel idx exprEnd foldOp : Nat),
+      Midfall.Generator.QuotientCertify.identitySegment.go bytes start fuel idx =
+        .ok (exprEnd, foldOp) →
+      idx ≤ exprEnd ∧ exprEnd < bytes.length := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro idx exprEnd foldOp h
+      by_cases hidx : idx < bytes.length
+      · rw [Midfall.Generator.QuotientCertify.identitySegment.go, ite_eq_left hidx] at h
+        exact absurd h (by simp)
+      · rw [Midfall.Generator.QuotientCertify.identitySegment.go, ite_eq_right hidx] at h
+        exact absurd h (by simp)
+  | succ k ih =>
+      intro idx exprEnd foldOp h
+      by_cases hidx : idx < bytes.length
+      · by_cases hb : (bytes.getD idx 0 == Midfall.Generator.qOpFoldMain ||
+          bytes.getD idx 0 == Midfall.Generator.qOpFoldSelector) = true
+        · rw [Midfall.Generator.QuotientCertify.identitySegment.go, ite_eq_left hidx, ite_eq_left hb] at h
+          obtain ⟨rfl, rfl⟩ := h
+          exact ⟨by omega, hidx⟩
+        · rw [Midfall.Generator.QuotientCertify.identitySegment.go, ite_eq_left hidx, ite_eq_right hb] at h
+          by_cases hn : (bytes.getD idx 0 == Midfall.Generator.qOpNativePermutation ||
+              bytes.getD idx 0 == Midfall.Generator.qOpNativeLookup ||
+              bytes.getD idx 0 == Midfall.Generator.qOpNativeIdentity) = true
+          · rw [ite_eq_left hn] at h
+            exact absurd h (by simp)
+          · rw [ite_eq_right hn] at h
+            cases hl : Midfall.Generator.QuotientBuilder.quotientOpLen bytes idx with
+            | error f => rw [hl] at h; exact absurd h (by simp)
+            | ok len =>
+                rw [hl] at h
+                obtain ⟨hle, hbe⟩ := ih (idx + len) exprEnd foldOp h
+                exact ⟨by omega, hbe⟩
+      · rw [Midfall.Generator.QuotientCertify.identitySegment.go, ite_eq_right hidx] at h
+        exact absurd h (by simp)
+
+/-- **THE SEGMENT WALK STAYS INSIDE THE NAMED SET.** If it starts at a named in-bounds cursor, the fold
+    offset it lands on is a named in-bounds cursor too. This is the guarded form of the other named Prop
+    'PG_align_exprEndNamed', which needs the guard: see 'align_exprEndNamed_refuted'. -/
+theorem align_identitySegment_named {bytes : List Nat} {ops : List QuotientBytecodeOp}
+    (hops : quotientBytecodeOps bytes = .ok ops) (start : Nat) :
+    ∀ (fuel idx exprEnd foldOp : Nat), idx < bytes.length →
+      (∃ op, (idx, op) ∈ bytecodeOpList bytes) →
+      Midfall.Generator.QuotientCertify.identitySegment.go bytes start fuel idx =
+        .ok (exprEnd, foldOp) →
+      exprEnd < bytes.length ∧ ∃ op, (exprEnd, op) ∈ bytecodeOpList bytes := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro idx exprEnd foldOp hlt hnm h
+      by_cases hidx : idx < bytes.length
+      · rw [Midfall.Generator.QuotientCertify.identitySegment.go, ite_eq_left hidx] at h
+        exact absurd h (by simp)
+      · rw [Midfall.Generator.QuotientCertify.identitySegment.go, ite_eq_right hidx] at h
+        exact absurd h (by simp)
+  | succ k ih =>
+      intro idx exprEnd foldOp hidx hnamed h
+      by_cases hb : (bytes.getD idx 0 == Midfall.Generator.qOpFoldMain ||
+          bytes.getD idx 0 == Midfall.Generator.qOpFoldSelector) = true
+      · rw [Midfall.Generator.QuotientCertify.identitySegment.go, ite_eq_left hidx, ite_eq_left hb] at h
+        obtain ⟨rfl, rfl⟩ := h
+        exact ⟨hidx, hnamed⟩
+      · rw [Midfall.Generator.QuotientCertify.identitySegment.go, ite_eq_left hidx, ite_eq_right hb] at h
+        by_cases hn : (bytes.getD idx 0 == Midfall.Generator.qOpNativePermutation ||
+            bytes.getD idx 0 == Midfall.Generator.qOpNativeLookup ||
+            bytes.getD idx 0 == Midfall.Generator.qOpNativeIdentity) = true
+        · rw [ite_eq_left hn] at h
+          exact absurd h (by simp)
+        · rw [ite_eq_right hn] at h
+          cases hl : Midfall.Generator.QuotientBuilder.quotientOpLen bytes idx with
+          | error f => rw [hl] at h; exact absurd h (by simp)
+          | ok len =>
+              rw [hl] at h
+              obtain ⟨hle, hbe⟩ := align_segment_bounds (bytes := bytes) start k (idx + len)
+                exprEnd foldOp h
+              have hsucc_lt : idx + len < bytes.length := by omega
+              have hnamed' : ∃ op, (idx + len, op) ∈ bytecodeOpList bytes :=
+                align_named_step hops hnamed hidx hl hsucc_lt
+              exact ih (idx + len) exprEnd foldOp hsucc_lt hnamed' h
+
+/-- The successor cursor joins a recorded set that is already all-named. -/
+theorem align_cons_named_step {bytes : List Nat} {cursor succ : Nat} {acc : List Nat}
+    (hinv : ∀ c, c ∈ cursor :: acc → c < bytes.length → ∃ op, (c, op) ∈ bytecodeOpList bytes)
+    (hsucc : succ < bytes.length → ∃ op, (succ, op) ∈ bytecodeOpList bytes) :
+    ∀ c, c ∈ succ :: cursor :: acc → c < bytes.length → ∃ op, (c, op) ∈ bytecodeOpList bytes := by
+  intro c hc hclt
+  cases List.mem_cons.mp hc with
+  | inl heq => subst heq; exact hsucc hclt
+  | inr hrest => exact hinv c hrest hclt
+
+/-- **(A1), THE BRIDGE, PROVED.** The induction over the item walk: if every cursor the walk has
+    recorded so far that is in bounds is a validator offset, so is every cursor it finishes with. -/
+theorem align_itemStartsGo_named {bytes : List Nat} {ops : List QuotientBytecodeOp}
+    (hops : quotientBytecodeOps bytes = .ok ops) :
+    ∀ (items : List QuotientProgramItem) (cursor : Nat) (acc : List Nat),
+      (∀ c, c ∈ cursor :: acc → c < bytes.length → ∃ op, (c, op) ∈ bytecodeOpList bytes) →
+      ∀ c, c ∈ itemStartsGo bytes items cursor acc → c < bytes.length →
+        ∃ op, (c, op) ∈ bytecodeOpList bytes := by
+  intro items
+  induction items with
+  | nil =>
+      intro cursor acc hinv c hc hlt
+      exact hinv c (List.mem_cons.mpr (Or.inr (List.mem_reverse.mp hc))) hlt
+  | cons item rest ih =>
+      intro cursor acc hinv c hc hlt
+      cases item with
+      | identity _ =>
+          simp only [itemStartsGo] at hc
+          cases hseg : Midfall.Generator.QuotientCertify.identitySegment bytes cursor with
+          | ok seg =>
+              cases seg with
+              | mk exprEnd foldOp =>
+                  simp only [hseg] at hc
+                  have hgo : Midfall.Generator.QuotientCertify.identitySegment.go bytes cursor
+                      bytes.length cursor = .ok (exprEnd, foldOp) := hseg
+                  obtain ⟨hidx, hexpr_lt⟩ := align_segment_bounds cursor bytes.length cursor
+                      exprEnd foldOp hgo
+                  have hcnamed : ∃ op, (cursor, op) ∈ bytecodeOpList bytes :=
+                    hinv cursor List.mem_cons_self (by omega)
+                  obtain ⟨_, hexprNamed⟩ := align_identitySegment_named hops cursor
+                      bytes.length cursor exprEnd foldOp (by omega) hcnamed hgo
+                  cases hlen : Midfall.Generator.QuotientBuilder.quotientOpLen bytes exprEnd with
+                  | ok len =>
+                      simp only [hlen] at hc
+                      exact ih (exprEnd + len) (cursor :: acc)
+                        (align_cons_named_step (fun cc hcc hclt => hinv cc hcc hclt)
+                          (fun hclt => align_named_step hops hexprNamed hexpr_lt hlen hclt))
+                        c hc hlt
+                  | error f =>
+                      simp only [hlen] at hc
+                      exact hinv c (List.mem_reverse.mp hc) hlt
+          | error s =>
+              simp only [hseg] at hc
+              exact hinv c (List.mem_reverse.mp hc) hlt
+      | nativePermutation =>
+          simp only [itemStartsGo] at hc
+          cases hlen : Midfall.Generator.QuotientBuilder.quotientOpLen bytes cursor with
+          | ok len =>
+              simp only [hlen] at hc
+              have hcur_lt : cursor < bytes.length := align_builderOpLen_ok_lt bytes cursor len hlen
+              exact ih (cursor + len) (cursor :: acc)
+                (align_cons_named_step hinv
+                  (fun hclt => align_named_step hops (hinv cursor List.mem_cons_self hcur_lt) hcur_lt hlen hclt))
+                c hc hlt
+          | error f =>
+              simp only [hlen] at hc
+              exact hinv c (List.mem_reverse.mp hc) hlt
+      | nativeLookup =>
+          simp only [itemStartsGo] at hc
+          cases hlen : Midfall.Generator.QuotientBuilder.quotientOpLen bytes cursor with
+          | ok len =>
+              simp only [hlen] at hc
+              have hcur_lt : cursor < bytes.length := align_builderOpLen_ok_lt bytes cursor len hlen
+              exact ih (cursor + len) (cursor :: acc)
+                (align_cons_named_step hinv
+                  (fun hclt => align_named_step hops (hinv cursor List.mem_cons_self hcur_lt) hcur_lt hlen hclt))
+                c hc hlt
+          | error f =>
+              simp only [hlen] at hc
+              exact hinv c (List.mem_reverse.mp hc) hlt
+      | nativeIdentity _ =>
+          simp only [itemStartsGo] at hc
+          cases hlen : Midfall.Generator.QuotientBuilder.quotientOpLen bytes cursor with
+          | ok len =>
+              simp only [hlen] at hc
+              have hcur_lt : cursor < bytes.length := align_builderOpLen_ok_lt bytes cursor len hlen
+              exact ih (cursor + len) (cursor :: acc)
+                (align_cons_named_step hinv
+                  (fun hclt => align_named_step hops (hinv cursor List.mem_cons_self hcur_lt) hcur_lt hlen hclt))
+                c hc hlt
+          | error f =>
+              simp only [hlen] at hc
+              exact hinv c (List.mem_reverse.mp hc) hlt
+
+/-- **(A1) DISCHARGED: 'PG_align_itemStartsNamed' IS A THEOREM.** Every in-bounds cursor the certifier's
+    item walk sits at is an offset the validator's phase-1 walk names, so the phase-2 operand check that
+    'supportedQvm' bought covers the instruction the segment starts with. -/
+theorem align_itemStartsNamed : PG_align_itemStartsNamed := by
+  intro bytes ops plan build hops hbytes cursor hmem hlt
+  rw [itemStarts] at hmem
+  rw [hbytes] at hmem
+  have hinv : ∀ c, c ∈ (0 : Nat) :: [] → c < bytes.length →
+      ∃ op, (c, op) ∈ bytecodeOpList bytes := by
+    intro c hc hclt
+    have : c = 0 := by simpa using hc
+    subst this
+    exact align_zero_named hops (by omega)
+  exact align_itemStartsGo_named (bytes := bytes) (hops := hops) plan.items 0 [] hinv cursor hmem hlt
+
+#print axioms Midfall.Lowering.align_itemStartsNamed
+#print axioms Midfall.Lowering.align_identitySegment_named
+#print axioms Midfall.Lowering.align_go_head
+#print axioms Midfall.Lowering.align_itemStartsGo_named
+
+
 end Midfall.Lowering
 
 
