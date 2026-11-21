@@ -825,6 +825,1090 @@ theorem exitDiscipline_refuses :
     exitDisciplineFuel 16 (yul% { leave mstore(4096, 1) return(4096, 32) }) = false := by
   decide
 
+/-! ## §I.a The exit classification (the proof of `twoOutcomes_of_exitDiscipline`)
+
+  THE INVARIANT. `exitScan` is a syntactic over-approximation of the halting behaviour of a block.
+  This section turns it into a semantic judgement: `ExitCleanRes fu la st res` says that a `Step`
+  result either leaves `halted` exactly as it was (and its outcome is `normal`, or `leave` when
+  `fu`, or `break`/`continue` when `la`), or halts with a NON-COMMITTING `HaltKind` (revert,
+  invalid, invalidMemoryAccess, staticViolation). `Step.exitClassified` is the induction on the
+  derivation carrying `ExitScanCleanCode` for the code and `ExitCleanFuns` for the function
+  environment; `exitScan`'s closure lemmas below hand every sub-derivation its scan.
+
+  THE TWO REMAINING FACTS are about the designated tail `mstore(p, 1); return(p, 0x20)`:
+  `Step.stmts_mstore_one_ret` computes the halt record (`readBytes_storeWord_one` is the 32-byte
+  read-back of the word 1), and `returnTail?_spec` inverts the syntactic split so the final proof
+  can use `Step.stmts_append_inv` at exactly that boundary. -/
+
+
+
+def ExitScanClean (fu la : Bool) (sc : Scan) : Prop := ∃ n, exitScan n fu la sc = true
+
+def ExitScanCleanCode (fu la : Bool) (code : Code EVM.Op) : Prop :=
+  ExitScanClean fu la (codeScan code)
+
+def ExitCleanFuns {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) : Prop :=
+  ∀ scope ∈ funs, ∀ q ∈ scope, ExitScanClean true false (.b q.2.body)
+
+theorem exitScan_mono_succ : ∀ (n : Nat) (fu la : Bool) (sc : Scan),
+    exitScan n fu la sc = true → exitScan (n + 1) fu la sc = true := by
+  intro n
+  induction n with
+  | zero => intro fu la sc h; simp [exitScan] at h
+  | succ k ih =>
+      intro fu la sc h
+      change exitStep fu la sc (exitScan k) = true at h
+      change exitStep fu la sc (exitScan (k + 1)) = true
+      cases sc with
+      | e e =>
+          cases e with
+          | lit l => exact h
+          | var x => exact h
+          | builtin op args =>
+              simp only [exitStep, Bool.and_eq_true, Bool.not_eq_true'] at h ⊢
+              exact ⟨h.1, ih fu la _ h.2⟩
+          | call fn args =>
+              simp only [exitStep] at h ⊢
+              exact ih fu la _ h
+      | es es =>
+          cases es with
+          | nil => exact h
+          | cons e rest =>
+              simp only [exitStep, Bool.and_eq_true] at h ⊢
+              exact ⟨ih fu la _ h.1, ih fu la _ h.2⟩
+      | s s =>
+          cases s with
+          | block body =>
+              simp only [exitStep] at h ⊢
+              exact ih fu la _ h
+          | funDef n ps rs b =>
+              simp only [exitStep] at h ⊢
+              exact ih true false _ h
+          | letDecl xs val =>
+              cases val with
+              | none => exact h
+              | some e =>
+                  simp only [exitStep] at h ⊢
+                  exact ih fu la _ h
+          | assign xs e =>
+              simp only [exitStep] at h ⊢
+              exact ih fu la _ h
+          | cond cc body =>
+              simp only [exitStep, Bool.and_eq_true] at h ⊢
+              exact ⟨ih fu la _ h.1, ih fu la _ h.2⟩
+          | «switch» cc cases dflt =>
+              cases dflt with
+              | none =>
+                  simp only [exitStep, Bool.and_eq_true] at h ⊢
+                  exact ⟨⟨ih fu la _ h.1.1, ih fu la _ h.1.2⟩, h.2⟩
+              | some d =>
+                  simp only [exitStep, Bool.and_eq_true] at h ⊢
+                  exact ⟨⟨ih fu la _ h.1.1, ih fu la _ h.1.2⟩, ih fu la _ h.2⟩
+          | forLoop init cc post body =>
+              simp only [exitStep, Bool.and_eq_true] at h ⊢
+              exact ⟨⟨⟨ih fu false _ h.1.1.1, ih fu false _ h.1.1.2⟩,
+                ih fu false _ h.1.2⟩, ih fu true _ h.2⟩
+          | exprStmt e =>
+              simp only [exitStep] at h ⊢
+              exact ih fu la _ h
+          | «break» => exact h
+          | «continue» => exact h
+          | «leave» => exact h
+      | b b =>
+          cases b with
+          | nil => exact h
+          | cons s ss =>
+              simp only [exitStep, Bool.and_eq_true] at h ⊢
+              exact ⟨ih fu la _ h.1, ih fu la _ h.2⟩
+      | cs cs =>
+          cases cs with
+          | nil => exact h
+          | cons q rest =>
+              simp only [exitStep, Bool.and_eq_true] at h ⊢
+              exact ⟨ih fu la _ h.1, ih fu la _ h.2⟩
+
+theorem exitScan_mono {n m : Nat} (h : n ≤ m) {fu la : Bool} {sc : Scan}
+    (hn : exitScan n fu la sc = true) : exitScan m fu la sc = true := by
+  obtain ⟨d, rfl⟩ := Nat.exists_eq_add_of_le h
+  clear h
+  induction d with
+  | zero => simpa using hn
+  | succ d ih =>
+      simpa only [Nat.add_succ] using exitScan_mono_succ (n + d) fu la sc ih
+
+/-! ## Closure (projections) -/
+
+theorem exitScan_b_cons {fu la : Bool} {s : Stmt EVM.Op} {ss : Block EVM.Op}
+    (h : ExitScanClean fu la (.b (s :: ss))) :
+    ExitScanClean fu la (.s s) ∧ ExitScanClean fu la (.b ss) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k =>
+      simp only [exitScan, exitStep, Bool.and_eq_true] at hn
+      exact ⟨⟨k, hn.1⟩, ⟨k, hn.2⟩⟩
+
+theorem exitScan_es_cons {fu la : Bool} {e : Expr EVM.Op} {es : List (Expr EVM.Op)}
+    (h : ExitScanClean fu la (.es (e :: es))) :
+    ExitScanClean fu la (.e e) ∧ ExitScanClean fu la (.es es) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k =>
+      simp only [exitScan, exitStep, Bool.and_eq_true] at hn
+      exact ⟨⟨k, hn.1⟩, ⟨k, hn.2⟩⟩
+
+theorem exitScan_cs_cons {fu la : Bool} {q : Literal × Block EVM.Op}
+    {rest : List (Literal × Block EVM.Op)}
+    (h : ExitScanClean fu la (.cs (q :: rest))) :
+    ExitScanClean fu la (.b q.2) ∧ ExitScanClean fu la (.cs rest) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k =>
+      simp only [exitScan, exitStep, Bool.and_eq_true] at hn
+      exact ⟨⟨k, hn.1⟩, ⟨k, hn.2⟩⟩
+
+theorem exitScan_e_builtin {fu la : Bool} {op : EVM.Op} {args : List (Expr EVM.Op)}
+    (h : ExitScanClean fu la (.e (.builtin op args))) :
+    isCommittingExit op = false ∧ ExitScanClean fu la (.es args) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k =>
+      simp only [exitScan, exitStep, Bool.and_eq_true, Bool.not_eq_true'] at hn
+      exact ⟨hn.1, ⟨k, hn.2⟩⟩
+
+theorem exitScan_e_call {fu la : Bool} {fn : Ident} {args : List (Expr EVM.Op)}
+    (h : ExitScanClean fu la (.e (.call fn args))) :
+    ExitScanClean fu la (.es args) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k => exact ⟨k, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_s_block {fu la : Bool} {body : Block EVM.Op}
+    (h : ExitScanClean fu la (.s (.block body))) : ExitScanClean fu la (.b body) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k => exact ⟨k, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_s_funDef {fu la : Bool} {n : Ident} {ps rs : List Ident}
+    {body : Block EVM.Op} (h : ExitScanClean fu la (.s (.funDef n ps rs body))) :
+    ExitScanClean true false (.b body) := by
+  obtain ⟨f, hf⟩ := h
+  cases f with
+  | zero => simp [exitScan] at hf
+  | succ k => exact ⟨k, by simpa [exitScan, exitStep] using hf⟩
+
+theorem exitScan_s_letDecl_some {fu la : Bool} {xs : List Ident} {e : Expr EVM.Op}
+    (h : ExitScanClean fu la (.s (.letDecl xs (some e)))) :
+    ExitScanClean fu la (.e e) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k => exact ⟨k, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_s_assign {fu la : Bool} {xs : List Ident} {e : Expr EVM.Op}
+    (h : ExitScanClean fu la (.s (.assign xs e))) : ExitScanClean fu la (.e e) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k => exact ⟨k, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_s_exprStmt {fu la : Bool} {e : Expr EVM.Op}
+    (h : ExitScanClean fu la (.s (.exprStmt e))) : ExitScanClean fu la (.e e) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k => exact ⟨k, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_s_cond {fu la : Bool} {cc : Expr EVM.Op} {body : Block EVM.Op}
+    (h : ExitScanClean fu la (.s (.cond cc body))) :
+    ExitScanClean fu la (.e cc) ∧ ExitScanClean fu la (.b body) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k =>
+      simp only [exitScan, exitStep, Bool.and_eq_true] at hn
+      exact ⟨⟨k, hn.1⟩, ⟨k, hn.2⟩⟩
+
+def ExitScanDflt (fu la : Bool) (dflt : Option (Block EVM.Op)) : Prop :=
+  match dflt with | none => True | some d => ExitScanClean fu la (.b d)
+
+theorem exitScan_s_switch {fu la : Bool} {cc : Expr EVM.Op}
+    {cases : List (Literal × Block EVM.Op)} {dflt : Option (Block EVM.Op)}
+    (h : ExitScanClean fu la (.s (.switch cc cases dflt))) :
+    ExitScanClean fu la (.e cc) ∧ ExitScanClean fu la (.cs cases) ∧
+      ExitScanDflt fu la dflt := by
+  revert h
+  cases dflt with
+  | none =>
+      intro h
+      obtain ⟨n, hn⟩ := h
+      cases n with
+      | zero => simp [exitScan] at hn
+      | succ k =>
+          simp only [exitScan, exitStep, Bool.and_eq_true] at hn
+          exact ⟨⟨k, hn.1.1⟩, ⟨k, hn.1.2⟩, trivial⟩
+  | some d =>
+      intro h
+      obtain ⟨n, hn⟩ := h
+      cases n with
+      | zero => simp [exitScan] at hn
+      | succ k =>
+          simp only [exitScan, exitStep, Bool.and_eq_true] at hn
+          exact ⟨⟨k, hn.1.1⟩, ⟨k, hn.1.2⟩, ⟨k, hn.2⟩⟩
+
+theorem exitScan_s_forLoop {fu la : Bool} {init : Block EVM.Op} {cc : Expr EVM.Op}
+    {post body : Block EVM.Op}
+    (h : ExitScanClean fu la (.s (.forLoop init cc post body))) :
+    ExitScanClean fu false (.b init) ∧ ExitScanClean fu false (.e cc) ∧
+      ExitScanClean fu false (.b post) ∧ ExitScanClean fu true (.b body) := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k =>
+      simp only [exitScan, exitStep, Bool.and_eq_true] at hn
+      exact ⟨⟨k, hn.1.1.1⟩, ⟨k, hn.1.1.2⟩, ⟨k, hn.1.2⟩, ⟨k, hn.2⟩⟩
+
+theorem exitScan_s_break {fu la : Bool} (h : ExitScanClean fu la (.s .«break»)) : la = true := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k => simpa [exitScan, exitStep] using hn
+
+theorem exitScan_s_continue {fu la : Bool} (h : ExitScanClean fu la (.s .«continue»)) :
+    la = true := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k => simpa [exitScan, exitStep] using hn
+
+theorem exitScan_s_leave {fu la : Bool} (h : ExitScanClean fu la (.s .«leave»)) : fu = true := by
+  obtain ⟨n, hn⟩ := h
+  cases n with
+  | zero => simp [exitScan] at hn
+  | succ k => simpa [exitScan, exitStep] using hn
+
+/-! ## Reverse closure -/
+
+theorem exitScanClean_nil {fu la : Bool} : ExitScanClean fu la (.b ([] : Block EVM.Op)) :=
+  ⟨1, rfl⟩
+
+theorem exitScanClean_and {fu la : Bool} {sc₁ sc₂ : Scan}
+    (h₁ : ExitScanClean fu la sc₁) (h₂ : ExitScanClean fu la sc₂) :
+    ∃ n, exitScan n fu la sc₁ = true ∧ exitScan n fu la sc₂ = true := by
+  obtain ⟨n₁, hn₁⟩ := h₁
+  obtain ⟨n₂, hn₂⟩ := h₂
+  exact ⟨max n₁ n₂, exitScan_mono (Nat.le_max_left _ _) hn₁,
+    exitScan_mono (Nat.le_max_right _ _) hn₂⟩
+
+theorem exitScan_s_block_rev {fu la : Bool} {body : Block EVM.Op}
+    (h : ExitScanClean fu la (.b body)) : ExitScanClean fu la (.s (.block body)) := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨n + 1, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_b_cons_rev {fu la : Bool} {s : Stmt EVM.Op} {ss : Block EVM.Op}
+    (hs : ExitScanClean fu la (.s s)) (hss : ExitScanClean fu la (.b ss)) :
+    ExitScanClean fu la (.b (s :: ss)) := by
+  obtain ⟨n, hn1, hn2⟩ := exitScanClean_and hs hss
+  exact ⟨n + 1, by simp only [exitScan, exitStep, hn1, hn2, Bool.and_true]⟩
+
+theorem exitScan_es_cons_rev {fu la : Bool} {e : Expr EVM.Op} {es : List (Expr EVM.Op)}
+    (he : ExitScanClean fu la (.e e)) (hes : ExitScanClean fu la (.es es)) :
+    ExitScanClean fu la (.es (e :: es)) := by
+  obtain ⟨n, hn1, hn2⟩ := exitScanClean_and he hes
+  exact ⟨n + 1, by simp only [exitScan, exitStep, hn1, hn2, Bool.and_true]⟩
+
+theorem exitScan_cs_cons_rev {fu la : Bool} {q : Literal × Block EVM.Op}
+    {rest : List (Literal × Block EVM.Op)}
+    (hb : ExitScanClean fu la (.b q.2)) (hrest : ExitScanClean fu la (.cs rest)) :
+    ExitScanClean fu la (.cs (q :: rest)) := by
+  obtain ⟨n, hn1, hn2⟩ := exitScanClean_and hb hrest
+  exact ⟨n + 1, by simp only [exitScan, exitStep, hn1, hn2, Bool.and_true]⟩
+
+theorem exitScan_e_builtin_rev {fu la : Bool} {op : EVM.Op} {args : List (Expr EVM.Op)}
+    (hw : isCommittingExit op = false) (hargs : ExitScanClean fu la (.es args)) :
+    ExitScanClean fu la (.e (.builtin op args)) := by
+  obtain ⟨n, hn⟩ := hargs
+  exact ⟨n + 1, by simp only [exitScan, exitStep, hw, Bool.not_false, Bool.true_and]; exact hn⟩
+
+theorem exitScan_e_call_rev {fu la : Bool} {fn : Ident} {args : List (Expr EVM.Op)}
+    (hargs : ExitScanClean fu la (.es args)) : ExitScanClean fu la (.e (.call fn args)) := by
+  obtain ⟨n, hn⟩ := hargs
+  exact ⟨n + 1, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_s_letDecl_some_rev {fu la : Bool} {xs : List Ident} {e : Expr EVM.Op}
+    (h : ExitScanClean fu la (.e e)) : ExitScanClean fu la (.s (.letDecl xs (some e))) := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨n + 1, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_s_assign_rev {fu la : Bool} {xs : List Ident} {e : Expr EVM.Op}
+    (h : ExitScanClean fu la (.e e)) : ExitScanClean fu la (.s (.assign xs e)) := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨n + 1, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_s_exprStmt_rev {fu la : Bool} {e : Expr EVM.Op}
+    (h : ExitScanClean fu la (.e e)) : ExitScanClean fu la (.s (.exprStmt e)) := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨n + 1, by simpa [exitScan, exitStep] using hn⟩
+
+theorem exitScan_s_cond_rev {fu la : Bool} {cc : Expr EVM.Op} {body : Block EVM.Op}
+    (hc : ExitScanClean fu la (.e cc)) (hb : ExitScanClean fu la (.b body)) :
+    ExitScanClean fu la (.s (.cond cc body)) := by
+  obtain ⟨n, hn1, hn2⟩ := exitScanClean_and hc hb
+  exact ⟨n + 1, by simp only [exitScan, exitStep, hn1, hn2, Bool.and_true]⟩
+
+theorem exitScan_s_forLoop_rev {fu la : Bool} {init : Block EVM.Op} {cc : Expr EVM.Op}
+    {post body : Block EVM.Op} (hi : ExitScanClean fu false (.b init))
+    (hc : ExitScanClean fu false (.e cc)) (hp : ExitScanClean fu false (.b post))
+    (hb : ExitScanClean fu true (.b body)) :
+    ExitScanClean fu la (.s (.forLoop init cc post body)) := by
+  obtain ⟨n1, h1⟩ := hi
+  obtain ⟨n2, h2⟩ := hc
+  obtain ⟨n3, h3⟩ := hp
+  obtain ⟨n4, h4⟩ := hb
+  refine ⟨max (max (max n1 n2) n3) n4 + 1, ?_⟩
+  have h1' : exitScan (max (max (max n1 n2) n3) n4) fu false (.b init) = true :=
+    exitScan_mono (le_trans (Nat.le_max_left _ _) (le_trans (Nat.le_max_left _ _)
+      (Nat.le_max_left _ _))) h1
+  have h2' : exitScan (max (max (max n1 n2) n3) n4) fu false (.e cc) = true :=
+    exitScan_mono (le_trans (Nat.le_max_right _ _) (le_trans (Nat.le_max_left _ _)
+      (Nat.le_max_left _ _))) h2
+  have h3' : exitScan (max (max (max n1 n2) n3) n4) fu false (.b post) = true :=
+    exitScan_mono (le_trans (Nat.le_max_right _ _) (Nat.le_max_left _ _)) h3
+  have h4' : exitScan (max (max (max n1 n2) n3) n4) fu true (.b body) = true :=
+    exitScan_mono (Nat.le_max_right _ _) h4
+  simp only [exitScan, exitStep, h1', h2', h3', h4', Bool.and_true]
+
+theorem exitScan_s_switch_rev_none {fu la : Bool} {cc : Expr EVM.Op}
+    {cases : List (Literal × Block EVM.Op)}
+    (hc : ExitScanClean fu la (.e cc)) (hcs : ExitScanClean fu la (.cs cases)) :
+    ExitScanClean fu la (.s (.switch cc cases none)) := by
+  obtain ⟨n, hn1, hn2⟩ := exitScanClean_and hc hcs
+  exact ⟨n + 1, by simp only [exitScan, exitStep, hn1, hn2, Bool.and_true]⟩
+
+theorem exitScan_s_switch_rev_some {fu la : Bool} {cc : Expr EVM.Op}
+    {cases : List (Literal × Block EVM.Op)} {d : Block EVM.Op}
+    (hc : ExitScanClean fu la (.e cc)) (hcs : ExitScanClean fu la (.cs cases))
+    (hd : ExitScanClean fu la (.b d)) :
+    ExitScanClean fu la (.s (.switch cc cases (some d))) := by
+  obtain ⟨n12, hn1, hn2⟩ := exitScanClean_and hc hcs
+  obtain ⟨n3, hn3⟩ := hd
+  refine ⟨max n12 n3 + 1, ?_⟩
+  have hn1' : exitScan (max n12 n3) fu la (.e cc) = true :=
+    exitScan_mono (Nat.le_max_left _ _) hn1
+  have hn2' : exitScan (max n12 n3) fu la (.cs cases) = true :=
+    exitScan_mono (Nat.le_max_left _ _) hn2
+  have hn3' : exitScan (max n12 n3) fu la (.b d) = true :=
+    exitScan_mono (Nat.le_max_right _ _) hn3
+  simp only [exitScan, exitStep, hn1', hn2', hn3', Bool.and_true]
+
+theorem exitScan_s_switch_rev {fu la : Bool} {cc : Expr EVM.Op}
+    {cases : List (Literal × Block EVM.Op)} {dflt : Option (Block EVM.Op)}
+    (hc : ExitScanClean fu la (.e cc)) (hcs : ExitScanClean fu la (.cs cases))
+    (hd : ExitScanDflt fu la dflt) :
+    ExitScanClean fu la (.s (.switch cc cases dflt)) := by
+  revert hd
+  cases dflt with
+  | none => intro _; exact exitScan_s_switch_rev_none hc hcs
+  | some d => intro hd; exact exitScan_s_switch_rev_some hc hcs hd
+
+theorem exitScan_loop_rev {fu la : Bool} {cc : Expr EVM.Op} {post body : Block EVM.Op}
+    (hc : ExitScanClean fu false (.e cc)) (hp : ExitScanClean fu false (.b post))
+    (hb : ExitScanClean fu true (.b body)) :
+    ExitScanClean fu la (.s (.forLoop [] cc post body)) :=
+  exitScan_s_forLoop_rev exitScanClean_nil hc hp hb
+
+/-! ## Subterm / environment facts -/
+
+theorem exitScan_b_mem {s : Stmt EVM.Op} :
+    ∀ {ss : Block EVM.Op}, s ∈ ss → ExitScanClean false false (.b ss) →
+      ExitScanClean false false (.s s) := by
+  intro ss
+  induction ss with
+  | nil => intro hmem _; simp at hmem
+  | cons a as ih =>
+      intro hmem h
+      rw [List.mem_cons] at hmem
+      obtain ⟨ha, has⟩ := exitScan_b_cons h
+      rcases hmem with rfl | hmem
+      · exact ha
+      · exact ih hmem has
+
+theorem exitScan_b_mem_fun {fu la : Bool} {s : Stmt EVM.Op} :
+    ∀ {ss : Block EVM.Op}, s ∈ ss → ExitScanClean fu la (.b ss) →
+      ExitScanClean fu la (.s s) := by
+  intro ss
+  induction ss with
+  | nil => intro hmem _; simp at hmem
+  | cons a as ih =>
+      intro hmem h
+      rw [List.mem_cons] at hmem
+      obtain ⟨ha, has⟩ := exitScan_b_cons h
+      rcases hmem with rfl | hmem
+      · exact ha
+      · exact ih hmem has
+
+theorem exitScan_hoist {c : ExternalCalls} {g : ExternalGas} {fu la : Bool}
+    {body : Block EVM.Op} (h : ExitScanClean fu la (.b body)) :
+    ∀ q ∈ hoist (Bridge.Dialect c g) body, ExitScanClean true false (.b q.2.body) := by
+  intro q hq
+  simp only [hoist, List.mem_filterMap] at hq
+  obtain ⟨s, hs, hsq⟩ := hq
+  have hss := exitScan_b_mem_fun hs h
+  cases s with
+  | block body => simp at hsq
+  | funDef n ps rs b =>
+      simp only [Option.some.injEq] at hsq
+      subst hsq
+      exact exitScan_s_funDef hss
+  | letDecl vars val => simp at hsq
+  | assign vars val => simp at hsq
+  | cond cc body => simp at hsq
+  | «switch» cc cs dflt => simp at hsq
+  | forLoop init cc post body => simp at hsq
+  | exprStmt e => simp at hsq
+  | «break» => simp at hsq
+  | «continue» => simp at hsq
+  | «leave» => simp at hsq
+
+theorem exitCleanFuns_nil {c : ExternalCalls} {g : ExternalGas} :
+    ExitCleanFuns ([] : FunEnv (Bridge.Dialect c g)) := by
+  intro scope hscope
+  simp at hscope
+
+theorem exitCleanFuns_hoist {c : ExternalCalls} {g : ExternalGas} {fu la : Bool}
+    {body : Block EVM.Op} (hb : ExitScanClean fu la (.b body))
+    {funs : FunEnv (Bridge.Dialect c g)} (hf : ExitCleanFuns funs) :
+    ExitCleanFuns (hoist (Bridge.Dialect c g) body :: funs) := by
+  intro scope hscope q hq
+  rw [List.mem_cons] at hscope
+  rcases hscope with rfl | hscope
+  · exact exitScan_hoist hb q hq
+  · exact hf scope hscope q hq
+
+theorem lookupFun_exitClean {c : ExternalCalls} {g : ExternalGas} :
+    ∀ {funs : FunEnv (Bridge.Dialect c g)} {fn : Ident} {decl : FDecl (Bridge.Dialect c g)}
+      {cenv : FunEnv (Bridge.Dialect c g)},
+    ExitCleanFuns funs → lookupFun funs fn = some (decl, cenv) →
+      ExitCleanFuns cenv ∧ ExitScanClean true false (.b decl.body) := by
+  intro funs
+  induction funs with
+  | nil => intro fn decl cenv hf h; simp [lookupFun] at h
+  | cons scope rest ih =>
+      intro fn decl cenv hf h
+      simp only [lookupFun] at h
+      split at h
+      · rename_i q hq
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨hdecl, hcenv⟩ := h
+        subst hcenv
+        refine ⟨?_, ?_⟩
+        · intro sc hsc r hr
+          rw [List.mem_cons] at hsc
+          rcases hsc with rfl | hsc
+          · exact hf sc (by simp) r hr
+          · exact hf sc (by simp [hsc]) r hr
+        · simpa [hdecl] using hf scope (by simp) q (List.mem_of_find?_eq_some hq)
+      · exact ih (fun sc hs => hf sc (by simp [hs])) h
+
+theorem exitScan_cs_mem {fu la : Bool} {q : Literal × Block EVM.Op} :
+    ∀ {cs : List (Literal × Block EVM.Op)}, q ∈ cs → ExitScanClean fu la (.cs cs) →
+      ExitScanClean fu la (.b q.2) := by
+  intro cs
+  induction cs with
+  | nil => intro hmem _; simp at hmem
+  | cons a as ih =>
+      intro hmem h
+      rw [List.mem_cons] at hmem
+      obtain ⟨ha, has⟩ := exitScan_cs_cons h
+      rcases hmem with rfl | hmem
+      · exact ha
+      · exact ih hmem has
+
+theorem exitScan_selectSwitch {c : ExternalCalls} {g : ExternalGas} {fu la : Bool}
+    {cv : U256} {cases : List (Literal × Block EVM.Op)} {dflt : Option (Block EVM.Op)}
+    (hcs : ExitScanClean fu la (.cs cases)) (hd : ExitScanDflt fu la dflt) :
+    ExitScanClean fu la (.b (selectSwitch (Bridge.Dialect c g) cv cases dflt)) := by
+  revert hd
+  unfold selectSwitch
+  cases hfind : List.find? (fun q : Literal × Block EVM.Op =>
+      decide (cv = (Bridge.Dialect c g).litValue q.1)) cases with
+  | some q =>
+      intro _
+      exact exitScan_cs_mem (List.mem_of_find?_eq_some hfind) hcs
+  | none =>
+      cases dflt with
+      | none => intro _; exact exitScanClean_nil
+      | some d => intro hd; exact hd
+
+/-! ## Builtin halted behaviour -/
+
+theorem finishCall_halted (kind : EVM.CallKind) (st : EvmState) (response : CallResponse)
+    (io is oo os : Nat) : (finishCall kind st response io is oo os).halted = st.halted := by
+  unfold finishCall
+  split <;> simp [CallWorld.install, touchMemory2, touchMemory]
+
+theorem finishCreate_halted (st : EvmState) (response : CreateResponse) (off size : Nat) :
+    (finishCreate st response off size).halted = st.halted := by
+  unfold finishCreate
+  split <;> simp [CallWorld.install, touchMemory2, touchMemory]
+
+theorem stepOp_ok_halted {op : EVM.Op} {args : List U256} {st : EvmState}
+    {rets : List U256} {st' : EvmState} (hr : stepOp op args st = some (.ok rets st')) :
+    st'.halted = st.halted := by
+  unfold stepOp at hr
+  simp only [bin, un, ter, rd0, rd1, guardStatic] at hr
+  repeat' (split at hr <;> try simp at hr)
+  all_goals (try (obtain ⟨-, rfl⟩ := hr; rfl))
+  all_goals (try (subst hr; rfl))
+  all_goals (try (rw [hr]))
+
+theorem stepOp_halt_noncommitting {op : EVM.Op} (h : isCommittingExit op = false)
+    {args : List U256} {st st' : EvmState} (hr : stepOp op args st = some (.halt st')) :
+    ∃ k d, st'.halted = some (k, d) ∧ k.commits = false := by
+  unfold stepOp at hr
+  simp only [bin, un, ter, rd0, rd1, guardStatic] at hr
+  repeat' (split at hr <;> try simp at hr)
+  all_goals (try (unfold isCommittingExit at h; cases h))
+  all_goals (try (cases hr; first
+    | exact ⟨.revert, _, rfl, rfl⟩
+    | exact ⟨.invalid, _, rfl, rfl⟩
+    | exact ⟨.invalidMemoryAccess, _, rfl, rfl⟩
+    | exact ⟨.staticViolation, _, rfl, rfl⟩))
+
+theorem builtin_ok_halted {c : ExternalCalls} {g : ExternalGas} {op : EVM.Op}
+    {args : List U256} {st : EvmState} {rets : List U256} {st' : EvmState}
+    (hb : (Bridge.Dialect c g).Builtin op args st (.ok rets st')) :
+    st'.halted = st.halted := by
+  change builtinWithExternal c ExternalCreates.none g op args st (.ok rets st') at hb
+  cases op with
+  | call =>
+      rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨v, _ | ⟨io, _ | ⟨is, _ | ⟨oo, _ | ⟨os, _ | ⟨x8, xs⟩⟩⟩⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      by_cases hstat : st.env.static = true ∧ v ≠ 0
+      · rw [ite_eq_left hstat] at hb
+        cases hb
+      · rw [ite_eq_right hstat] at hb
+        obtain ⟨resp, _, hres⟩ := hb
+        cases hres
+        exact finishCall_halted _ _ _ _ _ _ _
+  | callcode =>
+      rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨v, _ | ⟨io, _ | ⟨is, _ | ⟨oo, _ | ⟨os, _ | ⟨x8, xs⟩⟩⟩⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      obtain ⟨resp, _, hres⟩ := hb
+      cases hres
+      exact finishCall_halted _ _ _ _ _ _ _
+  | delegatecall =>
+      rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨io, _ | ⟨is, _ | ⟨oo, _ | ⟨os, _ | ⟨x7, xs⟩⟩⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      obtain ⟨resp, _, hres⟩ := hb
+      cases hres
+      exact finishCall_halted _ _ _ _ _ _ _
+  | staticcall =>
+      rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨io, _ | ⟨is, _ | ⟨oo, _ | ⟨os, _ | ⟨x7, xs⟩⟩⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      obtain ⟨resp, _, hres⟩ := hb
+      cases hres
+      exact finishCall_halted _ _ _ _ _ _ _
+  | create =>
+      rcases args with _ | ⟨v, _ | ⟨off, _ | ⟨sz, _ | ⟨x4, xs⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      by_cases hstat : st.env.static = true
+      · rw [ite_eq_left hstat] at hb
+        cases hb
+      · rw [ite_eq_right hstat] at hb
+        obtain ⟨resp, _, hres⟩ := hb
+        cases hres
+        exact finishCreate_halted _ _ _ _
+  | create2 =>
+      rcases args with _ | ⟨v, _ | ⟨off, _ | ⟨sz, _ | ⟨salt, _ | ⟨x5, xs⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      by_cases hstat : st.env.static = true
+      · rw [ite_eq_left hstat] at hb
+        cases hb
+      · rw [ite_eq_right hstat] at hb
+        obtain ⟨resp, _, hres⟩ := hb
+        cases hres
+        exact finishCreate_halted _ _ _ _
+  | gas =>
+      rcases args with _ | ⟨a, as⟩
+      all_goals simp only [builtinWithExternal] at hb
+      obtain ⟨w, _, hres⟩ := hb
+      cases hres
+      rfl
+  | _ => exact stepOp_ok_halted hb
+
+theorem builtin_halt_noncommitting {c : ExternalCalls} {g : ExternalGas} {op : EVM.Op}
+    (h : isCommittingExit op = false) {args : List U256} {st st' : EvmState}
+    (hb : (Bridge.Dialect c g).Builtin op args st (.halt st')) :
+    ∃ k d, st'.halted = some (k, d) ∧ k.commits = false := by
+  change builtinWithExternal c ExternalCreates.none g op args st (.halt st') at hb
+  cases op with
+  | call =>
+      rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨v, _ | ⟨io, _ | ⟨is, _ | ⟨oo, _ | ⟨os, _ | ⟨x8, xs⟩⟩⟩⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      by_cases hstat : st.env.static = true ∧ v ≠ 0
+      · rw [ite_eq_left hstat] at hb
+        cases hb
+        exact ⟨.staticViolation, [], rfl, rfl⟩
+      · rw [ite_eq_right hstat] at hb
+        obtain ⟨resp, _, hres⟩ := hb
+        cases hres
+  | callcode =>
+      rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨v, _ | ⟨io, _ | ⟨is, _ | ⟨oo, _ | ⟨os, _ | ⟨x8, xs⟩⟩⟩⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      obtain ⟨resp, _, hres⟩ := hb
+      cases hres
+  | delegatecall =>
+      rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨io, _ | ⟨is, _ | ⟨oo, _ | ⟨os, _ | ⟨x7, xs⟩⟩⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      obtain ⟨resp, _, hres⟩ := hb
+      cases hres
+  | staticcall =>
+      rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨io, _ | ⟨is, _ | ⟨oo, _ | ⟨os, _ | ⟨x7, xs⟩⟩⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      obtain ⟨resp, _, hres⟩ := hb
+      cases hres
+  | create =>
+      rcases args with _ | ⟨v, _ | ⟨off, _ | ⟨sz, _ | ⟨x4, xs⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      by_cases hstat : st.env.static = true
+      · rw [ite_eq_left hstat] at hb
+        cases hb
+        exact ⟨.staticViolation, [], rfl, rfl⟩
+      · rw [ite_eq_right hstat] at hb
+        obtain ⟨resp, _, hres⟩ := hb
+        cases hres
+  | create2 =>
+      rcases args with _ | ⟨v, _ | ⟨off, _ | ⟨sz, _ | ⟨salt, _ | ⟨x5, xs⟩⟩⟩⟩⟩
+      all_goals simp only [builtinWithExternal] at hb
+      by_cases hstat : st.env.static = true
+      · rw [ite_eq_left hstat] at hb
+        cases hb
+        exact ⟨.staticViolation, [], rfl, rfl⟩
+      · rw [ite_eq_right hstat] at hb
+        obtain ⟨resp, _, hres⟩ := hb
+        cases hres
+  | gas =>
+      rcases args with _ | ⟨a, as⟩
+      all_goals simp only [builtinWithExternal] at hb
+      obtain ⟨w, _, hres⟩ := hb
+      cases hres
+  | _ => exact stepOp_halt_noncommitting h hb
+
+
+/-! ## The exit-classification invariant -/
+
+def ExitCleanRes {c : ExternalCalls} {g : ExternalGas} (fu la : Bool) (st : EvmState) :
+    Res (Bridge.Dialect c g) → Prop
+  | .eres (.vals _ st') => st'.halted = st.halted
+  | .eres (.halt st') => ∃ k d, st'.halted = some (k, d) ∧ k.commits = false
+  | .sres _ st' o =>
+      (st'.halted = st.halted ∧
+        (o = .normal ∨ (fu = true ∧ o = .leave) ∨
+          (la = true ∧ (o = .«break» ∨ o = .«continue»)))) ∨
+      (o = .halt ∧ ∃ k d, st'.halted = some (k, d) ∧ k.commits = false)
+
+theorem ExitCleanRes.sres_normal {c : ExternalCalls} {g : ExternalGas} {fu la : Bool}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (h : ExitCleanRes fu la st (.sres V' st' o)) (ho : o = .normal) :
+    st'.halted = st.halted := by
+  rcases h with ⟨hh, _⟩ | ⟨h, _⟩
+  · exact hh
+  · subst ho; cases h
+
+theorem ExitCleanRes.sres_halt {c : ExternalCalls} {g : ExternalGas} {fu la : Bool}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState}
+    (h : ExitCleanRes fu la st (.sres V' st' .halt)) :
+    ∃ k d, st'.halted = some (k, d) ∧ k.commits = false := by
+  rcases h with ⟨_, ho⟩ | ⟨_, hk⟩
+  · rcases ho with h | ⟨_, h⟩ | ⟨_, h⟩
+    · cases h
+    · cases h
+    · rcases h with h | h <;> cases h
+  · exact hk
+
+theorem ExitCleanRes.sres_normal_or_continue {c : ExternalCalls} {g : ExternalGas}
+    {fu la : Bool} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState}
+    {ob : Outcome} (h : ExitCleanRes fu la st (.sres V' st' ob))
+    (hob : ob = .normal ∨ ob = .«continue») : st'.halted = st.halted := by
+  rcases h with ⟨hh, _⟩ | ⟨ho, _⟩
+  · exact hh
+  · rcases hob with h' | h' <;> (subst h'; cases ho)
+
+theorem ExitCleanRes.sres_break {c : ExternalCalls} {g : ExternalGas} {fu la : Bool}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState}
+    (h : ExitCleanRes fu la st (.sres V' st' .«break»)) :
+    st'.halted = st.halted := by
+  rcases h with ⟨hh, _⟩ | ⟨ho, _⟩
+  · exact hh
+  · cases ho
+
+theorem ExitCleanRes.sres_leave {c : ExternalCalls} {g : ExternalGas} {fu la : Bool}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState}
+    (h : ExitCleanRes fu la st (.sres V' st' .leave)) :
+    st'.halted = st.halted ∧ fu = true := by
+  rcases h with ⟨hh, ho⟩ | ⟨ho, _⟩
+  · rcases ho with h | ⟨hfu, h⟩ | ⟨_, h⟩
+    · cases h
+    · exact ⟨hh, hfu⟩
+    · rcases h with h | h <;> cases h
+  · cases ho
+
+theorem ExitCleanRes.trans_sres {c : ExternalCalls} {g : ExternalGas} {fu la : Bool}
+    {st st1 : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (h1 : st1.halted = st.halted)
+    (h2 : ExitCleanRes fu la st1 (.sres V' st' o)) :
+    ExitCleanRes fu la st (.sres V' st' o) := by
+  rcases h2 with ⟨hh, ho⟩ | ⟨ho, hk⟩
+  · exact Or.inl ⟨hh.trans h1, ho⟩
+  · exact Or.inr ⟨ho, hk⟩
+
+theorem Step.exitClassified :
+    ∀ {c : ExternalCalls} {g : ExternalGas} {funs : FunEnv (Bridge.Dialect c g)}
+      {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {code : Code EVM.Op}
+      {res : Res (Bridge.Dialect c g)},
+      Step (Bridge.Dialect c g) funs V st code res →
+      ∀ (fu la : Bool), ExitCleanFuns funs →
+        ExitScanCleanCode fu la code → ExitCleanRes fu la st res := by
+  intro c g funs V st code res h
+  induction h with
+  | lit => intro fu la hf hc; rfl
+  | var hget => intro fu la hf hc; rfl
+  | builtinOk hargs hb ihargs =>
+      intro fu la hf hc
+      exact (builtin_ok_halted hb).trans (ihargs fu la hf (exitScan_e_builtin hc).2)
+  | builtinHalt hargs hb ihargs =>
+      intro fu la hf hc
+      exact builtin_halt_noncommitting (exitScan_e_builtin hc).1 hb
+  | builtinArgsHalt hargs ihargs =>
+      intro fu la hf hc
+      exact ihargs fu la hf (exitScan_e_builtin hc).2
+  | callOk hargs hlookup hlen hbody hout ihargs ihbody =>
+      intro fu la hf hc
+      obtain ⟨hcenv, hbodyClean⟩ := lookupFun_exitClean hf hlookup
+      have h1 := ihargs fu la hf (exitScan_e_call hc)
+      rcases ihbody true false hcenv (exitScan_s_block_rev hbodyClean) with
+        ⟨hh, _⟩ | ⟨ho, _⟩
+      · exact hh.trans h1
+      · rcases hout with h | h <;> (subst h; cases ho)
+  | callHalt hargs hlookup hlen hbody ihargs ihbody =>
+      intro fu la hf hc
+      obtain ⟨hcenv, hbodyClean⟩ := lookupFun_exitClean hf hlookup
+      exact ExitCleanRes.sres_halt
+        (ihbody true false hcenv (exitScan_s_block_rev hbodyClean))
+  | callArgsHalt hargs ihargs =>
+      intro fu la hf hc
+      exact ihargs fu la hf (exitScan_e_call hc)
+  | argsNil => intro fu la hf hc; rfl
+  | argsCons hrest hhead ihrest ihhead =>
+      intro fu la hf hc
+      obtain ⟨hheadC, hrestC⟩ := exitScan_es_cons hc
+      exact (ihhead fu la hf hheadC).trans (ihrest fu la hf hrestC)
+  | argsRestHalt hrest ihrest =>
+      intro fu la hf hc
+      exact ihrest fu la hf (exitScan_es_cons hc).2
+  | argsHeadHalt hrest hhead ihrest ihhead =>
+      intro fu la hf hc
+      exact ihhead fu la hf (exitScan_es_cons hc).1
+  | funDef => intro fu la hf hc; exact Or.inl ⟨rfl, Or.inl rfl⟩
+  | block hbody ihbody =>
+      intro fu la hf hc
+      exact ihbody fu la (exitCleanFuns_hoist (exitScan_s_block hc) hf)
+        (exitScan_s_block hc)
+  | letZero => intro fu la hf hc; exact Or.inl ⟨rfl, Or.inl rfl⟩
+  | letVal hbody hlen ihbody =>
+      intro fu la hf hc
+      exact Or.inl ⟨ihbody fu la hf (exitScan_s_letDecl_some hc), Or.inl rfl⟩
+  | letHalt hbody ihbody =>
+      intro fu la hf hc
+      exact Or.inr ⟨rfl, ihbody fu la hf (exitScan_s_letDecl_some hc)⟩
+  | assignVal hbody hlen ihbody =>
+      intro fu la hf hc
+      exact Or.inl ⟨ihbody fu la hf (exitScan_s_assign hc), Or.inl rfl⟩
+  | assignHalt hbody ihbody =>
+      intro fu la hf hc
+      exact Or.inr ⟨rfl, ihbody fu la hf (exitScan_s_assign hc)⟩
+  | exprStmt hbody ihbody =>
+      intro fu la hf hc
+      exact Or.inl ⟨ihbody fu la hf (exitScan_s_exprStmt hc), Or.inl rfl⟩
+  | exprStmtHalt hbody ihbody =>
+      intro fu la hf hc
+      exact Or.inr ⟨rfl, ihbody fu la hf (exitScan_s_exprStmt hc)⟩
+  | ifTrue hcond hne hbody ihcond ihbody =>
+      intro fu la hf hc
+      obtain ⟨hcC, hbodyC⟩ := exitScan_s_cond hc
+      exact ExitCleanRes.trans_sres (ihcond fu la hf hcC)
+        (ihbody fu la hf (exitScan_s_block_rev hbodyC))
+  | ifFalse hcond hzero ihcond =>
+      intro fu la hf hc
+      exact Or.inl ⟨ihcond fu la hf (exitScan_s_cond hc).1, Or.inl rfl⟩
+  | ifHalt hcond ihcond =>
+      intro fu la hf hc
+      exact Or.inr ⟨rfl, ihcond fu la hf (exitScan_s_cond hc).1⟩
+  | switchExec hcond hbody ihcond ihbody =>
+      intro fu la hf hc
+      obtain ⟨hcC, hcsC, hdC⟩ := exitScan_s_switch hc
+      exact ExitCleanRes.trans_sres (ihcond fu la hf hcC)
+        (ihbody fu la hf (exitScan_s_block_rev (exitScan_selectSwitch hcsC hdC)))
+  | switchHalt hcond ihcond =>
+      intro fu la hf hc
+      exact Or.inr ⟨rfl, ihcond fu la hf (exitScan_s_switch hc).1⟩
+  | forLoop hinit hloop ihinit ihloop =>
+      intro fu la hf hc
+      obtain ⟨hinitC, hcC, hpostC, hbodyC⟩ := exitScan_s_forLoop hc
+      have hf' := exitCleanFuns_hoist hinitC hf
+      have hh1 := ExitCleanRes.sres_normal (ihinit fu false hf' hinitC) rfl
+      exact ExitCleanRes.trans_sres hh1
+        (ihloop fu la hf' (exitScan_loop_rev hcC hpostC hbodyC))
+  | forInitHalt hinit ihinit =>
+      intro fu la hf hc
+      obtain ⟨hinitC, _, _, _⟩ := exitScan_s_forLoop hc
+      exact Or.inr ⟨rfl, ExitCleanRes.sres_halt
+        (ihinit fu false (exitCleanFuns_hoist hinitC hf) hinitC)⟩
+  | «break» =>
+      intro fu la hf hc
+      exact Or.inl ⟨rfl, Or.inr (Or.inr ⟨exitScan_s_break hc, Or.inl rfl⟩)⟩
+  | «continue» =>
+      intro fu la hf hc
+      exact Or.inl ⟨rfl, Or.inr (Or.inr ⟨exitScan_s_continue hc, Or.inr rfl⟩)⟩
+  | «leave» =>
+      intro fu la hf hc
+      exact Or.inl ⟨rfl, Or.inr (Or.inl ⟨exitScan_s_leave hc, rfl⟩)⟩
+  | seqNil => intro fu la hf hc; exact Or.inl ⟨rfl, Or.inl rfl⟩
+  | seqCons hs hrest ihs ihrest =>
+      intro fu la hf hc
+      obtain ⟨hsC, hrestC⟩ := exitScan_b_cons hc
+      exact ExitCleanRes.trans_sres (ExitCleanRes.sres_normal (ihs fu la hf hsC) rfl)
+        (ihrest fu la hf hrestC)
+  | seqStop hs hne ihs =>
+      intro fu la hf hc
+      exact ihs fu la hf (exitScan_b_cons hc).1
+  | loopDone hcond hzero ihcond =>
+      intro fu la hf hc
+      exact Or.inl ⟨ihcond fu false hf (exitScan_s_forLoop hc).2.1, Or.inl rfl⟩
+  | loopCondHalt hcond ihcond =>
+      intro fu la hf hc
+      exact Or.inr ⟨rfl, ihcond fu false hf (exitScan_s_forLoop hc).2.1⟩
+  | loopStep hcond hne hbody hob hpost hpostnorm ihcond ihbody ihpost ihloop =>
+      intro fu la hf hc
+      obtain ⟨_, hcC, hpostC, hbodyC⟩ := exitScan_s_forLoop hc
+      have hh1 := ihcond fu false hf hcC
+      have hh2 := ExitCleanRes.sres_normal_or_continue
+        (ihbody fu true hf (exitScan_s_block_rev hbodyC)) hob
+      have hh3 := ExitCleanRes.sres_normal (ihpost fu false hf (exitScan_s_block_rev hpostC)) rfl
+      exact ExitCleanRes.trans_sres (hh3.trans (hh2.trans hh1))
+        (ihloop fu la hf (exitScan_loop_rev hcC hpostC hbodyC))
+  | loopPostHalt hcond hne hbody hob hpost ihcond ihbody ihpost =>
+      intro fu la hf hc
+      obtain ⟨_, hcC, hpostC, hbodyC⟩ := exitScan_s_forLoop hc
+      have hh1 := ihcond fu false hf hcC
+      have hh2 := ExitCleanRes.sres_normal_or_continue
+        (ihbody fu true hf (exitScan_s_block_rev hbodyC)) hob
+      exact Or.inr ⟨rfl, ExitCleanRes.sres_halt
+        (ihpost fu false hf (exitScan_s_block_rev hpostC))⟩
+  | loopBreak hcond hne hbody ihcond ihbody =>
+      intro fu la hf hc
+      obtain ⟨_, hcC, _, hbodyC⟩ := exitScan_s_forLoop hc
+      have hh1 := ihcond fu false hf hcC
+      have hh2 := ExitCleanRes.sres_break (ihbody fu true hf (exitScan_s_block_rev hbodyC))
+      exact Or.inl ⟨hh2.trans hh1, Or.inl rfl⟩
+  | loopLeave hcond hne hbody ihcond ihbody =>
+      intro fu la hf hc
+      obtain ⟨_, hcC, _, hbodyC⟩ := exitScan_s_forLoop hc
+      have hh1 := ihcond fu false hf hcC
+      obtain ⟨hh2, hfu⟩ := ExitCleanRes.sres_leave
+        (ihbody fu true hf (exitScan_s_block_rev hbodyC))
+      exact Or.inl ⟨hh2.trans hh1, Or.inr (Or.inl ⟨hfu, rfl⟩)⟩
+  | loopBodyHalt hcond hne hbody ihcond ihbody =>
+      intro fu la hf hc
+      obtain ⟨_, hcC, _, hbodyC⟩ := exitScan_s_forLoop hc
+      exact Or.inr ⟨rfl, ExitCleanRes.sres_halt
+        (ihbody fu true hf (exitScan_s_block_rev hbodyC))⟩
+
+
+/-! ## The return tail: inversion, the two step lemmas, and the final theorem -/
+
+theorem map_congr_range {β : Type} (n : Nat) (f g : Nat → β) (h : ∀ i, i < n → f i = g i) :
+    (List.range n).map f = (List.range n).map g := by
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+      rw [List.range_succ, List.map_append, List.map_append]
+      rw [ih (fun i hi => h i (Nat.lt_of_lt_of_le hi (Nat.le_succ n)))]
+      rw [List.map_singleton, List.map_singleton, h n (Nat.lt_succ_self n)]
+
+theorem readBytes_storeWord_one (mem : Nat → UInt8) (p : Nat) :
+    readBytes (storeWord mem p 1) p 32 = abiTrue := by
+  have pt : ∀ i, i < 32 → storeWord mem p 1 (p + i) = byteAt (1 : U256) (31 - i) := by
+    intro i hi
+    show (if p ≤ p + i ∧ p + i < p + 32 then byteAt (1 : U256) (31 - (p + i - p))
+      else mem (p + i)) = byteAt (1 : U256) (31 - i)
+    simp [hi]
+  have key : (List.range 32).map (fun i => storeWord mem p 1 (p + i))
+      = (List.range 32).map (fun i => byteAt (1 : U256) (31 - i)) := map_congr_range 32 _ _ pt
+  have tail : (List.range 32).map (fun i => byteAt (1 : U256) (31 - i)) = abiTrue := by decide
+  show (List.range 32).map (fun i => storeWord mem p 1 (p + i)) =
+    (Midfall.natToBytesBE 1 32).data.toList
+  rw [key, tail]
+  rfl
+
+theorem WorldEq.symm {a b : EvmState} (h : WorldEq a b) : WorldEq b a := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11⟩ := h
+  exact ⟨h1.symm, h2.symm, h3.symm, h4.symm, h5.symm, h6.symm, h7.symm, h8.symm,
+    h9.symm, h10.symm, h11.symm⟩
+
+theorem returnTail?_spec {b init : Block EVM.Op} (h : returnTail? b = some init) :
+    ∃ (p₁ p₂ n v : Nat), b = init ++
+      [Stmt.exprStmt (Expr.builtin EVM.Op.mstore
+         [Expr.lit (Literal.number p₂), Expr.lit (Literal.number v)]),
+       Stmt.exprStmt (Expr.builtin EVM.Op.ret
+         [Expr.lit (Literal.number p₁), Expr.lit (Literal.number n)])] ∧
+      p₁ = p₂ ∧ n = 32 ∧ v = 1 := by
+  unfold returnTail? at h
+  split at h
+  · rename_i p₁ n p₂ v initRev heq
+    split at h
+    · rename_i hcond
+      obtain ⟨hp, hn, hv⟩ := hcond
+      have hinit : init = initRev.reverse := (Option.some.inj h).symm
+      subst hinit
+      refine ⟨p₁, p₂, n, v, ?_, hp, hn, hv⟩
+      have hb : b.reverse = Stmt.exprStmt (Expr.builtin EVM.Op.ret
+            [Expr.lit (Literal.number p₁), Expr.lit (Literal.number n)]) ::
+          Stmt.exprStmt (Expr.builtin EVM.Op.mstore
+            [Expr.lit (Literal.number p₂), Expr.lit (Literal.number v)]) :: initRev := heq
+      conv_lhs => rw [← List.reverse_reverse b]
+      rw [hb]
+      simp [List.reverse_cons, List.append_assoc]
+    · simp at h
+  · simp at h
+
+theorem Step.args_lits_vals {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    (l : List Nat) {vs : List U256} {st' : EvmState} :
+    Step (Bridge.Dialect c g) funs V st
+      (.args (l.map (fun k => Expr.lit (Literal.number k)))) (.eres (.vals vs st')) →
+    vs = l.map (fun k => (BitVec.ofNat 256 k : U256)) ∧ st' = st := by
+  induction l generalizing vs st' with
+  | nil =>
+      intro h
+      cases h with
+      | argsNil => exact ⟨rfl, rfl⟩
+  | cons a as ih =>
+      intro h
+      cases h with
+      | argsCons hrest hhead =>
+          obtain ⟨hvs, hst⟩ := ih hrest
+          cases hhead with
+          | lit =>
+              refine ⟨?_, ?_⟩
+              · rw [hvs]; rfl
+              · exact hst
+
+theorem Step.args_lits_no_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState} :
+    ∀ (l : List Nat) {st' : EvmState},
+      ¬ Step (Bridge.Dialect c g) funs V st
+        (.args (l.map (fun k => Expr.lit (Literal.number k)))) (.eres (.halt st')) := by
+  intro l
+  induction l with
+  | nil => intro st' h; cases h
+  | cons a as ih =>
+      intro st' h
+      cases h with
+      | argsRestHalt hrest => exact ih hrest
+      | argsHeadHalt hrest hhead => cases hhead
+
+theorem Step.mstore_lit_step {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} (p : Nat) :
+    Step (Bridge.Dialect c g) funs V st
+      (.stmt (.exprStmt (.builtin EVM.Op.mstore [Expr.lit (Literal.number p), Expr.lit (Literal.number 1)])))
+      (.sres V' st' .normal) →
+    V' = V ∧ st' = { touchMemory st ((BitVec.ofNat 256 p : U256)).toNat 32 with
+      memory := storeWord st.memory ((BitVec.ofNat 256 p : U256)).toNat 1 } := by
+  intro h
+  cases h with
+  | exprStmt hex =>
+      cases hex with
+      | builtinOk hargs hb =>
+          obtain ⟨hvs, hst⟩ := Step.args_lits_vals [p, 1] hargs
+          subst hvs; rw [hst] at hb
+          simp only [List.map_cons, List.map_nil] at hb
+          simp only [builtinWithExternal, stepOp] at hb
+          cases hb
+          exact ⟨rfl, rfl⟩
+
+theorem Step.ret_lit_expr {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {st' : EvmState} (q : Nat) :
+    Step (Bridge.Dialect c g) funs V st
+      (.expr (.builtin EVM.Op.ret [Expr.lit (Literal.number q), Expr.lit (Literal.number 32)]))
+      (.eres (.halt st')) →
+    st'.halted = some (.ret, readBytes st.memory ((BitVec.ofNat 256 q : U256)).toNat 32) := by
+  intro h
+  cases h with
+  | builtinHalt hargs hb =>
+      obtain ⟨hvs, hst⟩ := Step.args_lits_vals [q, 32] hargs
+      subst hvs; rw [hst] at hb
+      simp only [List.map_cons, List.map_nil] at hb
+      simp only [builtinWithExternal, stepOp] at hb
+      cases hb
+      rfl
+  | builtinArgsHalt hargs => exact (Step.args_lits_no_halt [q, 32] hargs).elim
+
+theorem Step.stmts_mstore_one_ret {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome} (p q : Nat) (hpq : p = q) :
+    Step (Bridge.Dialect c g) funs V st
+      (.stmts [Stmt.exprStmt (.builtin EVM.Op.mstore
+          [Expr.lit (Literal.number p), Expr.lit (Literal.number 1)]),
+        Stmt.exprStmt (.builtin EVM.Op.ret
+          [Expr.lit (Literal.number q), Expr.lit (Literal.number 32)])])
+      (.sres V' st' o) →
+    o = .halt ∧ st'.halted = some (.ret, abiTrue) := by
+  subst hpq
+  intro h
+  cases h with
+  | seqCons hms hrest =>
+      obtain ⟨-, hstM⟩ := Step.mstore_lit_step p hms
+      cases hrest with
+      | seqCons hret hnil =>
+          cases hret with
+          | exprStmt hex =>
+              cases hex with
+              | builtinOk hargs hb =>
+                  obtain ⟨hvs, hst⟩ := Step.args_lits_vals [p, 32] hargs
+                  subst hvs; rw [hst] at hb
+                  simp only [List.map_cons, List.map_nil] at hb
+                  simp only [builtinWithExternal, stepOp] at hb
+                  cases hb
+      | seqStop hret hne =>
+          cases hret with
+          | exprStmt hex => exact absurd rfl hne
+          | exprStmtHalt hex =>
+              have hhalt := Step.ret_lit_expr p hex
+              refine ⟨rfl, ?_⟩
+              rw [hhalt, hstM, readBytes_storeWord_one]
+  | seqStop hms hne =>
+      cases hms with
+      | exprStmt hex => exact absurd rfl hne
+      | exprStmtHalt hex =>
+          cases hex with
+          | builtinHalt hargs hb =>
+              obtain ⟨hvs, hst⟩ := Step.args_lits_vals [p, 1] hargs
+              subst hvs; rw [hst] at hb
+              simp only [List.map_cons, List.map_nil] at hb
+              simp only [builtinWithExternal, stepOp] at hb
+              cases hb
+          | builtinArgsHalt hargs => exact (Step.args_lits_no_halt [p, 1] hargs).elim
+
 /-- **TWO OUTCOMES.** Every run of the body, under ANY call relation and ANY gas oracle, from ANY
     state, returns ABI `true` with the world unchanged or is a non-committing halt with the world
     unchanged. No `LeanAccepts`, no `SoundSide`, no snapshot, no `EntryFrame`, no `Eip2537.Holds`. -/
@@ -834,21 +1918,77 @@ def TwoOutcomes (R : Render p G₁ G₂ Gₜ) : Prop :=
     obs.view = returnView st₀ ∨ (obs.isRevertOrHalt ∧ obs.worldUnchanged st₀)
 
 /-- **THE OBLIGATION THAT REPLACES `rejects_of_not_accepts`** (WP-M5c). Generic in the block: no
-    render, no plan, no key.
+    render, no plan, no key. PROVED (EXITSOUND).
 
-    Experiment that discharges it: one induction on `Step` (the shape of
-    `Bridge.Run_worldEq_of_noWriters`, `Bridge.lean:1221`) proving, for a block passing
-    `exitScan`, that every derivation ends with `halted` unchanged or set by a non-committing
-    builtin and with an outcome that is `.normal`/`.halt` at top level; then
-    `Step.stmts_append_inv` (`Contracts.lean:115`) at the tail and the two builtin steps
-    `mstore`/`ret` by `simp [stepOp]`. `NoWriters` gives `WorldEq` (the registered
-    `Run_worldEq_of_noWriters`). -/
+    The proof is the exit-classification induction of §I.a: `Step.exitClassified` says every
+    derivation of an `exitScan`-clean code leaves `halted` unchanged or halts with a NON-COMMITTING
+    kind; `returnTail?_spec` splits the block at its designated `mstore(p,1); return(p,0x20)` tail,
+    `Step.stmts_append_inv` splits the run there, and `Step.stmts_mstore_one_ret` computes the
+    tail's halt record as `(ret, abiTrue)`. `NoWriters` supplies the world equality through the
+    PROVED `Bridge.Run_worldEq_of_noWriters`. -/
 theorem twoOutcomes_of_exitDiscipline (b : Block EVM.Op) (hw : NoWriters b) (hx : ExitDiscipline b)
     (c : ExternalCalls) (g : ExternalGas) (st₀ : EvmState) (V' : VEnv (Bridge.Dialect c g))
     (stObs : EvmState) (o : Outcome) (hrun : Bridge.RunCommitted c g b st₀ V' stObs o) :
     (⟨stObs, o⟩ : Obs).view = returnView st₀ ∨
       ((⟨stObs, o⟩ : Obs).isRevertOrHalt ∧ (⟨stObs, o⟩ : Obs).worldUnchanged st₀) := by
-  sorry
+  obtain ⟨n, hn⟩ := hx
+  unfold exitDisciplineFuel at hn
+  split at hn
+  · rename_i init ht
+    obtain ⟨p₁, p₂, nlen, v, hb, hpq, hn32, hv⟩ := returnTail?_spec ht
+    subst hn32; subst hv
+    subst hb
+    obtain ⟨st', hrun0, hstObs⟩ := hrun
+    have hw0 : WorldEq st₀ st' := Run_worldEq_of_noWriters hw hrun0
+    cases hrun0 with
+    | block hbody =>
+      have hinitClean : ExitScanClean false false (.b init) := ⟨n, hn⟩
+      have hhoist : hoist (Bridge.Dialect c g)
+          (init ++ [Stmt.exprStmt (Expr.builtin EVM.Op.mstore
+              [Expr.lit (Literal.number p₂), Expr.lit (Literal.number 1)]),
+            Stmt.exprStmt (Expr.builtin EVM.Op.ret
+              [Expr.lit (Literal.number p₁), Expr.lit (Literal.number 32)])]) =
+          hoist (Bridge.Dialect c g) init := by
+        simp [hoist, List.filterMap_append]
+      have hfuns : ExitCleanFuns (hoist (Bridge.Dialect c g) init :: []) :=
+        exitCleanFuns_hoist hinitClean exitCleanFuns_nil
+      have hfuns' : ExitCleanFuns
+          (hoist (Bridge.Dialect c g)
+            (init ++ [Stmt.exprStmt (Expr.builtin EVM.Op.mstore
+                [Expr.lit (Literal.number p₂), Expr.lit (Literal.number 1)]),
+              Stmt.exprStmt (Expr.builtin EVM.Op.ret
+                [Expr.lit (Literal.number p₁), Expr.lit (Literal.number 32)])]) :: []) := by
+        rw [hhoist]; exact hfuns
+      rcases Step.stmts_append_inv hbody with ⟨V₁, st₁, hinit, htail⟩ | ⟨hinit, hne⟩
+      · rw [hpq] at htail
+        obtain ⟨ho, hhalt⟩ := Step.stmts_mstore_one_ret p₂ p₂ rfl htail
+        subst ho
+        have hcommit : committedState st₀ st' = st' := committedState_commit hhalt rfl
+        left
+        rw [hstObs, hcommit]
+        show (⟨st', .halt⟩ : Obs).view =
+          Obs.view ⟨{ st₀ with halted := some (.ret, abiTrue) }, .halt⟩
+        exact view_eq_of_worldEq_and_halt (by simpa [WorldEq] using WorldEq.symm hw0) hhalt rfl
+      · have hclass := Step.exitClassified hinit false false hfuns' hinitClean
+        have hhalt : o = .halt := by
+          rcases hclass with ⟨_, ho⟩ | ⟨ho, _⟩
+          · rcases ho with h | ⟨hf, _⟩ | ⟨hl, _⟩
+            · exact absurd h hne
+            · cases hf
+            · cases hl
+          · exact ho
+        rw [hhalt] at hclass
+        obtain ⟨k, d, hk, hnc⟩ := ExitCleanRes.sres_halt hclass
+        right
+        have hroll : committedState st₀ st' =
+            { st₀ with halted := st'.halted, returndata := st'.returndata } :=
+          committedState_rollback hk hnc
+        refine ⟨⟨k, d, ?_, hnc⟩, ?_⟩
+        · rw [hstObs, hroll]
+          exact hk
+        · rw [hstObs, hroll]
+          simp [Obs.worldUnchanged, WorldEq]
+  · simp at hn
 
 /-! # A2 (ST.12): the two scans do not read the VALUE of a literal
 
