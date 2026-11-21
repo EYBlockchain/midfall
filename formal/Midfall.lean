@@ -43,6 +43,7 @@ import Midfall.Generator.Layout
 import Midfall.Generator.LayoutMemory
 import Midfall.Generator.Templates
 import Midfall.Generator.VerifierPartials
+import Midfall.Generator.IvcPartialKats
 import Midfall.Generator.Contracts
 import Midfall.Generator.Artifacts
 import Midfall.Generator.Protocol

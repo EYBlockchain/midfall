@@ -392,8 +392,19 @@ EVAL = re.compile(
 # tail update; streamFalsifiers_ok and streamRefusalIntact_ok are the negative controls, including that
 # QVR:325-333 STILL refuses a fold opcode inside an identity. No gate was deleted, edited or re-spelled;
 # evalQuotientIdentity and every pre-existing gate are untouched. The delta is +7/+0.
-EXPECTED_KAT_TOTAL = 1640
-EXPECTED_KAT_FILES = 118
+# WID.2 (C1 first tranche) moved EXPECTED_KAT_TOTAL 1640 -> 1648 and EXPECTED_KAT_FILES 118 -> 119
+# deliberately: Midfall/Generator/IvcPartialKats.lean is a NEW file in the suite carrying EIGHT
+# '#eval' gates, ported from docs/plans/V3-evidence/lean/widening/IvcPartials.lean at base 1460013.
+# SEVEN expect true: f2_assemblyHelpers_bytesExact_ok, f2_accumulatorHelpers_bytesExact_ok,
+# f2_vkLoading_bytesExact_ok, f2_transcriptProofParser_bytesExact_ok, f2_lagrange_bytesExact_ok,
+# f2_quotientAndLinearization_external_ok, f2_finalPairing_bytesExact_ok - each render occurs exactly
+# once in the tracked IVC artifact proofs/solidity-verifier/target/ivc-keccak-solidity-dump/Halo2Verifier.sol
+# AND carries the include boundary, measuring the F2-shaped context the evidence file read by hand.
+# ONE expects false, the card's negative control: f2_f1CtxAccumulatorHelpers_noBoundary_ok is the
+# F1-context AccumulatorHelpers boundary test, which is false on the IVC artifact (that render occurs in
+# F2 but not at an include boundary). No gate was deleted, edited or re-spelled; the delta is +8/+1.
+EXPECTED_KAT_TOTAL = 1648
+EXPECTED_KAT_FILES = 119
 
 # Only these shapes count as #eval output.
 #
