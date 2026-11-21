@@ -794,11 +794,19 @@ theorem gasFree_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (vkAddr 
     GasFree (R.prog vkAddr 0) := by
   sorry
 
-/-- **LEAF (TOT.1.a): A GAS-FREE PROGRAM HAS THE SAME RUNS UNDER EVERY GAS ORACLE.** One `Step`
-    induction in the shape of `Bridge.Run_worldEq_of_noWriters`; generic in the block. Owner:
-    TOT.1.a (WP A12). WITNESS: `gap_lowering_correct_witness_unexhibited`. FALSIFIER:
-    `mid_start_not_vacuous` (Stages.lean:672, PROVED) - the boundary the run starts from is not
-    `True`, so the runs compared are runs of this program and not of an arbitrary one. -/
+/-- **LEAF (TOT.1.a): A GAS-FREE PROGRAM HAS THE SAME RUNS UNDER EVERY GAS ORACLE.** PROVED
+    (WP A12). The generic derivation transport is `step_gas_irrel` below: one induction on `Step`
+    with the scan's `GasFreeScan` as the code hypothesis and `GasFreeEnv` for the function
+    environment. The only oracle-reading constructors are `builtinOk`/`builtinHalt` at
+    `Op.gas`, and `gasFreeScan` rejects that op; every other builtin's `builtinWithExternal` arm
+    does not mention the oracle (`builtinWithExternal_gas_irrel`). The dialects' `Op`, `Value` and
+    `State` agree definitionally, so the derivation is transported, not an equality of dialects:
+    `fdeclCast`/`funEnvCast`/`resCast` rebuild the three indices that do depend on the full
+    `Dialect` value, and `VEnv.setMany`/`bindZeros`/`VEnv.get` are the payload functions whose
+    dialect argument needs the small oracle-independence lemmas. FALSIFIER: the two `decide`
+    examples above - the scan refuses `pop(gas())` and accepts `pop(msize())`, so the hypothesis
+    is not decorative; `mid_start_not_vacuous` (Stages.lean:672, PROVED) keeps the starting
+    boundary non-trivial. CONE: 0, axioms standard three. -/
 theorem runBody_gas_oblivious (R : Render p G₁ G₂ Gₜ) (vkAddr : U256)
     (hgas : GasFree (R.prog vkAddr 0)) (c : ExternalCalls) (g g' : ExternalGas)
     (st₀ : EvmState) (obs : Obs) (h : RunBody R vkAddr 0 c g st₀ obs) :
