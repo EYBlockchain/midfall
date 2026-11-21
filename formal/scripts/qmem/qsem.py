@@ -42,7 +42,7 @@ bi('qbi_addmod_atFr', 'addmod', '(st : EvmState) (a b : U256)', '[a, b, frModulu
 bi('qbi_mulmod_atFr', 'mulmod', '(st : EvmState) (a b : U256)', '[a, b, frModulusWord]', '[wMulmod a b] st')
 for _k in (1, 2, 3, 4, 5, 6, 7, 8):
     bi('qbi_shl' + str(_k), 'shl', '(st : EvmState) (v : U256)', '[' + sv(_k) + ', v]', '[v <<< ' + str(_k) + '] st')
-for _k in (168, 216, 224, 232, 240, 248):
+for _k in (16, 168, 216, 224, 232, 240, 248):
     bi('qbi_shr' + str(_k), 'shr', '(st : EvmState) (v : U256)', '[' + sv(_k) + ', v]', '[v >>> ' + str(_k) + '] st')
 for _i in (0, 1, 2, 3, 4):
     bi('qbi_byte' + str(_i), 'byte', '(st : EvmState) (w : U256)', '[' + sv(_i) + ', w]',

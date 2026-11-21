@@ -42,6 +42,11 @@ class Gen(object):
         self.used = set()
         self.decode = {}
         self.funs_lbl = 'funs'
+        # 'read_proofs' maps a read-equation name to a PROOF TERM for it. Such a read is still
+        # substituted into the post (so the post is clean) but it is NOT a hypothesis of the theorem:
+        # it is discharged inline. Used by the fold arms, whose second accumulator read is
+        # 'loadWord (storeWord m p v) p = v' - a lemma, not a precondition.
+        self.read_proofs = spec.get('read_proofs', {})
         for (computed, hyp, repl) in spec.get('reads', []):
             self.decode[computed] = (hyp, repl)
 
@@ -169,8 +174,16 @@ class Gen(object):
             if key is not None and key in self.decode:
                 hyp, repl = self.decode[key]
                 nm2 = self.fresh('d')
+                rp = self.read_proofs.get(hyp)
+                # A read PROOF is applied to the derivation, not to the goal: rewriting the goal
+                # with '<- prf' can hit an earlier syntactic occurrence of the replacement value
+                # (the fold arm writes 'wMulmod a y' into memory and then reads it back, and the
+                # write comes before the read in the term).  'rw [prf] at h' rewrites only the
+                # 'loadWord (storeWord m p v) p' pattern, which occurs once.
+                src = ('by have h9 := ' + nm + '; rw [' + rp + '] at h9; exact h9') if rp \
+                    else ('by rw [<- ' + hyp + ']; exact ' + nm)
                 self.have(nm2, self.step_ty(p, '.expr (' + syn(e) + ')', '.eres (.vals [' + repl + '] ' + P(stnew) + ')'),
-                          'by rw [<- ' + hyp + ']; exact ' + nm)
+                          src)
                 nm = nm2
                 val = repl
             q = pa.cp()
@@ -313,8 +326,9 @@ class Arm(object):
 
     def pre_list(self):
         s = self.spec
+        rp = s.get('read_proofs', {})
         ps = ['VEnv.get V ' + idq(reg) + ' = some ' + P(val) for (reg, val, h) in s['pins']]
-        ps += [c + ' = ' + r for (c, h, r) in s.get('reads', [])]
+        ps += [c + ' = ' + r for (c, h, r) in s.get('reads', []) if h not in rp]
         return ps
 
     def projections(self):
@@ -334,7 +348,10 @@ class Arm(object):
         out = []
         for (reg, val, hyp) in s['pins']:
             out.append('(' + hyp + ' : VEnv.get V ' + idq(reg) + ' = some ' + P(val) + ')')
+        rp = s.get('read_proofs', {})
         for (computed, hyp, repl) in s.get('reads', []):
+            if hyp in rp:
+                continue
             out.append('(' + hyp + ' : ' + computed + ' = ' + repl + ')')
         for (b, prop, name) in s.get('extras', []):
             out.append(b)
