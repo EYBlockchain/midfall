@@ -35,6 +35,15 @@ git branch -D $BRANCH 2>/dev/null || true
 echo newbox: adding worktree $DEST on $BRANCH from $BASE
 git worktree add -b $BRANCH $DEST $BASE >/dev/null
 
+# MOD7F found the FIRST build was ~13 min, not ~2, because the vendor subproject keeps its OWN
+# .lake and the clone above did not include it. Clone it too if present.
+if [ -d $ROOT/formal/vendor/yul-semantics/.lake ]; then
+  mkdir -p $DEST/formal/vendor
+  cp -Rc $ROOT/formal/vendor/yul-semantics/.lake $DEST/formal/vendor/yul-semantics/.lake 2>/dev/null \
+    || cp -R $ROOT/formal/vendor/yul-semantics/.lake $DEST/formal/vendor/yul-semantics/.lake 2>/dev/null || true
+  echo newbox: vendor .lake cloned
+fi
+
 if [ -n $SRC_LAKE ]; then
   T0=$(python3 -c 'import time;print(time.time())')
   if cp -Rc $SRC_LAKE $DEST/formal/.lake 2>/dev/null; then MODE=clonefile; else

@@ -11005,3 +11005,359 @@ namespace Midfall.LoweringV3.QuotientArms
 #print axioms Midfall.LoweringV3.QuotientArms.mod7Epilogue
 #cone_sorries Midfall.LoweringV3.QuotientArms.mod7Epilogue
 end Midfall.LoweringV3.QuotientArms
+
+/-!
+## MOD7F - THE FIVE AFFINE CURSOR LEMMAS
+
+MOD7E's correction stands and is the whole subject of this section: the 'mod7Env' get-facts were
+necessary but NOT SUFFICIENT, and the real blocker was CURSOR ARITHMETIC. Each block lemma's post-env
+carries 'pc := fun k => (mod7XFrom cm pcv accv st ... k).1' and nothing reduced that to an affine
+function of 'k', so the arm could not NAME its output cursor. This section supplies exactly the five
+missing lemmas, one per block, and nothing else:
+
+| block | walk | cursor after 'm' iterations | stride |
+|-------|------|------------------------------|--------|
+| MEM   | 'mod7LimbFrom'  | 'pcv + ofNat (3 * m)'          | 3            |
+| LIN   | 'mod7LinFrom'   | 'pcv + ofNat (3 * L * m)'      | 3L = 21      |
+| ROW   | 'mod7RowFrom'   | 'pcv + ofNat ((2 + 3L) * m)'   | 2 + 3L = 23  |
+| PAIR  | 'mod7PwFrom'    | 'pcv + ofNat ((b32+coeffN) * m)' | b32 + coeffN = 17 |
+| PROD  | 'mod7ProdFrom'  | 'pcv + ofNat (5 * m)'          | 5            |
+
+The strides are the ones the handoffs predicted, and they are NOT assumed: each is read off the walk's
+own step function ('lin7Step' adds 3, 'mod7RowStep' adds 2 then '3 * L' through 'bilin7RowWalk',
+'mod7PwStep' adds 'b32 + coeffN', 'mod7ProdStep' adds 5) and then proved by induction over the walk.
+Every walk's cursor IS affine in 'k'; no block needed a corrected diagnosis, and no hypothesis was
+added to any row, 'ValidV3', a bundle or the root.
+
+The strides are stated SYMBOLICALLY ('L' for 'tcq.limbCount', 'b32'/'coeffN' for
+'tcq.byteU32Bytes'/'tcq.limbPairwiseCoeffs') because the block lemmas are too: 21, 23 and 17 are the
+values at the template constants, not extra assumptions.
+
+'mod7_cursor_chain' then chains all five walks and NAMES the total advance - the equation MOD7E said
+could not even be stated. It is stated here as a sum of five 'BitVec.ofNat' terms rather than one,
+which is the honest shape: the collapse of that sum into a single 'ofNat' is a 'BitVec' associativity
+exercise, not a fact about the arm.
+
+EVERYTHING HERE IS AN EMITTED-SIDE CONTRACT. No equation against 'modarith7Form' exists or is implied,
+and this section does not measure the reference side.
+-/
+namespace Midfall.LoweringV3.QuotientArms
+
+/-- 'BitVec' bookkeeping: two literal-extended additions collapse into one. -/
+theorem mod7_bv_add_ofNat_add (pcv : U256) (a b : Nat) :
+    pcv + BitVec.ofNat 256 a + BitVec.ofNat 256 b = pcv + BitVec.ofNat 256 (a + b) := by
+  rw [← BitVec.ofNat_add_ofNat, BitVec.add_assoc]
+
+/-- 'BitVec' bookkeeping, fully parenthesised form: used to fold a cursor chain one stride at a time. -/
+theorem mod7_bv_add_ofNat_add' (pcv : U256) (a b : Nat) :
+    (pcv + BitVec.ofNat 256 a) + BitVec.ofNat 256 b = pcv + BitVec.ofNat 256 (a + b) := by
+  rw [BitVec.add_assoc, ← BitVec.ofNat_add]
+
+/-- ONE LIMB STEP advances the cursor by exactly 3 - the MEM block's stride. -/
+theorem lin7Step_fst (cm : U256) (s : U256 × U256 × EvmState) :
+    (lin7Step cm s).1 = s.1 + BitVec.ofNat 256 3 := rfl
+
+/-- THE LIMB WALK'S CURSOR IS AFFINE IN THE ITERATION COUNT. -/
+theorem lin7Walk_fst (cm : U256) (m : Nat) (s : U256 × U256 × EvmState) :
+    (lin7Walk cm m s).1 = s.1 + BitVec.ofNat 256 (3 * m) := by
+  induction m with
+  | zero => show s.1 = s.1 + BitVec.ofNat 256 0; simp
+  | succ m ih =>
+      rw [lin7Walk_succ, lin7Step_fst, ih, mod7_bv_add_ofNat_add]
+      rw [show (3 : Nat) * (m + 1) = 3 * m + 3 by ring]
+
+/-- **AFFINE CURSOR LEMMA 1 of 5 - THE MEM BLOCK, STRIDE 3.** The cursor the MEM block leaves 'q_pc' at
+    after 'm' iterations is its input cursor plus '3 * m'. -/
+theorem mod7LimbFrom_fst (cm pcv accv : U256) (st : EvmState) (m : Nat) :
+    (mod7LimbFrom cm pcv accv st m).1 = pcv + BitVec.ofNat 256 (3 * m) :=
+  lin7Walk_fst cm m (pcv, accv, st)
+
+/-- 'mod7LinWalk' unfolds one outer iteration; the LIN analogue of 'mod7ProdWalk_succ'. -/
+theorem mod7LinWalk_succ (cm : U256) (L m : Nat) (s : U256 × U256 × EvmState) :
+    mod7LinWalk cm L (m + 1) s = mod7LinStep cm L (mod7LinWalk cm L m s) := rfl
+
+/-- ONE LIN OUTER ITERATION advances the cursor by '3 * L' - the LIN block's stride, 21 at 'L = 7'. -/
+theorem mod7LinStep_fst (cm : U256) (L : Nat) (s : U256 × U256 × EvmState) :
+    (mod7LinStep cm L s).1 = s.1 + BitVec.ofNat 256 (3 * L) :=
+  lin7Walk_fst cm L s
+
+/-- **AFFINE CURSOR LEMMA 2 of 5 - THE LIN BLOCK, STRIDE '3 * limbCount' = 21.** This is the lemma
+    MOD7E named: it is what lets the LIN block's post-env say 'pc = fun k => pcv + ofNat (3 * L * k)'
+    instead of carrying the un-collapsed walk. -/
+theorem mod7LinFrom_fst (cm pcv accv : U256) (st : EvmState) (L m : Nat) :
+    (mod7LinFrom cm pcv accv st L m).1 = pcv + BitVec.ofNat 256 (3 * L * m) := by
+  show (mod7LinWalk cm L m (pcv, accv, st)).1 = _
+  induction m with
+  | zero => show pcv = pcv + BitVec.ofNat 256 0; simp
+  | succ m ih =>
+      rw [mod7LinWalk_succ, mod7LinStep_fst, ih, mod7_bv_add_ofNat_add]
+      rw [show 3 * L * (m + 1) = 3 * L * m + 3 * L by ring]
+
+/-- ONE ROW INNER STEP advances the cursor by 3. -/
+theorem bilin7RowStep_fst (cm lv : U256) (s : U256 × U256 × EvmState) :
+    (bilin7RowStep cm lv s).1 = s.1 + BitVec.ofNat 256 3 := rfl
+
+/-- THE ROW INNER WALK'S CURSOR IS AFFINE: stride 3 per limb. -/
+theorem bilin7RowWalk_fst (cm lv : U256) (m : Nat) (s : U256 × U256 × EvmState) :
+    (bilin7RowWalk cm lv m s).1 = s.1 + BitVec.ofNat 256 (3 * m) := by
+  induction m with
+  | zero => show s.1 = s.1 + BitVec.ofNat 256 0; simp
+  | succ m ih =>
+      rw [bilin7RowWalk_succ, bilin7RowStep_fst, ih, mod7_bv_add_ofNat_add]
+      rw [show (3 : Nat) * (m + 1) = 3 * m + 3 by ring]
+
+/-- 'mod7RowWalk' unfolds one outer iteration. -/
+theorem mod7RowWalk_succ (cm : U256) (L m : Nat) (s : U256 × U256 × EvmState) :
+    mod7RowWalk cm L (m + 1) s = mod7RowStep cm L (mod7RowWalk cm L m s) := rfl
+
+/-- ONE ROW OUTER ITERATION advances the cursor by '2 + 3 * L' - the two pre-statements' 'q_pc' write
+    plus the inner limb loop, i.e. 23 at 'L = 7'. -/
+theorem mod7RowStep_fst (cm : U256) (L : Nat) (s : U256 × U256 × EvmState) :
+    (mod7RowStep cm L s).1 = s.1 + BitVec.ofNat 256 (2 + 3 * L) := by
+  unfold mod7RowStep
+  rw [bilin7RowWalk_fst, BitVec.add_assoc, ← BitVec.ofNat_add]
+
+/-- **AFFINE CURSOR LEMMA 3 of 5 - THE ROW BLOCK, STRIDE '2 + 3 * limbCount' = 23.** -/
+theorem mod7RowFrom_fst (cm pcv accv : U256) (st : EvmState) (L m : Nat) :
+    (mod7RowFrom cm pcv accv st L m).1 = pcv + BitVec.ofNat 256 ((2 + 3 * L) * m) := by
+  show (mod7RowWalk cm L m (pcv, accv, st)).1 = _
+  induction m with
+  | zero => show pcv = pcv + BitVec.ofNat 256 0; simp
+  | succ m ih =>
+      rw [mod7RowWalk_succ, mod7RowStep_fst, ih, mod7_bv_add_ofNat_add]
+      rw [show (2 + 3 * L) * (m + 1) = (2 + 3 * L) * m + (2 + 3 * L) by ring]
+
+/-- 'mod7PwWalk' unfolds one outer iteration. -/
+theorem mod7PwWalk_succ (cm b32 coeffN : U256) (N m : Nat) (s : U256 × U256 × EvmState) :
+    mod7PwWalk cm b32 coeffN N (m + 1) s
+      = mod7PwStep cm b32 coeffN N (mod7PwWalk cm b32 coeffN N m s) := rfl
+
+/-- ONE PAIR OUTER ITERATION advances the cursor by 'b32 + coeffN' and NOTHING ELSE: the whole inner
+    double loop sits in the second and third components, so the cursor never sees it. This is why the
+    PAIR stride is the plain sum 'byteU32Bytes + limbPairwiseCoeffs' = 17. -/
+theorem mod7PwStep_fst (cm b32 coeffN : U256) (N : Nat) (s : U256 × U256 × EvmState) :
+    (mod7PwStep cm b32 coeffN N s).1 = s.1 + (b32 + coeffN) := by
+  show (s.1 + b32 + coeffN) = _
+  rw [BitVec.add_assoc]
+
+/-- ONE PAIR OUTER ITERATION at literal strides: the cursor advance is 'ofNat (b + c)'. -/
+theorem mod7PwStep_fst_ofNat (cm : U256) (b c N : Nat) (s : U256 × U256 × EvmState) :
+    (mod7PwStep cm (BitVec.ofNat 256 b) (BitVec.ofNat 256 c) N s).1
+      = s.1 + BitVec.ofNat 256 (b + c) := by
+  show (s.1 + BitVec.ofNat 256 b + BitVec.ofNat 256 c) = _
+  rw [BitVec.add_assoc, ← BitVec.ofNat_add]
+
+/-- **AFFINE CURSOR LEMMA 4 of 5 - THE PAIR BLOCK, STRIDE 'byteU32Bytes + limbPairwiseCoeffs' = 17.**
+    Stated at LITERAL 'ofNat' strides, which is exactly what the block lemma passes
+    ('BitVec.ofNat 256 tcq.byteU32Bytes', 'BitVec.ofNat 256 tcq.limbPairwiseCoeffs'). A general-'U256'-stride
+    form was proved and then DROPPED: it needs Mathlib's 'nsmul' API, which for 'BitVec' is not
+    computational and dragged 'Classical.choice' into the cone. The literal form is at [propext, Quot.sound]. -/
+theorem mod7PwFrom_fst (cm pcv accv : U256) (st : EvmState) (b c N m : Nat) :
+    (mod7PwFrom cm (BitVec.ofNat 256 b) (BitVec.ofNat 256 c) pcv accv st N m).1
+      = pcv + BitVec.ofNat 256 ((b + c) * m) := by
+  show (mod7PwWalk cm (BitVec.ofNat 256 b) (BitVec.ofNat 256 c) N m (pcv, accv, st)).1 = _
+  induction m with
+  | zero => show pcv = pcv + BitVec.ofNat 256 0; simp
+  | succ m ih =>
+      rw [mod7PwWalk_succ, mod7PwStep_fst_ofNat, ih, mod7_bv_add_ofNat_add]
+      rw [show (b + c) * (m + 1) = (b + c) * m + (b + c) by ring]
+
+/-- ONE PRODUCT ITERATION advances the cursor by exactly 5 - the PROD block's stride. -/
+theorem mod7ProdStep_fst (cm : U256) (s : U256 × U256 × EvmState) :
+    (mod7ProdStep cm s).1 = s.1 + BitVec.ofNat 256 5 := rfl
+
+/-- **AFFINE CURSOR LEMMA 5 of 5 - THE PROD BLOCK, STRIDE 5.** -/
+theorem mod7ProdFrom_fst (cm pcv accv : U256) (st : EvmState) (m : Nat) :
+    (mod7ProdFrom cm pcv accv st m).1 = pcv + BitVec.ofNat 256 (5 * m) := by
+  show (mod7ProdWalk cm m (pcv, accv, st)).1 = _
+  induction m with
+  | zero => show pcv = pcv + BitVec.ofNat 256 0; simp
+  | succ m ih =>
+      rw [mod7ProdWalk_succ, mod7ProdStep_fst, ih, mod7_bv_add_ofNat_add]
+      rw [show (5 : Nat) * (m + 1) = 5 * m + 5 by ring]
+
+/-- **THE CURSOR EQUATION IS STABLE.** Chaining the five block walks in emission order - LIN, ROW, PAIR,
+    MEM, PROD - from a start cursor 'pcv' leaves 'q_pc' at 'pcv' plus the five strides times their own
+    counts. This is the equation MOD7E said could not even be STATED without the affine lemmas above;
+    it is the '21 * lin + 23 * row + 17 * pw + 3 * mem + 5 * prod' half of the arm's cursor contract,
+    with the prologue's '1 + (COND?2) + (CONST?1) + 5' and the epilogue's zero still to be glued on by
+    the triple. Stated as a sum of five 'BitVec.ofNat' terms: the strides are NAMED, which is the point.
+    EMITTED SIDE ONLY - nothing here is an equation against 'modarith7Form'. -/
+theorem mod7_cursor_chain (cm pcv accv : U256) (st : EvmState)
+    (b c L N lin row pw mem prod : Nat) :
+    (mod7ProdFrom cm
+      (mod7LimbFrom cm
+        (mod7PwFrom cm (BitVec.ofNat 256 b) (BitVec.ofNat 256 c)
+          (mod7RowFrom cm (mod7LinFrom cm pcv accv st L lin).1 accv st L row).1
+          accv st N pw).1
+        accv st mem).1
+      accv st prod).1
+      = pcv + BitVec.ofNat 256 (3 * L * lin) + BitVec.ofNat 256 ((2 + 3 * L) * row)
+          + BitVec.ofNat 256 ((b + c) * pw) + BitVec.ofNat 256 (3 * mem)
+          + BitVec.ofNat 256 (5 * prod) := by
+  rw [mod7ProdFrom_fst, mod7LimbFrom_fst, mod7PwFrom_fst, mod7RowFrom_fst, mod7LinFrom_fst]
+
+/-- 'mod7Env' reads its cursor function at EXACTLY ONE argument, the iteration it is taken at. So a
+    block's post-environment can have its cursor function REPLACED by the affine closed form without
+    changing the environment at all. This is the one-step glue the triple's chain needs: block 'k+1'
+    sits on 'mod7Env V₀ (fun j => (mod7XFrom ... j).1) acc m', and this turns that into the env whose
+    cursor is named. -/
+theorem mod7Env_congr_pc {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc pc' acc : Nat → U256) (m : Nat)
+    (h : pc m = pc' m) : mod7Env V₀ pc acc m = mod7Env V₀ pc' acc m := by
+  unfold mod7Env
+  rw [h]
+
+/-- THE MEM BLOCK'S OUTPUT CURSOR, NAMED: 'pcv + 3 * m'. -/
+theorem mod7LimbEnv_pc {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pcv accv cm : U256) (st : EvmState) (m : Nat)
+    (acc : Nat → U256) :
+    mod7Env V₀ (fun k => (mod7LimbFrom cm pcv accv st k).1) acc m
+      = mod7Env V₀ (fun k => pcv + BitVec.ofNat 256 (3 * k)) acc m :=
+  mod7Env_congr_pc V₀ (fun k => (mod7LimbFrom cm pcv accv st k).1)
+    (fun k => pcv + BitVec.ofNat 256 (3 * k)) acc m
+    (mod7LimbFrom_fst cm pcv accv st m)
+
+/-- THE LIN BLOCK'S OUTPUT CURSOR, NAMED: 'pcv + 3 * limbCount * m'. -/
+theorem mod7LinEnv_pc {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pcv accv cm : U256) (st : EvmState) (L m : Nat)
+    (acc : Nat → U256) :
+    mod7Env V₀ (fun k => (mod7LinFrom cm pcv accv st L k).1) acc m
+      = mod7Env V₀ (fun k => pcv + BitVec.ofNat 256 (3 * L * k)) acc m :=
+  mod7Env_congr_pc V₀ (fun k => (mod7LinFrom cm pcv accv st L k).1)
+    (fun k => pcv + BitVec.ofNat 256 (3 * L * k)) acc m
+    (mod7LinFrom_fst cm pcv accv st L m)
+
+/-- THE ROW BLOCK'S OUTPUT CURSOR, NAMED: 'pcv + (2 + 3 * limbCount) * m'. -/
+theorem mod7RowEnv_pc {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pcv accv cm : U256) (st : EvmState) (L m : Nat)
+    (acc : Nat → U256) :
+    mod7Env V₀ (fun k => (mod7RowFrom cm pcv accv st L k).1) acc m
+      = mod7Env V₀ (fun k => pcv + BitVec.ofNat 256 ((2 + 3 * L) * k)) acc m :=
+  mod7Env_congr_pc V₀ (fun k => (mod7RowFrom cm pcv accv st L k).1)
+    (fun k => pcv + BitVec.ofNat 256 ((2 + 3 * L) * k)) acc m
+    (mod7RowFrom_fst cm pcv accv st L m)
+
+/-- THE PAIR BLOCK'S OUTPUT CURSOR, NAMED: 'pcv + (byteU32Bytes + limbPairwiseCoeffs) * m'. -/
+theorem mod7PwEnv_pc {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pcv accv cm : U256) (st : EvmState) (b c' N m : Nat)
+    (acc : Nat → U256) :
+    mod7Env V₀ (fun k => (mod7PwFrom cm (BitVec.ofNat 256 b) (BitVec.ofNat 256 c') pcv accv st N k).1) acc m
+      = mod7Env V₀ (fun k => pcv + BitVec.ofNat 256 ((b + c') * k)) acc m :=
+  mod7Env_congr_pc V₀ (fun k => (mod7PwFrom cm (BitVec.ofNat 256 b) (BitVec.ofNat 256 c') pcv accv st N k).1)
+    (fun k => pcv + BitVec.ofNat 256 ((b + c') * k)) acc m
+    (mod7PwFrom_fst cm pcv accv st b c' N m)
+
+/-- THE PROD BLOCK'S OUTPUT CURSOR, NAMED: 'pcv + 5 * m'. -/
+theorem mod7ProdEnv_pc {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pcv accv cm : U256) (st : EvmState) (m : Nat)
+    (acc : Nat → U256) :
+    mod7Env V₀ (fun k => (mod7ProdFrom cm pcv accv st k).1) acc m
+      = mod7Env V₀ (fun k => pcv + BitVec.ofNat 256 (5 * k)) acc m :=
+  mod7Env_congr_pc V₀ (fun k => (mod7ProdFrom cm pcv accv st k).1)
+    (fun k => pcv + BitVec.ofNat 256 (5 * k)) acc m
+    (mod7ProdFrom_fst cm pcv accv st m)
+
+end Midfall.LoweringV3.QuotientArms
+
+namespace Midfall.LoweringV3.QuotientArms
+#print axioms Midfall.LoweringV3.QuotientArms.mod7LimbFrom_fst
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7LimbFrom_fst
+#print axioms Midfall.LoweringV3.QuotientArms.mod7LinFrom_fst
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7LinFrom_fst
+#print axioms Midfall.LoweringV3.QuotientArms.mod7RowFrom_fst
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7RowFrom_fst
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PwFrom_fst
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PwFrom_fst
+#print axioms Midfall.LoweringV3.QuotientArms.mod7ProdFrom_fst
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7ProdFrom_fst
+#print axioms Midfall.LoweringV3.QuotientArms.mod7_cursor_chain
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7_cursor_chain
+#print axioms Midfall.LoweringV3.QuotientArms.mod7Env_congr_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7Env_congr_pc
+#print axioms Midfall.LoweringV3.QuotientArms.mod7LimbEnv_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7LimbEnv_pc
+#print axioms Midfall.LoweringV3.QuotientArms.mod7LinEnv_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7LinEnv_pc
+#print axioms Midfall.LoweringV3.QuotientArms.mod7RowEnv_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7RowEnv_pc
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PwEnv_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PwEnv_pc
+#print axioms Midfall.LoweringV3.QuotientArms.mod7ProdEnv_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7ProdEnv_pc
+end Midfall.LoweringV3.QuotientArms
+
+/-!
+## MOD7F HANDOFF - THE CURSOR ARITHMETIC IS CLOSED; THE TRIPLE IS ASSEMBLY ONLY
+
+**BASE.** '50d6127' (MOD7E's landed state), branch 't/MOD7F', worktree '/Users/julian/midfall-f'.
+'QuotientArms.lean' 11007 -> 11363 lines, APPENDED ONLY: 'git diff --numstat' is **356 insertions, ZERO
+deletions**, one hunk starting at line 11008 - no line of any other card was touched.
+
+**MOD7E'S DIAGNOSIS WAS CORRECT AND IS NOW RESOLVED.** The five affine cursor lemmas exist, each proved by
+one induction over its own walk, and every walk's cursor IS affine in the iteration count. No block needed
+a corrected diagnosis; nothing here is a finding about the emitted arm being wrong.
+
+| block | lemma | cursor after 'm' iterations | stride |
+|-------|-------|------------------------------|--------|
+| MEM   | 'mod7LimbFrom_fst' | 'pcv + ofNat (3 * m)'        | 3 |
+| LIN   | 'mod7LinFrom_fst'  | 'pcv + ofNat (3 * L * m)'     | '3 * limbCount' = 21 |
+| ROW   | 'mod7RowFrom_fst'  | 'pcv + ofNat ((2 + 3L) * m)'  | '2 + 3 * limbCount' = 23 |
+| PAIR  | 'mod7PwFrom_fst'   | 'pcv + ofNat ((b + c) * m)'   | 'byteU32Bytes + limbPairwiseCoeffs' = 17 |
+| PROD  | 'mod7ProdFrom_fst' | 'pcv + ofNat (5 * m)'         | 5 |
+
+Each stride is READ OFF the step function, not assumed: 'lin7Step' adds 3, 'mod7RowStep' adds 2 and then
+'3 * L' through 'bilin7RowWalk', 'mod7PwStep' adds 'b32 + coeffN' and NOTHING ELSE (the whole inner double
+loop lives in components 2 and 3 - 'mod7PwStep_fst' is the fact), 'mod7ProdStep' adds 5. Strides are stated
+SYMBOLICALLY in 'L' / 'b' / 'c' because the block lemmas are too; 21, 23 and 17 are the values at the
+template constants, not new assumptions. All at **[propext, Quot.sound]**, '#cone_sorries' 0, no 'sorry'.
+
+**THE CURSOR EQUATION IS STABLE - THAT WAS THE QUESTION.** 'mod7_cursor_chain' chains LIN -> ROW -> PAIR ->
+MEM -> PROD from one start cursor and names the total advance as the sum of the five stride-times-count
+terms. It is stated as a sum of five 'BitVec.ofNat' terms rather than one collapsed 'ofNat': the strides are
+NAMED, which is the point, and the final collapse is a 'BitVec' associativity exercise, not a fact about the
+arm. MOD7E's 'pc0 + 1 + (COND?2) + (CONST?1) + 5 + 21*lin + 23*row + 17*pw + 3*mem + 5*prod' is now
+composable from landed pieces: the block half is 'mod7_cursor_chain', the prologue half is 'mod7Prologue'
+plus 'mod7EpiEnv_get_pc' (MOD7E proved the epilogue's stride is ZERO).
+
+**AND THE CHAIN STEP NOW HAS WHAT IT CONSUMES.** 'mod7Env' reads its cursor function at exactly one
+argument, so 'mod7Env_congr_pc' replaces a block's walk-derived cursor function by its affine closed form
+without touching the environment. The five instances 'mod7LimbEnv_pc' / 'mod7LinEnv_pc' / 'mod7RowEnv_pc' /
+'mod7PwEnv_pc' / 'mod7ProdEnv_pc' do it per block: block 'k' OUTPUTS an environment whose 'q_pc' is named
+affinely, which is precisely what block 'k+1' needs as an input 'hget_pc'. Together with MOD7E's
+'mod7EnvBlock_gets_at2' the chain step is now three rewrites, not an induction.
+
+**THE TRIPLE IS NOT LANDED, AND NOT FOR LACK OF PIECES.** It is assembly: seven derivations -
+'mod7Prologue' (statements 0-14), the five block lemmas (15-19), 'mod7Epilogue' (20-22) - glued by
+'mod7_stmtsAppend' against 'mod7_emitted_split' / 'mod7_emitted_mid' / 'mod7_emitted_epilogue_take', then
+'StmtsContract', then 'StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)' copied from
+'qArmValueAll_bilin7Pairwise'. What the assembler still has to do by hand is the ENVIRONMENT NAMING at each
+of the five boundaries: instantiate block 'k+1' at 'V₀ := mod7Env ... (cntv_k.toNat)', discharge its five
+'VEnv.get' hypotheses from 'mod7EnvBlock_gets_at2' plus the per-block 'mod7XEnv_pc' above, and carry the
+accumulator function 'acc' un-named (it is genuinely data-dependent - only the CURSOR is affine). This card
+ran out of budget before that assembly rather than land a half-shaped triple; per the brief's standard, a
+moved count from a badly-shaped statement would have been worse than an unchanged one.
+
+**ONE FINDING WORTH REPEATING.** A general-'U256'-stride form of the PAIR lemma ('pcv + m • (b32 + coeffN)')
+was proved and then REMOVED: Mathlib's 'nsmul' API for 'BitVec' is not computational ('(m+1) • d = m • d + d'
+is NOT 'rfl'), and going through 'succ_nsmul' / 'zero_nsmul' put 'Classical.choice' in that lemma's cone. The
+literal-'ofNat' stride form, which is what the block lemma actually passes, is at [propext, Quot.sound]. Do
+not reintroduce the 'nsmul' version for cosmetic generality.
+
+**CORRECTION TO THIS BRIEF, AND TO THE STANDING BUILD CLAIM.** The worktree's APFS clone did NOT include
+'formal/vendor/yul-semantics/.lake' - the vendored package had ZERO built oleans. So the first 'lake build'
+here was NOT the promised ~2-minute incremental: it was **5302 jobs / about 13 minutes**, because YulSemantics
+and everything downstream of it had to be compiled. The SECOND build was genuinely incremental (5302 jobs
+reported again, but all replays except 'Midfall.LoweringV3.QuotientArms' at 30 s). Budget accordingly.
+
+**STILL NOT CLAIMED, AND STILL NOT MEASURED.** Everything in this file for MODARITH7 is an EMITTED-SIDE
+contract. No equation between any 'mod7*' walk and 'modarith7Form' exists or is implied. THIS CARD DID NOT
+LAND THE TRIPLE, so 'armcount.py' still lists 'modarith7' under 'qStepValue but NO triple' and the
+emitted-side count is UNCHANGED at 24. Landing the triple will NOT measure the reference side. No
+disagreement between the emitted and reference sides was exhibited or ruled out. 'PG_limbCountAgrees'
+appears nowhere in this work and is needed by none of it. No hypothesis was added to any row, 'ValidV3', a
+bundle or the root.
+-/
+
+namespace Midfall.LoweringV3.QuotientArms
+end Midfall.LoweringV3.QuotientArms
