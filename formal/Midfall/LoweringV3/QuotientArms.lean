@@ -11361,3 +11361,792 @@ bundle or the root.
 
 namespace Midfall.LoweringV3.QuotientArms
 end Midfall.LoweringV3.QuotientArms
+
+/-!
+## MOD7G - THE MODARITH7 TRIPLE IS LANDED. **EMITTED-SIDE CONTRACT ONLY.**
+
+Everything MOD7F said was missing is here: seven derivations - 'mod7Prologue' (emitted statements 0-14),
+the five block lemmas in EMITTED order LIN -> ROW -> PAIR -> MEM -> PROD (15-19) and 'mod7Epilogue'
+(20-22) - glued by 'mod7_stmtsAppend' against the 'rfl' partition certificate 'mod7_emitted_split',
+wrapped as 'StmtsContract' and lifted to 'StmtsContractAll' by 'StmtsContractAll.of_det
+(Bridge.dialect_deterministic hc hg)'. The triple is 'qArmValueAll_modarith7'; 'qArmValue_modarith7' is
+its one-run form and 'qArmRun_modarith7' the raw 23-link derivation.
+
+**THE HAND WORK MOD7F NAMED, AND ONE THING IT DID NOT.** The boundary environment naming goes one layer
+at a time: 'mod7Env_get_pc' / '_get_acc' / '_get_other' discharge a block's five 'VEnv.get' hypotheses on
+'mod7Env V0 pc acc m' and the five '_fst' lemmas name the cursor affinely, so a chain step really is
+three rewrites. What MOD7F did NOT name is that the landed 'mod7PrologueEnv_get_*' lemmas are UNUSABLE at
+the FIRST boundary: each demands 'VEnv.get V "q_acc" = some accv' where 'accv' is the prologue's OWN
+computed accumulator 'mod7Acc cm st pcv b0 b1', which no precondition on an arbitrary start environment
+can supply (the hypothesis is incidental - their proofs never use it). 'mod7PrologueEnv_pc' / '_acc' /
+'_cm' / '_r' / '_lin' / '_row' / '_pw' / '_mem' / '_prod' / '_flags' / '_cond' are the same peeling with
+only the reads actually used, via the existing 'venvGet_c3' / '_c4' / '_c5' / '_c7' multi-cons peelers.
+'mod7EnvBlock_gets_at2' turned out NOT to be needed: propagating one layer at a time is shorter than
+carrying a two-layer bundle through five boundaries.
+
+**THE TRIPLE NAMES ITS POST-ENV, ITS POST-STATE AND ITS CURSOR.** 'mod7ChainEnv' is the post-environment
+spelled as one term (prologue env, five block envs, epilogue), 'mod7ChainSt' the post-state, and
+'mod7ChainPcAffine' the output cursor: 'mod7PcF pc b0 b1' (the prologue's 'pc0 + 1 + (COND?2) + (CONST?1)
++ 5') plus '3 * limbCount * linCount' + '(2 + 3 * limbCount) * rowCount' + '(byteU32Bytes +
+limbPairwiseCoeffs) * pwCount' + '3 * memCount' + '5 * prodCount' - the sum 'mod7_cursor_chain' names,
+with the epilogue's stride ZERO by 'mod7EpiEnv_get_pc'. The accumulator and the state are carried
+UN-NAMED (they are genuinely data-dependent), which is the honest shape.
+
+**LABEL, HELD EXPLICITLY.** This is an EMITTED-SIDE contract. No equation between any 'mod7*' walk and
+'modarith7Form' exists or is implied, and LANDING THIS TRIPLE DOES NOT MEASURE THE REFERENCE SIDE:
+'qStepValue_modarith7' is still an unlinked reference value. No disagreement between the emitted and
+reference sides was exhibited or ruled out. 'PG_limbCountAgrees' appears nowhere in this work and is
+needed by none of it. No hypothesis was added to any row, 'ValidV3', a bundle or the root; the arm-lemma
+hypotheses are 'hfit : tcq.limbCount < 2 ^ 256' (as every limb-strided arm carries) and the flag-bit
+names 'b0'/'b1', which live inside the PRECONDITION.
+-/
+namespace Midfall.LoweringV3.QuotientArms
+
+/-- The two short cons peelers the chain needs that the landed 'venvGet_c3' .. 'venvGet_c7' do not
+    cover: one and two bindings. Stated in their shape, so the hypothesis is the LAST argument and
+    every boundary of the chain is one 'refine'. -/
+theorem mod7_vc1 {D : YulSemantics.Dialect} (V : VEnv D) (a : Ident) (va v : D.Value) (x : Ident)
+    (ha : a ≠ x) (h : VEnv.get V x = some v) : VEnv.get ((a, va) :: V) x = some v :=
+  Eq.trans (@venvGet_cons_ne D V a x va ha) h
+
+/-- Two bindings peeled. -/
+theorem mod7_vc2 {D : YulSemantics.Dialect} (V : VEnv D) (a b : Ident) (va vb v : D.Value)
+    (x : Ident) (ha : a ≠ x) (hb : b ≠ x) (h : VEnv.get V x = some v) :
+    VEnv.get ((b, vb) :: (a, va) :: V) x = some v :=
+  Eq.trans (@venvGet_cons_ne D ((a, va) :: V) b x vb hb)
+    (@mod7_vc1 D V a va v x ha h)
+
+theorem mod7PrologueEnv_pc {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv : U256)
+    (hget_pc : VEnv.get V "q_pc" = some pcv)
+    (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_pc" = some pcF := by
+  refine @venvGet_set_same (Bridge.Dialect c g) ?_ "q_pc" pcF pcC ?_
+  refine @venvGet_c4 (Bridge.Dialect c g) ?_ "q_row_count" "q_pairwise_count" "q_mem_count"
+    "q_product_count" c1 c2 c3 c4 pcC "q_pc" (by decide) (by decide) (by decide)
+    (by decide) ?_
+  refine @venvGet_c5 (Bridge.Dialect c g) ?_ "q_flags" "q_cond_ptr" "q_acc" "q_counts_word"
+    "q_lin_count" fl cpv accv cw c0 pcC "q_pc" (by decide) (by decide) (by decide)
+    (by decide) (by decide) ?_
+  exact @venvGet_set_same (Bridge.Dialect c g) V "q_pc" pcC pcv hget_pc
+
+theorem mod7PrologueEnv_acc {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_acc" = some accv := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "q_acc" pcF accv (by decide) ?_
+  refine @venvGet_c4 (Bridge.Dialect c g) ?_ "q_row_count" "q_pairwise_count" "q_mem_count"
+    "q_product_count" c1 c2 c3 c4 accv "q_acc" (by decide) (by decide) (by decide)
+    (by decide) ?_
+  refine @mod7_vc2 (Bridge.Dialect c g) ?_ "q_lin_count" "q_counts_word" c0 cw accv "q_acc" (by decide) (by decide) ?_
+  exact @venvGet_cons_eq (Bridge.Dialect c g) _ "q_acc" accv
+
+theorem mod7PrologueEnv_cm {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (cm : U256)
+    (hget_cm : VEnv.get V "q_const_mptr" = some cm)
+    (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_const_mptr" = some cm := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "q_const_mptr" pcF cm (by decide) ?_
+  refine @venvGet_c4 (Bridge.Dialect c g) ?_ "q_row_count" "q_pairwise_count" "q_mem_count"
+    "q_product_count" c1 c2 c3 c4 cm "q_const_mptr" (by decide) (by decide) (by decide)
+    (by decide) ?_
+  refine @venvGet_c5 (Bridge.Dialect c g) ?_ "q_flags" "q_cond_ptr" "q_acc" "q_counts_word"
+    "q_lin_count" fl cpv accv cw c0 cm "q_const_mptr" (by decide) (by decide) (by decide)
+    (by decide) (by decide) ?_
+  exact @venvGet_set_ne (Bridge.Dialect c g) V "q_pc" "q_const_mptr" pcC cm (by decide) hget_cm
+
+theorem mod7PrologueEnv_r {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g))
+    (hget_r : VEnv.get V "r" = some frModulusWord)
+    (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "r" = some frModulusWord := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "r" pcF frModulusWord (by decide) ?_
+  refine @venvGet_c4 (Bridge.Dialect c g) ?_ "q_row_count" "q_pairwise_count" "q_mem_count"
+    "q_product_count" c1 c2 c3 c4 frModulusWord "r" (by decide) (by decide) (by decide)
+    (by decide) ?_
+  refine @venvGet_c5 (Bridge.Dialect c g) ?_ "q_flags" "q_cond_ptr" "q_acc" "q_counts_word"
+    "q_lin_count" fl cpv accv cw c0 frModulusWord "r" (by decide) (by decide) (by decide)
+    (by decide) (by decide) ?_
+  exact @venvGet_set_ne (Bridge.Dialect c g) V "q_pc" "r" pcC frModulusWord (by decide) hget_r
+
+theorem mod7PrologueEnv_lin {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_lin_count" = some c0 := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "q_lin_count" pcF c0 (by decide) ?_
+  refine @venvGet_c4 (Bridge.Dialect c g) ?_ "q_row_count" "q_pairwise_count" "q_mem_count"
+    "q_product_count" c1 c2 c3 c4 c0 "q_lin_count" (by decide) (by decide) (by decide)
+    (by decide) ?_
+  exact @venvGet_cons_eq (Bridge.Dialect c g) _ "q_lin_count" c0
+
+theorem mod7PrologueEnv_row {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_row_count" = some c1 := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "q_row_count" pcF c1 (by decide) ?_
+  refine @venvGet_c3 (Bridge.Dialect c g) ?_ "q_pairwise_count" "q_mem_count" "q_product_count"
+    c2 c3 c4 c1 "q_row_count" (by decide) (by decide) (by decide) ?_
+  exact @venvGet_cons_eq (Bridge.Dialect c g) _ "q_row_count" c1
+
+theorem mod7PrologueEnv_pw {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_pairwise_count" = some c2 := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "q_pairwise_count" pcF c2 (by decide) ?_
+  refine @mod7_vc2 (Bridge.Dialect c g) ?_ "q_mem_count" "q_product_count" c3 c4 c2 "q_pairwise_count" (by decide) (by decide) ?_
+  exact @venvGet_cons_eq (Bridge.Dialect c g) _ "q_pairwise_count" c2
+
+theorem mod7PrologueEnv_mem {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_mem_count" = some c3 := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "q_mem_count" pcF c3 (by decide) ?_
+  refine @mod7_vc1 (Bridge.Dialect c g) ?_ "q_product_count" c4 c3 "q_mem_count" (by decide) ?_
+  exact @venvGet_cons_eq (Bridge.Dialect c g) _ "q_mem_count" c3
+
+theorem mod7PrologueEnv_prod {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_product_count" = some c4 := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "q_product_count" pcF c4 (by decide) ?_
+  exact @venvGet_cons_eq (Bridge.Dialect c g) _ "q_product_count" c4
+
+theorem mod7PrologueEnv_flags {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_flags" = some fl := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "q_flags" pcF fl (by decide) ?_
+  refine @venvGet_c7 (Bridge.Dialect c g) ?_ "q_acc" "q_counts_word" "q_lin_count" "q_row_count"
+    "q_pairwise_count" "q_mem_count" "q_product_count" accv cw c0 c1 c2 c3 c4 fl "q_flags"
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) ?_
+  refine @mod7_vc1 (Bridge.Dialect c g) ?_ "q_cond_ptr" cpv fl "q_flags" (by decide) ?_
+  exact @venvGet_cons_eq (Bridge.Dialect c g) _ "q_flags" fl
+
+theorem mod7PrologueEnv_cond {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_cond_ptr" = some cpv := by
+  refine @venvGet_set_ne (Bridge.Dialect c g) ?_ "q_pc" "q_cond_ptr" pcF cpv (by decide) ?_
+  refine @venvGet_c7 (Bridge.Dialect c g) ?_ "q_acc" "q_counts_word" "q_lin_count" "q_row_count"
+    "q_pairwise_count" "q_mem_count" "q_product_count" accv cw c0 c1 c2 c3 c4 cpv "q_cond_ptr"
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) ?_
+  exact @venvGet_cons_eq (Bridge.Dialect c g) _ "q_cond_ptr" cpv
+
+
+/-- The output of one block layer: the environment the block leaves behind, plus the accumulator and
+    the state its successor is instantiated at. -/
+abbrev mod7LayerT (c : ExternalCalls) (g : ExternalGas) : Type :=
+    VEnv (Bridge.Dialect c g) × U256 × EvmState
+
+/-- ONE BLOCK-LAYER: 'mod7Env' at a block walk's own projections, tupled with the walk's final
+    accumulator and state. -/
+def mod7Layer {c : ExternalCalls} {g : ExternalGas}
+    (E : VEnv (Bridge.Dialect c g)) (walk : Nat → U256 × U256 × EvmState) (m : Nat) :
+    mod7LayerT c g :=
+  (mod7Env E (fun k => (walk k).1) (fun k => (walk k).2.1) m, (walk m).2.1, (walk m).2.2)
+
+/-- LIN: stride '3 * limbCount'. -/
+def mod7L0 {c : ExternalCalls} {g : ExternalGas}
+    (E : VEnv (Bridge.Dialect c g)) (cm pcF accv : U256) (stF : EvmState)
+    (tcq : QuotientVmTemplateConstants) (c0 : U256) : mod7LayerT c g :=
+  mod7Layer E (fun k => mod7LinFrom cm pcF accv stF tcq.limbCount k) c0.toNat
+
+/-- ROW: stride '2 + 3 * limbCount'. -/
+def mod7L1 {c : ExternalCalls} {g : ExternalGas}
+    (z : mod7LayerT c g) (cm pcF : U256) (tcq : QuotientVmTemplateConstants)
+    (c0 c1 : U256) : mod7LayerT c g :=
+  mod7Layer z.1 (fun k => mod7RowFrom cm (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat)) z.2.1 z.2.2 tcq.limbCount k) c1.toNat
+
+/-- PAIR: stride 'byteU32Bytes + limbPairwiseCoeffs'. -/
+def mod7L2 {c : ExternalCalls} {g : ExternalGas}
+    (z : mod7LayerT c g) (cm pcF : U256) (tcq : QuotientVmTemplateConstants)
+    (c0 c1 c2 : U256) : mod7LayerT c g :=
+  mod7Layer z.1 (fun k => mod7PwFrom cm (BitVec.ofNat 256 tcq.byteU32Bytes)
+    (BitVec.ofNat 256 tcq.limbPairwiseCoeffs) (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat)) z.2.1 z.2.2 tcq.limbCount k) c2.toNat
+
+/-- MEM: stride 3. -/
+def mod7L3 {c : ExternalCalls} {g : ExternalGas}
+    (z : mod7LayerT c g) (cm pcF : U256) (tcq : QuotientVmTemplateConstants)
+    (c0 c1 c2 c3 : U256) : mod7LayerT c g :=
+  mod7Layer z.1 (fun k => mod7LimbFrom cm (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat)) z.2.1 z.2.2 k) c3.toNat
+
+/-- PROD: stride 5. -/
+def mod7L4 {c : ExternalCalls} {g : ExternalGas}
+    (z : mod7LayerT c g) (cm pcF : U256) (tcq : QuotientVmTemplateConstants)
+    (c0 c1 c2 c3 c4 : U256) : mod7LayerT c g :=
+  mod7Layer z.1 (fun k => mod7ProdFrom cm (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat) + BitVec.ofNat 256 (3 * c3.toNat)) z.2.1 z.2.2 k) c4.toNat
+
+/-- **THE WHOLE EMITTED-SIDE CHAIN IN ONE TERM.** The prologue environment, then the five block
+    environments in EMITTED order LIN -> ROW -> PAIR -> MEM -> PROD, each sitting on the previous block's
+    OUTPUT environment, then the epilogue. Every block's cursor is named AFFINELY - 'pcF' plus the strides
+    of the blocks before it - and its accumulator and state are the previous layer's projections, carried
+    UN-NAMED because they are genuinely data-dependent. 'mod7ChainEnv' is therefore the triple's
+    post-environment spelled and 'mod7ChainPcAffine' what 'q_pc' is left at. The layers are the defs above
+    and the twelve prologue values are PARAMETERS, both so that naming the post-environment stays a head
+    match instead of a ~500-fold re-expansion of the prologue 'abbrev's (measured: the let-chained form
+    blows the 200000-heartbeat budget). EMITTED SIDE ONLY: nothing here is an equation against
+    'modarith7Form'. -/
+def mod7Chain {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pc cm : U256) (st : EvmState) (b0 b1 : Bool)
+    (tcq : QuotientVmTemplateConstants)
+    (fl cpv accv : U256) (stF : EvmState)
+    (pcF cw c0 c1 c2 c3 c4 pcC : U256) :
+    VEnv (Bridge.Dialect c g) × EvmState :=
+  let E0 := mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  let z0 := mod7L0 E0 cm pcF accv stF tcq c0
+  let z1 := mod7L1 z0 cm pcF tcq c0 c1
+  let z2 := mod7L2 z1 cm pcF tcq c0 c1 c2
+  let z3 := mod7L3 z2 cm pcF tcq c0 c1 c2 c3
+  let z4 := mod7L4 z3 cm pcF tcq c0 c1 c2 c3 c4
+  (mod7EpiEnv z4.1 z4.2.2 cpv z4.2.1 b0, mod7EpiSt z4.2.2 cpv b0)
+
+/-- The triple's POST-ENVIRONMENT, named. -/
+abbrev mod7ChainEnv {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pc cm : U256) (st : EvmState) (b0 b1 : Bool)
+    (tcq : QuotientVmTemplateConstants)
+    (fl cpv accv : U256) (stF : EvmState)
+    (pcF cw c0 c1 c2 c3 c4 pcC : U256) : VEnv (Bridge.Dialect c g) :=
+  (mod7Chain V pc cm st b0 b1 tcq fl cpv accv stF pcF cw c0 c1 c2 c3 c4 pcC).1
+
+/-- The triple's POST-STATE, named. -/
+abbrev mod7ChainSt {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pc cm : U256) (st : EvmState) (b0 b1 : Bool)
+    (tcq : QuotientVmTemplateConstants)
+    (fl cpv accv : U256) (stF : EvmState)
+    (pcF cw c0 c1 c2 c3 c4 pcC : U256) : EvmState :=
+  (mod7Chain V pc cm st b0 b1 tcq fl cpv accv stF pcF cw c0 c1 c2 c3 c4 pcC).2
+
+/-- **THE OUTPUT CURSOR, NAMED.** The prologue's own advance 'mod7PcF' (= 'pc0 + 1 + (COND?2) +
+    (CONST?1) + 5') plus the five block strides times their own counts: '3 * limbCount' for LIN,
+    '2 + 3 * limbCount' for ROW, 'byteU32Bytes + limbPairwiseCoeffs' for PAIR, 3 for MEM, 5 for PROD -
+    the sum 'mod7_cursor_chain' names for the block half and the sum 'quotientModarith7OpLen' computes.
+    The epilogue's stride is ZERO ('mod7EpiEnv_get_pc'), which is why the cursor after all 23 emitted
+    statements is this and nothing more. -/
+def mod7ChainPcAffine (pc cm : U256) (st : EvmState) (b0 b1 : Bool)
+    (tcq : QuotientVmTemplateConstants) : U256 :=
+  mod7PcF pc b0 b1
+    + BitVec.ofNat 256 (3 * tcq.limbCount * (mod7Count0 cm st pc b0 b1).toNat)
+    + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * (mod7Count1 cm st pc b0 b1).toNat)
+    + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs)
+      * (mod7Count2 cm st pc b0 b1).toNat)
+    + BitVec.ofNat 256 (3 * (mod7Count3 cm st pc b0 b1).toNat)
+    + BitVec.ofNat 256 (5 * (mod7Count4 cm st pc b0 b1).toNat)
+
+/-- **THE MODARITH7 OUTPUT CURSOR**, as its own declaration. The comparison it forces - the bottom-up
+    chain of block environments against the top-down 'mod7ChainEnv' - is the one expensive defeq in this
+    section, and keeping it out of 'qArmRun_modarith7' is what lets BOTH fit inside the 200000-heartbeat
+    budget (RULES forbid raising 'maxHeartbeats'). It needs the environments and the five '_fst' rewrites
+    only, no statement derivations. EMITTED SIDE ONLY. -/
+theorem qArmRun_modarith7_pc {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pc cm : U256) (st : EvmState) (b0 b1 : Bool)
+    (tcq : QuotientVmTemplateConstants)
+    (hget_pc : VEnv.get V "q_pc" = some pc) :
+    VEnv.get (mod7ChainEnv V pc cm st b0 b1 tcq
+        (mod7Flags st pc) (mod7CondPtr st pc b0) (mod7Acc cm st pc b0 b1)
+        (mod7StF cm st pc b0 b1) (mod7PcF pc b0 b1) (mod7Counts cm st pc b0 b1)
+        (mod7Count0 cm st pc b0 b1) (mod7Count1 cm st pc b0 b1) (mod7Count2 cm st pc b0 b1)
+        (mod7Count3 cm st pc b0 b1) (mod7Count4 cm st pc b0 b1) (mod7PcC pc b0 b1)) "q_pc" = some (mod7ChainPcAffine pc cm st b0 b1 tcq) := by
+  let fl := mod7Flags st pc
+  let cpv := mod7CondPtr st pc b0
+  let accv := mod7Acc cm st pc b0 b1
+  let stF := mod7StF cm st pc b0 b1
+  let pcF := mod7PcF pc b0 b1
+  let c0 := mod7Count0 cm st pc b0 b1
+  let c1 := mod7Count1 cm st pc b0 b1
+  let c2 := mod7Count2 cm st pc b0 b1
+  let c3 := mod7Count3 cm st pc b0 b1
+  let c4 := mod7Count4 cm st pc b0 b1
+  let cw := mod7Counts cm st pc b0 b1
+  let pcC := mod7PcC pc b0 b1
+  let n0 := c0.toNat
+  let n1 := c1.toNat
+  let n2 := c2.toNat
+  let n3 := c3.toNat
+  let n4 := c4.toNat
+  let E0 := mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  let w0 := fun k => mod7LinFrom cm pcF accv stF tcq.limbCount k
+  let z0 := mod7L0 E0 cm pcF accv stF tcq c0
+  let E1 := z0.1
+  let p1 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat)
+  let a1 := z0.2.1
+  let s1 := z0.2.2
+  let w1 := fun k => mod7RowFrom cm (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat)) a1 s1 tcq.limbCount k
+  let z1 := mod7L1 z0 cm pcF tcq c0 c1
+  let E2 := z1.1
+  let p2 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat)
+  let a2 := z1.2.1
+  let s2 := z1.2.2
+  let w2 := fun k => mod7PwFrom cm (BitVec.ofNat 256 tcq.byteU32Bytes)
+    (BitVec.ofNat 256 tcq.limbPairwiseCoeffs) (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat)) a2 s2 tcq.limbCount k
+  let z2 := mod7L2 z1 cm pcF tcq c0 c1 c2
+  let E3 := z2.1
+  let p3 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat)
+  let a3 := z2.2.1
+  let s3 := z2.2.2
+  let w3 := fun k => mod7LimbFrom cm (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat)) a3 s3 k
+  let z3 := mod7L3 z2 cm pcF tcq c0 c1 c2 c3
+  let E4 := z3.1
+  let p4 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat) + BitVec.ofNat 256 (3 * c3.toNat)
+  let a4 := z3.2.1
+  let s4 := z3.2.2
+  let w4 := fun k => mod7ProdFrom cm (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat) + BitVec.ofNat 256 (3 * c3.toNat)) a4 s4 k
+  let z4 := mod7L4 z3 cm pcF tcq c0 c1 c2 c3 c4
+  let E5 := z4.1
+  let p5 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat) + BitVec.ofNat 256 (3 * c3.toNat) + BitVec.ofNat 256 (5 * c4.toNat)
+  let a5 := z4.2.1
+  let s5 := z4.2.2
+  let E6 := mod7EpiEnv E5 s5 cpv a5 b0
+  let st6 := mod7EpiSt s5 cpv b0
+  have hpc0 : VEnv.get E0 "q_pc" = some pcF :=
+    mod7PrologueEnv_pc V pc hget_pc fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hpc1 : VEnv.get E1 "q_pc" = some p1 :=
+    Eq.trans (mod7Env_get_pc E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) pcF hpc0 n0)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7LinFrom_fst cm pcF accv stF tcq.limbCount n0))
+  have hpc2 : VEnv.get E2 "q_pc" = some p2 :=
+    Eq.trans (mod7Env_get_pc E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) p1 hpc1 n1)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7RowFrom_fst cm p1 a1 s1 tcq.limbCount n1))
+  have hpc3 : VEnv.get E3 "q_pc" = some p3 :=
+    Eq.trans (mod7Env_get_pc E2 (fun k => (w2 k).1) (fun k => (w2 k).2.1) p2 hpc2 n2)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7PwFrom_fst cm p2 a2 s2
+          tcq.byteU32Bytes tcq.limbPairwiseCoeffs tcq.limbCount n2))
+  have hpc4 : VEnv.get E4 "q_pc" = some p4 :=
+    Eq.trans (mod7Env_get_pc E3 (fun k => (w3 k).1) (fun k => (w3 k).2.1) p3 hpc3 n3)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7LimbFrom_fst cm p3 a3 s3 n3))
+  have hpc5 : VEnv.get E5 "q_pc" = some p5 :=
+    Eq.trans (mod7Env_get_pc E4 (fun k => (w4 k).1) (fun k => (w4 k).2.1) p4 hpc4 n4)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7ProdFrom_fst cm p4 a4 s4 n4))
+  exact mod7EpiEnv_get_pc E5 p5 s5 cpv a5 b0 hpc5
+/-- **ARM MODARITH7: THE 23-LINK RUN.** Seven derivations glued by 'mod7_stmtsAppend' against the
+    'rfl' partition certificate 'mod7_emitted_split': 'mod7Prologue' (emitted statements 0-14), the five
+    block lemmas (15-19) in emitted order LIN -> ROW -> PAIR -> MEM -> PROD, and 'mod7Epilogue' (20-22).
+    Each block is instantiated at its predecessor's OUTPUT environment with its five 'VEnv.get' facts
+    discharged one layer at a time by 'mod7Env_get_pc' / '_get_acc' / '_get_other'; the cursor is named
+    affinely by the five '_fst' lemmas and the carried accumulator and state are left un-named, exactly as
+    MOD7F prescribed. The post-environment and post-state are 'mod7ChainEnv' / 'mod7ChainSt'; the cursor
+    equation is 'qArmRun_modarith7_pc'. EMITTED SIDE ONLY. -/
+theorem qArmRun_modarith7 {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc cm : U256) (b0 b1 : Bool)
+    (hfit : tcq.limbCount < 2 ^ 256)
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hget_pc : VEnv.get V "q_pc" = some pc)
+    (hget_ht : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_cm : VEnv.get V "q_const_mptr" = some cm)
+    (hget_r : VEnv.get V "r" = some frModulusWord)
+    (hflag : mod7Flags st pc ≤ 3)
+    (hb0 : mod7Flags st pc &&& BitVec.ofNat 256 1 = if b0 then BitVec.ofNat 256 1
+                                                  else BitVec.ofNat 256 0)
+    (hb1 : mod7Flags st pc &&& BitVec.ofNat 256 2 = if b1 then BitVec.ofNat 256 2
+                                                  else BitVec.ofNat 256 0) :
+    Step (D := Bridge.Dialect c g) funs V st
+      (.stmts (GenAst.qArmBodyModarith7 ctx program tcq))
+      (.sres (mod7ChainEnv V pc cm st b0 b1 tcq
+        (mod7Flags st pc) (mod7CondPtr st pc b0) (mod7Acc cm st pc b0 b1)
+        (mod7StF cm st pc b0 b1) (mod7PcF pc b0 b1) (mod7Counts cm st pc b0 b1)
+        (mod7Count0 cm st pc b0 b1) (mod7Count1 cm st pc b0 b1) (mod7Count2 cm st pc b0 b1)
+        (mod7Count3 cm st pc b0 b1) (mod7Count4 cm st pc b0 b1) (mod7PcC pc b0 b1)) (mod7ChainSt V pc cm st b0 b1 tcq
+        (mod7Flags st pc) (mod7CondPtr st pc b0) (mod7Acc cm st pc b0 b1)
+        (mod7StF cm st pc b0 b1) (mod7PcF pc b0 b1) (mod7Counts cm st pc b0 b1)
+        (mod7Count0 cm st pc b0 b1) (mod7Count1 cm st pc b0 b1) (mod7Count2 cm st pc b0 b1)
+        (mod7Count3 cm st pc b0 b1) (mod7Count4 cm st pc b0 b1) (mod7PcC pc b0 b1)) .normal) := by
+  let fl := mod7Flags st pc
+  let cpv := mod7CondPtr st pc b0
+  let accv := mod7Acc cm st pc b0 b1
+  let stF := mod7StF cm st pc b0 b1
+  let pcF := mod7PcF pc b0 b1
+  let c0 := mod7Count0 cm st pc b0 b1
+  let c1 := mod7Count1 cm st pc b0 b1
+  let c2 := mod7Count2 cm st pc b0 b1
+  let c3 := mod7Count3 cm st pc b0 b1
+  let c4 := mod7Count4 cm st pc b0 b1
+  let cw := mod7Counts cm st pc b0 b1
+  let pcC := mod7PcC pc b0 b1
+  let n0 := c0.toNat
+  let n1 := c1.toNat
+  let n2 := c2.toNat
+  let n3 := c3.toNat
+  let n4 := c4.toNat
+  let E0 := mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  let w0 := fun k => mod7LinFrom cm pcF accv stF tcq.limbCount k
+  let z0 := mod7L0 E0 cm pcF accv stF tcq c0
+  let E1 := z0.1
+  let p1 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat)
+  let a1 := z0.2.1
+  let s1 := z0.2.2
+  let w1 := fun k => mod7RowFrom cm (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat)) a1 s1 tcq.limbCount k
+  let z1 := mod7L1 z0 cm pcF tcq c0 c1
+  let E2 := z1.1
+  let p2 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat)
+  let a2 := z1.2.1
+  let s2 := z1.2.2
+  let w2 := fun k => mod7PwFrom cm (BitVec.ofNat 256 tcq.byteU32Bytes)
+    (BitVec.ofNat 256 tcq.limbPairwiseCoeffs) (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat)) a2 s2 tcq.limbCount k
+  let z2 := mod7L2 z1 cm pcF tcq c0 c1 c2
+  let E3 := z2.1
+  let p3 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat)
+  let a3 := z2.2.1
+  let s3 := z2.2.2
+  let w3 := fun k => mod7LimbFrom cm (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat)) a3 s3 k
+  let z3 := mod7L3 z2 cm pcF tcq c0 c1 c2 c3
+  let E4 := z3.1
+  let p4 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat) + BitVec.ofNat 256 (3 * c3.toNat)
+  let a4 := z3.2.1
+  let s4 := z3.2.2
+  let w4 := fun k => mod7ProdFrom cm (pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat) + BitVec.ofNat 256 (3 * c3.toNat)) a4 s4 k
+  let z4 := mod7L4 z3 cm pcF tcq c0 c1 c2 c3 c4
+  let E5 := z4.1
+  let p5 := pcF + BitVec.ofNat 256 (3 * tcq.limbCount * c0.toNat) + BitVec.ofNat 256 ((2 + 3 * tcq.limbCount) * c1.toNat) + BitVec.ofNat 256 ((tcq.byteU32Bytes + tcq.limbPairwiseCoeffs) * c2.toNat) + BitVec.ofNat 256 (3 * c3.toNat) + BitVec.ofNat 256 (5 * c4.toNat)
+  let a5 := z4.2.1
+  let s5 := z4.2.2
+  let E6 := mod7EpiEnv E5 s5 cpv a5 b0
+  let st6 := mod7EpiSt s5 cpv b0
+  -- THE PROLOGUE: emitted statements 0-14
+  have hpro : Step (D := Bridge.Dialect c g) funs V st (.stmts (mod7PrologueBody program))
+      (.sres E0 stF .normal) :=
+    mod7Prologue program funs V pc cm st b0 b1 hget_pc hget_ht hget_cm hget_r hflag hb0 hb1
+  have hpc0 : VEnv.get E0 "q_pc" = some pcF :=
+    mod7PrologueEnv_pc V pc hget_pc fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hacc0 : VEnv.get E0 "q_acc" = some accv :=
+    mod7PrologueEnv_acc V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hcm0 : VEnv.get E0 "q_const_mptr" = some cm :=
+    mod7PrologueEnv_cm V cm hget_cm fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hr0 : VEnv.get E0 "r" = some frModulusWord :=
+    mod7PrologueEnv_r V hget_r fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hfl0 : VEnv.get E0 "q_flags" = some fl :=
+    mod7PrologueEnv_flags V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hcp0 : VEnv.get E0 "q_cond_ptr" = some cpv :=
+    mod7PrologueEnv_cond V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hc0_0 : VEnv.get E0 "q_lin_count" = some c0 :=
+    mod7PrologueEnv_lin V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hc0_1 : VEnv.get E0 "q_row_count" = some c1 :=
+    mod7PrologueEnv_row V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hc0_2 : VEnv.get E0 "q_pairwise_count" = some c2 :=
+    mod7PrologueEnv_pw V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hc0_3 : VEnv.get E0 "q_mem_count" = some c3 :=
+    mod7PrologueEnv_mem V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  have hc0_4 : VEnv.get E0 "q_product_count" = some c4 :=
+    mod7PrologueEnv_prod V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF
+  -- BLOCK 1 of 5: LIN
+  have hb_lin : Step (D := Bridge.Dialect c g) funs E0 stF
+      (.stmt (Stmt.forLoop (mod7Init "q_lin_block")
+        (yop EVM.Op.lt [yvar "q_lin_block", yvar "q_lin_count"])
+        (mod7Post "q_lin_block")
+        [Stmt.forLoop (mod7Init "q_i") (yop EVM.Op.lt [yvar "q_i", ylit tcq.limbCount])
+          (mod7Post "q_i") (lin7Body tcq)]))
+      (.sres E1 s1 .normal) :=
+    mod7LinBlock tcq funs E0 pcF accv cm c0 stF hfit hpc0 hacc0 hcm0 hr0 hc0_0
+  have hpc1 : VEnv.get E1 "q_pc" = some p1 :=
+    Eq.trans (mod7Env_get_pc E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) pcF hpc0 n0)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7LinFrom_fst cm pcF accv stF tcq.limbCount n0))
+  have hacc1 : VEnv.get E1 "q_acc" = some a1 :=
+    mod7Env_get_acc E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) accv hacc0 n0
+  have hcm1 : VEnv.get E1 "q_const_mptr" = some cm :=
+    mod7Env_get_other E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) "q_const_mptr"
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") cm hcm0 n0
+  have hr1 : VEnv.get E1 "r" = some frModulusWord :=
+    mod7Env_get_other E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) "r"
+      (by decide : ("r" : Ident) ≠ "q_acc")
+      (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord hr0 n0
+  have hc1_1 : VEnv.get E1 "q_row_count" = some c1 :=
+    mod7Env_get_other E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) "q_row_count"
+      (by decide : ("q_row_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_row_count" : Ident) ≠ "q_pc") c1 hc0_1 n0
+  have hc1_2 : VEnv.get E1 "q_pairwise_count" = some c2 :=
+    mod7Env_get_other E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) "q_pairwise_count"
+      (by decide : ("q_pairwise_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_pairwise_count" : Ident) ≠ "q_pc") c2 hc0_2 n0
+  have hc1_3 : VEnv.get E1 "q_mem_count" = some c3 :=
+    mod7Env_get_other E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) "q_mem_count"
+      (by decide : ("q_mem_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_mem_count" : Ident) ≠ "q_pc") c3 hc0_3 n0
+  have hc1_4 : VEnv.get E1 "q_product_count" = some c4 :=
+    mod7Env_get_other E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) "q_product_count"
+      (by decide : ("q_product_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_product_count" : Ident) ≠ "q_pc") c4 hc0_4 n0
+  have hfl1 : VEnv.get E1 "q_flags" = some fl :=
+    mod7Env_get_other E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) "q_flags"
+      (by decide : ("q_flags" : Ident) ≠ "q_acc")
+      (by decide : ("q_flags" : Ident) ≠ "q_pc") fl hfl0 n0
+  have hcp1 : VEnv.get E1 "q_cond_ptr" = some cpv :=
+    mod7Env_get_other E0 (fun k => (w0 k).1) (fun k => (w0 k).2.1) "q_cond_ptr"
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_pc") cpv hcp0 n0
+  -- BLOCK 2 of 5: ROW
+  have hb_row : Step (D := Bridge.Dialect c g) funs E1 s1
+      (.stmt (Stmt.forLoop (mod7Init "q_row_block")
+        (yop EVM.Op.lt [yvar "q_row_block", yvar "q_row_count"])
+        (mod7Post "q_row_block") (mod7RowOuterBody tcq)))
+      (.sres E2 s2 .normal) :=
+    mod7RowBlock tcq funs E1 p1 a1 cm c1 s1 hfit hpc1 hacc1 hcm1 hr1 hc1_1
+  have hpc2 : VEnv.get E2 "q_pc" = some p2 :=
+    Eq.trans (mod7Env_get_pc E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) p1 hpc1 n1)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7RowFrom_fst cm p1 a1 s1 tcq.limbCount n1))
+  have hacc2 : VEnv.get E2 "q_acc" = some a2 :=
+    mod7Env_get_acc E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) a1 hacc1 n1
+  have hcm2 : VEnv.get E2 "q_const_mptr" = some cm :=
+    mod7Env_get_other E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) "q_const_mptr"
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") cm hcm1 n1
+  have hr2 : VEnv.get E2 "r" = some frModulusWord :=
+    mod7Env_get_other E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) "r"
+      (by decide : ("r" : Ident) ≠ "q_acc")
+      (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord hr1 n1
+  have hc2_2 : VEnv.get E2 "q_pairwise_count" = some c2 :=
+    mod7Env_get_other E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) "q_pairwise_count"
+      (by decide : ("q_pairwise_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_pairwise_count" : Ident) ≠ "q_pc") c2 hc1_2 n1
+  have hc2_3 : VEnv.get E2 "q_mem_count" = some c3 :=
+    mod7Env_get_other E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) "q_mem_count"
+      (by decide : ("q_mem_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_mem_count" : Ident) ≠ "q_pc") c3 hc1_3 n1
+  have hc2_4 : VEnv.get E2 "q_product_count" = some c4 :=
+    mod7Env_get_other E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) "q_product_count"
+      (by decide : ("q_product_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_product_count" : Ident) ≠ "q_pc") c4 hc1_4 n1
+  have hfl2 : VEnv.get E2 "q_flags" = some fl :=
+    mod7Env_get_other E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) "q_flags"
+      (by decide : ("q_flags" : Ident) ≠ "q_acc")
+      (by decide : ("q_flags" : Ident) ≠ "q_pc") fl hfl1 n1
+  have hcp2 : VEnv.get E2 "q_cond_ptr" = some cpv :=
+    mod7Env_get_other E1 (fun k => (w1 k).1) (fun k => (w1 k).2.1) "q_cond_ptr"
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_pc") cpv hcp1 n1
+  -- BLOCK 3 of 5: PW
+  have hb_pw : Step (D := Bridge.Dialect c g) funs E2 s2
+      (.stmt (Stmt.forLoop (mod7Init "q_pair_block")
+        (yop EVM.Op.lt [yvar "q_pair_block", yvar "q_pairwise_count"])
+        (mod7Post "q_pair_block") (mod7PwOuterBody7 tcq)))
+      (.sres E3 s3 .normal) :=
+    mod7PwBlock tcq funs E2 p2 a2 cm c2 s2 hfit hpc2 hacc2 hcm2 hr2 hc2_2
+  have hpc3 : VEnv.get E3 "q_pc" = some p3 :=
+    Eq.trans (mod7Env_get_pc E2 (fun k => (w2 k).1) (fun k => (w2 k).2.1) p2 hpc2 n2)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7PwFrom_fst cm p2 a2 s2
+          tcq.byteU32Bytes tcq.limbPairwiseCoeffs tcq.limbCount n2))
+  have hacc3 : VEnv.get E3 "q_acc" = some a3 :=
+    mod7Env_get_acc E2 (fun k => (w2 k).1) (fun k => (w2 k).2.1) a2 hacc2 n2
+  have hcm3 : VEnv.get E3 "q_const_mptr" = some cm :=
+    mod7Env_get_other E2 (fun k => (w2 k).1) (fun k => (w2 k).2.1) "q_const_mptr"
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") cm hcm2 n2
+  have hr3 : VEnv.get E3 "r" = some frModulusWord :=
+    mod7Env_get_other E2 (fun k => (w2 k).1) (fun k => (w2 k).2.1) "r"
+      (by decide : ("r" : Ident) ≠ "q_acc")
+      (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord hr2 n2
+  have hc3_3 : VEnv.get E3 "q_mem_count" = some c3 :=
+    mod7Env_get_other E2 (fun k => (w2 k).1) (fun k => (w2 k).2.1) "q_mem_count"
+      (by decide : ("q_mem_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_mem_count" : Ident) ≠ "q_pc") c3 hc2_3 n2
+  have hc3_4 : VEnv.get E3 "q_product_count" = some c4 :=
+    mod7Env_get_other E2 (fun k => (w2 k).1) (fun k => (w2 k).2.1) "q_product_count"
+      (by decide : ("q_product_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_product_count" : Ident) ≠ "q_pc") c4 hc2_4 n2
+  have hfl3 : VEnv.get E3 "q_flags" = some fl :=
+    mod7Env_get_other E2 (fun k => (w2 k).1) (fun k => (w2 k).2.1) "q_flags"
+      (by decide : ("q_flags" : Ident) ≠ "q_acc")
+      (by decide : ("q_flags" : Ident) ≠ "q_pc") fl hfl2 n2
+  have hcp3 : VEnv.get E3 "q_cond_ptr" = some cpv :=
+    mod7Env_get_other E2 (fun k => (w2 k).1) (fun k => (w2 k).2.1) "q_cond_ptr"
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_pc") cpv hcp2 n2
+  -- BLOCK 4 of 5: MEM
+  have hb_mem : Step (D := Bridge.Dialect c g) funs E3 s3
+      (.stmt (Stmt.forLoop (mod7Init "q_mem_block")
+        (yop EVM.Op.lt [yvar "q_mem_block", yvar "q_mem_count"])
+        (mod7Post "q_mem_block") (lin7Body tcq)))
+      (.sres E4 s4 .normal) :=
+    mod7MemBlock tcq funs E3 p3 a3 cm c3 s3 hpc3 hacc3 hcm3 hr3 hc3_3
+  have hpc4 : VEnv.get E4 "q_pc" = some p4 :=
+    Eq.trans (mod7Env_get_pc E3 (fun k => (w3 k).1) (fun k => (w3 k).2.1) p3 hpc3 n3)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7LimbFrom_fst cm p3 a3 s3 n3))
+  have hacc4 : VEnv.get E4 "q_acc" = some a4 :=
+    mod7Env_get_acc E3 (fun k => (w3 k).1) (fun k => (w3 k).2.1) a3 hacc3 n3
+  have hcm4 : VEnv.get E4 "q_const_mptr" = some cm :=
+    mod7Env_get_other E3 (fun k => (w3 k).1) (fun k => (w3 k).2.1) "q_const_mptr"
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") cm hcm3 n3
+  have hr4 : VEnv.get E4 "r" = some frModulusWord :=
+    mod7Env_get_other E3 (fun k => (w3 k).1) (fun k => (w3 k).2.1) "r"
+      (by decide : ("r" : Ident) ≠ "q_acc")
+      (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord hr3 n3
+  have hc4_4 : VEnv.get E4 "q_product_count" = some c4 :=
+    mod7Env_get_other E3 (fun k => (w3 k).1) (fun k => (w3 k).2.1) "q_product_count"
+      (by decide : ("q_product_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_product_count" : Ident) ≠ "q_pc") c4 hc3_4 n3
+  have hfl4 : VEnv.get E4 "q_flags" = some fl :=
+    mod7Env_get_other E3 (fun k => (w3 k).1) (fun k => (w3 k).2.1) "q_flags"
+      (by decide : ("q_flags" : Ident) ≠ "q_acc")
+      (by decide : ("q_flags" : Ident) ≠ "q_pc") fl hfl3 n3
+  have hcp4 : VEnv.get E4 "q_cond_ptr" = some cpv :=
+    mod7Env_get_other E3 (fun k => (w3 k).1) (fun k => (w3 k).2.1) "q_cond_ptr"
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_pc") cpv hcp3 n3
+  -- BLOCK 5 of 5: PROD
+  have hb_prod : Step (D := Bridge.Dialect c g) funs E4 s4
+      (.stmt (Stmt.forLoop (mod7Init "q_product_block")
+        (yop EVM.Op.lt [yvar "q_product_block", yvar "q_product_count"])
+        (mod7Post "q_product_block") mod7ProdBody))
+      (.sres E5 s5 .normal) :=
+    mod7ProdBlock funs E4 p4 a4 cm c4 s4 hpc4 hacc4 hcm4 hr4 hc4_4
+  have hpc5 : VEnv.get E5 "q_pc" = some p5 :=
+    Eq.trans (mod7Env_get_pc E4 (fun k => (w4 k).1) (fun k => (w4 k).2.1) p4 hpc4 n4)
+      (congrArg (fun z : U256 => (some z : Option U256))
+        (mod7ProdFrom_fst cm p4 a4 s4 n4))
+  have hacc5 : VEnv.get E5 "q_acc" = some a5 :=
+    mod7Env_get_acc E4 (fun k => (w4 k).1) (fun k => (w4 k).2.1) a4 hacc4 n4
+  have hcm5 : VEnv.get E5 "q_const_mptr" = some cm :=
+    mod7Env_get_other E4 (fun k => (w4 k).1) (fun k => (w4 k).2.1) "q_const_mptr"
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") cm hcm4 n4
+  have hr5 : VEnv.get E5 "r" = some frModulusWord :=
+    mod7Env_get_other E4 (fun k => (w4 k).1) (fun k => (w4 k).2.1) "r"
+      (by decide : ("r" : Ident) ≠ "q_acc")
+      (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord hr4 n4
+  have hfl5 : VEnv.get E5 "q_flags" = some fl :=
+    mod7Env_get_other E4 (fun k => (w4 k).1) (fun k => (w4 k).2.1) "q_flags"
+      (by decide : ("q_flags" : Ident) ≠ "q_acc")
+      (by decide : ("q_flags" : Ident) ≠ "q_pc") fl hfl4 n4
+  have hcp5 : VEnv.get E5 "q_cond_ptr" = some cpv :=
+    mod7Env_get_other E4 (fun k => (w4 k).1) (fun k => (w4 k).2.1) "q_cond_ptr"
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_cond_ptr" : Ident) ≠ "q_pc") cpv hcp4 n4
+  -- THE EPILOGUE: emitted statements 20-22, stride zero
+  have hepi : Step (D := Bridge.Dialect c g) funs E5 s5 (.stmts mod7EpilogueBody)
+      (.sres E6 st6 .normal) :=
+    mod7Epilogue funs E5 fl cpv a5 s5 b0 hfl5 hcp5 hacc5 hr5 hb0
+  -- the five block loops as ONE '.stmts' derivation over 'mod7MidBody'
+  have hmid : Step (D := Bridge.Dialect c g) funs E0 stF (.stmts (mod7MidBody tcq))
+      (.sres E5 s5 .normal) := by
+    refine Step.seqCons (D := Bridge.Dialect c g) (V1 := E1) (st1 := s1) hb_lin ?_
+    refine Step.seqCons (D := Bridge.Dialect c g) (V1 := E2) (st1 := s2) hb_row ?_
+    refine Step.seqCons (D := Bridge.Dialect c g) (V1 := E3) (st1 := s3) hb_pw ?_
+    refine Step.seqCons (D := Bridge.Dialect c g) (V1 := E4) (st1 := s4) hb_mem ?_
+    exact Step.seqCons (D := Bridge.Dialect c g) (V1 := E5) (st1 := s5) hb_prod
+      (Step.seqNil (D := Bridge.Dialect c g))
+  -- glue the three regions against the emitted partition certificate
+  have hglue : Step (D := Bridge.Dialect c g) funs V st
+      (.stmts ((mod7PrologueBody program ++ mod7MidBody tcq) ++ mod7EpilogueBody))
+      (.sres (mod7ChainEnv V pc cm st b0 b1 tcq fl cpv accv stF pcF cw c0 c1 c2 c3 c4 pcC) (mod7ChainSt V pc cm st b0 b1 tcq fl cpv accv stF pcF cw c0 c1 c2 c3 c4 pcC) .normal) :=
+    mod7_stmtsAppend (mod7_stmtsAppend hpro hmid) hepi
+  rw [mod7_emitted_split ctx program tcq]
+  exact hglue
+
+/-- **ARM MODARITH7: THE CONTRACT.** **THIS TRIPLE IS AN EMITTED-SIDE CONTRACT, NOT A REFERENCE-TIED
+    VALUE REFINEMENT.** It pins what the emitter's own 'GenAst.qArmBodyModarith7' computes from the
+    registers it reads, and it NAMES its post-environment ('mod7ChainEnv'), its post-state
+    ('mod7ChainSt') and its output cursor ('mod7ChainPcAffine'). No equation against 'modarith7Form'
+    exists here and none is implied. The extra hypotheses are 'hfit : tcq.limbCount < 2 ^ 256', which the
+    LIN, ROW and PAIR block lemmas need as in every limb-strided arm, and the flag-bit names 'b0'/'b1',
+    which live inside the PRECONDITION rather than being assumptions about the arm. No row, no
+    'ValidV3', no bundle, no root. -/
+theorem qArmValue_modarith7 {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc cm : U256) (b0 b1 : Bool)
+    (hfit : tcq.limbCount < 2 ^ 256) :
+    StmtsContract (D := Bridge.Dialect c g) funs
+      (GenAst.qArmBodyModarith7 ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧
+        VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0) ∧
+        VEnv.get V "q_const_mptr" = some cm ∧
+        VEnv.get V "r" = some frModulusWord ∧
+        mod7Flags st pc ≤ 3 ∧
+        mod7Flags st pc &&& BitVec.ofNat 256 1
+          = (if b0 then BitVec.ofNat 256 1 else BitVec.ofNat 256 0) ∧
+        mod7Flags st pc &&& BitVec.ofNat 256 2
+          = (if b1 then BitVec.ofNat 256 2 else BitVec.ofNat 256 0))
+      (fun V st V' st' o => o = .normal
+        ∧ st' = (mod7ChainSt V pc cm st b0 b1 tcq
+        (mod7Flags st pc) (mod7CondPtr st pc b0) (mod7Acc cm st pc b0 b1)
+        (mod7StF cm st pc b0 b1) (mod7PcF pc b0 b1) (mod7Counts cm st pc b0 b1)
+        (mod7Count0 cm st pc b0 b1) (mod7Count1 cm st pc b0 b1) (mod7Count2 cm st pc b0 b1)
+        (mod7Count3 cm st pc b0 b1) (mod7Count4 cm st pc b0 b1) (mod7PcC pc b0 b1))
+        ∧ V' = (mod7ChainEnv V pc cm st b0 b1 tcq
+        (mod7Flags st pc) (mod7CondPtr st pc b0) (mod7Acc cm st pc b0 b1)
+        (mod7StF cm st pc b0 b1) (mod7PcF pc b0 b1) (mod7Counts cm st pc b0 b1)
+        (mod7Count0 cm st pc b0 b1) (mod7Count1 cm st pc b0 b1) (mod7Count2 cm st pc b0 b1)
+        (mod7Count3 cm st pc b0 b1) (mod7Count4 cm st pc b0 b1) (mod7PcC pc b0 b1))
+        ∧ VEnv.get V' "q_pc" = some (mod7ChainPcAffine pc cm st b0 b1 tcq)) := by
+  intro V st hpre
+  obtain ⟨hget_pc, hget_ht, hget_cm, hget_r, hflag, hb0, hb1⟩ := hpre
+  have hrun := qArmRun_modarith7 ctx program tcq funs pc cm b0 b1 hfit V st hget_pc
+    hget_ht hget_cm hget_r hflag hb0 hb1
+  have hpc := qArmRun_modarith7_pc V pc cm st b0 b1 tcq hget_pc
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl, hpc⟩⟩
+
+/-- **ARM MODARITH7: THE EVERY-RUN FORM.** 'StmtsContractAll.of_det' at 'Bridge.dialect_deterministic',
+    whose only extra hypotheses are 'c.Functional' and 'g.Functional' - the same lift
+    'qArmValueAll_bilin7Pairwise' uses. **EMITTED SIDE ONLY: landing this does NOT measure the reference
+    side.** 'qStepValue_modarith7' remains an unlinked reference value, and no agreement or disagreement
+    between the emitted and reference sides was exhibited or ruled out here. -/
+theorem qArmValueAll_modarith7 {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc cm : U256) (b0 b1 : Bool)
+    (hfit : tcq.limbCount < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (GenAst.qArmBodyModarith7 ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧
+        VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0) ∧
+        VEnv.get V "q_const_mptr" = some cm ∧
+        VEnv.get V "r" = some frModulusWord ∧
+        mod7Flags st pc ≤ 3 ∧
+        mod7Flags st pc &&& BitVec.ofNat 256 1
+          = (if b0 then BitVec.ofNat 256 1 else BitVec.ofNat 256 0) ∧
+        mod7Flags st pc &&& BitVec.ofNat 256 2
+          = (if b1 then BitVec.ofNat 256 2 else BitVec.ofNat 256 0))
+      (fun V st V' st' o => o = .normal
+        ∧ st' = (mod7ChainSt V pc cm st b0 b1 tcq
+        (mod7Flags st pc) (mod7CondPtr st pc b0) (mod7Acc cm st pc b0 b1)
+        (mod7StF cm st pc b0 b1) (mod7PcF pc b0 b1) (mod7Counts cm st pc b0 b1)
+        (mod7Count0 cm st pc b0 b1) (mod7Count1 cm st pc b0 b1) (mod7Count2 cm st pc b0 b1)
+        (mod7Count3 cm st pc b0 b1) (mod7Count4 cm st pc b0 b1) (mod7PcC pc b0 b1))
+        ∧ V' = (mod7ChainEnv V pc cm st b0 b1 tcq
+        (mod7Flags st pc) (mod7CondPtr st pc b0) (mod7Acc cm st pc b0 b1)
+        (mod7StF cm st pc b0 b1) (mod7PcF pc b0 b1) (mod7Counts cm st pc b0 b1)
+        (mod7Count0 cm st pc b0 b1) (mod7Count1 cm st pc b0 b1) (mod7Count2 cm st pc b0 b1)
+        (mod7Count3 cm st pc b0 b1) (mod7Count4 cm st pc b0 b1) (mod7PcC pc b0 b1))
+        ∧ VEnv.get V' "q_pc" = some (mod7ChainPcAffine pc cm st b0 b1 tcq)) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (qArmValue_modarith7 ctx program tcq funs pc cm b0 b1 hfit)
+
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_pc
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_acc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_acc
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_cm
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_cm
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_r
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_r
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_lin
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_lin
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_row
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_row
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_pw
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_pw
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_mem
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_mem
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_prod
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_prod
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_flags
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_flags
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_cond
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_cond
+#print axioms Midfall.LoweringV3.QuotientArms.mod7_vc1
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7_vc1
+#print axioms Midfall.LoweringV3.QuotientArms.mod7Chain
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7Chain
+#print axioms Midfall.LoweringV3.QuotientArms.qArmRun_modarith7_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmRun_modarith7_pc
+#print axioms Midfall.LoweringV3.QuotientArms.mod7L0
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7L0
+#print axioms Midfall.LoweringV3.QuotientArms.qArmRun_modarith7
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmRun_modarith7
+#print axioms Midfall.LoweringV3.QuotientArms.qArmValue_modarith7
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmValue_modarith7
+#print axioms Midfall.LoweringV3.QuotientArms.qArmValueAll_modarith7
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmValueAll_modarith7
+
+end Midfall.LoweringV3.QuotientArms

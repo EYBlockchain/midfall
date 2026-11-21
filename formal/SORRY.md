@@ -69,7 +69,7 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Lowering.qvm_compile_correct_identity | Midfall.Lowering.Qvm | theorem | OPEN | - | `4855c6b810d4ec8b` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.qvm_compile_correct_program | Midfall.Lowering.Qvm | theorem | OPEN | - | `872104589438bfc7` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.qvm_compile_correct_stream | Midfall.Lowering.QvmFold | theorem | OPEN | - | `190c993b2542362d` | P-SE: semantic equivalence obligations |
-| Midfall.Lowering.qvm_validated_noBoundsFault | Midfall.Lowering.Qvm | theorem | OPEN | - | `523df718aa0e2305` | P-SE: semantic equivalence obligations |
+| Midfall.Lowering.qvm_validated_noBoundsFault | Midfall.Lowering.QvmNoBounds | theorem | OPEN | - | `b3f52e40cfe6cea7` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.repack_spec_of_decodeRust | Midfall.Lowering.Calldata | theorem | OPEN | - | `e9ac280126ce661a` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.snapshotOf_prepareMsgs | Midfall.Lowering.Snapshot | theorem | OPEN | ROOT | `a2557e7fe0a1f84a` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.toExec_fixedScalarCount | Midfall.Lowering.AccEncoding | theorem | OPEN | - | `df38b488380809ce` | P-SE: semantic equivalence obligations |
