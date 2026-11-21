@@ -39,7 +39,7 @@
 -- 'consumed_agrees_at' (section 5).
 --
 -- WHAT IS NOT HERE, named: the congruences for BILIN7_PAIRWISE, BILIN7_ROW, MODARITH7, and the two
--- RUN arms and AFFINE_SUM - see section 6 for the exact remaining goal in each case. Those five are
+-- RUN arms and AFFINE_SUM - see section 6 for the exact remaining goal in each case. Those six are
 -- arms plus BILIN7_ROW/BILIN7_PAIRWISE, and the latter two ARE among the 22 arms of 'evalQuotientIdentityStep_readsWithinStride' or
 -- 'evalQuotientIdentityStep_consumed_agrees', so nothing in this file is blocked on them: the RUN
 -- pair and AFFINE_SUM already have general-cursor read bounds from QvmWalk ('runAddMul*_noRF',
@@ -796,7 +796,10 @@ theorem step_error_transport (bytes : List Nat) (idx : Nat) (consts : List Word2
 
 /-! ### Section 5: the combined congruence and the two general-cursor packages -/
 
-/-- THE COMBINED CONGRUENCE, 21 of the 26 identity arms: the 19 static arms whose body is a
+/-- THE COMBINED CONGRUENCE. **Count deliberately not stated here: it has gone stale twice as
+    arms landed (QSHIFT said 20, section 5 said 21 and wrongly claimed BILIN7_ROW). The
+    authoritative list is the set of `step_shift_*` theorems in this file; section 6 names
+    the identity arms NOT yet covered.** The static arms whose body is a
     flat block over the six readers, plus LIN7 and BILIN7_ROW (the two whose body is a counted fold
     and which the fold transport of section 2 reaches). The remaining six - BILIN7_ROW,
     BILIN7_PAIRWISE, MODARITH7, the two RUN arms and AFFINE_SUM - are named in section 6. -/
@@ -918,7 +921,338 @@ theorem NamesSlot_shiftFault_slot_ok {α : Type} {x : Except QVMFault α} {S : L
     'affineLinearTerm_shift' at 'idx + 3 + used' - both already proved here. These three are the
     cheapest of the five. They are also NOT needed for the two general-cursor packages above: the
     22-arm statements exclude all four dynamic arms, and QvmWalk already supplies their read bounds
-    at a general cursor ('affineSum_noRF', 'runAddMul*_noRF' are stated at an arbitrary 'idx'). -/
+    at a general cursor ('affineSum_noRF', 'runAddMul*_noRF' are stated at an arbitrary 'idx').
+  LANDED SINCE (card NBF): the two RUN arms and AFFINE_SUM - the three named cheapest - are proved in
+  section 7 below, so what is still missing from this file is BILIN7_ROW, BILIN7_PAIRWISE and
+  MODARITH7. -/
+
+
 theorem shift_remaining_arms_are_the_dynamic_and_pairwise_ones : True := trivial
+
+
+/-! ### Section 7: the three cheapest of the six remaining arm congruences (card NBF)
+
+    THE TWO RUN ARMS AND AFFINE_SUM. QSHIFT section 6 named these as the cheapest of the six: their
+    fold state's cursor component is the RELATIVE 'used', not an absolute byte offset, so the state
+    transport is the IDENTITY and only the per-term byte read moves. That is why 'foldRangeIdxM_shift'
+    is instantiated at 'S = id' here (via 'foldRangeIdxM_shift_id') rather than at 'shiftSt3' as for
+    the limb forms.
+
+    WHY THE BODIES HAVE TO BE VARIABLES. The concrete per-term lambda inside 'evalQuotientIdentityStep'
+    compiles to a match auxiliary ('Except.map.match_1') that is NOT writable from a statement: the
+    equation compiler names it after the definition it was generated in, so a lambda typed out here
+    compiles to a DIFFERENT constant and 'rw' cannot see the goal's copy. Measured: three formulations
+    (do-notation with tuple destructuring, do-notation with projections, and an explicit match) all
+    failed to rewrite, while the same term written as 'Except.map' is definitionally equal. The fix is
+    to state the transport about an ABSTRACT body 'F' and bridge the concrete arm to it with a 'rfl'
+    equation ('step_eq_runArmBody' and friends), which typechecks up to defeq instead of matching
+    syntax. Nothing is weakened by this: the bridging lemmas are definitional.
+
+    NOTHING HERE ADDS A HYPOTHESIS TO A ROW, to 'ValidV3', a bundle or the root (RULES); no statement
+    names a fixture (D-P71); no 'native_decide'; this section adds no sorry. -/
+
+theorem foldRangeIdxM_shift_id {α : Type} (g : QVMFault → QVMFault) (n : Nat) (init : α)
+    (f f' : Nat → α → Except QVMFault α) (h : ∀ i s, f i s = mapErr g (f' i s)) :
+    Midfall.Generator.foldRangeIdxM n init f
+      = mapErr g (Midfall.Generator.foldRangeIdxM n init f') := by
+  have := foldRangeIdxM_shift g (id : α → α) n init f f'
+    (fun i s => by rw [(show f i (id s) = f i s from rfl), h i s]; rfl)
+  rwa [mapBoth_mapErr] at this
+
+def runFoldL (bytes : List Nat) (consts : List Word256) (base : Nat) :
+    Nat → QVMFr × Nat × QuotientRefMemory → Except QVMFault (QVMFr × Nat × QuotientRefMemory) :=
+  fun _ state => Except.map (fun x => (qvmFrAdd state.1 x.1, state.2.1 + x.2.1, x.2.2))
+    (affineLinearTerm bytes consts state.2.2 (base + state.2.1))
+
+def runFoldP (bytes : List Nat) (consts : List Word256) (base : Nat) :
+    Nat → QVMFr × Nat × QuotientRefMemory → Except QVMFault (QVMFr × Nat × QuotientRefMemory) :=
+  fun _ state => Except.map (fun x => (qvmFrAdd state.1 x.1, state.2.1 + x.2.1, x.2.2))
+    (affineProductTerm bytes consts state.2.2 (base + state.2.1))
+
+def runArmBody (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (F : Nat → QVMFr × Nat × QuotientRefMemory →
+        Except QVMFault (QVMFr × Nat × QuotientRefMemory)) :
+    Except QVMFault IdentityStep :=
+  Midfall.Generator.readU16 bytes (idx + 1) >>= fun count =>
+    if count != 0 then
+      Midfall.Generator.popStack stack idx >>= fun p =>
+        Midfall.Generator.foldRangeIdxM count (p.1, 0, mem) F >>= fun y =>
+          Except.ok { stack := y.1 :: p.2, consumed := 3 + y.2.1, hConsumed := by omega, mem := y.2.2 }
+    else Except.error (QVMFault.zeroLengthRun idx)
+
+theorem runArmBody_shift (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (F F' : Nat → QVMFr × Nat × QuotientRefMemory →
+        Except QVMFault (QVMFr × Nat × QuotientRefMemory))
+    (h : ∀ i s, F i s = mapErr (shiftFault idx) (F' i s)) :
+    runArmBody bytes consts idx stack mem F
+      = mapErr (shiftFault idx) (runArmBody (bytes.drop idx) consts 0 stack mem F') := by
+  unfold runArmBody
+  rw [readU16_shift bytes idx 1, popStack_shiftHere stack idx]
+  cases hcnt : Midfall.Generator.readU16 (bytes.drop idx) 1 with
+  | error e => simp only [mapErr, bind, Except.bind]
+  | ok count =>
+      rw [mapErr_ok]
+      simp only [bind, Except.bind]
+      rw [mapErr_ite]
+      by_cases hc : (count != 0) = true
+      · rw [if_pos hc, if_pos hc]
+        cases hps : Midfall.Generator.popStack stack 0 with
+        | error e => simp only [mapErr, bind, Except.bind]
+        | ok v =>
+            rw [mapErr_ok]
+            simp only [bind, Except.bind]
+            rw [foldRangeIdxM_shift_id (shiftFault idx) count (v.1, 0, mem) F F' h]
+            cases hf : Midfall.Generator.foldRangeIdxM count (v.1, 0, mem) F' with
+            | ok y => simp only [mapErr_ok, bind, Except.bind]
+            | error e => simp only [mapErr, bind, Except.bind]
+      · rw [if_neg hc, if_neg hc]
+        simp only [mapErr, shiftFault, Nat.add_zero]
+
+theorem step_eq_runArmBodyL (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpRunAddMulConstU8MemU16 stack mem
+      = runArmBody bytes consts idx stack mem (runFoldL bytes consts (idx + 3)) := rfl
+
+theorem step_eq_runArmBodyL_dropped (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0
+        qOpRunAddMulConstU8MemU16 stack mem
+      = runArmBody (bytes.drop idx) consts 0 stack mem (runFoldL (bytes.drop idx) consts 3) := rfl
+
+theorem step_eq_runArmBody (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpRunAddMulMemMemConstU8 stack mem
+      = runArmBody bytes consts idx stack mem (runFoldP bytes consts (idx + 3)) := rfl
+
+theorem step_eq_runArmBody_dropped (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0
+        qOpRunAddMulMemMemConstU8 stack mem
+      = runArmBody (bytes.drop idx) consts 0 stack mem (runFoldP (bytes.drop idx) consts 3) := rfl
+
+theorem runFoldL_shift (bytes : List Nat) (consts : List Word256) (idx base : Nat) :
+    ∀ i s, runFoldL bytes consts (idx + base) i s
+      = mapErr (shiftFault idx) (runFoldL (bytes.drop idx) consts base i s) := by
+  intro i s
+  unfold runFoldL
+  show Except.map (fun x => (qvmFrAdd s.1 x.1, s.2.1 + x.2.1, x.2.2))
+        (affineLinearTerm bytes consts s.2.2 (idx + base + s.2.1))
+      = mapErr (shiftFault idx) (Except.map (fun x => (qvmFrAdd s.1 x.1, s.2.1 + x.2.1, x.2.2))
+        (affineLinearTerm (bytes.drop idx) consts s.2.2 (base + s.2.1)))
+  have key : affineLinearTerm bytes consts s.2.2 (idx + base + s.2.1)
+      = mapErr (shiftFault idx)
+        (affineLinearTerm (bytes.drop idx) consts s.2.2 (base + s.2.1)) := by
+      rw [show idx + base + s.2.1 = idx + (base + s.2.1) by omega,
+          affineLinearTerm_shift bytes consts s.2.2 idx (base + s.2.1)]
+  rw [key]
+  cases h : affineLinearTerm (bytes.drop idx) consts s.2.2 (base + s.2.1) with
+  | ok y => simp only [mapErr_ok, Except.map]
+  | error e => simp only [mapErr, Except.map]
+
+theorem runFoldP_shift (bytes : List Nat) (consts : List Word256) (idx base : Nat) :
+    ∀ i s, runFoldP bytes consts (idx + base) i s
+      = mapErr (shiftFault idx) (runFoldP (bytes.drop idx) consts base i s) := by
+  intro i s
+  unfold runFoldP
+  show Except.map (fun x => (qvmFrAdd s.1 x.1, s.2.1 + x.2.1, x.2.2))
+        (affineProductTerm bytes consts s.2.2 (idx + base + s.2.1))
+      = mapErr (shiftFault idx) (Except.map (fun x => (qvmFrAdd s.1 x.1, s.2.1 + x.2.1, x.2.2))
+        (affineProductTerm (bytes.drop idx) consts s.2.2 (base + s.2.1)))
+  have key : affineProductTerm bytes consts s.2.2 (idx + base + s.2.1)
+      = mapErr (shiftFault idx)
+        (affineProductTerm (bytes.drop idx) consts s.2.2 (base + s.2.1)) := by
+      rw [show idx + base + s.2.1 = idx + (base + s.2.1) by omega,
+          affineProductTerm_shift bytes consts s.2.2 idx (base + s.2.1)]
+  rw [key]
+  cases h : affineProductTerm (bytes.drop idx) consts s.2.2 (base + s.2.1) with
+  | ok y => simp only [mapErr_ok, Except.map]
+  | error e => simp only [mapErr, Except.map]
+
+theorem step_shift_runAddMulConstU8MemU16 (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpRunAddMulConstU8MemU16 stack mem
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0
+          qOpRunAddMulConstU8MemU16 stack mem) := by
+  rw [step_eq_runArmBodyL, step_eq_runArmBodyL_dropped,
+      runArmBody_shift bytes consts idx stack mem _ _ (runFoldL_shift bytes consts idx 3)]
+
+theorem step_shift_runAddMulMemMemConstU8 (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpRunAddMulMemMemConstU8 stack mem
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0
+          qOpRunAddMulMemMemConstU8 stack mem) := by
+  rw [step_eq_runArmBody, step_eq_runArmBody_dropped,
+      runArmBody_shift bytes consts idx stack mem _ _ (runFoldP_shift bytes consts idx 3)]
+
+
+/-- ARM AFFINE_SUM's body with BOTH counted blocks' per-term functions abstracted: the linear block
+    first, the product block second, in the source order the interpreter depends on. The second
+    block's INIT CURSOR is the first block's output, which is why the transport has to be stated
+    about variable bodies and bridged by 'rfl'. -/
+def affineSumArmBody (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (Fl Fp : Nat → QVMFr × Nat × QuotientRefMemory →
+        Except QVMFault (QVMFr × Nat × QuotientRefMemory)) :
+    Except QVMFault IdentityStep :=
+  Midfall.Generator.readU16 bytes (idx + 1) >>= fun linCount =>
+    Midfall.Generator.readU16 bytes (idx + 3) >>= fun productCount =>
+      if (linCount != 0 && productCount != 0) = true then
+        Midfall.Generator.popStack stack idx >>= fun p =>
+          Midfall.Generator.foldRangeIdxM linCount (p.1, 0, mem) Fl >>= fun a =>
+            Midfall.Generator.foldRangeIdxM productCount (a.1, a.2.1, a.2.2) Fp >>= fun b =>
+              Except.ok { stack := b.1 :: p.2, consumed := 5 + b.2.1, hConsumed := by omega, mem := b.2.2 }
+      else Except.error (QVMFault.affineSumZeroCounts idx)
+
+theorem affineSumArmBody_shift (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (Fl Fl' Fp Fp' : Nat → QVMFr × Nat × QuotientRefMemory →
+        Except QVMFault (QVMFr × Nat × QuotientRefMemory))
+    (hl : ∀ i s, Fl i s = mapErr (shiftFault idx) (Fl' i s))
+    (hp : ∀ i s, Fp i s = mapErr (shiftFault idx) (Fp' i s)) :
+    affineSumArmBody bytes consts idx stack mem Fl Fp
+      = mapErr (shiftFault idx)
+        (affineSumArmBody (bytes.drop idx) consts 0 stack mem Fl' Fp') := by
+  unfold affineSumArmBody
+  cases h1 : Midfall.Generator.readU16 (bytes.drop idx) 1 with
+  | error e => rw [readU16_shift bytes idx 1, h1]; simp only [mapErr, bind, Except.bind]
+  | ok lin =>
+      rw [readU16_shift bytes idx 1, h1, mapErr_ok]
+      cases h3 : Midfall.Generator.readU16 (bytes.drop idx) 3 with
+      | error e => rw [readU16_shift bytes idx 3, h3]; simp only [mapErr, bind, Except.bind]
+      | ok prod =>
+          rw [readU16_shift bytes idx 3, h3, mapErr_ok]
+          simp only [bind, Except.bind]
+          rw [mapErr_ite, popStack_shiftHere stack idx]
+          by_cases hc : (lin != 0 && prod != 0) = true
+          · rw [if_pos hc, if_pos hc]
+            cases hps : Midfall.Generator.popStack stack 0 with
+            | error e => simp only [mapErr, bind, Except.bind]
+            | ok p =>
+                rw [mapErr_ok]
+                simp only [bind, Except.bind]
+                rw [foldRangeIdxM_shift_id (shiftFault idx) lin (p.1, 0, mem) Fl Fl' hl]
+                cases ha : Midfall.Generator.foldRangeIdxM lin (p.1, 0, mem) Fl' with
+                | error e => simp only [ha, mapErr, bind, Except.bind]
+                | ok a =>
+                    rw [mapErr_ok]
+                    simp only [bind, Except.bind]
+                    rw [foldRangeIdxM_shift_id (shiftFault idx) prod (a.1, a.2.1, a.2.2) Fp Fp' hp]
+                    cases hb : Midfall.Generator.foldRangeIdxM prod (a.1, a.2.1, a.2.2) Fp' with
+                    | ok b => simp only [mapErr_ok, bind, Except.bind]
+                    | error e => simp only [mapErr, bind, Except.bind]
+          · rw [if_neg hc, if_neg hc]
+            simp only [mapErr, shiftFault, Nat.add_zero]
+
+theorem step_eq_affineSumArmBody (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpAffineSum stack mem
+      = affineSumArmBody bytes consts idx stack mem
+          (runFoldL bytes consts (idx + 5)) (runFoldP bytes consts (idx + 5)) := rfl
+
+theorem step_eq_affineSumArmBody_dropped (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0 qOpAffineSum stack mem
+      = affineSumArmBody (bytes.drop idx) consts 0 stack mem
+          (runFoldL (bytes.drop idx) consts 5) (runFoldP (bytes.drop idx) consts 5) := rfl
+
+theorem step_shift_affineSum (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpAffineSum stack mem
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0 qOpAffineSum stack mem) := by
+  rw [step_eq_affineSumArmBody, step_eq_affineSumArmBody_dropped,
+      affineSumArmBody_shift bytes consts idx stack mem _ _ _ _
+        (runFoldL_shift bytes consts idx 5) (runFoldP_shift bytes consts idx 5)]
+
+
+/-- THE WIDTH AGREEMENT AT A GENERAL CURSOR for the first RUN arm: QvmWalk supplies it at index 0 and
+    the section-7 congruence transports it, so the loop induction can cite it at a cursor. -/
+theorem consumed_agrees_at_runAddMulMemMemConstU8 (bytes : List Nat) (idx : Nat) (rest : List Nat)
+    (hdrop : bytes.drop idx = qOpRunAddMulMemMemConstU8 :: rest)
+    (consts : List Word256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+        qOpRunAddMulMemMemConstU8 stack mem = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen
+        (qOpRunAddMulMemMemConstU8 :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  have h2 : Midfall.Generator.evalQuotientIdentityStep (qOpRunAddMulMemMemConstU8 :: rest)
+      consts 0 qOpRunAddMulMemMemConstU8 stack mem = .ok step := by
+    have h3 := step_ok_congr bytes idx consts stack mem step qOpRunAddMulMemMemConstU8
+      (step_shift_runAddMulMemMemConstU8 bytes idx consts stack mem)
+    rw [hdrop] at h3
+    exact h3.mp hstep
+  exact Midfall.Lowering.QvmWalk.consumed_agrees_runAddMulMemMemConstU8
+    rest consts stack mem step len h2 hlen
+
+/-- Same for the second RUN arm. -/
+theorem consumed_agrees_at_runAddMulConstU8MemU16 (bytes : List Nat) (idx : Nat) (rest : List Nat)
+    (hdrop : bytes.drop idx = qOpRunAddMulConstU8MemU16 :: rest)
+    (consts : List Word256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+        qOpRunAddMulConstU8MemU16 stack mem = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen
+        (qOpRunAddMulConstU8MemU16 :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  have h2 : Midfall.Generator.evalQuotientIdentityStep (qOpRunAddMulConstU8MemU16 :: rest)
+      consts 0 qOpRunAddMulConstU8MemU16 stack mem = .ok step := by
+    have h3 := step_ok_congr bytes idx consts stack mem step qOpRunAddMulConstU8MemU16
+      (step_shift_runAddMulConstU8MemU16 bytes idx consts stack mem)
+    rw [hdrop] at h3
+    exact h3.mp hstep
+  exact Midfall.Lowering.QvmWalk.consumed_agrees_runAddMulConstU8MemU16
+    rest consts stack mem step len h2 hlen
+
+/-- PG_NBF - THE EXACT FACT 'qvm_validated_noBoundsFault' STILL NEEDS after QSHIFT and card NBF,
+    recorded as a named Prop and NOT added to the row, to 'ValidV3', a bundle or the root (RULES:
+    "if a fact is missing, STOP, record a PG_* row with the exact goal state"). It is the per-step
+    core of the hole: at a cursor inside a VALIDATED program, a step that faults names neither
+    read-past-end nor a const slot. The hole is this fact plus the loop induction over the segment,
+    and the induction is mechanical once this is available ('evalQuotientIdentityLoop_fuelNeverBinds'
+    is the template and 'foldRangeIdxM_ok_advance' supplies the cursor arithmetic).
+
+    WHY NOTHING SUPPLIES IT, named rather than glossed - three families, all per-arm:
+
+    1. THE READ BOUND at a general cursor is missing for THREE arms: BILIN7_ROW and BILIN7_PAIRWISE
+       (their index-0 form exists in the 22-arm 'evalQuotientIdentityStep_readsWithinStride' but
+       their step congruence does not, so 'readsWithinStride_at' cannot reach them), and MODARITH7
+       (missing at index 0 AND at a cursor - five chained counted blocks plus a flag-dependent
+       header; 'fold_chain_step' in QvmWalk is the tool and 'affineSum_noRF' the template).
+    2. THE WIDTH AGREEMENT at a general cursor is missing for FOUR arms: AFFINE_SUM and MODARITH7
+       have no index-0 form at all (QvmWalk names both as open), and BILIN7_ROW / BILIN7_PAIRWISE
+       have the index-0 form but no congruence to transport it. The two RUN arms' general-cursor
+       forms LANDED in this card ('consumed_agrees_at_runAddMul*').
+    3. THE CONST-SLOT CORRESPONDENCE is missing for SEVEN arms: LIN7, BILIN7_ROW, BILIN7_PAIRWISE,
+       the two RUN arms, AFFINE_SUM and MODARITH7 are excluded from the 19-arm
+       'evalQuotientIdentityStep_constSlot_namedByWalker' because their slot reads sit inside a
+       counted fold. QSHIFT's transport makes each one a per-arm case split, not a new idea.
+
+    WHAT THIS CARD DID LAND, so the count is honest: the three congruences QSHIFT named cheapest -
+    both RUN arms and AFFINE_SUM - plus the two general-cursor width agreements they unlock. That is
+    3 of the 6 remaining arm congruences and 2 of the 4 remaining width agreements. The row is
+    still open, and it is open on the 3 arms of family 1, the 4 of family 2 and the 7 of family 3,
+    not on anything conceptual. NO CONTRACT DEFECT WAS FOUND: on the arms the congruence covers,
+    interpreter-at-cursor and interpreter-at-index-0 agree as an EQUATION, so the validator cannot
+    be shown to fault a validated program on those arms; the remaining arms were not measured here
+    and no claim is made about them. -/
+def PG_stepNoRF_validated (bytes : List Nat) (consts : List Word256)
+    (model : QuotientOperandModel) : Prop :=
+  ∀ (j : Nat) (stack : List QVMFr) (mem : QuotientRefMemory) (f : QVMFault),
+    j < bytes.length →
+    (∃ ops, Midfall.Generator.QuotientValidator.quotientBytecodeOps bytes = .ok ops ∧
+        ∀ p ∈ ops.map (fun (idx, op, _len) => (idx, op)),
+          ∀ operand ∈ operandList bytes p.1 p.2,
+            Midfall.Generator.QuotientValidator.checkQuotientOperand model p.1 operand = .ok ()) →
+    Midfall.Generator.evalQuotientIdentityStep bytes consts j (bytes.getD j 0) stack mem
+        = .error f →
+    (∀ i, f ≠ QVMFault.readPastEnd i) ∧
+      (∀ slot idx, f ≠ QVMFault.constSlotOutOfRange slot idx)
+
+#print axioms Midfall.Lowering.QvmShift.PG_stepNoRF_validated
 
 end Midfall.Lowering.QvmShift
