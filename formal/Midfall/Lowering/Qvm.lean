@@ -747,25 +747,33 @@ theorem qvm_compile_correct_program (r : QuotientShapeRecognizers)
     runs past the end of its own segment", i.e. the per-opcode agreement between
     evalQuotientIdentityStep's 'consumed' field and the validator's quotientOpLen across all
     ~25 opcode arms, plus the loop induction over the fuel-bounded walk. That is a package of its
-    own; the hole stays open at the restored strength rather than being closed at the weak one. -/
-theorem qvm_validated_noBoundsFault {Program Layout : Type}
-    (model : QuotientOperandModel)
-    (L : Midfall.Generator.LoweringPlan Program Layout)
-    (hvm : L.lowering = Midfall.Generator.QuotientLowering.vm)
-    (q : Midfall.Generator.PlannedQuotient) (hq : L.quotient = some q)
-    (hmodel : Midfall.Generator.quotientOperandModel L.meta_ L.data L.vk L.vkMptr L.memory
-      q.build q.plan.selectorFold = .ok model)
-    (hvalidated : Midfall.Generator.LoweringPlan.supportedQvm L)
-    (hconsts : ∀ c ∈ q.build.consts, c.toNat < qvmFrModulus)
-    (cursor exprEnd foldOp : Nat) (hstart : cursor ∈ itemStarts q.plan q.build)
-    (hseg : identitySegment (qvmBytesToNats q.build.bytes) cursor = .ok (exprEnd, foldOp))
-    (mem : QuotientRefMemory) (f : QVMFault)
-    (hf : Midfall.Generator.evalQuotientIdentity
-        (((qvmBytesToNats q.build.bytes).drop cursor).take (exprEnd - cursor))
-        q.build.consts mem = .error f) :
-    (∀ i, f ≠ QVMFault.readPastEnd i) ∧
-      (∀ slot idx, f ≠ QVMFault.constSlotOutOfRange slot idx) := by
-  sorry
+    own; the hole stays open at the restored strength rather than being closed at the weak one.
+
+    RELOCATED DOWNSTREAM BY CARD RELOC. The conclusion is now the sorry-free 'def QvmNoBoundsFault'
+    below - DECLARED EXACTLY ONCE, here, where every module can see it - and the ROW that proves it
+    moved to 'Midfall/Lowering/QvmNoBounds.lean', which imports 'QvmShift' and 'QvmWalk'. WHY: all
+    three per-arm families this hole needs (the read bound, the width agreement, the const-slot
+    correspondence) live in those two files, and both of them IMPORT this one, so no proof of this
+    statement could be written where it stood. Nothing about the claim changed:
+    'qvmNoBoundsFault_conj' below PROVES the def is exactly the two-conjunct conclusion above.
+    WHAT STILL STANDS BETWEEN THE ROW AND A PROOF is named at the moved row: the loop inversion this
+    doc asks for is now PROVED there ('qvmNoBounds_stepErrorIsReachable'), so what is left is the
+    two-phase validator induction this comment has always named as unwritten, tying 'hvalidated' from
+    the whole program bytes to one cursor of the segment, plus MODARITH7 on the three per-arm families.
+    -/
+def QvmNoBoundsFault (f : QVMFault) : Prop :=
+  (∀ i, f ≠ QVMFault.readPastEnd i) ∧
+    (∀ slot idx, f ≠ QVMFault.constSlotOutOfRange slot idx)
+
+/-- **THE DEF IS THE COMMITTED CONCLUSION, NOT A WEAKER ONE - PROVED.** 'Iff.rfl' closes this only
+    because the two propositions are the same up to the def's own equation, so the relocation to a
+    named 'def : Prop' cannot have dropped a conjunct, narrowed a quantifier or lost a fault class:
+    if the def ever stopped saying exactly the committed pair, this line would stop elaborating. -/
+theorem qvmNoBoundsFault_conj (f : QVMFault) :
+    QvmNoBoundsFault f ↔
+      (∀ i, f ≠ QVMFault.readPastEnd i) ∧
+        (∀ slot idx, f ≠ QVMFault.constSlotOutOfRange slot idx) :=
+  Iff.rfl
 
 /-- The instruction list of a finalized program, or the empty list where phase 1 errors.
     Modelling scaffolding, not a Rust item. -/

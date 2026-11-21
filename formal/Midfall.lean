@@ -112,6 +112,7 @@ import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmWalk
 import Midfall.Lowering.QvmShift
+import Midfall.Lowering.QvmNoBounds
 import Midfall.Lowering.QvmFoldLin
 import Midfall.Lowering.QvmFold
 import Midfall.Lowering.Partials
