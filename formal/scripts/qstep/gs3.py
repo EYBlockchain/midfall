@@ -133,6 +133,9 @@ class Gen:
         elif op == 'byte':
             kk = args[0][1]; lemma = "qbi_byte%d %s %s" % (kk, st, vals[1])
             val = "((%s >>> %d) &&& 0xff)" % (vals[1], 248 - 8*kk)
+        elif op == 'gt':
+            lemma = "qbi_gt %s %s %s" % (st, vals[0], vals[1])
+            val = "(b2w (decide ((%s).toNat < (%s).toNat)))" % (vals[1], vals[0])
         elif op == 'mulmod':
             lemma = "qbi_mulmod_atFr %s %s %s" % (st, vals[0], vals[1]); val = "(wMulmod %s %s)" % (vals[0], vals[1])
         elif op == 'addmod':

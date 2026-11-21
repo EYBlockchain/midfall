@@ -9729,3 +9729,360 @@ namespace Midfall.LoweringV3.QuotientArms
 #print axioms Midfall.LoweringV3.QuotientArms.mod7ProdFrom
 
 end Midfall.LoweringV3.QuotientArms
+namespace Midfall.LoweringV3.QuotientArms
+
+/-- **GLUING TWO STATEMENT-SEQUENCE DERIVATIONS.** 'Step' is stated for a syntactic cons list, so a
+    card that derives a long body in SEGMENTS needs this to glue them: MOD7C derives the prologue, the
+    five blocks and the epilogue separately and the arm is 23 links, not one 23-link induction. -/
+theorem mod7_stmtsAppend {D : YulSemantics.Dialect} [DecidableEq D.Value] {funs : FunEnv D}
+    {body₁ body₂ : Block D.Op} {V V₁ V₂ : VEnv D} {st st₁ st₂ : D.State}
+    (h₁ : Step D funs V st (.stmts body₁) (.sres V₁ st₁ .normal))
+    (h₂ : Step D funs V₁ st₁ (.stmts body₂) (.sres V₂ st₂ .normal)) :
+    Step D funs V st (.stmts (body₁ ++ body₂)) (.sres V₂ st₂ .normal) := by
+  induction body₁ generalizing V V₁ st st₁ with
+  | nil => cases h₁ with | seqNil => exact h₂
+  | cons s ss ih =>
+      cases h₁ with
+      | seqCons hs hrest => exact Step.seqCons hs (ih hrest h₂)
+      | seqStop _ hne => exact absurd rfl hne
+
+/-- The two byte extracts the prologue's counts word needs that MOD7 did not: 'byte 1' and
+    'byte 3'. Only byte0/2/4 existed, which is why the counts word could not be decoded before. -/
+theorem qbi_byte1 {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (w : U256) :
+    (Bridge.Dialect c g).Builtin Op.byte [BitVec.ofNat 256 1, w] st (.ok [(w >>> 240) &&& 0xff] st) := rfl
+
+theorem qbi_byte3 {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (w : U256) :
+    (Bridge.Dialect c g).Builtin Op.byte [BitVec.ofNat 256 3, w] st (.ok [(w >>> 224) &&& 0xff] st) := rfl
+
+/-- **THE PROLOGUE'S CLOSED FORM**, one 'abbrev' per derived value, so the arm statement can name
+    what the prologue computes instead of spelling 7 KB of nested 'loadWord's. Each body is the
+    exact expression the generated derivation produces, so the two meet by 'rfl'. -/
+abbrev mod7Flags (st : EvmState) (pcv : U256) : U256 :=
+    (((loadWord st.memory pcv.toNat) >>> 248) &&& 0xff)
+abbrev mod7St1 (st : EvmState) (pcv : U256) : EvmState :=
+    (touchMemory st pcv.toNat 32)
+abbrev mod7Pc1 (pcv : U256) : U256 := (pcv + BitVec.ofNat 256 1)
+abbrev mod7CondPtr (st : EvmState) (pcv : U256)
+    (b0 : Bool) : U256 := (if b0 then ((loadWord ((touchMemory st pcv.toNat 32)).memory ((pcv + BitVec.ofNat 256 1)).toNat) >>> 240) else BitVec.ofNat 256 0)
+abbrev mod7PcA (pcv : U256) (b0 : Bool) : U256 := (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))
+abbrev mod7StA (st : EvmState) (pcv : U256) (b0 : Bool)
+    : EvmState := (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))
+abbrev mod7St3 (st : EvmState) (pcv : U256) (b0 : Bool)
+    : EvmState := (touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32)
+abbrev mod7Qcv (st : EvmState) (pcv : U256) (b0 : Bool)
+    : U256 := (((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff)
+abbrev mod7Cptr (cm : U256) (st : EvmState) (pcv : U256)
+    (b0 : Bool) : U256 := (cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))
+abbrev mod7Acc (cm : U256) (st : EvmState) (pcv : U256)
+    (b0 b1 : Bool) : U256 := (if b1 then (loadWord ((touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32)).memory ((cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))).toNat) else BitVec.ofNat 256 0)
+abbrev mod7PcC (pcv : U256) (b0 b1 : Bool) : U256 := (if b1 then ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1) else (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)))
+abbrev mod7PcB (pcv : U256) (b0 : Bool) : U256 := ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1)
+abbrev mod7StC (cm : U256) (st : EvmState) (pcv : U256)
+    (b0 b1 : Bool) : EvmState := (if b1 then (touchMemory (touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32) ((cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))).toNat 32) else (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)))
+abbrev mod7Counts (cm : U256) (st : EvmState)
+    (pcv : U256) (b0 b1 : Bool) : U256 := (loadWord ((if b1 then (touchMemory (touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32) ((cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))).toNat 32) else (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)))).memory ((if b1 then ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1) else (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)))).toNat)
+abbrev mod7Count0 (cm : U256) (st : EvmState)
+    (pcv : U256) (b0 b1 : Bool) : U256 := (((loadWord ((if b1 then (touchMemory (touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32) ((cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))).toNat 32) else (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)))).memory ((if b1 then ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1) else (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)))).toNat) >>> 248) &&& 0xff)
+abbrev mod7Count1 (cm : U256) (st : EvmState)
+    (pcv : U256) (b0 b1 : Bool) : U256 := (((loadWord ((if b1 then (touchMemory (touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32) ((cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))).toNat 32) else (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)))).memory ((if b1 then ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1) else (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)))).toNat) >>> 240) &&& 0xff)
+abbrev mod7Count2 (cm : U256) (st : EvmState)
+    (pcv : U256) (b0 b1 : Bool) : U256 := (((loadWord ((if b1 then (touchMemory (touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32) ((cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))).toNat 32) else (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)))).memory ((if b1 then ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1) else (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)))).toNat) >>> 232) &&& 0xff)
+abbrev mod7Count3 (cm : U256) (st : EvmState)
+    (pcv : U256) (b0 b1 : Bool) : U256 := (((loadWord ((if b1 then (touchMemory (touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32) ((cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))).toNat 32) else (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)))).memory ((if b1 then ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1) else (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)))).toNat) >>> 224) &&& 0xff)
+abbrev mod7Count4 (cm : U256) (st : EvmState)
+    (pcv : U256) (b0 b1 : Bool) : U256 := (((loadWord ((if b1 then (touchMemory (touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32) ((cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))).toNat 32) else (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)))).memory ((if b1 then ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1) else (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)))).toNat) >>> 216) &&& 0xff)
+abbrev mod7PcF (pcv : U256) (b0 b1 : Bool) : U256 := ((if b1 then ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1) else (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))) + BitVec.ofNat 256 5)
+abbrev mod7StF (cm : U256) (st : EvmState) (pcv : U256)
+    (b0 b1 : Bool) : EvmState := (touchMemory (if b1 then (touchMemory (touchMemory (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32)) ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat 32) ((cm + ((((loadWord ((if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))).memory ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1))).toNat) >>> 248) &&& 0xff) <<< 5))).toNat 32) else (if b0 then (touchMemory (touchMemory st pcv.toNat 32) ((pcv + BitVec.ofNat 256 1)).toNat 32) else (touchMemory st pcv.toNat 32))) ((if b1 then ((if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)) + BitVec.ofNat 256 1) else (if b0 then ((pcv + BitVec.ofNat 256 1) + BitVec.ofNat 256 2) else (pcv + BitVec.ofNat 256 1)))).toNat 32)
+
+/-- **THE PROLOGUE'S POST-ENVIRONMENT** in the shape the derivation leaves it: the nine 'let's the
+    prologue binds, on top of the start environment with 'q_pc' written at the cursor the prologue
+    arrived at, and with 'q_pc' written once more at its output cursor. 'cpv' is the condition
+    pointer (zero when the COND bit is clear), 'accv' the seeded accumulator (zero when the CONST
+    bit is clear) - the two optional fields are 'restore'd away by their own 'Step.block', so the
+    ENVIRONMENT SHAPE does not depend on the flags, only the VALUES do. -/
+def mod7PrologueEnv {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF : U256) :
+    VEnv (Bridge.Dialect c g) :=
+  VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF
+
+theorem mod7PrologueEnv_get_pc {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_pc" = some pcF :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_pc" = some pcF
+    exact venvGet_set_same (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF pcC (Eq.trans (venvGet_cons_ne (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" "q_pc" c4 (by decide : ("q_product_count" : Ident) ≠ "q_pc")) (Eq.trans (venvGet_cons_ne (("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_mem_count" "q_pc" c3 (by decide : ("q_mem_count" : Ident) ≠ "q_pc")) (Eq.trans (venvGet_cons_ne (("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pairwise_count" "q_pc" c2 (by decide : ("q_pairwise_count" : Ident) ≠ "q_pc")) (Eq.trans (venvGet_cons_ne (("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_row_count" "q_pc" c1 (by decide : ("q_row_count" : Ident) ≠ "q_pc")) (Eq.trans (venvGet_cons_ne (("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_lin_count" "q_pc" c0 (by decide : ("q_lin_count" : Ident) ≠ "q_pc")) (Eq.trans (venvGet_cons_ne (("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_counts_word" "q_pc" cw (by decide : ("q_counts_word" : Ident) ≠ "q_pc")) (Eq.trans (venvGet_cons_ne (("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_acc" "q_pc" accv (by decide : ("q_acc" : Ident) ≠ "q_pc")) (Eq.trans (venvGet_cons_ne (("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_cond_ptr" "q_pc" cpv (by decide : ("q_cond_ptr" : Ident) ≠ "q_pc")) (Eq.trans (venvGet_cons_ne (VEnv.set V "q_pc" pcC) "q_flags" "q_pc" fl (by decide : ("q_flags" : Ident) ≠ "q_pc")) (venvGet_set_same V "q_pc" pcC pcv hget_pcV))))))))))
+
+theorem mod7PrologueEnv_get_acc {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_acc" = some accv :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_acc" = some accv
+    exact venvGet_set_ne (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" "q_acc" pcF accv (by decide : ("q_pc" : Ident) ≠ "q_acc") (Eq.trans (venvGet_cons_ne (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" "q_acc" c4 (by decide : ("q_product_count" : Ident) ≠ "q_acc")) (Eq.trans (venvGet_cons_ne (("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_mem_count" "q_acc" c3 (by decide : ("q_mem_count" : Ident) ≠ "q_acc")) (Eq.trans (venvGet_cons_ne (("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pairwise_count" "q_acc" c2 (by decide : ("q_pairwise_count" : Ident) ≠ "q_acc")) (Eq.trans (venvGet_cons_ne (("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_row_count" "q_acc" c1 (by decide : ("q_row_count" : Ident) ≠ "q_acc")) (Eq.trans (venvGet_cons_ne (("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_lin_count" "q_acc" c0 (by decide : ("q_lin_count" : Ident) ≠ "q_acc")) (Eq.trans (venvGet_cons_ne (("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_counts_word" "q_acc" cw (by decide : ("q_counts_word" : Ident) ≠ "q_acc")) (venvGet_cons_eq (("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_acc" accv)))))))
+
+theorem mod7PrologueEnv_get_const_mptr {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_const_mptr" = some cm :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_const_mptr" = some cm
+    exact venvGet_set_ne (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" "q_const_mptr" pcF cm (by decide : ("q_pc" : Ident) ≠ "q_const_mptr") (Eq.trans (venvGet_cons_ne (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" "q_const_mptr" c4 (by decide : ("q_product_count" : Ident) ≠ "q_const_mptr")) (Eq.trans (venvGet_cons_ne (("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_mem_count" "q_const_mptr" c3 (by decide : ("q_mem_count" : Ident) ≠ "q_const_mptr")) (Eq.trans (venvGet_cons_ne (("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pairwise_count" "q_const_mptr" c2 (by decide : ("q_pairwise_count" : Ident) ≠ "q_const_mptr")) (Eq.trans (venvGet_cons_ne (("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_row_count" "q_const_mptr" c1 (by decide : ("q_row_count" : Ident) ≠ "q_const_mptr")) (Eq.trans (venvGet_cons_ne (("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_lin_count" "q_const_mptr" c0 (by decide : ("q_lin_count" : Ident) ≠ "q_const_mptr")) (Eq.trans (venvGet_cons_ne (("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_counts_word" "q_const_mptr" cw (by decide : ("q_counts_word" : Ident) ≠ "q_const_mptr")) (Eq.trans (venvGet_cons_ne (("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_acc" "q_const_mptr" accv (by decide : ("q_acc" : Ident) ≠ "q_const_mptr")) (Eq.trans (venvGet_cons_ne (("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_cond_ptr" "q_const_mptr" cpv (by decide : ("q_cond_ptr" : Ident) ≠ "q_const_mptr")) (Eq.trans (venvGet_cons_ne (VEnv.set V "q_pc" pcC) "q_flags" "q_const_mptr" fl (by decide : ("q_flags" : Ident) ≠ "q_const_mptr")) (venvGet_set_ne V "q_pc" "q_const_mptr" pcC cm (by decide : ("q_pc" : Ident) ≠ "q_const_mptr") hget_cmV))))))))))
+
+theorem mod7PrologueEnv_get_has_top {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_has_top" = some (BitVec.ofNat 256 0) :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_has_top" = some (BitVec.ofNat 256 0)
+    exact venvGet_set_ne (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" "q_has_top" pcF (BitVec.ofNat 256 0) (by decide : ("q_pc" : Ident) ≠ "q_has_top") (Eq.trans (venvGet_cons_ne (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" "q_has_top" c4 (by decide : ("q_product_count" : Ident) ≠ "q_has_top")) (Eq.trans (venvGet_cons_ne (("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_mem_count" "q_has_top" c3 (by decide : ("q_mem_count" : Ident) ≠ "q_has_top")) (Eq.trans (venvGet_cons_ne (("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pairwise_count" "q_has_top" c2 (by decide : ("q_pairwise_count" : Ident) ≠ "q_has_top")) (Eq.trans (venvGet_cons_ne (("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_row_count" "q_has_top" c1 (by decide : ("q_row_count" : Ident) ≠ "q_has_top")) (Eq.trans (venvGet_cons_ne (("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_lin_count" "q_has_top" c0 (by decide : ("q_lin_count" : Ident) ≠ "q_has_top")) (Eq.trans (venvGet_cons_ne (("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_counts_word" "q_has_top" cw (by decide : ("q_counts_word" : Ident) ≠ "q_has_top")) (Eq.trans (venvGet_cons_ne (("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_acc" "q_has_top" accv (by decide : ("q_acc" : Ident) ≠ "q_has_top")) (Eq.trans (venvGet_cons_ne (("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_cond_ptr" "q_has_top" cpv (by decide : ("q_cond_ptr" : Ident) ≠ "q_has_top")) (Eq.trans (venvGet_cons_ne (VEnv.set V "q_pc" pcC) "q_flags" "q_has_top" fl (by decide : ("q_flags" : Ident) ≠ "q_has_top")) (venvGet_set_ne V "q_pc" "q_has_top" pcC (BitVec.ofNat 256 0) (by decide : ("q_pc" : Ident) ≠ "q_has_top") hget_htV))))))))))
+
+theorem mod7PrologueEnv_get_top {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_top" = some topv :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_top" = some topv
+    exact venvGet_set_ne (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" "q_top" pcF topv (by decide : ("q_pc" : Ident) ≠ "q_top") (Eq.trans (venvGet_cons_ne (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" "q_top" c4 (by decide : ("q_product_count" : Ident) ≠ "q_top")) (Eq.trans (venvGet_cons_ne (("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_mem_count" "q_top" c3 (by decide : ("q_mem_count" : Ident) ≠ "q_top")) (Eq.trans (venvGet_cons_ne (("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pairwise_count" "q_top" c2 (by decide : ("q_pairwise_count" : Ident) ≠ "q_top")) (Eq.trans (venvGet_cons_ne (("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_row_count" "q_top" c1 (by decide : ("q_row_count" : Ident) ≠ "q_top")) (Eq.trans (venvGet_cons_ne (("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_lin_count" "q_top" c0 (by decide : ("q_lin_count" : Ident) ≠ "q_top")) (Eq.trans (venvGet_cons_ne (("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_counts_word" "q_top" cw (by decide : ("q_counts_word" : Ident) ≠ "q_top")) (Eq.trans (venvGet_cons_ne (("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_acc" "q_top" accv (by decide : ("q_acc" : Ident) ≠ "q_top")) (Eq.trans (venvGet_cons_ne (("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_cond_ptr" "q_top" cpv (by decide : ("q_cond_ptr" : Ident) ≠ "q_top")) (Eq.trans (venvGet_cons_ne (VEnv.set V "q_pc" pcC) "q_flags" "q_top" fl (by decide : ("q_flags" : Ident) ≠ "q_top")) (venvGet_set_ne V "q_pc" "q_top" pcC topv (by decide : ("q_pc" : Ident) ≠ "q_top") hget_topV))))))))))
+
+theorem mod7PrologueEnv_get_lin_count {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_lin_count" = some c0 :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_lin_count" = some c0
+    exact venvGet_set_ne (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" "q_lin_count" pcF c0 (by decide : ("q_pc" : Ident) ≠ "q_lin_count") (Eq.trans (venvGet_cons_ne (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" "q_lin_count" c4 (by decide : ("q_product_count" : Ident) ≠ "q_lin_count")) (Eq.trans (venvGet_cons_ne (("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_mem_count" "q_lin_count" c3 (by decide : ("q_mem_count" : Ident) ≠ "q_lin_count")) (Eq.trans (venvGet_cons_ne (("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pairwise_count" "q_lin_count" c2 (by decide : ("q_pairwise_count" : Ident) ≠ "q_lin_count")) (Eq.trans (venvGet_cons_ne (("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_row_count" "q_lin_count" c1 (by decide : ("q_row_count" : Ident) ≠ "q_lin_count")) (venvGet_cons_eq (("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_lin_count" c0)))))
+
+theorem mod7PrologueEnv_get_row_count {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_row_count" = some c1 :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_row_count" = some c1
+    exact venvGet_set_ne (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" "q_row_count" pcF c1 (by decide : ("q_pc" : Ident) ≠ "q_row_count") (Eq.trans (venvGet_cons_ne (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" "q_row_count" c4 (by decide : ("q_product_count" : Ident) ≠ "q_row_count")) (Eq.trans (venvGet_cons_ne (("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_mem_count" "q_row_count" c3 (by decide : ("q_mem_count" : Ident) ≠ "q_row_count")) (Eq.trans (venvGet_cons_ne (("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pairwise_count" "q_row_count" c2 (by decide : ("q_pairwise_count" : Ident) ≠ "q_row_count")) (venvGet_cons_eq (("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_row_count" c1))))
+
+theorem mod7PrologueEnv_get_pairwise_count {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_pairwise_count" = some c2 :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_pairwise_count" = some c2
+    exact venvGet_set_ne (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" "q_pairwise_count" pcF c2 (by decide : ("q_pc" : Ident) ≠ "q_pairwise_count") (Eq.trans (venvGet_cons_ne (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" "q_pairwise_count" c4 (by decide : ("q_product_count" : Ident) ≠ "q_pairwise_count")) (Eq.trans (venvGet_cons_ne (("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_mem_count" "q_pairwise_count" c3 (by decide : ("q_mem_count" : Ident) ≠ "q_pairwise_count")) (venvGet_cons_eq (("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pairwise_count" c2)))
+
+theorem mod7PrologueEnv_get_mem_count {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_mem_count" = some c3 :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_mem_count" = some c3
+    exact venvGet_set_ne (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" "q_mem_count" pcF c3 (by decide : ("q_pc" : Ident) ≠ "q_mem_count") (Eq.trans (venvGet_cons_ne (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" "q_mem_count" c4 (by decide : ("q_product_count" : Ident) ≠ "q_mem_count")) (venvGet_cons_eq (("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_mem_count" c3))
+
+theorem mod7PrologueEnv_get_product_count {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm topv : U256) (fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF :
+    U256) (hget_pcV : VEnv.get V "q_pc" = some pcv)
+    (hget_accV : VEnv.get V "q_acc" = some accv)
+    (hget_cmV : VEnv.get V "q_const_mptr" = some cm)
+    (hget_htV : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_topV : VEnv.get V "q_top" = some topv) :
+    VEnv.get (mod7PrologueEnv V fl cpv accv cw c0 c1 c2 c3 c4 pcC pcF) "q_product_count" = some c4 :=
+  by
+    show VEnv.get (VEnv.set (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" pcF) "q_product_count" = some c4
+    exact venvGet_set_ne (("q_product_count", c4) :: ("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_pc" "q_product_count" pcF c4 (by decide : ("q_pc" : Ident) ≠ "q_product_count") (venvGet_cons_eq (("q_mem_count", c3) :: ("q_pairwise_count", c2) :: ("q_row_count", c1) :: ("q_lin_count", c0) :: ("q_counts_word", cw) :: ("q_acc", accv) :: ("q_cond_ptr", cpv) :: ("q_flags", fl) :: VEnv.set V "q_pc" pcC) "q_product_count" c4)
+
+/-- **THE MODARITH7 PROLOGUE**: emitted statements 0-14 of 'qArmBodyModarith7', spelled VERBATIM
+    off the emitter's own source by 'gen_pro.emitted_statements' and pinned to the emitted list by
+    'mod7_emitted_split' below. The flag guard, the two optional fields, the counts word with its
+    FIVE byte extracts, the cursor step of five, and the spill guard at the empty stack. -/
+def mod7PrologueBody (program : QuotientProgram) : Block EVM.Op :=
+  [(ylet "q_flags" (yop EVM.Op.byte [(ylit 0), (yop EVM.Op.mload [(yvar "q_pc")])])),
+ (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit 1)])),
+ (yif (yop EVM.Op.gt [(yvar "q_flags"), (ylit 3)]) [(yexpr (ycall "q_program_fail" []))]),
+ (ylet "q_cond_ptr" (ylit 0)),
+ (yif (yop EVM.Op.and [(yvar "q_flags"), (ylit 1)]) [(yset "q_cond_ptr" (yop EVM.Op.shr [(ylit 240), (yop EVM.Op.mload [(yvar "q_pc")])])), (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit 2)]))]),
+ (ylet "q_acc" (ylit 0)),
+ (yif (yop EVM.Op.and [(yvar "q_flags"), (ylit 2)]) [(ylet "qconst" (yop EVM.Op.byte [(ylit 0), (yop EVM.Op.mload [(yvar "q_pc")])])), (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit 1)])), (yset "q_acc" (yop EVM.Op.mload [(yop EVM.Op.add [(yvar "q_const_mptr"), (yop EVM.Op.shl [(ylit 5), (yvar "qconst")])])]))]),
+ (ylet "q_counts_word" (yop EVM.Op.mload [(yvar "q_pc")])),
+ (ylet "q_lin_count" (yop EVM.Op.byte [(ylit 0), (yvar "q_counts_word")])),
+ (ylet "q_row_count" (yop EVM.Op.byte [(ylit 1), (yvar "q_counts_word")])),
+ (ylet "q_pairwise_count" (yop EVM.Op.byte [(ylit 2), (yvar "q_counts_word")])),
+ (ylet "q_mem_count" (yop EVM.Op.byte [(ylit 3), (yvar "q_counts_word")])),
+ (ylet "q_product_count" (yop EVM.Op.byte [(ylit 4), (yvar "q_counts_word")])),
+ (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit 5)])),
+ (yif (yvar "q_has_top") [(yif (yop EVM.Op.gt [(yvar "q_sp"), (ylit program.guards.stackLast)]) [(yexpr (ycall "q_program_fail" []))]), (yexpr (yop EVM.Op.mstore [(yvar "q_sp"), (yvar "q_top")])), (yset "q_sp" (yop EVM.Op.add [(yvar "q_sp"), (ylit 32)]))])]
+
+/-- **THE MODARITH7 EPILOGUE**: emitted statements 20-22 - the optional COND gate applied last,
+    then the two publishes. Also verbatim. -/
+def mod7EpilogueBody : Block EVM.Op :=
+  [(yif (yop EVM.Op.and [(yvar "q_flags"), (ylit 1)]) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))]),
+ (yset "q_top" (yvar "q_acc")),
+ (yset "q_has_top" (ylit 1))]
+
+/-- **THE FIVE BLOCK LOOPS**: emitted statements 15-19, verbatim. Each is one 'Step.forLoop' fact
+    by MOD7/MOD7B's five block lemmas, so the arm is 23 links and not 23 proofs. -/
+def mod7MidBody (tcq : QuotientVmTemplateConstants) : Block EVM.Op :=
+  [(yfor [(ylet "q_lin_block" (ylit 0))] (yop EVM.Op.lt [(yvar "q_lin_block"), (yvar "q_lin_count")]) [(yset "q_lin_block" (yop EVM.Op.add [(yvar "q_lin_block"), (ylit 1)]))] [(yfor [(ylet "q_i" (ylit 0))] (yop EVM.Op.lt [(yvar "q_i"), (ylit tcq.limbCount)]) [(yset "q_i" (yop EVM.Op.add [(yvar "q_i"), (ylit 1)]))] [(ylet "q_word" (yop EVM.Op.mload [(yvar "q_pc")])), (ylet "qconst" (yop EVM.Op.byte [(ylit 0), (yvar "q_word")])), (ylet "q_ptr" (yop EVM.Op.and [(yop EVM.Op.shr [(ylit 232), (yvar "q_word")]), (ylit 65535)])), (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit 3)])), (yset "q_acc" (yop EVM.Op.addmod [(yvar "q_acc"), (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yop EVM.Op.add [(yvar "q_const_mptr"), (yop EVM.Op.shl [(ylit 5), (yvar "qconst")])])]), (yop EVM.Op.mload [(yvar "q_ptr")]), (yvar "r")]), (yvar "r")]))])]),
+ (yfor [(ylet "q_row_block" (ylit 0))] (yop EVM.Op.lt [(yvar "q_row_block"), (yvar "q_row_count")]) [(yset "q_row_block" (yop EVM.Op.add [(yvar "q_row_block"), (ylit 1)]))] [(ylet "q_lhs" (yop EVM.Op.shr [(ylit 240), (yop EVM.Op.mload [(yvar "q_pc")])])), (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit 2)])), (ylet "q_lhs_value" (yop EVM.Op.mload [(yvar "q_lhs")])), (yfor [(ylet "q_i" (ylit 0))] (yop EVM.Op.lt [(yvar "q_i"), (ylit tcq.limbCount)]) [(yset "q_i" (yop EVM.Op.add [(yvar "q_i"), (ylit 1)]))] [(ylet "q_word" (yop EVM.Op.mload [(yvar "q_pc")])), (ylet "qconst" (yop EVM.Op.byte [(ylit 0), (yvar "q_word")])), (ylet "q_rhs" (yop EVM.Op.and [(yop EVM.Op.shr [(ylit 232), (yvar "q_word")]), (ylit 65535)])), (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit 3)])), (yset "q_acc" (yop EVM.Op.addmod [(yvar "q_acc"), (yop EVM.Op.mulmod [(yop EVM.Op.mulmod [(yvar "q_lhs_value"), (yop EVM.Op.mload [(yvar "q_rhs")]), (yvar "r")]), (yop EVM.Op.mload [(yop EVM.Op.add [(yvar "q_const_mptr"), (yop EVM.Op.shl [(ylit 5), (yvar "qconst")])])]), (yvar "r")]), (yvar "r")]))])]),
+ (yfor [(ylet "q_pair_block" (ylit 0))] (yop EVM.Op.lt [(yvar "q_pair_block"), (yvar "q_pairwise_count")]) [(yset "q_pair_block" (yop EVM.Op.add [(yvar "q_pair_block"), (ylit 1)]))] [(ylet "q_pair_word" (yop EVM.Op.mload [(yvar "q_pc")])), (ylet "q_lhs_base" (yop EVM.Op.shr [(ylit 240), (yvar "q_pair_word")])), (ylet "q_rhs_base" (yop EVM.Op.and [(yop EVM.Op.shr [(ylit 224), (yvar "q_pair_word")]), (ylit 65535)])), (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit tcq.byteU32Bytes)])), (ylet "q_coeff_pc" (yvar "q_pc")), (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit tcq.limbPairwiseCoeffs)])), (yfor [(ylet "q_i" (ylit 0))] (yop EVM.Op.lt [(yvar "q_i"), (ylit tcq.limbCount)]) [(yset "q_i" (yop EVM.Op.add [(yvar "q_i"), (ylit 1)]))] [(ylet "q_lhs_value" (yop EVM.Op.mload [(yop EVM.Op.add [(yvar "q_lhs_base"), (yop EVM.Op.shl [(ylit 5), (yvar "q_i")])])])), (yfor [(ylet "q_j" (ylit 0))] (yop EVM.Op.lt [(yvar "q_j"), (ylit tcq.limbCount)]) [(yset "q_j" (yop EVM.Op.add [(yvar "q_j"), (ylit 1)]))] [(ylet "qconst" (yop EVM.Op.byte [(ylit 0), (yop EVM.Op.mload [(yop EVM.Op.add [(yvar "q_coeff_pc"), (yop EVM.Op.add [(yvar "q_i"), (yvar "q_j")])])])])), (yset "q_acc" (yop EVM.Op.addmod [(yvar "q_acc"), (yop EVM.Op.mulmod [(yop EVM.Op.mulmod [(yvar "q_lhs_value"), (yop EVM.Op.mload [(yop EVM.Op.add [(yvar "q_rhs_base"), (yop EVM.Op.shl [(ylit 5), (yvar "q_j")])])]), (yvar "r")]), (yop EVM.Op.mload [(yop EVM.Op.add [(yvar "q_const_mptr"), (yop EVM.Op.shl [(ylit 5), (yvar "qconst")])])]), (yvar "r")]), (yvar "r")]))])])]),
+ (yfor [(ylet "q_mem_block" (ylit 0))] (yop EVM.Op.lt [(yvar "q_mem_block"), (yvar "q_mem_count")]) [(yset "q_mem_block" (yop EVM.Op.add [(yvar "q_mem_block"), (ylit 1)]))] [(ylet "q_word" (yop EVM.Op.mload [(yvar "q_pc")])), (ylet "qconst" (yop EVM.Op.byte [(ylit 0), (yvar "q_word")])), (ylet "q_ptr" (yop EVM.Op.and [(yop EVM.Op.shr [(ylit 232), (yvar "q_word")]), (ylit 65535)])), (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit 3)])), (yset "q_acc" (yop EVM.Op.addmod [(yvar "q_acc"), (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yop EVM.Op.add [(yvar "q_const_mptr"), (yop EVM.Op.shl [(ylit 5), (yvar "qconst")])])]), (yop EVM.Op.mload [(yvar "q_ptr")]), (yvar "r")]), (yvar "r")]))]),
+ (yfor [(ylet "q_product_block" (ylit 0))] (yop EVM.Op.lt [(yvar "q_product_block"), (yvar "q_product_count")]) [(yset "q_product_block" (yop EVM.Op.add [(yvar "q_product_block"), (ylit 1)]))] [(ylet "q_word" (yop EVM.Op.mload [(yvar "q_pc")])), (ylet "qconst" (yop EVM.Op.byte [(ylit 0), (yvar "q_word")])), (ylet "q_lhs" (yop EVM.Op.and [(yop EVM.Op.shr [(ylit 232), (yvar "q_word")]), (ylit 65535)])), (ylet "q_rhs" (yop EVM.Op.and [(yop EVM.Op.shr [(ylit 216), (yvar "q_word")]), (ylit 65535)])), (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit 5)])), (yset "q_acc" (yop EVM.Op.addmod [(yvar "q_acc"), (yop EVM.Op.mulmod [(yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_lhs")]), (yop EVM.Op.mload [(yvar "q_rhs")]), (yvar "r")]), (yop EVM.Op.mload [(yop EVM.Op.add [(yvar "q_const_mptr"), (yop EVM.Op.shl [(ylit 5), (yvar "qconst")])])]), (yvar "r")]), (yvar "r")]))])]
+
+/-- **THE EMITTED TEXT, SPLIT INTO ITS THREE REGIONS.** 'qArmBodyModarith7' is 23 top-level statements:
+    the 15-statement prologue, the five block loops, the 3-statement epilogue. The three defs above
+    are read VERBATIM out of the emitter's own source by 'gen_pro.emitted_statements', and this is a
+    plain 'rfl' on the emitted list - so the prologue and epilogue a later card derives are provably
+    ABOUT THE EMITTED TEXT and not a paraphrase of it. -/
+theorem mod7_emitted_split (ctx : PartialCtx) (program : QuotientProgram)
+    (tcq : QuotientVmTemplateConstants) :
+    GenAst.qArmBodyModarith7 ctx program tcq
+      = mod7PrologueBody program ++ mod7MidBody tcq ++ mod7EpilogueBody :=
+  rfl
+
+/-- The prologue region on its own, pinned at indices 0-14. -/
+theorem mod7_emitted_prologue (ctx : PartialCtx) (program : QuotientProgram)
+    (tcq : QuotientVmTemplateConstants) :
+    List.take 15 (GenAst.qArmBodyModarith7 ctx program tcq) = mod7PrologueBody program :=
+  rfl
+
+/-- The epilogue region on its own, pinned at indices 20-22. -/
+theorem mod7_emitted_epilogue (ctx : PartialCtx) (program : QuotientProgram)
+    (tcq : QuotientVmTemplateConstants) :
+    List.drop 20 (GenAst.qArmBodyModarith7 ctx program tcq) = mod7EpilogueBody :=
+  rfl
+
+#print axioms Midfall.LoweringV3.QuotientArms.mod7_emitted_split
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7_emitted_split
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_get_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_get_pc
+
+end Midfall.LoweringV3.QuotientArms
+
+/-!
+## MOD7C HANDOFF - THE PROLOGUE'S CLOSED FORM AND THE EMITTED-TEXT SPLIT ARE LANDED; THE PROLOGUE
+## DERIVATION ITSELF, THE EPILOGUE AND THE TRIPLE ARE NOT
+
+**BASE.** This card ran on '1b302c6' (MOD7B's own commit), branch 't/MOD7C', and appended to
+'QuotientArms.lean' with ZERO deletions of anyone else's line (9731 -> 9994 lines, then the handoff).
+
+**WHAT LANDED** (every one at '#cone_sorries' 0, no 'sorry' anywhere, before or after):
+
+* 'qbi_byte1' and 'qbi_byte3' - the two byte extracts MOD7 flagged as missing ('only byte0/2/4 exist').
+  Both are 'rfl' at '[propext, Quot.sound]' exactly as predicted, so the counts word can now be decoded.
+* 'mod7_stmtsAppend' - 'Step' is stated for a syntactic cons list, so a body derived in SEGMENTS needs
+  gluing. Proved by induction on the first block, at '[propext]' only. This is what makes the triple
+  'prologue lemma + five block lemmas + epilogue lemma' rather than one 23-link induction.
+* **THE PROLOGUE'S CLOSED FORM**: 21 'abbrev's ('mod7Flags', 'mod7St1', 'mod7Pc1', 'mod7CondPtr',
+  'mod7PcA', 'mod7StA', 'mod7St3', 'mod7Qcv', 'mod7Cptr', 'mod7Acc', 'mod7PcC', 'mod7PcB', 'mod7StC',
+  'mod7Counts', 'mod7Count0'..'mod7Count4', 'mod7PcF', 'mod7StF') plus 'mod7PrologueEnv', and TEN
+  generic get-lemmas 'mod7PrologueEnv_get_*'. THE STRUCTURAL FINDING: the two optional branches are
+  'Step.ifTrue' over a 'Step.block', so the 'let qconst' the CONST branch binds is 'restore'd away by
+  that block and **the post-environment SHAPE does not depend on the flags at all** - only the VALUES
+  of 'q_cond_ptr', 'q_acc' and 'q_pc' do. That is why the prologue is one derivation with a two-way
+  split inside each 'yif' link and not four derivations.
+* 'mod7PrologueBody' / 'mod7MidBody' / 'mod7EpilogueBody' and **the three 'rfl' certificates
+  'mod7_emitted_split' / 'mod7_emitted_prologue' / 'mod7_emitted_epilogue' - ALL THREE AT NO AXIOMS.
+  'mod7_emitted_split' is the pin the brief asked for: 'qArmBodyModarith7 = prologue ++ mid ++ epilogue'
+  by 'rfl' on the emitted list, so the regions a later card derives about are provably ABOUT the
+  emitted text. The three block lists are read VERBATIM out of 'GenAstQvm.lean' by
+  'gen_pro.emitted_statements()', never re-spelled by hand.
+
+**GENERATOR: USED AND EXTENDED.** 'gs3.py' gained the 'gt' builtin (3 lines, additive) - the flag guard
+is the first MODARITH7 construct needing it. Two new files: 'gen_pro.py' (runs 'Gen' over the two
+straight-line segments 0-1 and 7-13, over the two optional-branch bodies 4-body and 6-body, over the
+epilogue body, and over the three guard CONDITION expressions; also parses the 23 emitted statements
+out of 'GenAstQvm.lean' so the block defs and the 'rfl' certificates cannot drift) and 'asm_pro.py'
+(assembles 'pro_lean.txt', the whole prologue section, from those parts - the same
+template-plus-'@@NAME@@'-substitution shape as the preserved 'asm_prod.py'). Of the 15 prologue
+statements, 12 are generator-derived; only the four 'yif' ASCRPTIONS and the two literal 'let's are
+hand-written, and both of those are 2-line facts.
+
+**THE TOUCH ORDER THIS CARD DERIVED FOR THE PROLOGUE** (all explained by 'Step.argsCons' evaluating the
+REST before its head, 'BigStep.lean:209-212'): the prologue is the one region of this arm whose memory
+reads ARE in source order, because each read is the only read of its own statement -
+'touch(pc0)' for the flag word; then, if COND, 'touch(pc0+1)' for the condition pointer; then, if
+CONST, 'touch(pcA)' for the const-slot word and 'touch(cm + (qconst<<<5))' for the seed; then
+'touch(pcC)' for the counts word. The CONST branch's 'add' argument list evaluates 'shl 5 qconst'
+BEFORE 'q_const_mptr' (rest before head), which touches nothing and so is invisible in the state but
+is why the address is built in that order. Statement 14 is the spill guard at the EMPTY stack: it
+touches nothing, exactly as in every landed arm. The cursor is
+'pcF = pc0 + 1 + (COND?2) + (CONST?1) + 5', the prologue's own contribution to
+'quotientModarith7OpLen'. THE EPILOGUE'S ORDER IS 'touch(q_cond_ptr)' and nothing else, and only when
+COND is set; statements 21-22 are pure register writes.
+
+**WHAT REMAINS - THE PROLOGUE DERIVATION, THE EPILOGUE, THE TRIPLE.** 'asm_pro.py' already emits a
+complete 'mod7Prologue' derivation ('python3 gen_pro.py && python3 asm_pro.py' writes
+'pro_lean.txt', 545 lines). It is NOT committed into the Lean file because it does not yet elaborate.
+Four failures remain, all in the assembled text and all mechanical:
+  1. 'hnorm4' (the COND branch's 'restore E3 <raw> = E4' collapse): the 'rw' list
+     ['restore_same_len', 'venvSet_cons_eq', 'venvSet_cons_ne', 'venvSet_set_same', 'venvSet_cons_ne']
+     leaves one goal. MOD7B's warning is exactly right here - the branch's own 'q_pc' write is
+     OVERWRITTEN by statement 13, so the collapse is 'venvSet_set_same' at the environment and NOT a
+     chain lemma - but the list needs one more step or a different order.
+  2. 'hnorm6' (the CONST branch's collapse, which additionally drops the 'qconst' cons via
+     'restore_pw_cons_len'): 'No goals to be solved' on the trailing 'rw [<- hnorm6]', i.e. the
+     rewrite list is one step too long once 1 is fixed.
+  3. The 'lk()' lookup chains in 'gen_pro.py' emit an UNASCIBED environment inside 'have hX :
+     VEnv.get <env> x = some v', and Lean cannot then pin the dialect for the '&&& 0xff' in the
+     cons values: 'failed to synthesize HAnd (BitVec 256) Nat (Dialect.Value ?m)'. FIX: spell the
+     environment as '(<env> : VEnv (Bridge.Dialect c g))' in 'lk()'.
+  4. Once those three are fixed the 15-link chain should close by construction.
+Then: the epilogue (3 links, one of them a 'yif' on the SAME bit as the prologue's COND branch, so it
+reuses 'hb0'), and the triple - 23 'Step.seqCons' links glued by 'mod7_stmtsAppend' out of
+'mod7Prologue' + 'mod7LinBlock' + 'mod7RowBlock' + 'mod7PwBlock' + 'mod7MemBlock' + 'mod7ProdBlock' +
+'mod7Epilogue', then 'StmtsContract' and 'StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)'
+copied from 'qArmValueAll_bilin7Pairwise'. The block lemmas need only FIVE 'VEnv.get' facts on their
+input environment and 'mod7PrologueEnv_get_*' supplies exactly those ten, which is why the closed form
+landed first.
+
+**STILL NOT CLAIMED, AND STILL NOT MEASURED.** Everything here is an EMITTED-SIDE contract. No equation
+between any 'mod7*' walk and 'modarith7Form' exists or is implied. THIS CARD DID NOT LAND THE TRIPLE,
+so 'armcount.py' still lists 'modarith7' under 'qStepValue but NO triple' and the emitted-side count
+is UNCHANGED at 24 - the move to 25 is the next card's, not this one's. No disagreement between the
+emitted and reference sides was exhibited or ruled out. 'PG_limbCountAgrees' appears nowhere in this
+section as anything but an arm-lemma hypothesis and is not needed by anything landed here.
+-/
+
+namespace Midfall.LoweringV3.QuotientArms
+
+#print axioms Midfall.LoweringV3.QuotientArms.mod7_emitted_split
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7_emitted_split
+#print axioms Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_get_lin_count
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7PrologueEnv_get_lin_count
+
+end Midfall.LoweringV3.QuotientArms

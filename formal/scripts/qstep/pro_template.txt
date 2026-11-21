@@ -1,0 +1,89 @@
+/-!
+## MOD7C - the PROLOGUE (emitted statements 0-14), the EPILOGUE (20-22) and THE TRIPLE
+
+Everything in this section is an EMITTED-SIDE contract, exactly as MOD7 and MOD7B labelled the five
+block lemmas: it says what the emitter's own 'GenAst.qArmBodyModarith7' computes, and it is NOT an
+equation against 'modarith7Form' and implies none.
+
+THE TOUCH ORDER OF THE PROLOGUE, DERIVED (not guessed) from 'Step.argsCons' evaluating the REST before
+its head ('BigStep.lean:209-212'). The prologue is the one region of this arm whose reads ARE in source
+order, because every read is the only read of its own statement:
+  * statement 0  'let q_flags := byte 0 (mload q_pc)'      touch(pc0)
+  * statement 4  'q_cond_ptr := shr 240 (mload q_pc)'      touch(pc0+1)          [COND only]
+  * statement 6  'let qconst := byte 0 (mload q_pc)'       touch(pcA)            [CONST only]
+  * statement 6  'q_acc := mload (q_const_mptr + (qconst<<5))'
+        the 'add' argument list is evaluated REST-first, so 'shl 5 qconst' is evaluated BEFORE
+        'q_const_mptr' - neither touches memory, so the order is invisible here but the VALUE of the
+        address is computed in that order - and then the mload touches 'cm + (qconst<<<5)'  [CONST only]
+  * statement 7  'let q_counts_word := mload q_pc'         touch(pcC)
+  * statements 8-13 no memory access; statement 14 is the spill guard at the EMPTY stack and takes the
+        FALSE branch, so it touches nothing.
+Total: 1 + (COND?1) + (CONST?2) + 1 memory touches, and the cursor
+'pcF = pc0 + 1 + (COND?2) + (CONST?1) + 5' - the prologue's own contribution to
+'quotientModarith7OpLen' ('VmValidator.lean:626-644'), pinned by 'mod7_prologue_cursor'.
+
+THE FLAG BRANCHES. The two optional fields are 'Step.ifTrue' over a 'Step.block', so the 'let qconst'
+inside the CONST branch is 'restore'd away by the block and the ENVIRONMENT SHAPE does not depend on
+the flags at all - only the VALUES of 'q_cond_ptr', 'q_acc' and 'q_pc' do. That is why the prologue is
+ONE derivation with a two-way split inside each of the two 'yif' links rather than four derivations.
+And MOD7B's warning is right: the writes the branches make to 'q_pc' are later OVERWRITTEN by the next
+branch and by statement 13, so the collapse is 'venvSet_set_same' / 'venvSet_same_of_get' at the
+environment, never a chain lemma.
+-/
+
+namespace Midfall.LoweringV3.QuotientArms
+
+@@BYTE@@
+
+@@ABB@@
+
+@@ENVDEF@@
+
+/-- 'q_pc' survives the prologue at the prologue's OUTPUT cursor: the last write wins and the nine
+    'let's above it do not shadow a register. Stated generically over the values so the caller can
+    instantiate it with the closed forms or with anything else. -/
+@@GETS@@
+
+@@BODY@@
+
+/-- **THE PROLOGUE, DERIVED**: emitted statements 0-14 of 'qArmBodyModarith7' as fifteen
+    'Step.seqCons' links, of which four are 'Step.ifTrue'/'Step.ifFalse' ascriptions rather than
+    statement derivations. The two hypotheses 'hb0'/'hb1' say which flag bits are set; 'hflag' is the
+    guard 'if q_flags > 3' not firing, stated on the ARM LEMMA (RULES: never on a row, 'ValidV3', a
+    bundle or the root). -/
+theorem mod7Prologue {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) (pcv cm : U256) (st : EvmState) (b0 b1 : Bool)
+    (hget_pc : VEnv.get V "q_pc" = some pcv)
+    (hget_ht : VEnv.get V "q_has_top" = some (BitVec.ofNat 256 0))
+    (hget_cm : VEnv.get V "q_const_mptr" = some cm)
+    (hget_r : VEnv.get V "r" = some frModulusWord)
+    (hflag : mod7Flags st pcv ≤ 3)
+    (hb0 : mod7Flags st pcv &&& BitVec.ofNat 256 1 = if b0 then BitVec.ofNat 256 1
+                                                     else BitVec.ofNat 256 0)
+    (hb1 : mod7Flags st pcv &&& BitVec.ofNat 256 2 = if b1 then BitVec.ofNat 256 2
+                                                     else BitVec.ofNat 256 0) :
+    Step (D := Bridge.Dialect c g) funs V st (.stmts (mod7PrologueBody program))
+      (.sres (mod7PrologueEnv V (mod7Flags st pcv) (mod7CondPtr st pcv b0)
+                (mod7Acc cm st pcv b0 b1) (mod7Counts cm st pcv b0 b1)
+                (mod7Count0 cm st pcv b0 b1) (mod7Count1 cm st pcv b0 b1)
+                (mod7Count2 cm st pcv b0 b1) (mod7Count3 cm st pcv b0 b1)
+                (mod7Count4 cm st pcv b0 b1) (mod7PcC pcv b0 b1) (mod7PcF pcv b0 b1))
+              (mod7StF cm st pcv b0 b1) .normal) := by
+@@PRELETS@@
+@@BASEGETS@@
+@@SEGA@@
+@@GUARD@@
+@@COND4@@
+@@S4@@
+@@S5@@
+@@COND6@@
+@@S6@@
+@@SEGB@@
+@@S14@@
+@@CHAIN@@
+
+#print axioms Midfall.LoweringV3.QuotientArms.mod7Prologue
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7Prologue
+
+end Midfall.LoweringV3.QuotientArms
