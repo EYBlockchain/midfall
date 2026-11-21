@@ -432,7 +432,6 @@ where
           | .ok len => go fuel (idx + len)
       else
         .error neverFolded
-  termination_by fuel => fuel
 
 /-- rust: QVC:247-289 (`check_fold`) @formal-baseline. "Check that the emitted fold matches
     the planned target and selector gap." The arm order is the Rust's: (FOLD_MAIN, Main)
@@ -1505,7 +1504,6 @@ def walkAllSegments (bytes : List Nat) : Nat → List (Nat × Nat × Nat) → Na
         let (exprEnd, op) ← identitySegment bytes cursor
         let len ← faultToString (quotientOpLen bytes exprEnd)
         walkAllSegments bytes fuel (acc ++ [(cursor, exprEnd, op)]) (exprEnd + len)
-termination_by fuel => fuel
 
 /-- The three segments of the built program, at pinned byte offsets: identity 0 is
     PUSH_MEM_U16 0x100 / ADD_MEM_U16 0x120 with FOLD_MAIN at 6; identity 1 is
