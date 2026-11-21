@@ -230,6 +230,7 @@ import Midfall.Common.Bytes
 import Midfall.Common.Keccak
 import Midfall.Generator.Quotient.VmTypes
 import Midfall.Yul.Externals
+import Midfall.Tools.ConeSorries
 
 namespace Midfall.Generator
 
@@ -932,6 +933,304 @@ def run (bytes : List Nat) (consts : List Word256) (mem : Memory) :
   evalQuotientIdentity bytes consts mem
 
 end QVM
+
+
+/-! ## THE STREAM ACCUMULATOR - the fold the reference REFUSES and the emitter performs
+
+    **CITATION FINDING, PRINTED BEFORE THE CODE.** The brief for this card says the stream loop lives
+    at "rust QVR:325-347". **It does not, and that changes what this section may claim.** Re-derived
+    from the source at this HEAD (reference.rs, 549 lines), not from the brief:
+
+      * QVR:325-333 is the five-arm or-pattern Q_OP_FOLD_MAIN | Q_OP_FOLD_SELECTOR |
+        Q_OP_NATIVE_PERMUTATION | Q_OP_NATIVE_LOOKUP | Q_OP_NATIVE_IDENTITY => return Err(..) -
+        the REFUSAL. Already ported at evalQuotientIdentityStep (861-865 above) and already proved
+        from the emitted side by Midfall.Lowering.Qvm.streamArms_error (Qvm.lean:1461-1471).
+      * QVR:340-344 is the "if stack.len() != 1" check, QVR:346 the Ok(stack.pop().expect(..)) and
+        QVR:347 closes the function. **There is no accumulator, no challenge, no bucket and no
+        negation anywhere in reference.rs**: grep -n eval_numer_mptr reference.rs is empty, and so
+        is grep -n SELECTOR_ACC reference.rs.
+
+    **So there is no Rust stream loop to port, and this section does not pretend to be one.** The
+    loop it models is the EMITTED one, in
+    templates/partials/quotient_numerator/QuotientNumeratorBlock.yul (1442 lines, 82571 bytes at
+    this HEAD), cited below as **QNB** - the same Yul-side leg the header already names as the thing
+    the reference does not cover ("the y-batch accumulation itself is Yul-side and is never executed
+    here", NOT MODELLED AT ALL). Every definition here cites QNB; the only QVR range it cites is the
+    refusal, which is the proof that the reference has no counterpart to cite. A definition here that
+    claimed a QVR range for its loop would be a fabricated citation, which is the failure mode this
+    card was told to hold against.
+
+    WHAT THIS BUYS, AND WHAT IT DOES NOT. evalQuotientIdentity is UNTOUCHED: evalQuotientStream sits
+    ONE LEVEL ABOVE it and calls it, exactly as QVC:141-174 walks plan.items calling
+    eval_quotient_identity per identity and check_fold per fold. That is the reference-side statement
+    the two emitted FOLD arms need. It is NOT a reference theorem: the reference never folds
+    (QVR:325-333 refuses; QVC:355-360 pushes Fq::ZERO for a native marker), so the object below is a
+    NEW port whose source of truth is the emitted Yul, and it is labelled as such everywhere.
+
+    THE FOUR PIECES THE BRIEF ASKED FOR, AND WHERE EACH ACTUALLY COMES FROM:
+
+      * accumulator initialisation ................. QNB:161-162 (mstore(eval_numer_mptr, 0))
+      * the y-power multiply-add ................... QNB:1294-1298 (qn = qn*y + eval)
+      * the selector-bucket accumulation ........... QNB:1315-1340, table QNB:185-189
+      * the terminal negation ...................... QNB:1390-1394
+        (addmod(0, sub(r, mload(eval_numer_mptr)), r) stored at QUOTIENT_EVAL_MPTR)
+
+-/
+
+/-- **THE ACCUMULATOR INITIALISATION.** QNB:161-162: "Initialize A = 0 before scanning the identity
+    stream" / mstore({{ program.eval_numer_mptr|hex() }}, 0). The Lean emitted side is
+    GenAstQvm.lean:80, whose last statement is exactly that mstore. There is NO Rust source:
+    reference.rs never names the slot, because QVR:325-333 refuses the fold that writes it. -/
+def evalQuotientStreamInit : QVMFr := 0
+
+/-- **THE MULTIPLY-ADD STEP.** QNB:1294-1298, the body of the FOLD_MAIN arm (QNB:1284-1299):
+    mstore(acc, mulmod(mload(acc), y, r)); mstore(acc, addmod(mload(acc), q_eval, r)), under the
+    comment "Fully-evaluated identity: qn = qn*y + eval. This matches the reverse y-power fold in
+    Rust linearization once all identities have been read." The read-after-write of the slot is two
+    separate mstores in the Yul and a pure dependency here - the same shape the landed emitted arm
+    records at QuotientArms.lean:5861, which stores wAddmod (wMulmod a y) x.
+
+    **THE TIE, REFERENCE HALF.** The right-hand side below is, character for character, the .toNat
+    of the word the emitted FOLD_MAIN arm leaves in evalNumerMptr: wMulmod and wAddmod are
+    BitVec.ofNat 256 ((a.toNat * b.toNat) % qvmFrModulus) and its + twin (WpX.lean:490-496), and the
+    intermediate is below qvmFrModulus < 2^256, so the 256-bit wrap loses nothing. This file cannot
+    NAME them: WpX imports Midfall.Lowering.Qvm (WpX.lean:49), which imports this file
+    (Qvm.lean:104), so importing WpX here is a cycle. See evalQuotientStreamStep_eq_emittedFoldMain.
+    -/
+def evalQuotientStreamStep (acc y value : QVMFr) : QVMFr :=
+  qvmFrAdd (qvmFrMul acc y) value
+
+/-- The step IS the emitted FOLD_MAIN post-state word at the Nat level this file can speak:
+    (acc * y % r + value) % r, which is the .toNat of wAddmod (wMulmod acc y) value by
+    WpX.lean:490-496. Unfolds three definitions, so it is a naming step and not an argument. -/
+theorem evalQuotientStreamStep_eq_emittedFoldMain (acc y value : QVMFr) :
+    evalQuotientStreamStep acc y value = (acc * y % qvmFrModulus + value) % qvmFrModulus := rfl
+
+/-- Every accumulator the stream can store is CANONICAL, i.e. below qvmFrModulus. This is what
+    licenses the terminal negation: the emitted sub(r, x) negates only for a canonical x, which is
+    exactly why WpX.subFr_toFr carries the hypothesis (WpX.lean:566). -/
+theorem evalQuotientStreamStep_lt (acc y value : QVMFr) :
+    evalQuotientStreamStep acc y value < qvmFrModulus :=
+  Nat.mod_lt _ (by decide : 0 < qvmFrModulus)
+
+/-- The accumulator fold over already-evaluated identity values, from an explicit start. QNB:1297-1298
+    iterated; the byte-level stream below is this fold with each value produced by
+    evalQuotientIdentity. -/
+def evalQuotientStreamFoldFrom (acc : QVMFr) (y : QVMFr) (values : List QVMFr) : QVMFr :=
+  match values with
+  | [] => acc
+  | value :: rest => evalQuotientStreamFoldFrom (evalQuotientStreamStep acc y value) y rest
+
+/-- The fold started from the initialisation QNB:161-162. -/
+def evalQuotientStreamFold (y : QVMFr) (values : List QVMFr) : QVMFr :=
+  evalQuotientStreamFoldFrom evalQuotientStreamInit y values
+
+@[simp] theorem evalQuotientStreamFoldFrom_nil (acc y : QVMFr) :
+    evalQuotientStreamFoldFrom acc y [] = acc := rfl
+
+theorem evalQuotientStreamFoldFrom_cons (acc y : QVMFr) (value : QVMFr) (rest : List QVMFr) :
+    evalQuotientStreamFoldFrom acc y (value :: rest) =
+      evalQuotientStreamFoldFrom (evalQuotientStreamStep acc y value) y rest := rfl
+
+/-- The accumulator stays canonical over a whole stream, whatever the values are. -/
+theorem evalQuotientStreamFoldFrom_lt (acc : QVMFr) (y : QVMFr) (values : List QVMFr)
+    (hacc : acc < qvmFrModulus) : evalQuotientStreamFoldFrom acc y values < qvmFrModulus := by
+  induction values generalizing acc with
+  | nil => exact hacc
+  | cons v rest ih =>
+      rw [evalQuotientStreamFoldFrom_cons]
+      exact ih (evalQuotientStreamStep acc y v) (evalQuotientStreamStep_lt acc y v)
+
+theorem evalQuotientStreamFold_lt (y : QVMFr) (values : List QVMFr) :
+    evalQuotientStreamFold y values < qvmFrModulus :=
+  evalQuotientStreamFoldFrom_lt evalQuotientStreamInit y values (by decide)
+
+/-- **THE STREAM.** The signature the brief asked for: one identity subprogram per list element, each
+    evaluated by the UNTOUCHED evalQuotientIdentity, folded with evalQuotientStreamStep. The
+    recurrence is acc 0 = 0 and acc (k+1) = qvmFrAdd (qvmFrMul acc k y) (evalQuotientIdentity
+    (idents k) consts (mem k)).1 - QNB:161-162 plus QNB:1297-1298 iterated. The memory is threaded
+    because the Rust threads ONE &mut QuotientRefMemory across every identity of the certification
+    (QVC:137, 148, 155): the memoisation is semantics (hazard 1), so a stream that restarted the
+    cache per identity would not be the same computation.
+
+    **A new definition, not a port of a Rust function.** Its per-identity leg is the port
+    (QVR:131-347); its fold leg is QNB, because reference.rs refuses to fold (QVR:325-333). -/
+def evalQuotientStreamFrom (acc : QVMFr) (idents : List (List Nat)) (consts : List Word256)
+    (y : QVMFr) (mem : QuotientRefMemory) : Except QVMFault (QVMFr × QuotientRefMemory) :=
+  match idents with
+  | [] => .ok (acc, mem)
+  | id :: rest =>
+      match evalQuotientIdentity id consts mem with
+      | .error e => .error e
+      | .ok (v, mem1) =>
+          evalQuotientStreamFrom (evalQuotientStreamStep acc y v) rest consts y mem1
+
+/-- evalQuotientStream idents consts y mem, with the accumulator initialised as QNB:161-162 does. -/
+def evalQuotientStream (idents : List (List Nat)) (consts : List Word256) (y : QVMFr)
+    (mem : QuotientRefMemory) : Except QVMFault (QVMFr × QuotientRefMemory) :=
+  evalQuotientStreamFrom evalQuotientStreamInit idents consts y mem
+
+@[simp] theorem evalQuotientStreamFrom_nil (acc : QVMFr) (consts : List Word256) (y : QVMFr)
+    (mem : QuotientRefMemory) : evalQuotientStreamFrom acc [] consts y mem = .ok (acc, mem) := rfl
+
+/-- One identity peeled off the stream: the head value enters the accumulator and the tail runs
+    against the memory the head left behind (QVC:144-174 advances cursor past expr_end). -/
+theorem evalQuotientStreamFrom_cons (acc : QVMFr) (id : List Nat) (rest : List (List Nat))
+    (consts : List Word256) (y : QVMFr) (mem mem1 : QuotientRefMemory) (v : QVMFr)
+    (hid : evalQuotientIdentity id consts mem = .ok (v, mem1)) :
+    evalQuotientStreamFrom acc (id :: rest) consts y mem =
+      evalQuotientStreamFrom (evalQuotientStreamStep acc y v) rest consts y mem1 := by
+  simp only [evalQuotientStreamFrom, hid]
+
+theorem evalQuotientStream_nil (consts : List Word256) (y : QVMFr) (mem : QuotientRefMemory) :
+    evalQuotientStream [] consts y mem = .ok (evalQuotientStreamInit, mem) := rfl
+
+/-- **THE y-POWER TABLE.** QNB:185-189 precomputes y^i at selector_power_mptr + 32*i for
+    1 <= i <= selector_max_power, advancing by mulmod(q_y_power, y, r). QNB:187 states the
+    asymmetry the port keeps: "Start at i=1 because y^0 = 1 is implicit and never read" - the gap
+    branch is guarded by if q_sel_gap (QNB:1334), so index 0 is unreachable. -/
+def evalQuotientStreamYPower (y : QVMFr) (i : Nat) : QVMFr := (y ^ i) % qvmFrModulus
+
+/-- The table recurrence, i.e. QNB:186. It needs the canonical-challenge hypothesis: the emitted
+    loop advances a REDUCED value, and (y^i % r) * y is y^(i+1) % r only once y < r. At F1 that
+    holds (f1Y_lt_modulus_ok, gated in the KAT section). -/
+theorem evalQuotientStreamYPower_succ (y : QVMFr) (i : Nat) (hy : y < qvmFrModulus) :
+    evalQuotientStreamYPower y (i + 1) = qvmFrMul (evalQuotientStreamYPower y i) y := by
+  unfold evalQuotientStreamYPower qvmFrMul
+  rw [Nat.pow_succ, Nat.mul_mod, Nat.mod_eq_of_lt hy]
+
+/-- **THE TWO FOLD_SELECTOR GUARDS.** QNB:1315-1316: "The bucket index addresses SELECTOR_ACC and
+    the gap indexes the precomputed y-power table; both sizes are codegen-known, so check them
+    before any write." Both failures are q_program_fail() - a revert, not a typed error - and
+    QVMFault is the CLOSED nine-constructor taxonomy of hazard 2 (gated against the Rust format
+    strings by faultMessages_artifactStrings_ok), so the guard is modelled as a Bool precondition
+    rather than as an invented tenth fault. -/
+def evalQuotientStreamSelectorGuard (numBuckets maxPower bucket gap : Nat) : Bool :=
+  bucket < numBuckets && gap <= maxPower
+
+/-- **THE SELECTOR-BUCKET ACCUMULATION.** QNB:1331-1340, the tail of the FOLD_SELECTOR arm
+    (QNB:1303-1341): the GLOBAL accumulator is multiplied by y and NOT incremented, because "The
+    global fully-evaluated accumulator is still multiplied by y so later main identities land at the
+    same y powers as Rust reverse fold" (QNB:1328-1330); then the bucket read (1333), the sparse
+    y^gap advance guarded by if q_sel_gap (1334-1339), and the bucket write addmod(q_sel_acc,
+    q_eval, r) (1340). Buckets are a word-indexed array, so they are modelled as Nat -> QVMFr with
+    the 32-byte stride folded into the index: the emitted add(SELECTOR_ACC_MPTR, shl(5, q_sel_idx))
+    is bucket here. -/
+def evalQuotientStreamSelectorStep (y : QVMFr) (acc : QVMFr) (buckets : Nat -> QVMFr)
+    (bucket gap : Nat) (value : QVMFr) : QVMFr × (Nat -> QVMFr) :=
+  let acc1 := qvmFrMul acc y
+  let before := buckets bucket
+  let scaled := if gap == 0 then before else qvmFrMul before (evalQuotientStreamYPower y gap)
+  (acc1, fun j => if j = bucket then qvmFrAdd scaled value else buckets j)
+
+/-- The bucket the step writes, and nothing else: QNB:1332-1340 is local, which is what makes a
+    per-bucket accumulator well defined over a stream. -/
+theorem evalQuotientStreamSelectorStep_bucket (y acc : QVMFr) (buckets : Nat -> QVMFr)
+    (bucket gap value : Nat) :
+    (evalQuotientStreamSelectorStep y acc buckets bucket gap value).2 bucket =
+      qvmFrAdd (if gap = 0 then buckets bucket
+                else qvmFrMul (buckets bucket) (evalQuotientStreamYPower y gap)) value := by
+  unfold evalQuotientStreamSelectorStep
+  by_cases hg : gap = 0 <;> simp [hg]
+
+theorem evalQuotientStreamSelectorStep_other (y acc : QVMFr) (buckets : Nat -> QVMFr)
+    (bucket gap value j : Nat) (hj : j ≠ bucket) :
+    (evalQuotientStreamSelectorStep y acc buckets bucket gap value).2 j = buckets j := by
+  unfold evalQuotientStreamSelectorStep
+  simp [hj]
+
+/-- **THE GAP-ZERO CASE IS THE OVERLAP WITH THE LANDED EMITTED ARM.** With gap = 0 the step reduces
+    to exactly the two words qArmValueAll_foldSelector stores (QuotientArms.lean:6596): wMulmod a y
+    at evalNumerMptr and wAddmod sv2 x at the bucket - and that arm pins hgap : (pl &&& 65535) = 0,
+    i.e. it landed ONLY this branch. So this is the whole overlap available today, and the y^gap
+    multiply is the piece the emitted contract has not reached. -/
+theorem evalQuotientStreamSelectorStep_gapZero_matchesEmitted (y acc : QVMFr)
+    (buckets : Nat -> QVMFr) (bucket value : Nat) :
+    (evalQuotientStreamSelectorStep y acc buckets bucket 0 value).1 = qvmFrMul acc y ∧
+    (evalQuotientStreamSelectorStep y acc buckets bucket 0 value).2 bucket =
+      qvmFrAdd (buckets bucket) value := by
+  refine ⟨rfl, ?_⟩
+  rw [evalQuotientStreamSelectorStep_bucket]
+  simp
+
+/-- The selector fold over (bucket, gap, value) triples from an explicit accumulator and bucket
+    array: QNB:1331-1340 iterated. -/
+def evalQuotientStreamSelectorFold (y : QVMFr) (acc : QVMFr) (buckets : Nat -> QVMFr)
+    (steps : List (Nat × Nat × QVMFr)) : QVMFr × (Nat -> QVMFr) :=
+  match steps with
+  | [] => (acc, buckets)
+  | (bucket, gap, value) :: rest =>
+      let (acc1, buckets1) := evalQuotientStreamSelectorStep y acc buckets bucket gap value
+      evalQuotientStreamSelectorFold y acc1 buckets1 rest
+
+/-- **THE SELECTOR TAIL UPDATE.** QNB:1374-1387: after the stream ends each bucket is advanced by
+    the codegen-known tail "from each selector last identity to the end of the global y-batch",
+    mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(selector_power_mptr, power_offset)), r)).
+    Both operands are BYTE offsets in the emitted text (tail.selector_offset, tail.power_offset)
+    and the stride is qvmWordBytes = 0x20, so the indices are the offsets divided by it. -/
+def evalQuotientStreamTailStep (y : QVMFr) (buckets : Nat -> QVMFr)
+    (selectorOffset powerOffset : Nat) : Nat -> QVMFr :=
+  fun j => if j = selectorOffset / qvmWordBytes
+           then qvmFrMul (buckets j) (evalQuotientStreamYPower y (powerOffset / qvmWordBytes))
+           else buckets j
+
+/-- **THE TERMINAL NEGATION.** QNB:1390-1394: "Fully evaluated identities are the constant-polynomial
+    side of the linearization query. Rust subtracts that grouped scalar into expected_eval, so
+    Solidity stores -nu_y(x)" - addmod(0, sub(r, mload(eval_numer_mptr)), r) stored at
+    QUOTIENT_EVAL_MPTR. The Lean emitted side is GenAstQvm.lean:404. -/
+def evalQuotientStreamExpectedEval (acc : QVMFr) : QVMFr :=
+  qvmFrAdd 0 (qvmFrNeg acc)
+
+/-- The emitted epilogue sub(r, x) IS the field negation, with no hypothesis needed at the Nat level
+    because qvmFrNeg already reduces. -/
+theorem evalQuotientStreamExpectedEval_eq_neg (acc : QVMFr) :
+    evalQuotientStreamExpectedEval acc = qvmFrNeg acc := by
+  have hlt : qvmFrNeg acc < qvmFrModulus := Nat.mod_lt _ (by decide : 0 < qvmFrModulus)
+  show (0 + qvmFrNeg acc) % qvmFrModulus = qvmFrNeg acc
+  rw [Nat.zero_add]
+  exact Nat.mod_eq_of_lt hlt
+
+/-- The same value spelled the way QNB:1393 spells it, for a canonical accumulator: the word
+    subtraction does not wrap, so sub(r, a) is the literal r - a and the outer addmod is the
+    reduction. This is the Nat mirror of WpX.subFr_toFr, which this file cannot import (cycle). -/
+theorem evalQuotientStreamExpectedEval_emittedForm (acc : QVMFr) :
+    evalQuotientStreamExpectedEval acc = (0 + (qvmFrModulus - acc)) % qvmFrModulus := by
+  rw [Nat.zero_add]
+  exact evalQuotientStreamExpectedEval_eq_neg acc
+
+/-- And for a NONZERO accumulator the outer reduction is inert, so the stored value really is the
+    literal r - acc. NOTE what does NOT appear here: canonicity. At the Nat level truncated subtraction
+    already clamps, so r - acc = 0 whenever acc >= r and the equation survives; it is the WORD-level
+    sub(r, x) that needs the bound, which is why WpX.subFr_toFr carries the hypothesis and
+    WpX.subFr_needsCanonicity shows it cannot be dropped. Stating the hypothesis here would have been
+    cargo-culting the word-level requirement into the level that does not have it. -/
+theorem evalQuotientStreamExpectedEval_sub (acc : QVMFr) (h0 : 0 < acc) :
+    evalQuotientStreamExpectedEval acc = qvmFrModulus - acc := by
+  rw [evalQuotientStreamExpectedEval_emittedForm, Nat.zero_add,
+    Nat.mod_eq_of_lt (Nat.sub_lt (by decide : 0 < qvmFrModulus) h0)]
+
+namespace QVM
+
+/-- PLAN 9.5 whole-stream run at the granularity the reference can support: a list of identity
+    subprograms, a challenge, and the accumulator the emitter folds into program.evalNumerMptr.
+    The header DOMAIN OF QVM.run said any M6 statement must be re-stated "per identity over
+    evalQuotientIdentity plus a separately ported segment walker"; this is that second half, ported
+    from QNB rather than from QVR - see the citation finding in the section header. -/
+def runStream (idents : List (List Nat)) (consts : List Word256) (y : Fr) (mem : Memory) :
+    Except Fault (Fr × Memory) :=
+  evalQuotientStream idents consts y mem
+
+end QVM
+
+#print axioms Midfall.Generator.evalQuotientStream
+#print axioms Midfall.Generator.evalQuotientStreamStep_eq_emittedFoldMain
+#print axioms Midfall.Generator.evalQuotientStreamFoldFrom_lt
+#print axioms Midfall.Generator.evalQuotientStreamSelectorStep_gapZero_matchesEmitted
+#print axioms Midfall.Generator.evalQuotientStreamExpectedEval_emittedForm
+#cone_sorries Midfall.Generator.evalQuotientStream
+#cone_sorries Midfall.Generator.evalQuotientStreamSelectorStep
+#cone_sorries Midfall.Generator.evalQuotientStreamExpectedEval
+
 
 /-! ## Known-answer tests
 
@@ -1916,6 +2215,163 @@ def qvmWordBytes_isTheLimbStride_ok : Bool :=
   modarith7FlagsOk (qModarith7FlagCond ||| qModarith7FlagConst) &&
   ! modarith7FlagsOk 0x04 && ! modarith7FlagsOk 0x80 && ! modarith7FlagsOk 0xff
 
+
+/-! ### THE STREAM ACCUMULATOR GATES (card QSTREAM)
+
+    WHY THESE ARE HERE AND NOT IN Midfall/Instances. The brief asks for a KAT "at the F1 bundle".
+    The bundle is fixtures/conformance/poseidon-testsrs, and the object that reads it
+    (Midfall/Instances/NativeReplay.lean) sits DOWNSTREAM of this file: Qvm.lean:104 imports
+    VmReference and Instances imports Qvm. So this file cannot COMPUTE the F1 y from the bundle -
+    it can only pin it. f1Y below is the transcript squeeze copied from the bundle trace.json
+    (transcript_log, the entry with kind=squeeze and name=y, field challenge_be_hex), and
+    f1Y_canonical_ok asserts it is a canonical Fr rather than trusting the copy. Everything else
+    the gate needs is already in this file: the identity programs and their pinned values.
+
+    WHAT EACH GATE CROSS-CHECKS. streamFoldMain_ok is the real one: the byte-level stream (which
+    runs evalQuotientIdentity per segment, i.e. the port of QVR:131-347) must agree with TWO
+    independent routes over the same values - the Horner fold and the closed form in powers,
+    computed by different code - and with a pinned hex. streamMatchesEmittedFoldMain_ok is the
+    overlap with the landed emitted contract: it iterates the Nat mirror of the word the emitted
+    FOLD_MAIN arm stores. streamSelector_ok does the same for FOLD_SELECTOR including the y^gap
+    branch and both guards. streamFalsifiers_ok is the negative control (W12 discipline): a
+    different challenge, a shorter stream, and a segment containing a fold opcode (which the
+    reference must still REFUSE, QVR:325-333). -/
+
+/-- **THE F1 CHALLENGE y**, copied from the bundle trace.json (kind=squeeze, name=y). -/
+def f1Y : QVMFr := 0x577ca32784f3d9ade8e6f34158eee09ae85930847bee01294553a7be6c938744
+
+/-- The pinned copy must be a canonical field element, or the y-power recurrence hypothesis is
+    vacuous and the negation bridge takes the wrong branch. -/
+def f1Y_canonical_ok : Bool := f1Y < qvmFrModulus && f1Y > 0
+
+/-- Four single-identity fixture programs, each already pinned by its own value gate above: the
+    stream is what those four values look like folded. -/
+def streamIdents : List (List Nat) := [pPushMemLiteral, pAdd, pMul, pLin7]
+def streamValues : List QVMFr := [wantpPushMemLiteral, wantpAdd, wantpMul, wantpLin7]
+
+/-- The four-identity stream at the F1 challenge: acc = ((v0*y + v1)*y + v2)*y + v3. -/
+def wantStream4 : QVMFr := 0x2cfa068580c7c5e7c0847792e98d2a49596e37e6ea2541284c2ac2bed5d12842
+
+/-- The same after the terminal negation QNB:1390-1394: -nu_y(x) at QUOTIENT_EVAL_MPTR. -/
+def wantStream4Neg : QVMFr := 0x46f3a0cda8d5b76072b560752014adbbfa4f6c1c15d91ad6b3d53d402a2ed7bf
+
+/-- A two-identity prefix, for the falsifier that the fold is not idempotent. -/
+def wantStream2 : QVMFr := 0x384fea913ab47b30f147a5ce1053efb1fa6e7ff356e45fd3730e39fc20f0379f
+
+/-- The same stream at a WRONG challenge (y := 2), pinned so the falsifier is a value and not
+    merely a difference. -/
+def wantStream4WrongY : QVMFr := 0x0f7e3dd5f93c1f84c626607dc4c95a32ac759fcabee3fdbcfd424b8db493a10d
+
+/-- **A SECOND ROUTE to the same number**: the closed form, the sum over k of v_k * y^(n-1-k),
+    computed with explicit powers instead of the Horner recurrence. Independent code path, same
+    answer - that is what makes the gate a cross-check rather than a tautology. -/
+def streamClosedForm (y : QVMFr) (values : List QVMFr) : QVMFr :=
+  ((values.zip (List.range values.length)).foldr
+    (fun p acc => qvmFrAdd acc (qvmFrMul p.1 (evalQuotientStreamYPower y (values.length - 1 - p.2))))
+    0)
+
+/-- **THE EMITTED FOLD_MAIN WORD, mirrored at the Nat level**: the .toNat of
+    wAddmod (wMulmod a y) x (WpX.lean:490-496), which is the post-state the landed emitted arm
+    QuotientArms.lean:5861 stores at evalNumerMptr. -/
+def emittedFoldMainMirror (a y x : QVMFr) : QVMFr := (a * y % qvmFrModulus + x) % qvmFrModulus
+
+/-- The emitted formula iterated from the initialisation QNB:161-162. -/
+def streamEmittedChain : QVMFr :=
+  List.foldl (fun a x => emittedFoldMainMirror a f1Y x) evalQuotientStreamInit streamValues
+
+/-- **GATE: the stream fold.** The byte-level stream, the value-level Horner fold and the
+    powers-route closed form must all land on the pinned number, and the accumulator must be
+    canonical (which is what licenses the negation). -/
+def streamFoldMain_ok : Bool :=
+  match evalQuotientStream streamIdents refConsts f1Y refMem with
+  | .ok (acc, _) =>
+      acc == wantStream4 &&
+      acc == streamClosedForm f1Y streamValues &&
+      acc == evalQuotientStreamFold f1Y streamValues &&
+      acc < qvmFrModulus
+  | .error _ => false
+
+/-- **GATE: the terminal negation** (QNB:1390-1394), three ways: the pinned number, qvmFrNeg, and
+    the emitted addmod(0, sub(r, a), r) form spelled at the Nat level. -/
+def streamNegation_ok : Bool :=
+  match evalQuotientStream streamIdents refConsts f1Y refMem with
+  | .ok (acc, _) =>
+      evalQuotientStreamExpectedEval acc == wantStream4Neg &&
+      evalQuotientStreamExpectedEval acc == qvmFrNeg acc &&
+      evalQuotientStreamExpectedEval acc == (0 + (qvmFrModulus - acc)) % qvmFrModulus
+  | .error _ => false
+
+/-- **GATE: agreement with the landed emitted FOLD_MAIN contract where they overlap.** The emitted
+    arm post is wAddmod (wMulmod a y) x; its Nat mirror iterated from 0 must equal the stream. -/
+def streamMatchesEmittedFoldMain_ok : Bool :=
+  streamEmittedChain == wantStream4 &&
+  evalQuotientStreamFold f1Y streamValues == streamEmittedChain &&
+  evalQuotientStreamStep 7 f1Y 11 == emittedFoldMainMirror 7 f1Y 11 &&
+  (match evalQuotientStream streamIdents refConsts f1Y refMem with
+   | .ok (acc, _) => acc == streamEmittedChain
+   | .error _ => false)
+
+/-- The selector stream: four FOLD_SELECTOR contributions over two buckets with gaps 0, 3, 2, 0 -
+    i.e. the y^gap branch IS exercised, which is the branch the landed emitted arm pinned away. -/
+def streamSelectorSteps : List (Nat × Nat × QVMFr) :=
+  [(0, 0, wantpPushMemLiteral), (1, 3, wantpAdd), (0, 2, wantpMul), (1, 0, wantpLin7)]
+
+def wantStreamSelB0 : QVMFr := 0x0bd7999784095f2c180c4f9c454e3ebdb5ccc70d2e74db078f0ec10158ea403d
+def wantStreamSelB1 : QVMFr := 0x2e94071407788ce037f4ad98740ed10478259d20011a9119fb67655a1fc81ca1
+def wantStreamSelB1Tail : QVMFr := 0x1dc8e9519e2d1af6e759bbb9c7b3853a9137b6299f74a69fe38f20854a3250d7
+def wantStreamYPow3 : QVMFr := 0x5da2b83080a711709f95ca8a9d7f227387ccc9ad2fad846b40b030f61a104ea1
+
+/-- **GATE: the selector-bucket accumulation** (QNB:1315-1340, 1374-1387). Note the shape the Yul
+    forces and a careless port would get wrong: a FOLD_SELECTOR multiplies the GLOBAL accumulator
+    by y and adds NOTHING to it (QNB:1328-1331), so a stream of pure selector folds leaves acc = 0
+    while the buckets fill. Both guards are checked on both sides of their bounds. -/
+def streamSelector_ok : Bool :=
+  let (acc, buckets) :=
+    evalQuotientStreamSelectorFold f1Y evalQuotientStreamInit (fun _ => 0) streamSelectorSteps
+  acc == 0 &&
+  buckets 0 == wantStreamSelB0 && buckets 1 == wantStreamSelB1 &&
+  buckets 2 == 0 && buckets 3 == 0 &&
+  (evalQuotientStreamTailStep f1Y buckets (1 * qvmWordBytes) (5 * qvmWordBytes)) 1
+    == wantStreamSelB1Tail &&
+  (evalQuotientStreamTailStep f1Y buckets (1 * qvmWordBytes) (5 * qvmWordBytes)) 0 == buckets 0 &&
+  evalQuotientStreamSelectorGuard 4 21 3 21 &&
+  ! (evalQuotientStreamSelectorGuard 4 21 4 0) &&
+  ! (evalQuotientStreamSelectorGuard 4 21 0 22) &&
+  evalQuotientStreamYPower f1Y 3 == wantStreamYPow3 &&
+  evalQuotientStreamYPower f1Y 0 == 1
+
+/-- **GATE: THE FALSIFIERS.** A gate that cannot fail measures nothing. -/
+def streamFalsifiers_ok : Bool :=
+  (match evalQuotientStream streamIdents refConsts 2 refMem with
+   | .ok (acc, _) => acc != wantStream4 && acc == wantStream4WrongY
+   | .error _ => false) &&
+  (match evalQuotientStream [pPushMemLiteral, pAdd] refConsts f1Y refMem with
+   | .ok (acc, _) => acc == wantStream2 && acc != wantStream4
+   | .error _ => false) &&
+  errIs (evalQuotientStream [eFoldInside] refConsts f1Y refMem)
+    (QVMFault.streamOpcodeInIdentity qOpFoldMain 5) &&
+  errIs (evalQuotientStream [eNativeInside] refConsts f1Y refMem)
+    (QVMFault.streamOpcodeInIdentity qOpNativeIdentity 0) &&
+  -- and the two pins above DISCRIMINATE: a different opcode or a different byte index must not pass.
+  ! errIs (evalQuotientStream [eFoldInside] refConsts f1Y refMem)
+    (QVMFault.streamOpcodeInIdentity qOpFoldSelector 5) &&
+  ! errIs (evalQuotientStream [eFoldInside] refConsts f1Y refMem)
+    (QVMFault.streamOpcodeInIdentity qOpFoldMain 6) &&
+  (match evalQuotientStream [] refConsts f1Y refMem with
+   | .ok (acc, m) => acc == 0 && m == refMem
+   | .error _ => false) &&
+  evalQuotientStreamExpectedEval wantStream4 != wantStream4
+
+/-- The stream leg of the reference gate must not have moved the refusal: the five stream opcodes
+    are still an error INSIDE an identity (QVR:325-333) and the new fold sits above it. Asserted
+    against the existing fault fixtures rather than restated. -/
+def streamRefusalIntact_ok : Bool :=
+  faultIs eFoldInside faulteFoldInside &&
+  faultIs eNativeInside faulteNativeInside &&
+  (match evalQuotientStream (streamIdents ++ [eFoldInside]) refConsts f1Y refMem with
+   | .error (QVMFault.streamOpcodeInIdentity _ _) => true
+   | _ => false)
+
 end QuotientVmRefKats
 
 end Midfall.Generator
@@ -1954,3 +2410,11 @@ end Midfall.Generator
 #eval Midfall.Generator.QuotientVmRefKats.programBytesRoundTrip_ok -- expect true
 #eval Midfall.Generator.QuotientVmRefKats.qvmFrModulus_agreesWithBlsR_ok -- expect true
 #eval Midfall.Generator.QuotientVmRefKats.qvmWordBytes_isTheLimbStride_ok -- expect true
+
+#eval Midfall.Generator.QuotientVmRefKats.f1Y_canonical_ok -- expect true
+#eval Midfall.Generator.QuotientVmRefKats.streamFoldMain_ok -- expect true
+#eval Midfall.Generator.QuotientVmRefKats.streamNegation_ok -- expect true
+#eval Midfall.Generator.QuotientVmRefKats.streamMatchesEmittedFoldMain_ok -- expect true
+#eval Midfall.Generator.QuotientVmRefKats.streamSelector_ok -- expect true
+#eval Midfall.Generator.QuotientVmRefKats.streamFalsifiers_ok -- expect true
+#eval Midfall.Generator.QuotientVmRefKats.streamRefusalIntact_ok -- expect true

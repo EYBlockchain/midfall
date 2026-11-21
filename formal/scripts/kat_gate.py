@@ -383,7 +383,16 @@ EVAL = re.compile(
 # 0x3149ae4f...bef176 and 'assert_axioms Midfall.LoweringV3.lowering_correct' stayed ok (4 named, 0 native).
 # The delta is +12/+1: the twelfth is poseidonRealCommitments_matchPayload_ok, the REF.6 pin that the 27 decoded
 # commitments of vk.json ARE the payload words the generator emits, with the placeholder key as its falsifier.
-EXPECTED_KAT_TOTAL = 1633
+# QSTREAM moved EXPECTED_KAT_TOTAL 1633 -> 1640 deliberately and EXPECTED_KAT_FILES NOT AT ALL: SEVEN NEW
+# '#eval ... -- expect true' gates, all appended to VmReference's own KAT section: f1Y_canonical_ok pins the
+# copied F1 challenge as a canonical Fr; streamFoldMain_ok cross-checks the byte-level stream against the
+# Horner fold, the powers-route closed form and a pinned hex; streamNegation_ok pins the terminal negation
+# (QNB:1390-1394) three ways; streamMatchesEmittedFoldMain_ok is the overlap with the landed emitted
+# FOLD_MAIN post wAddmod (wMulmod a y) x; streamSelector_ok exercises the y^gap branch, both guards and the
+# tail update; streamFalsifiers_ok and streamRefusalIntact_ok are the negative controls, including that
+# QVR:325-333 STILL refuses a fold opcode inside an identity. No gate was deleted, edited or re-spelled;
+# evalQuotientIdentity and every pre-existing gate are untouched. The delta is +7/+0.
+EXPECTED_KAT_TOTAL = 1640
 EXPECTED_KAT_FILES = 118
 
 # Only these shapes count as #eval output.
