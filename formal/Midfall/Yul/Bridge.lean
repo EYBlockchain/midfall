@@ -1344,25 +1344,6 @@ theorem NoWriters_staticcall_fail_arm :
     }) :=
   ⟨30, by decide⟩
 
-/-- Only staticcalls and no writers means the world is untouched: sstore, tstore,
-    the log family, selfdestruct and the create family are the only stepOp world
-    writers, and the call family is excluded by NoWriters except staticcall, whose
-    response world is never installed (EVMExec.lean:612-616). PROOF OBLIGATION,
-    registered in SORRY.md: induction on Step with the isWriter scan. Note the
-    decorative hypothesis attack.md line 99 warns about is deliberately absent.
-
-    REACHABILITY, P-BRIDGE step 3: while noWritersFuel was a two-argument hole this
-    theorem had NO instances - NoWriters b was unsatisfiable for every b, so the claim
-    was vacuously true and uninteresting. That is now false in the useful direction:
-    NoWriters_staticcall_then_mstore and NoWriters_staticcall_fail_arm exhibit proved
-    instances, so this is a real obligation. What it still needs is (a) subterm closure
-    of the scan (a clean block's sub-blocks are clean at reduced fuel) and (b) the
-    per-op table 'non-writer op implies WorldEq-preserving' over the 70 local ops plus
-    finishCall for staticcall - the same 77-constructor cost class as
-    dialect_deterministic, which is why it is reported rather than closed here. -/
-theorem Run_worldEq_of_noWriters {c g prog st0 V' st' o}
-    (hn : NoWriters prog) (h : Run c g prog st0 V' st' o) : WorldEq st0 st' := by
-  sorry
 
 /-- **THE LOCAL PER-OP TABLE FOR 'Run_worldEq_of_noWriters'.** A non-writer local built-in
     preserves every world component. The proof is the op case split plus `stepOp`'s argument
@@ -1492,6 +1473,504 @@ theorem builtin_worldEq_halt {c : ExternalCalls} {g : ExternalGas} {op : Op}
           cases hres
       | cons a rest => change False at hb; exact hb.elim
   | _ => exact stepOp_worldEq_halt h (hr := hb)
+
+/-! ## WorldEq helpers -/
+
+section EXITSOUNDWorld
+
+variable {c : ExternalCalls} {g : ExternalGas}
+
+theorem WorldEq.refl (st : EvmState) : WorldEq st st := by
+  simp [WorldEq]
+
+theorem WorldEq.trans {a b d : EvmState} (hab : WorldEq a b) (hbd : WorldEq b d) : WorldEq a d := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11⟩ := hab
+  obtain ⟨g1, g2, g3, g4, g5, g6, g7, g8, g9, g10, g11⟩ := hbd
+  exact ⟨h1.trans g1, h2.trans g2, h3.trans g3, h4.trans g4, h5.trans g5,
+    h6.trans g6, h7.trans g7, h8.trans g8, h9.trans g9, h10.trans g10, h11.trans g11⟩
+
+/-! ## Fuel monotonicity for the writer scan -/
+
+theorem noWritersScan_mono_succ : ∀ (n : Nat) (sc : Scan),
+    noWritersScan n sc = true → noWritersScan (n + 1) sc = true := by
+  intro n
+  induction n with
+  | zero => intro sc h; simp [noWritersScan] at h
+  | succ k ih =>
+      intro sc h
+      change noWritersStep sc (noWritersScan k) = true at h
+      change noWritersStep sc (noWritersScan (k + 1)) = true
+      cases sc with
+      | e e =>
+          cases e with
+          | lit l => exact h
+          | var x => exact h
+          | builtin op args =>
+              simp only [noWritersStep, Bool.and_eq_true, Bool.not_eq_true'] at h ⊢
+              exact ⟨h.1, ih _ h.2⟩
+          | call fn args =>
+              simp only [noWritersStep] at h ⊢
+              exact ih _ h
+      | es es =>
+          cases es with
+          | nil => exact h
+          | cons e rest =>
+              simp only [noWritersStep, Bool.and_eq_true] at h ⊢
+              exact ⟨ih _ h.1, ih _ h.2⟩
+      | s s =>
+          cases s with
+          | block body =>
+              simp only [noWritersStep] at h ⊢
+              exact ih _ h
+          | funDef n ps rs b =>
+              simp only [noWritersStep] at h ⊢
+              exact ih _ h
+          | letDecl xs val =>
+              cases val with
+              | none => exact h
+              | some e =>
+                  simp only [noWritersStep] at h ⊢
+                  exact ih _ h
+          | assign xs e =>
+              simp only [noWritersStep] at h ⊢
+              exact ih _ h
+          | cond cc body =>
+              simp only [noWritersStep, Bool.and_eq_true] at h ⊢
+              exact ⟨ih _ h.1, ih _ h.2⟩
+          | «switch» cc cases dflt =>
+              simp only [noWritersStep, Bool.and_eq_true] at h ⊢
+              refine ⟨⟨ih _ h.1.1, ih _ h.1.2⟩, ?_⟩
+              cases dflt with
+              | none => exact h.2
+              | some d => exact ih _ h.2
+          | forLoop init cc post body =>
+              simp only [noWritersStep, Bool.and_eq_true] at h ⊢
+              exact ⟨⟨⟨ih _ h.1.1.1, ih _ h.1.1.2⟩, ih _ h.1.2⟩, ih _ h.2⟩
+          | exprStmt e =>
+              simp only [noWritersStep] at h ⊢
+              exact ih _ h
+          | «break» => exact h
+          | «continue» => exact h
+          | «leave» => exact h
+      | b b =>
+          cases b with
+          | nil => exact h
+          | cons s ss =>
+              simp only [noWritersStep, Bool.and_eq_true] at h ⊢
+              exact ⟨ih _ h.1, ih _ h.2⟩
+      | cs cs =>
+          cases cs with
+          | nil => exact h
+          | cons p rest =>
+              simp only [noWritersStep, Bool.and_eq_true] at h ⊢
+              exact ⟨ih _ h.1, ih _ h.2⟩
+
+theorem noWritersScan_mono {n m : Nat} (h : n ≤ m) {sc : Scan}
+    (hn : noWritersScan n sc = true) : noWritersScan m sc = true := by
+  obtain ⟨d, rfl⟩ := Nat.exists_eq_add_of_le h
+  clear h
+  induction d with
+  | zero => simpa using hn
+  | succ d ih =>
+      simpa only [Nat.add_succ] using noWritersScan_mono_succ (n + d) sc ih
+
+theorem scanClean_fuel_and {sc₁ sc₂ : Scan} (h₁ : ScanClean sc₁) (h₂ : ScanClean sc₂) :
+    ∃ n, noWritersScan n sc₁ = true ∧ noWritersScan n sc₂ = true := by
+  obtain ⟨n₁, hn₁⟩ := h₁
+  obtain ⟨n₂, hn₂⟩ := h₂
+  exact ⟨max n₁ n₂, noWritersScan_mono (Nat.le_max_left _ _) hn₁,
+    noWritersScan_mono (Nat.le_max_right _ _) hn₂⟩
+
+theorem scanClean_fuel_and3 {sc₁ sc₂ sc₃ : Scan} (h₁ : ScanClean sc₁) (h₂ : ScanClean sc₂)
+    (h₃ : ScanClean sc₃) :
+    ∃ n, noWritersScan n sc₁ = true ∧ noWritersScan n sc₂ = true ∧
+      noWritersScan n sc₃ = true := by
+  obtain ⟨n, hn₁, hn₂⟩ := scanClean_fuel_and h₁ h₂
+  obtain ⟨m, hm⟩ := h₃
+  refine ⟨max n m, noWritersScan_mono (Nat.le_max_left _ _) hn₁,
+    noWritersScan_mono (Nat.le_max_left _ _) hn₂, noWritersScan_mono (Nat.le_max_right _ _) hm⟩
+
+theorem scanClean_fuel_and4 {sc₁ sc₂ sc₃ sc₄ : Scan} (h₁ : ScanClean sc₁) (h₂ : ScanClean sc₂)
+    (h₃ : ScanClean sc₃) (h₄ : ScanClean sc₄) :
+    ∃ n, noWritersScan n sc₁ = true ∧ noWritersScan n sc₂ = true ∧
+      noWritersScan n sc₃ = true ∧ noWritersScan n sc₄ = true := by
+  obtain ⟨n, hn₁, hn₂, hn₃⟩ := scanClean_fuel_and3 h₁ h₂ h₃
+  obtain ⟨m, hm⟩ := h₄
+  refine ⟨max n m, noWritersScan_mono (Nat.le_max_left _ _) hn₁,
+    noWritersScan_mono (Nat.le_max_left _ _) hn₂,
+    noWritersScan_mono (Nat.le_max_left _ _) hn₃,
+    noWritersScan_mono (Nat.le_max_right _ _) hm⟩
+
+/-! ## Reverse closure: building a clean compound from clean parts -/
+
+theorem scanClean_s_block_rev {body : Block Op} (h : ScanClean (.b body)) :
+    ScanClean (.s (.block body)) := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨n + 1, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_s_funDef_rev {n : Ident} {ps rs : List Ident} {body : Block Op}
+    (h : ScanClean (.b body)) : ScanClean (.s (.funDef n ps rs body)) := by
+  obtain ⟨f, hf⟩ := h
+  exact ⟨f + 1, by simpa [noWritersScan, noWritersStep] using hf⟩
+
+theorem scanClean_b_cons_rev {s : Stmt Op} {ss : Block Op}
+    (hs : ScanClean (.s s)) (hss : ScanClean (.b ss)) : ScanClean (.b (s :: ss)) := by
+  obtain ⟨n, hn1, hn2⟩ := scanClean_fuel_and hs hss
+  exact ⟨n + 1, by simp only [noWritersScan, noWritersStep, hn1, hn2, Bool.and_true]⟩
+
+theorem scanClean_es_cons_rev {e : Expr Op} {es : List (Expr Op)}
+    (he : ScanClean (.e e)) (hes : ScanClean (.es es)) : ScanClean (.es (e :: es)) := by
+  obtain ⟨n, hn1, hn2⟩ := scanClean_fuel_and he hes
+  exact ⟨n + 1, by simp only [noWritersScan, noWritersStep, hn1, hn2, Bool.and_true]⟩
+
+theorem scanClean_cs_cons_rev {p : Literal} {b : Block Op} {rest : List (Literal × Block Op)}
+    (hb : ScanClean (.b b)) (hrest : ScanClean (.cs rest)) :
+    ScanClean (.cs ((p, b) :: rest)) := by
+  obtain ⟨n, hn1, hn2⟩ := scanClean_fuel_and hb hrest
+  exact ⟨n + 1, by simp only [noWritersScan, noWritersStep, hn1, hn2, Bool.and_true]⟩
+
+theorem scanClean_e_builtin_rev {op : Op} {args : List (Expr Op)}
+    (hw : Op.isWriter op = false) (hargs : ScanClean (.es args)) :
+    ScanClean (.e (.builtin op args)) := by
+  obtain ⟨n, hn⟩ := hargs
+  refine ⟨n + 1, ?_⟩
+  simp only [noWritersScan, noWritersStep, hw, Bool.not_false, Bool.true_and]
+  exact hn
+
+theorem scanClean_e_call_rev {fn : Ident} {args : List (Expr Op)}
+    (hargs : ScanClean (.es args)) : ScanClean (.e (.call fn args)) := by
+  obtain ⟨n, hn⟩ := hargs
+  exact ⟨n + 1, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_s_letDecl_some_rev {xs : List Ident} {e : Expr Op}
+    (h : ScanClean (.e e)) : ScanClean (.s (.letDecl xs (some e))) := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨n + 1, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_s_assign_rev {xs : List Ident} {e : Expr Op}
+    (h : ScanClean (.e e)) : ScanClean (.s (.assign xs e)) := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨n + 1, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_s_exprStmt_rev {e : Expr Op} (h : ScanClean (.e e)) :
+    ScanClean (.s (.exprStmt e)) := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨n + 1, by simpa [noWritersScan, noWritersStep] using hn⟩
+
+theorem scanClean_s_cond_rev {cc : Expr Op} {body : Block Op}
+    (hc : ScanClean (.e cc)) (hb : ScanClean (.b body)) : ScanClean (.s (.cond cc body)) := by
+  obtain ⟨n, hn1, hn2⟩ := scanClean_fuel_and hc hb
+  exact ⟨n + 1, by simp only [noWritersScan, noWritersStep, hn1, hn2, Bool.and_true]⟩
+
+theorem scanClean_s_forLoop_rev {init : Block Op} {cc : Expr Op} {post body : Block Op}
+    (hi : ScanClean (.b init)) (hc : ScanClean (.e cc)) (hp : ScanClean (.b post))
+    (hb : ScanClean (.b body)) : ScanClean (.s (.forLoop init cc post body)) := by
+  obtain ⟨n, hn1, hn2, hn3, hn4⟩ := scanClean_fuel_and4 hi hc hp hb
+  exact ⟨n + 1, by
+    simp only [noWritersScan, noWritersStep, hn1, hn2, hn3, hn4, Bool.and_true]⟩
+
+theorem scanClean_s_switch_rev {cc : Expr Op} {cases : List (Literal × Block Op)}
+    {dflt : Option (Block Op)} (hc : ScanClean (.e cc)) (hcs : ScanClean (.cs cases))
+    (hd : match dflt with | none => True | some d => ScanClean (.b d)) :
+    ScanClean (.s (.switch cc cases dflt)) := by
+  cases dflt with
+  | none =>
+      obtain ⟨n, hn1, hn2⟩ := scanClean_fuel_and hc hcs
+      exact ⟨n + 1, by
+        simp only [noWritersScan, noWritersStep, hn1, hn2, Bool.and_true]⟩
+  | some d =>
+      obtain ⟨n, hn1, hn2, hn3⟩ := scanClean_fuel_and3 hc hcs hd
+      exact ⟨n + 1, by
+        simp only [noWritersScan, noWritersStep, hn1, hn2, hn3, Bool.and_true]⟩
+
+theorem scanClean_loop {cc : Expr Op} {post body : Block Op}
+    (hc : ScanClean (.e cc)) (hp : ScanClean (.b post)) (hb : ScanClean (.b body)) :
+    ScanClean (.s (.forLoop [] cc post body)) :=
+  scanClean_s_forLoop_rev scanClean_nil hc hp hb
+
+/-! ## Subterm facts -/
+
+theorem scanClean_b_mem {s : Stmt Op} :
+    ∀ {ss : Block Op}, s ∈ ss → ScanClean (.b ss) → ScanClean (.s s) := by
+  intro ss
+  induction ss with
+  | nil => intro hmem _; simp at hmem
+  | cons a as ih =>
+      intro hmem h
+      rw [List.mem_cons] at hmem
+      obtain ⟨ha, has⟩ := scanClean_b_cons h
+      rcases hmem with rfl | hmem
+      · exact ha
+      · exact ih hmem has
+
+theorem scanClean_cs_mem {q : Literal × Block Op} :
+    ∀ {cs : List (Literal × Block Op)}, q ∈ cs → ScanClean (.cs cs) → ScanClean (.b q.2) := by
+  intro cs
+  induction cs with
+  | nil => intro hmem _; simp at hmem
+  | cons a as ih =>
+      intro hmem h
+      rw [List.mem_cons] at hmem
+      obtain ⟨ha, has⟩ := scanClean_cs_cons h
+      rcases hmem with rfl | hmem
+      · exact ha
+      · exact ih hmem has
+
+theorem scanClean_hoist {body : Block Op} (h : ScanClean (.b body)) :
+    ∀ p ∈ hoist (Dialect c g) body, ScanClean (.b p.2.body) := by
+  intro p hp
+  simp only [hoist, List.mem_filterMap] at hp
+  obtain ⟨s, hs, hsp⟩ := hp
+  have hss := scanClean_b_mem hs h
+  cases s with
+  | block body => simp at hsp
+  | funDef n ps rs b =>
+      simp only [Option.some.injEq] at hsp
+      subst hsp
+      exact scanClean_s_funDef hss
+  | letDecl vars val => simp at hsp
+  | assign vars val => simp at hsp
+  | cond cc body => simp at hsp
+  | «switch» cc cases dflt => simp at hsp
+  | forLoop init cc post body => simp at hsp
+  | exprStmt e => simp at hsp
+  | «break» => simp at hsp
+  | «continue» => simp at hsp
+  | «leave» => simp at hsp
+
+theorem scanCleanFuns_nil : ScanCleanFuns ([] : FunEnv (Dialect c g)) := by
+  intro scope hscope
+  simp at hscope
+
+theorem scanCleanFuns_hoist {body : Block Op} (hb : ScanClean (.b body))
+    {funs : FunEnv (Dialect c g)} (hf : ScanCleanFuns funs) :
+    ScanCleanFuns (hoist (Dialect c g) body :: funs) := by
+  intro scope hscope p hp
+  rw [List.mem_cons] at hscope
+  rcases hscope with rfl | hscope
+  · exact scanClean_hoist hb p hp
+  · exact hf scope hscope p hp
+
+theorem scanCleanFuns_drop {funs : FunEnv (Dialect c g)} (hf : ScanCleanFuns funs) (k : Nat) :
+    ScanCleanFuns (funs.drop k) := by
+  intro scope hscope p hp
+  exact hf scope (List.mem_of_mem_drop hscope) p hp
+
+theorem lookupFun_clean : ∀ {funs : FunEnv (Dialect c g)} {fn decl cenv},
+    ScanCleanFuns funs → lookupFun funs fn = some (decl, cenv) →
+      ScanCleanFuns cenv ∧ ScanClean (.b decl.body) := by
+  intro funs
+  induction funs with
+  | nil => intro fn decl cenv hf h; simp [lookupFun] at h
+  | cons scope rest ih =>
+      intro fn decl cenv hf h
+      simp only [lookupFun] at h
+      split at h
+      · rename_i p hp
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨hdecl, hcenv⟩ := h
+        subst hcenv
+        refine ⟨?_, ?_⟩
+        · intro sc hsc q hq
+          rw [List.mem_cons] at hsc
+          rcases hsc with rfl | hsc
+          · exact hf sc (by simp) q hq
+          · exact hf sc (by simp [hsc]) q hq
+        · simpa [hdecl] using hf scope (by simp) p (List.mem_of_find?_eq_some hp)
+      · exact ih (fun sc hs => hf sc (by simp [hs])) h
+
+def ScanCleanDflt (dflt : Option (Block Op)) : Prop :=
+  match dflt with | none => True | some d => ScanClean (.b d)
+
+theorem scanCleanDflt_of_switch {cc : Expr Op} {cs : List (Literal × Block Op)}
+    {dflt : Option (Block Op)} (h : ScanClean (.s (.switch cc cs dflt))) :
+    ScanCleanDflt dflt := by
+  cases dflt with
+  | none => exact trivial
+  | some d => exact (scanClean_s_switch h).2.2
+
+theorem scanClean_selectSwitch {cv : U256} {cases : List (Literal × Block Op)}
+    {dflt : Option (Block Op)} (hcs : ScanClean (.cs cases))
+    (hd : ScanCleanDflt dflt) :
+    ScanClean (.b (selectSwitch (Dialect c g) cv cases dflt)) := by
+  unfold selectSwitch
+  cases hfind : List.find? (fun p : Literal × Block Op => decide (cv = (Dialect c g).litValue p.1)) cases with
+  | some q =>
+      exact scanClean_cs_mem (List.mem_of_find?_eq_some hfind) hcs
+  | none =>
+      cases dflt with
+      | none => exact scanClean_nil
+      | some d => exact hd
+
+/-! ## The step invariant -/
+
+def StepWorld (funs : FunEnv (Dialect c g)) (code : Code Op) : Prop :=
+  ScanCleanFuns funs ∧ ScanCleanCode code
+
+theorem Step.stepWorld {c : ExternalCalls} {g : ExternalGas} :
+    ∀ {funs : FunEnv (Dialect c g)} {V : VEnv (Dialect c g)} {st : EvmState}
+      {code : Code Op} {res : Res (Dialect c g)},
+      Step (Dialect c g) funs V st code res →
+      ScanCleanFuns funs → ScanCleanCode code → WorldEq st (Res.state res) := by
+  intro funs V st code res h
+  induction h with
+  | lit => intro _ _; exact WorldEq.refl _
+  | var hget => intro _ _; exact WorldEq.refl _
+  | builtinOk hargs hb ihargs =>
+      intro hf hc
+      obtain ⟨hw, hargsC⟩ := scanClean_e_builtin hc
+      exact WorldEq.trans (ihargs hf hargsC) (builtin_worldEq_ok hw hb)
+  | builtinHalt hargs hb ihargs =>
+      intro hf hc
+      obtain ⟨hw, hargsC⟩ := scanClean_e_builtin hc
+      exact WorldEq.trans (ihargs hf hargsC) (builtin_worldEq_halt hw hb)
+  | builtinArgsHalt hargs ihargs =>
+      intro hf hc
+      exact ihargs hf (scanClean_e_builtin hc).2
+  | callOk hargs hlookup hlen hbody hout ihargs ihbody =>
+      intro hf hc
+      obtain ⟨hcenv, hbodyClean⟩ := lookupFun_clean hf hlookup
+      exact WorldEq.trans (ihargs hf (scanClean_e_call hc))
+        (ihbody hcenv (scanClean_s_block_rev hbodyClean))
+  | callHalt hargs hlookup hlen hbody ihargs ihbody =>
+      intro hf hc
+      obtain ⟨hcenv, hbodyClean⟩ := lookupFun_clean hf hlookup
+      exact WorldEq.trans (ihargs hf (scanClean_e_call hc))
+        (ihbody hcenv (scanClean_s_block_rev hbodyClean))
+  | callArgsHalt hargs ihargs =>
+      intro hf hc
+      exact ihargs hf (scanClean_e_call hc)
+  | argsNil => intro _ _; exact WorldEq.refl _
+  | argsCons hrest hhead ihrest ihhead =>
+      intro hf hc
+      obtain ⟨hheadC, hrestC⟩ := scanClean_es_cons hc
+      exact WorldEq.trans (ihrest hf hrestC) (ihhead hf hheadC)
+  | argsRestHalt hrest ihrest =>
+      intro hf hc
+      exact ihrest hf (scanClean_es_cons hc).2
+  | argsHeadHalt hrest hhead ihrest ihhead =>
+      intro hf hc
+      obtain ⟨hheadC, hrestC⟩ := scanClean_es_cons hc
+      exact WorldEq.trans (ihrest hf hrestC) (ihhead hf hheadC)
+  | funDef => intro _ _; exact WorldEq.refl _
+  | block hbody ihbody =>
+      intro hf hc
+      exact ihbody (scanCleanFuns_hoist (scanClean_s_block hc) hf) (scanClean_s_block hc)
+  | letZero => intro _ _; exact WorldEq.refl _
+  | letVal hbody hlen ihbody =>
+      intro hf hc
+      exact ihbody hf (scanClean_s_letDecl_some hc)
+  | letHalt hbody ihbody =>
+      intro hf hc
+      exact ihbody hf (scanClean_s_letDecl_some hc)
+  | assignVal hbody hlen ihbody =>
+      intro hf hc
+      exact ihbody hf (scanClean_s_assign hc)
+  | assignHalt hbody ihbody =>
+      intro hf hc
+      exact ihbody hf (scanClean_s_assign hc)
+  | exprStmt hbody ihbody =>
+      intro hf hc
+      exact ihbody hf (scanClean_s_exprStmt hc)
+  | exprStmtHalt hbody ihbody =>
+      intro hf hc
+      exact ihbody hf (scanClean_s_exprStmt hc)
+  | ifTrue hcond hne hbody ihcond ihbody =>
+      intro hf hc
+      obtain ⟨hcC, hbodyC⟩ := scanClean_s_cond hc
+      exact WorldEq.trans (ihcond hf hcC) (ihbody hf (scanClean_s_block_rev hbodyC))
+  | ifFalse hcond hzero ihcond =>
+      intro hf hc
+      exact ihcond hf (scanClean_s_cond hc).1
+  | ifHalt hcond ihcond =>
+      intro hf hc
+      exact ihcond hf (scanClean_s_cond hc).1
+  | switchExec hcond hbody ihcond ihbody =>
+      intro hf hc
+      obtain ⟨hcC, hcsC, _⟩ := scanClean_s_switch hc
+      exact WorldEq.trans (ihcond hf hcC)
+        (ihbody hf (scanClean_s_block_rev
+          (scanClean_selectSwitch hcsC (scanCleanDflt_of_switch hc))))
+  | switchHalt hcond ihcond =>
+      intro hf hc
+      exact ihcond hf (scanClean_s_switch hc).1
+  | forLoop hinit hloop ihinit ihloop =>
+      intro hf hc
+      obtain ⟨hinitC, hcC, hpostC, hbodyC⟩ := scanClean_s_forLoop hc
+      have hf' := scanCleanFuns_hoist hinitC hf
+      exact WorldEq.trans (ihinit hf' hinitC) (ihloop hf' (scanClean_loop hcC hpostC hbodyC))
+  | forInitHalt hinit ihinit =>
+      intro hf hc
+      obtain ⟨hinitC, _, _, _⟩ := scanClean_s_forLoop hc
+      exact ihinit (scanCleanFuns_hoist hinitC hf) hinitC
+  | «break» => intro _ _; exact WorldEq.refl _
+  | «continue» => intro _ _; exact WorldEq.refl _
+  | «leave» => intro _ _; exact WorldEq.refl _
+  | seqNil => intro _ _; exact WorldEq.refl _
+  | seqCons hs hrest ihs ihrest =>
+      intro hf hc
+      obtain ⟨hsC, hrestC⟩ := scanClean_b_cons hc
+      exact WorldEq.trans (ihs hf hsC) (ihrest hf hrestC)
+  | seqStop hs hne ihs =>
+      intro hf hc
+      exact ihs hf (scanClean_b_cons hc).1
+  | loopDone hcond hzero ihcond =>
+      intro hf hc
+      exact ihcond hf (scanClean_s_forLoop hc).2.1
+  | loopCondHalt hcond ihcond =>
+      intro hf hc
+      exact ihcond hf (scanClean_s_forLoop hc).2.1
+  | loopStep hcond hne hbody hob hpost hpostnorm ihcond ihbody ihpost ihloop =>
+      intro hf hc
+      obtain ⟨_, hcC, hpostC, hbodyC⟩ := scanClean_s_forLoop hc
+      exact WorldEq.trans (ihcond hf hcC)
+        (WorldEq.trans (ihbody hf (scanClean_s_block_rev hbodyC))
+          (WorldEq.trans (ihpost hf (scanClean_s_block_rev hpostC))
+            (ihloop hf (scanClean_loop hcC hpostC hbodyC))))
+  | loopPostHalt hcond hne hbody hob hpost ihcond ihbody ihpost =>
+      intro hf hc
+      obtain ⟨_, hcC, hpostC, hbodyC⟩ := scanClean_s_forLoop hc
+      exact WorldEq.trans (ihcond hf hcC)
+        (WorldEq.trans (ihbody hf (scanClean_s_block_rev hbodyC))
+          (ihpost hf (scanClean_s_block_rev hpostC)))
+  | loopBreak hcond hne hbody ihcond ihbody =>
+      intro hf hc
+      obtain ⟨_, hcC, _, hbodyC⟩ := scanClean_s_forLoop hc
+      exact WorldEq.trans (ihcond hf hcC) (ihbody hf (scanClean_s_block_rev hbodyC))
+  | loopLeave hcond hne hbody ihcond ihbody =>
+      intro hf hc
+      obtain ⟨_, hcC, _, hbodyC⟩ := scanClean_s_forLoop hc
+      exact WorldEq.trans (ihcond hf hcC) (ihbody hf (scanClean_s_block_rev hbodyC))
+  | loopBodyHalt hcond hne hbody ihcond ihbody =>
+      intro hf hc
+      obtain ⟨_, hcC, _, hbodyC⟩ := scanClean_s_forLoop hc
+      exact WorldEq.trans (ihcond hf hcC) (ihbody hf (scanClean_s_block_rev hbodyC))
+
+
+/-- **PROVED (EXITSOUND).** Only staticcalls and no writers means the world is untouched:
+    sstore, tstore, the log family, selfdestruct and the create family are the only
+    stepOp world writers, and the call family is excluded by NoWriters except
+    staticcall, whose response world is never installed (EVMExec.lean:612-616). Note
+    the decorative hypothesis attack.md line 99 warns about is deliberately absent.
+
+    THE PROOF IS `Step.stepWorld`: one induction on the derivation carrying two
+    syntactic invariants - `ScanCleanCode code` for the code under execution and
+    `ScanCleanFuns funs` for every function body reachable from the environment. The
+    per-op table (`builtin_worldEq_ok`/`builtin_worldEq_halt` above) covers the `builtin`
+    cases, `ScanCleanFuns` covers `callOk`/`callHalt`, and the closure lemmas above
+    (`scanClean_b_cons`, `scanClean_s_block`, `scanClean_s_forLoop`, ...) hand each
+    sub-derivation its own clean code. REACHABILITY is unchanged: the scan has proved
+    instances (`NoWriters_staticcall_then_mstore`, `NoWriters_staticcall_fail_arm`). -/
+theorem Run_worldEq_of_noWriters {c g prog st0 V' st' o}
+    (hn : NoWriters prog) (h : Run c g prog st0 V' st' o) : WorldEq st0 st' := by
+  have hclean : ScanCleanCode (.stmt (.block prog)) := scanCleanCode_stmt_block.mpr hn
+  have hbody : ScanCleanCode (.stmts prog) := scanClean_s_block hclean
+  have hfuns : ScanCleanFuns (hoist (Dialect c g) prog :: []) :=
+    scanCleanFuns_hoist hbody scanCleanFuns_nil
+  cases h with
+  | block hstep => exact Step.stepWorld hstep hfuns hbody
+
+end EXITSOUNDWorld
 
 
 /-! ### MF-4: a failed staticcall reverts with the pinned selector
