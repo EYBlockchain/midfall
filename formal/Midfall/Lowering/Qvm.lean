@@ -2825,6 +2825,129 @@ theorem const_slot_correspondence_needs_walker_success :
       ∧ walkerKonstSlots (qOpLin7 :: List.replicate 3 0) 0 qOpLin7 = [] := by
   refine ⟨?_, ?_⟩ <;> rfl
 
+/-! ### VALP2: the whole-to-part fact for a segment, and the alignment it secretly needs
+
+    THE QUESTION THE ROW ASKS. 'operands_ok_of_validated' gives 'checkQuotientOperand' at every
+    instruction of the WHOLE program bytes; the row needs it on the SEGMENT
+    '((bytes.drop cursor).take (exprEnd - cursor))'. THE INDEX ARITHMETIC, ON PAPER FIRST: the segment
+    is a 'take' of a 'drop', so instruction 'j' of the SEGMENT is instruction 'cursor + j' of the
+    WHOLE - never 'j'. Every read of the segment at position 'p' is a read of the whole at position
+    'cursor + p' ('byteAtPanic_drop', 'quotientReadU16_drop', 'quotientReadU32_drop', all PROVED with
+    no hypothesis), which is the same shift and the reason the offset in the statement below is
+    'cursor + i'. -/
+
+/-- The two spellings of the program bytes the row has to reconcile: 'supportedQvm' validates
+    'bytesToList q.build.bytes' while the segment is cut out of 'qvmBytesToNats q.build.bytes'. Same
+    definition, so the bridge is 'rfl' - but it has to be NAMED, or the first card that tries the
+    whole-to-part step loses an hour to a mismatch that is not a mismatch. -/
+theorem valp2_bytesToList_eq_qvmBytesToNats (bs : Midfall.Bytes) :
+    Midfall.Generator.bytesToList bs = qvmBytesToNats bs := rfl
+
+/-- **THE NATURAL WHOLE-TO-PART STATEMENT, AND IT IS FALSE** (card VALP2). Stated here in full, with
+    the correct 'cursor + i' offset, so that the record contains the shape someone would otherwise
+    prove: from 'checkQuotientOperand' passing on every instruction of the whole bytes, every operand
+    of every instruction of the drop-take segment passes at its shifted cursor.
+
+    REFUTED, not weakened. 'valp2_heredityFails_measure' (VmValidator.lean) measures a four-byte program
+    that validates, a cursor of 1 in the middle of its first instruction, and a segment that decodes
+    'PUSH_CONST_U8 0x80' - a slot outside the model's 100-entry constant table. The segment's operand
+    fails at BOTH cursors 0 and 1 ('valp2_segmentOperandFails',
+    'valp2_segmentOperandFails_atWholeIndex'), so no choice of offset rescues the statement. The
+    reason is structural and it is a CONTRACT FACT about 'supportedQvm': phase 1 walks from offset 0
+    and phase 2 checks the instructions THAT walk names, so 'supportedQvm' says nothing at all about
+    a buffer cut at an arbitrary cursor. -/
+def PG_valp2_naturalWholeToPart : Prop :=
+  ∀ (bytes : List Nat) (model : QuotientOperandModel) (cursor exprEnd : Nat),
+    validateQuotientProgramOperands bytes model = .ok () →
+    ∀ (i : Nat) (op : Nat),
+      (i, op) ∈ bytecodeOpList ((bytes.drop cursor).take (exprEnd - cursor)) →
+      ∀ operand ∈ operandList ((bytes.drop cursor).take (exprEnd - cursor)) i op,
+        checkQuotientOperand model (cursor + i) operand = .ok ()
+
+/-- **WHAT THE SEGMENT ACTUALLY NEEDS: ALIGNMENT.** The missing hypothesis is not about the operand
+    check at all, it is about the WALK: the segment's instructions have to be instructions the whole
+    program's phase-1 walk also names, at the shifted cursors. Two conjuncts, both about the walk and
+    the operand reads and neither about any bound:
+
+      * 'shift' - every '(i, op)' the segment walk names has its whole-program twin '(cursor + i, op)';
+      * 'reads' - the operand list of that instruction is the SAME LIST of operands in both buffers.
+
+    'reads' is where the 'take' bites: a segment instruction whose operand reads run past 'exprEnd'
+    reads 'none' in the segment and a real byte in the whole. It is harmless here only because every
+    validator reader is panic-class, so a truncated read errors and 'operandList' - the TOTAL reading -
+    is then empty and the obligation is vacuous. The drop-congruence lemmas in 'VmValidator.lean' are
+    exactly the ingredients of 'reads' for the drop; the 'take' leg and the 'shift' leg are both
+    inductions over 'quotientBytecodeOpsGo', and 'shift' additionally needs the boundary fact that the
+    whole-program walk passes through 'cursor' - which NOTHING in the tree connects to 'itemStarts'. -/
+def PG_valp2_walkAlignment (bytes seg : List Nat) (cursor : Nat) : Prop :=
+  (∀ i op, (i, op) ∈ bytecodeOpList seg → (cursor + i, op) ∈ bytecodeOpList bytes) ∧
+    (∀ i op, (i, op) ∈ bytecodeOpList seg →
+        operandList seg i op = operandList bytes (cursor + i) op)
+
+/-- **THE WHOLE-TO-PART FACT, PROVED, WITH THE OFFSET.** Given the alignment - which is a hypothesis on
+    THIS LEMMA, never on the row, on a bundle, on 'ValidV3' or on the root (RULES) - the operand check
+    that 'supportedQvm' bought on the whole program transfers to every operand of every instruction of
+    the segment, at the shifted cursor 'cursor + i'. The proof is eight lines: it is a reindexing, and
+    all of the work is in 'PG_valp2_walkAlignment'. -/
+theorem operands_ok_of_validated_segment {bytes seg : List Nat}
+    {model : QuotientOperandModel} {cursor : Nat}
+    (hval : validateQuotientProgramOperands bytes model = .ok ())
+    (halign : PG_valp2_walkAlignment bytes seg cursor) :
+    ∀ i op, (i, op) ∈ bytecodeOpList seg →
+      ∀ operand ∈ operandList seg i op,
+        checkQuotientOperand model (cursor + i) operand = .ok () := by
+  obtain ⟨hmem, hreads⟩ := halign
+  obtain ⟨ops, ho, hall⟩ := operands_ok_of_validated hval
+  have hlist : bytecodeOpList bytes = ops.map (fun (idx, op, _len) => (idx, op)) := by
+    simp [bytecodeOpList, ho]
+  intro i op hi operand hop
+  have hmem' : (cursor + i, op) ∈ ops.map (fun (idx, op, _len) => (idx, op)) :=
+    hlist ▸ hmem i op hi
+  have hgoal := hall (cursor + i, op) hmem'
+  rw [← hreads i op hi] at hgoal
+  exact hgoal operand hop
+
+/-- The same fact in the row's own vocabulary: 'supportedQvm' really does buy the whole-program
+    operand check for the model the plan builds, with no 'Bool' in sight. The unfolding is the one
+    'qvm_validated_windows' performs; only the tail differs. -/
+theorem operands_ok_of_supported {Program Layout : Type}
+    (model : QuotientOperandModel)
+    (L : Midfall.Generator.LoweringPlan Program Layout)
+    (hvm : L.lowering = Midfall.Generator.QuotientLowering.vm)
+    (q : Midfall.Generator.PlannedQuotient) (hq : L.quotient = some q)
+    (hmodel : Midfall.Generator.quotientOperandModel L.meta_ L.data L.vk L.vkMptr L.memory
+      q.build q.plan.selectorFold = .ok model)
+    (hvalidated : Midfall.Generator.LoweringPlan.supportedQvm L) :
+    validateQuotientProgramOperands (Midfall.Generator.bytesToList q.build.bytes) model = .ok () := by
+  have hsup : L.supportedQvmBool = true := hvalidated
+  have hsb : L.supportedQvmBool =
+      match L.quotient with
+      | none => false
+      | some q =>
+          match Midfall.Generator.quotientOperandModel L.meta_ L.data L.vk L.vkMptr L.memory
+              q.build q.plan.selectorFold with
+          | .error _ => false
+          | .ok model =>
+              match validateQuotientProgramOperands (bytesToList q.build.bytes) model with
+              | .ok _ => true
+              | .error _ => false := by
+    unfold LoweringPlan.supportedQvmBool
+    rw [hvm]
+    rfl
+  rw [hsb] at hsup
+  rw [hq] at hsup
+  dsimp only at hsup
+  rw [hmodel] at hsup
+  cases hx : validateQuotientProgramOperands (bytesToList q.build.bytes) model with
+  | ok u =>
+      cases u
+      rfl
+  | error f => simp [hx] at hsup
+
+#print axioms Midfall.Lowering.operands_ok_of_validated_segment
+#print axioms Midfall.Lowering.operands_ok_of_supported
+#print axioms Midfall.Lowering.valp2_bytesToList_eq_qvmBytesToNats
+
 end Midfall.Lowering
 
 

@@ -36,19 +36,29 @@
 --   (iv)  THE LOOP INDUCTION over the fuel-bounded segment - LANDED HERE, PROVED, as
 --         'qvmNoBounds_stepErrorIsReachable'. SLOT2 named it as an independent remaining item and it
 --         is: the proof cites NO per-arm fact, only 'IdentityStep.hConsumed'.
--- SO WHAT DOES STILL BLOCK THE ROW? Two things, and they are now the ONLY two, both named below:
---   (A) THE VALIDATOR-SIDE INDUCTION. 'hvalidated' unfolds, through 'supportedQvmBool' and
---       'operands_ok_of_validated' (Qvm.lean:840, PROVED), to 'checkQuotientOperand' passing on every
---       operand of every instruction of the WHOLE PROGRAM BYTES. The per-arm families need it at ONE
---       cursor of the SEGMENT '(bytes.drop cursor).take (exprEnd - cursor)'. Tying the whole to the part
---       is the induction the row's own upstream doc comment already recorded as unwritten - "phase 1's
---       byte span covers every offset the walker reads ... has not been written as an induction over
---       quotientBytecodeOps". It is a VmValidator fact, not a per-arm fact.
+-- SO WHAT DOES STILL BLOCK THE ROW? Three things now, and VALP2 is what turned two into three:
+--   (A) THE VALIDATOR-SIDE WHOLE-TO-PART STEP - AND VALP2 MEASURED IT: IT IS FALSE AS STATED.
+--       'hvalidated' unfolds, through 'supportedQvmBool' and 'operands_ok_of_validated'
+--       (Qvm.lean:840, PROVED), to 'checkQuotientOperand' passing on every operand of every instruction
+--       of the WHOLE PROGRAM BYTES. The natural transfer - "so it passes at cursor 'cursor + j' of the
+--       SEGMENT '(bytes.drop cursor).take (exprEnd - cursor)'" - is REFUTED, not proved: phase 1 walks
+--       from offset 0 and phase 2 checks the instructions THAT walk names, so 'supportedQvm' says
+--       nothing about a buffer cut at an arbitrary cursor. The counterexample is
+--       'valp2_heredityFails_measure' and its reducing conjuncts in 'VmValidator.lean' (a validating
+--       4-byte program, a cursor in the middle of its first instruction, a segment that decodes
+--       PUSH_CONST_U8 0x80 against a 100-entry constant table). What the segment needs is not an
+--       induction but an ALIGNMENT hypothesis, named as 'PG_valp2_walkAlignment' with the whole-to-part
+--       lemma 'operands_ok_of_validated_segment' PROVED from it (offset 'cursor + i', and
+--       'checkQuotientOperand_ok_index' shows the offset carries no constraint either way). The bridge
+--       from 'itemStarts q.plan q.build' to the offsets of 'quotientBytecodeOps' is a VmCertify /
+--       VmBuilder fact and is NOT in this tree yet: so (A) splits into (A1) the walk-alignment bridge
+--       and (A2) the two drop/take congruence legs inside 'PG_valp2_walkAlignment'.
 --   (B) MODARITH7, absent from (i)-(iii) - QvmShift names it in
 --       'PG_stepNoRF_validated_slot2_modarith7_oor', '..._shif2_modarith7_read' and
 --       '..._shif2_modarith7_width'.
--- With (A) and (B), 'qvm_validated_noBoundsFault_of_stepErrorIsReachable' (PROVED below) closes the row
--- by a case split over the segment's cursors and nothing else.
+-- Given (A) and (B), 'qvm_validated_noBoundsFault_of_stepErrorIsReachable' (PROVED below) closes the
+-- row by a case split over the segment's cursors and nothing else. VALP2 corrects the RELOC reading of
+-- (A): it is not an induction that is owed, it is a hypothesis the row does not have.
 --
 -- NOTHING HERE ADDS A HYPOTHESIS TO A ROW, to 'ValidV3', a bundle or the root (RULES); no statement
 -- names a fixture (D-P71); no 'native_decide'. The file carries exactly one sorry and it is the row
@@ -79,12 +89,16 @@ open Midfall.Generator.QuotientValidator
     'Qvm.lean', so no proof of it could be written where it stood; the PROOF HOLE and its history are in
     the doc comment that stayed with the def.
 
-    STILL OPEN, and what stands between this row and a proof, named rather than glossed: (A) the
-    validator-side induction that gets 'checkQuotientOperand' from the whole program bytes to one cursor
-    of the segment - see (A) in this file's header, and the same gap recorded in the row's own upstream
-    doc comment; and (B) MODARITH7 on legs (i)-(iii), named in QvmShift's three
-    'PG_stepNoRF_validated_*_modarith7_*' Props. Leg (iv), the loop inversion, is PROVED below, so the
-    row is ONE validator induction and ONE arm away, not four legs away. -/
+    STILL OPEN, and what stands between this row and a proof, named rather than glossed - VALP2
+    corrected this list from two items to three. (A1) NOTHING IN THE TREE BRIDGES 'itemStarts q.plan
+    q.build' TO THE OFFSETS OF 'quotientBytecodeOps', and without that bridge the whole-to-part step is
+    FALSE: see 'PG_valp2_naturalWholeToPart' (stated, refuted) and 'valp2_heredityFails_measure' in
+    'VmValidator.lean'. (A2) The two legs of 'PG_valp2_walkAlignment' - the walk-shift and the
+    operand-read congruence for a drop-take segment - are inductions over 'quotientBytecodeOpsGo', whose
+    reader ingredients ('byteAtPanic_drop' and twins) are PROVED. (B) MODARITH7 on legs (i)-(iii), named
+    in QvmShift's three 'PG_stepNoRF_validated_*_modarith7_*' Props. Leg (iv), the loop inversion, is
+    PROVED below. No hypothesis was added to THIS row: (A1) and (A2) are lemmas about the segment, stated
+    where they belong, and the row's binders are untouched. -/
 theorem qvm_validated_noBoundsFault {Program Layout : Type}
     (model : QuotientOperandModel)
     (L : Midfall.Generator.LoweringPlan Program Layout)

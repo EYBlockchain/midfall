@@ -1205,6 +1205,176 @@ def validateQuotientConstSlots (bytes : List Nat) (constLen : Nat) : VResult Uni
     without widening `QuotientBuilder.M` (hazard 3's retirement path). -/
 def toQVMFault (fault : QuotientValidationFault) : QVMFault := QVMFault.panic fault.message
 
+/-! ## VALP2: the whole-to-part fact about the operand check, and the index arithmetic it needs
+
+    THE QUESTION (card VALP2). 'operands_ok_of_validated' (Midfall/Lowering/Qvm.lean) turns
+    'supportedQvm' into 'checkQuotientOperand model idx operand = .ok ()' for every operand of every
+    instruction of the WHOLE program bytes. The per-arm families need that fact at ONE cursor of the
+    SEGMENT '((bytes.drop cursor).take (exprEnd - cursor))'. This section does the arithmetic that
+    relates the two buffers, and it records the answer to the question nobody asked yet: the
+    whole-to-part step is NOT a validator fact, and it is FALSE as stated. -/
+
+/-- THE INDEX ARITHMETIC, PART ONE: a read of the shifted buffer at position 'p' IS a read of the
+    original buffer at position 'c + p', with NO hypothesis at all. Each of the three panic-class
+    readers is defined by matching on 'bytes.drop idx', so the fact is 'List.drop_drop' in disguise -
+    but it has to be said once per reader, because it is the only place in the validator where a
+    cursor is interpreted, and it is what makes the shift 'cursor + j' (and never 'j') the right
+    offset for instruction 'j' of the segment. -/
+theorem byteAtPanic_drop (bytes : List Nat) (c idx line : Nat) :
+    byteAtPanic (bytes.drop c) idx line = byteAtPanic bytes (c + idx) line := by
+  unfold byteAtPanic
+  simp only [List.drop_drop]
+
+/-- The 'u16' twin. Named for its namespace: 'Midfall.Generator.readU16' is the INTERPRETER's
+    bounds-checked reader with a different error type and must not be conflated with this one
+    (hazard 5, stated at the def). -/
+theorem quotientReadU16_drop (bytes : List Nat) (c idx : Nat) :
+    QuotientValidator.readU16 (bytes.drop c) idx = QuotientValidator.readU16 bytes (c + idx) := by
+  unfold QuotientValidator.readU16
+  simp only [List.drop_drop]
+
+/-- The 'u32' twin. -/
+theorem quotientReadU32_drop (bytes : List Nat) (c idx : Nat) :
+    QuotientValidator.readU32 (bytes.drop c) idx = QuotientValidator.readU32 bytes (c + idx) := by
+  unfold QuotientValidator.readU32
+  simp only [List.drop_drop]
+
+/-- THE INDEX CARRIES NO CONSTRAINT. 'idx' appears in 'checkQuotientOperand' only inside the fault
+    payload - every bound it enforces ('slot >= numConsts', 'bucket >= numSelectorBuckets',
+    'gap > selectorMaxPower', alignment, 'windowFor') is a function of the operand and the model
+    alone. So the whole-to-part step CANNOT be rescued by renumbering: passing the check at the
+    segment's own cursor and passing it at the whole program's cursor are the same proposition.
+    This is why the lemma the card was asked for has to be about the BYTES, not about the index. -/
+theorem checkQuotientOperand_ok_index {model : QuotientOperandModel} {i i' : Nat}
+    (operand : QuotientOperand) (h : checkQuotientOperand model i operand = .ok ()) :
+    checkQuotientOperand model i' operand = .ok () := by
+  cases operand with
+  | konst slot wide =>
+      have hred (j : Nat) : checkQuotientOperand model j (QuotientOperand.konst slot wide)
+          = if slot >= model.numConsts then
+              .error (QuotientValidationFault.constSlotOutOfRange wide slot j model.numConsts)
+            else .ok () := by
+        unfold checkQuotientOperand checkQuotientConstSlot
+        rfl
+      rw [hred] at h
+      rw [hred]
+      split at h <;> simp_all
+  | selectorBucket bucket =>
+      unfold checkQuotientOperand at h ⊢
+      split at h <;> simp_all
+  | selectorGap gap =>
+      unfold checkQuotientOperand at h ⊢
+      split at h <;> simp_all
+  | mem kind ptr =>
+      have hred (j : Nat) : checkQuotientOperand model j (QuotientOperand.mem kind ptr)
+          = (if ptr % wordBytes != 0 then
+              .error (QuotientValidationFault.pointerMisaligned kind ptr j)
+            else if model.read.windowFor ptr == none then
+              .error (QuotientValidationFault.pointerOutsideWindows kind ptr j
+                (describeReadWindows model.read))
+            else .ok ()) := by
+        unfold checkQuotientOperand checkQuotientMemOperand
+        rfl
+      rw [hred] at h
+      rw [hred]
+      split at h <;> simp_all
+  | token t off =>
+      unfold checkQuotientOperand checkQuotientMemOperand at h ⊢
+      simp only [bind, Except.bind] at h ⊢
+      cases hb : model.read.tokenBase t with
+      | none =>
+          simp only [hb] at h ⊢
+          exact absurd h (by simp)
+      | some base =>
+          simp only [hb] at h ⊢
+          by_cases h1 : base + off < base
+          · exact absurd h (by simp [h1])
+          · by_cases h2 : (base + off) % wordBytes != 0
+            · exact absurd h (by simp [h1, h2])
+            · by_cases h3 : model.read.windowFor (base + off) == none
+              · exact absurd h (by simp [h1, h2, h3])
+              · simp [h1, h2, h3]
+
+/-! ### THE COUNTEREXAMPLE: validation is not hereditary to a drop-take segment
+
+    THE CLAIM THAT IS FALSE. For every byte list 'bytes', every model, every 'cursor' and
+    'exprEnd': if 'validateQuotientProgramOperands bytes model' is '.ok ()' then so is
+    'validateQuotientProgramOperands ((bytes.drop cursor).take (exprEnd - cursor)) model' - and in
+    particular every operand of every instruction of the SEGMENT passes 'checkQuotientOperand' at the
+    shifted cursor 'cursor + j'. It is false, and the reason is structural: phase 1 walks the buffer
+    from offset 0 and phase 2 checks the instructions THAT walk names, so a cursor in the middle of
+    an instruction makes the segment a DIFFERENT PROGRAM with DIFFERENT operands. Nothing in
+    'supportedQvm' says where the segment starts. -/
+
+/-- A model with one generous read window (so every 'u16' pointer the counterexample can name is
+    inside it) and a constant table of 100 entries. -/
+def valp2CounterModel : QuotientOperandModel :=
+  { read := { windows := [⟨"valp2", 0, 0x10000⟩], tokenBases := [] }, numConsts := 100,
+    numSelectorBuckets := 0, selectorMaxPower := 0, stackWords := 1 }
+
+/-- 'PUSH_MEM_U16 0x0980 ; FOLD_MAIN'. Stack-safe (depth 1 then folded to 0), and its one memory
+    operand is aligned and inside the window, so the whole program validates. -/
+def valp2WholeBytes : List Nat := [0x05, 0x09, 0x80, 0x0a]
+
+/-- A cursor in the MIDDLE of the first instruction: the whole walk visits 0 and 3, never 1. -/
+def valp2Cursor : Nat := 1
+
+def valp2ExprEnd : Nat := 4
+
+/-- The segment: 'PUSH_CONST_U8 0x80 ; FOLD_MAIN'. Also stack-safe, so phase 1 accepts it - the
+    failure below is purely a phase-2 operand-value failure. -/
+def valp2SegmentBytes : List Nat :=
+  (valp2WholeBytes.drop valp2Cursor).take (valp2ExprEnd - valp2Cursor)
+
+/-- **THE MEASUREMENT: every conjunct is `true`.** Hand-run under `lake env lean` on this base and
+    printed `true` (card VALP2 report). It is deliberately NOT a `#eval ... -- expect` gate:
+    'kat_gate.py' asserts an EXACT pin of the gate count, and this card cannot afford a 17-28 minute
+    KAT run to move it honestly. The conjuncts that 'decide' can reduce are theorems below. The first five are recorded as a gate rather than as
+    theorems for a tooling reason worth knowing: 'decide' cannot kernel-reduce 'quotientBytecodeOpsGo'
+    or anything that calls it (measured on this base - the fuel-indexed match stays stuck even with
+    the fuel written in unary), so no 'decide' proof of a walk-level fact exists; the conjuncts that
+    do reduce are the theorems below. -/
+def valp2_heredityFails_measure : Bool :=
+  valp2SegmentBytes == [0x09, 0x80, 0x0a]
+    && (validateQuotientProgramOperands valp2WholeBytes valp2CounterModel).isOk
+    && (quotientBytecodeOps valp2WholeBytes).toOption == some [(0, 0x05, 3), (3, 0x0a, 1)]
+    && (quotientBytecodeOps valp2SegmentBytes).toOption == some [(0, 0x09, 2), (2, 0x0a, 1)]
+    && !(validateQuotientProgramOperands valp2SegmentBytes valp2CounterModel).isOk
+    && (visitQuotientOperands valp2SegmentBytes 0 qOpPushConstU8).isOk
+    && !(checkQuotientOperand valp2CounterModel 1 (QuotientOperand.konst 0x80 false)).isOk
+
+/-- The whole program's single instruction is the 3-byte 'PUSH_MEM_U16' and then 'FOLD_MAIN': so 1 is
+    not an instruction boundary, which is the whole point. -/
+theorem valp2_wholeInstructionLengths :
+    (quotientOpLen valp2WholeBytes 0).toOption = some 3 ∧
+      (quotientOpLen valp2WholeBytes 3).toOption = some 1 := by
+  constructor <;> decide
+
+/-- The segment decodes 'PUSH_CONST_U8' at its own cursor 0 and reads slot 0x80 = 128. -/
+theorem valp2_segmentOperandRead :
+    (visitQuotientOperands valp2SegmentBytes 0 qOpPushConstU8).isOk = true := by decide
+
+/-- The whole program's operand passes: pointer 0x0980 = 2432 is 32-aligned and inside the window. -/
+theorem valp2_wholeOperandOk :
+    (checkQuotientOperand valp2CounterModel 0 (QuotientOperand.mem "u16" 0x0980)).isOk = true := by
+  decide
+
+/-- The segment's operand FAILS: slot 128 is outside a 100-entry constant table. -/
+theorem valp2_segmentOperandFails :
+    (checkQuotientOperand valp2CounterModel 1 (QuotientOperand.konst 0x80 false)).isOk = false := by
+  decide
+
+/-- And renumbering does not help: by 'checkQuotientOperand_ok_index' the same operand fails at the
+    segment's own cursor 0 too. The defect is in WHICH BYTES are decoded, not in what they are called.
+    -/
+theorem valp2_segmentOperandFails_atWholeIndex :
+    (checkQuotientOperand valp2CounterModel 0 (QuotientOperand.konst 0x80 false)).isOk = false := by
+  decide
+
+#print axioms Midfall.Generator.QuotientValidator.checkQuotientOperand_ok_index
+#print axioms Midfall.Generator.QuotientValidator.byteAtPanic_drop
+#print axioms Midfall.Generator.QuotientValidator.valp2_segmentOperandFails
+
 end Midfall.Generator.QuotientValidator
 
 /-! ## Known-answer tests
