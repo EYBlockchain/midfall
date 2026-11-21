@@ -106,3 +106,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
 - After ANY edit to a large file, run `git diff --stat` and `git diff` and confirm the changed hunks are
   ONLY yours. If a hunk is not yours, restore from HEAD with git show and re-apply; do not commit.
 - WIP-commit before the edit, so recovery costs nothing.
+- FOUR occurrences in 48 hours, all in files over 2000 lines: a read returns at most ~2000 lines
+  and the write-back silently truncates the file. **For any file over ~1500 lines, patch with python
+  or a bash heredoc against the file on disk. NEVER read-then-write a large file.** Verify with
+  `wc -l` before and after, and `git diff --stat` to confirm only your hunks appear.
