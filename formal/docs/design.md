@@ -2730,3 +2730,32 @@ the human.
 **Conditions (applied, not chosen).** W1–W5, W7, W9–W15 and PLAN-V3 §4 still bind except where items
 2–7 say otherwise. The calibration points remain: a missed threshold stops the dependent WPs and goes
 to the human.
+
+## D-QVM1 — **Approved: add the address-fit conjunct to the program clause (repairs the QVM window and VKFIT gaps)**
+
+> **Status: APPROVED.** Drafted and signed 2026-11-21, in the OpenCode session on
+> `/Users/julian/midfall`, after the QVM work packages reported that
+> `qinterpRefines_qvmLoop` is FALSE as stated (BOXD: a window base at `2^256 - 1` wraps the
+> two cursor registers) and VKFIT reported the same missing bound at `vkMptr`/`vk.len`.
+> The question put to the human: *"The clean repair is a `memoryFit`/`programFit` conjunct in
+> the program clause (a computation on each render) that bounds every pointer+length window
+> below 2^256. It changes the class of covered renders, not the headline's form, and it is
+> faithful to Rust's usize arithmetic. Do you authorize that repair?"*
+> The human answered: **"Yes, add the fit clause (Recommended)."**
+
+**Decision.** `Midfall.LoweringV3.programOk` gains a fourth conjunct `programFits R.pv R.model`
+(`LoweringV3/Statements.lean`): the VK payload windows and, when the model carries a
+`QuotientProgram`, the interpreter's program, constant and stack windows must all lie below
+`2^256`. `ValidV3`'s text does not change; the class of renders it covers shrinks to the ones
+whose emitted addresses are representable, which is the Rust `usize` domain.
+
+**Consequences, applied not chosen.**
+1. `MemoryPairs.fit1_of_valid` / `fit2_of_valid` are now theorems of `ValidV3`; VKFIT's missing
+   bound is no longer a hypothesis.
+2. `QuotientRows.quotientProgram_window_of_valid` / `_constWindow_` / `_stackWindow_` expose the
+   QVM's three windows to the row.
+3. The QVM row is **not** silently proved by this: BOXD's section 12 (unpinned cached top) and
+   QLOOP's table-disagreement sketch are separate missing hypotheses, and `qinterpRefines_qvmLoop`
+   remains a registered OPEN row until they are added with a consumer.
+4. No `ValidV3`, bundle or root hypothesis was added beyond this conjunct; the headline signature
+   is unchanged.

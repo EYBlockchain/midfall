@@ -428,7 +428,7 @@ theorem blockProgS_of_progContractsW (R : Render p G₁ G₂ Gₜ) (Q : EvalObje
     TwoOutcomesW needs no Q. -/
 theorem twoOutcomesW_of_valid (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) (hR : ValidW R Q) :
     TwoOutcomesW R :=
-  twoOutcomesW_of_scans R hR.core.noWriters hR.core.program.2.2
+  twoOutcomesW_of_scans R hR.core.noWriters hR.core.program.2.2.1
 
 /-- **OBLIGATION 1, SOUNDNESS HALF, WIDENED: PROGRAM-LEVEL REJECTION.** SKELETON. NAMED LEAVES: the
     seven widened simulation rows of SimContractsW sequenced (SIM.2's proofs, re-pointed at BlockSimW),

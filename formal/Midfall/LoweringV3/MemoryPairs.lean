@@ -70,6 +70,7 @@ import Midfall.LoweringV2.Consts
 import Midfall.Generator.PlanNew
 import Midfall.LoweringV3.Statements
 import Midfall.Tools.ConeSorries
+import Midfall.Tools.Done
 
 set_option autoImplicit false
 
@@ -629,6 +630,17 @@ theorem fit1_of_bound {R : Render p G₁ G₂ Gₜ}
 theorem fit2_of_bound {R : Render p G₁ G₂ Gₜ} (h : R.pv.vk.len < 2 ^ 256) :
     (BitVec.ofNat 256 R.pv.vk.len).toNat = R.pv.vk.len := (ofNat_toNat_iff_lt _).mpr h
 
+/-- **THE VKFIT PAYOFF (D-QVM1, signed 2026-11-21).** The two equations the walk stops on, now
+    THEOREMS of `ValidV3` - the address-fit conjunct `programFits` supplies both bounds. Before the
+    decision they were conditional on a hypothesis that no clause carried. -/
+theorem fit1_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    (BitVec.ofNat 256 (ptrAddr R.pv.memory.vkMptr)).toNat = ptrAddr R.pv.memory.vkMptr :=
+  fit1_of_bound (Nat.lt_of_le_of_lt (Nat.le_add_right _ _) (programFit_of_valid hR).1)
+
+theorem fit2_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    (BitVec.ofNat 256 R.pv.vk.len).toNat = R.pv.vk.len :=
+  fit2_of_bound (Nat.lt_of_le_of_lt (Nat.le_add_left _ _) (programFit_of_valid hR).1)
+
 /-- **ROUTE 1 (THE ARENA CHAIN) - REFUTED.** The brief's hypothesis was that
     'VerifierMemoryLayout.new' allocates a 30-allocation chain over concrete 'Nat' offsets, so
     every emitted 'ptrAddr' is a sum of small literals and is below '2 ^ 256' by arithmetic. That
@@ -831,4 +843,9 @@ end Midfall.LoweringV3.MemoryPairs
 #print axioms Midfall.LoweringV3.MemoryPairs.fit1_iff_bound
 #print axioms Midfall.LoweringV3.MemoryPairs.fit2_iff_bound
 #cone_sorries Midfall.LoweringV3.MemoryPairs.fit1_iff_bound
+#print axioms Midfall.LoweringV3.MemoryPairs.fit1_of_valid
+#print axioms Midfall.LoweringV3.MemoryPairs.fit2_of_valid
+#cone_sorries Midfall.LoweringV3.MemoryPairs.fit1_of_valid
+#assert_axioms Midfall.LoweringV3.MemoryPairs.fit1_of_valid [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.MemoryPairs.fit2_of_valid [propext, Classical.choice, Quot.sound] native []
 

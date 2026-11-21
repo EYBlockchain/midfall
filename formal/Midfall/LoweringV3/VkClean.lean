@@ -919,7 +919,14 @@ theorem wrap_breaks_payload_clause :
   record. What IS left ready for whoever closes it: `MemoryPairs.fit1_of_bound` and
   `MemoryPairs.fit2_of_bound` turn the two `2 ^ 256` bounds into exactly the two equations this
   walk stops on, and `MemoryPairs.row_premises_of_generated` already supplies hdisj, hnum and hcode.
-  No new `sorry` is introduced anywhere in this section, so W12 does not bite. -/
+  No new `sorry` is introduced anywhere in this section, so W12 does not bite.
+
+  **UPDATE - D-QVM1 WAS SIGNED 2026-11-21 AND THIS GAP IS CLOSED.** `programOk` now carries
+  `programFits`, whose VK half is `ptrAddr pv.memory.vkMptr + pv.vk.len < 2 ^ 256` and the runtime
+  length bound. `MemoryPairs.fit1_of_valid` and `fit2_of_valid` are therefore THEOREMS of `ValidV3`
+  (proved, cone 0, standard three), and the reassembly this section said was waiting on the
+  decision can read them directly. The two `..._can_fail` refutations stay: they show why the
+  clause, not `generated`, has to carry the bound. -/
 #print axioms Midfall.LoweringV3.VkClean.wrap_breaks_payload_clause
 #print axioms Midfall.LoweringV3.VkClean.vkBody_clean_walk
 #print axioms Midfall.LoweringV3.VkClean.vkS1_peelT

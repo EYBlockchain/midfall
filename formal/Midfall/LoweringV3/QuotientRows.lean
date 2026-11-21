@@ -244,6 +244,40 @@ theorem q_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (h
     BlockProgS R Partial.quotientLin H vkAddr product cd := by
   sorry
 
+/-! ### 3b. THE ADDRESS-FIT PROJECTIONS FOR ROW.Q (D-QVM1, signed 2026-11-21)
+
+'programFits' (LoweringV3/Statements.lean) is the new program-clause conjunct. The QVM's own window
+and the two windows its prologue writes are its first fields; the row's caller gets them here
+without unfolding the conjunction. The window bound is exactly what BOXD's section 11 refutation
+says the old statement lacked. -/
+
+theorem quotientProgram_window_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
+    {program : QuotientProgram} (hp : R.model.quotientProgram = some program) :
+    program.programMptr + program.len < 2 ^ 256 :=
+  (quotientProgramFits_of_valid hR hp).1
+
+theorem quotientProgram_constWindow_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
+    {program : QuotientProgram} (hp : R.model.quotientProgram = some program) :
+    program.constMptr + 32 * (program.guards.constMax + 1) < 2 ^ 256 :=
+  (quotientProgramFits_of_valid hR hp).2.1
+
+theorem quotientProgram_stackWindow_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
+    {program : QuotientProgram} (hp : R.model.quotientProgram = some program) :
+    program.stackMptr ≤ program.guards.stackLast ∧
+      program.guards.stackLast + 32 < 2 ^ 256 :=
+  ⟨(quotientProgramFits_of_valid hR hp).2.2.1,
+    (quotientProgramFits_of_valid hR hp).2.2.2.1⟩
+
+/-- The segment window at the program's own window fits the 256-bit cursor word. This is the fact
+    the QVM row's cursor registers need; it is a corollary of the program-clause fit, not a new
+    hypothesis. -/
+theorem windowFit_of_programWindow {program : QuotientProgram} {s : QSegment}
+    (h : program.programMptr + program.len < 2 ^ 256)
+    (hb : s.base = program.programMptr) (he : s.exprEnd ≤ program.len) :
+    s.base + s.exprEnd < 2 ^ 256 :=
+  Nat.lt_of_le_of_lt
+    (Nat.add_le_add (le_of_eq hb) he) h
+
 /-- **ROW.Q.1 - THE SPLIT LOOP.** VERBATIM from 'GeneratorRows.lean:875-887': binders, the 'hr'
 hypothesis that the table does not pin 'r', the 'k < 2 ^ 256' bound, the pre and the post. Statement
 4 of the linearization scope is the squaring walk that computes '(x^(2^k - 1), x^(2^k))' in ONE

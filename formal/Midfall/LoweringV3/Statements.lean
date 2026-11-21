@@ -2074,6 +2074,61 @@ def hasMultiPointSet (pv : PlanView) : Bool :=
 def permCommMatchRepaired (vk : VerifyingKey (Fr p) G₁) : Bool :=
   vk.permutation.commitments.size == vk.cs.permutation.columns.size
 
+/-- **THE ADDRESS-FIT INVARIANT (D-QVM1, signed 2026-11-21).** The port keeps `usize` addresses as
+    `Nat`, so a pointer plus a window length can pass `2^256` even though the emitted Yul registers
+    are 256-bit words. The QVM window counterexample (`qinterpRefines_qvmLoop_row_is_false`, BOXD)
+    and VKFIT's `fit1`/`fit2` are both instances of that one model gap. This is the computation the
+    program clause checks: every region the emitted code addresses must lie below `2^256`.
+
+    The `vk` half is the payload VkLoading copies; the `quotientProgram` half is the interpreter's
+    own window. `quotientProgram = none` is the direct-lowering case, which uses no QVM window. -/
+def quotientProgramFits (p : QuotientProgram) : Prop :=
+  p.programMptr + p.len < 2 ^ 256 ∧
+  p.constMptr + 32 * (p.guards.constMax + 1) < 2 ^ 256 ∧
+  p.stackMptr ≤ p.guards.stackLast ∧
+  p.guards.stackLast + 32 < 2 ^ 256 ∧
+  p.evalNumerMptr + 32 < 2 ^ 256 ∧
+  p.traceIdMptr + 32 < 2 ^ 256 ∧
+  p.selectorPowerMptr + 32 * (p.selectorMaxPower + 1) < 2 ^ 256
+
+def programFits (pv : PlanView) (m : Model) : Prop :=
+  ptrAddr pv.memory.vkMptr + pv.vk.len < 2 ^ 256 ∧
+  ptrAddr pv.memory.vkMptr + pv.vk.runtimeLen < 2 ^ 256 ∧
+  match m.quotientProgram with
+  | some p => quotientProgramFits p
+  | none => True
+
+/-- The `Bool` face of `quotientProgramFits`; the clauses are explicit so the kernel can compute
+    the conjunction without a `Decidable` instance for the `Prop` def. -/
+def quotientProgramFitB (p : QuotientProgram) : Bool :=
+  decide (p.programMptr + p.len < 2 ^ 256) &&
+  decide (p.constMptr + 32 * (p.guards.constMax + 1) < 2 ^ 256) &&
+  decide (p.stackMptr ≤ p.guards.stackLast) &&
+  decide (p.guards.stackLast + 32 < 2 ^ 256) &&
+  decide (p.evalNumerMptr + 32 < 2 ^ 256) &&
+  decide (p.traceIdMptr + 32 < 2 ^ 256) &&
+  decide (p.selectorPowerMptr + 32 * (p.selectorMaxPower + 1) < 2 ^ 256)
+
+theorem quotientProgramFitB_eq_true_iff {p : QuotientProgram} :
+    quotientProgramFitB p = true ↔ quotientProgramFits p := by
+  simp only [quotientProgramFitB, quotientProgramFits, Bool.and_eq_true, decide_eq_true_eq]
+  tauto
+
+/-- The `Bool` face of `programFits`, so the program clause computes it per render. -/
+def programFitB (pv : PlanView) (m : Model) : Bool :=
+  decide (ptrAddr pv.memory.vkMptr + pv.vk.len < 2 ^ 256) &&
+  decide (ptrAddr pv.memory.vkMptr + pv.vk.runtimeLen < 2 ^ 256) &&
+  match m.quotientProgram with
+  | some p => quotientProgramFitB p
+  | none => true
+
+theorem programFitB_eq_true_iff {pv : PlanView} {m : Model} :
+    programFitB pv m = true ↔ programFits pv m := by
+  unfold programFitB programFits
+  cases m.quotientProgram <;>
+    simp [Bool.and_eq_true, decide_eq_true_eq, quotientProgramFitB_eq_true_iff]
+    <;> tauto
+
 /-- **ONE BUNDLE FOR THE PROGRAM.** Everything about the emitted program that a computation at a
     render decides: it is the parse of the text (`codegenStruct`, structural) AND the token equality
     the frozen surface states (`codegenAgrees`, the card's "frozen token clause"); its constant table
@@ -2111,7 +2166,8 @@ def programOkB (R : Render p G₁ G₂ Gₜ) : Bool :=
     (D-P71 addition 5): `ExitDiscipline` is the scan of §I and `ExitShape` below is the SAME
     `exitScan` applied to a different block - there is no second scan function in the tree. -/
 def programOk (R : Render p G₁ G₂ Gₜ) : Prop :=
-  programOkB R = true ∧ GasCallOk (R.prog 0 0) ∧ ExitDiscipline (R.prog 0 0)
+  programOkB R = true ∧ GasCallOk (R.prog 0 0) ∧ ExitDiscipline (R.prog 0 0) ∧
+    programFits R.pv R.model
 
 /-- The three names the projections read are in the data table for EVERY plan view and model,
     whatever the four optional arms of the model hold. -/
@@ -2242,6 +2298,20 @@ structure ValidV3 (R : Render p G₁ G₂ Gₜ) : Prop where
 theorem programOkB_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) : programOkB R = true :=
   hR.program.1
 
+/-- The address-fit conjunct of the program clause (D-QVM1). -/
+theorem programFit_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    programFits R.pv R.model :=
+  hR.program.2.2.2
+
+/-- The interpreter's own window, at the model's quotient program. -/
+theorem quotientProgramFits_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
+    {p : QuotientProgram} (hp : R.model.quotientProgram = some p) :
+    quotientProgramFits p := by
+  have h := programFit_of_valid hR
+  unfold programFits at h
+  rw [hp] at h
+  exact h.2.2
+
 theorem noShadow_of_programOk {R : Render p G₁ G₂ Gₜ} (hp : programOkB R = true) :
     noShadowCore R.pv R.model = true := by
   have hc := hp
@@ -2285,7 +2355,7 @@ theorem negLagranges_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
     2 ≤ R.pv.numNegLagranges := negLagranges_of_programOk (programOkB_of_valid hR)
 
 theorem exitDiscipline_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
-    ExitDiscipline (R.prog 0 0) := hR.program.2.2
+    ExitDiscipline (R.prog 0 0) := hR.program.2.2.1
 
 theorem gasCallOk_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) : GasCallOk (R.prog 0 0) :=
   hR.program.2.1
