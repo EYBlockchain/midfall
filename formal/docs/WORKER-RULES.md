@@ -122,3 +122,8 @@ Read this whole file before starting. Card briefs reference it instead of restat
   moving the pin reddens the gate; moving the pin is an ownership breach unless disclosed and reconciled
   by the orchestrator. **If the KAT will not fit your budget, hand-measure as a Bool and claim neither way
   for KAT itself** - that is what VALP2 did and it is the standard.
+
+- **`str.replace(x, y, 1)` substitutes the FIRST match ANYWHERE in the file, not the first match in your
+  region.** MOD7E had a replace meant for its own text hit an earlier card's line and joined two lines of
+  it. Anchor on text unique to YOUR block, or insert at a line number you have just verified, and always
+  audit `git diff` hunk by hunk before committing - `git diff --numstat` showing 0 deletions is the proof.

@@ -10469,3 +10469,539 @@ reference side. No disagreement between the emitted and reference sides was exhi
 namespace Midfall.LoweringV3.QuotientArms
 end Midfall.LoweringV3.QuotientArms
 
+
+/-!
+## MOD7E - THE FIVE 'VEnv.get' FACTS ON 'mod7Env' (THE PREREQUISITE MOD7D NAMED)
+
+MOD7D's handoff names this as the real triple blocker, and it is NOT 'mod7PrologueEnv_get_*': the five
+block lemmas each take their 'VEnv.get' facts on a GENERIC input 'V₀' - 'mod7MemBlock' asks for 'q_pc',
+'q_acc', 'q_const_mptr', 'r' and its own 'q_mem_count' - the prologue's output is covered by
+'mod7PrologueEnv_get_*', but block 'k' OUTPUTS 'mod7Env V₀ pc acc cntv.toNat', so chaining block 'k+1'
+onto block 'k' needs the same reads ON 'mod7Env'. Nothing had them. This section is that prerequisite.
+
+'mod7Env V₀ pc acc m' is 'V₀' with exactly two registers rewritten - 'q_pc' to 'pc m' and 'q_acc' to
+'acc m' - so the answer is uniform: the two rewritten registers read back their iteration-'m' values and
+EVERY other register passes through untouched at every iteration. 'mod7Env_get_pc' / '_get_acc' /
+'_get_other' say that for an arbitrary 'Ident' but each in its own incidental argument order; what the
+chain needs is the reads spelled in the shape a 'have' at a block boundary wants, one per register, plus
+the five-at-once bundle. 'mod7EnvBlock_gets' is the bundle at iteration 'm', 'mod7EnvBlock_gets_at2' the
+bundle through TWO block layers, which is what a chain step actually consumes.
+
+NOTHING HERE IS AN EQUATION AGAINST 'modarith7Form'. It is environment bookkeeping on the emitted side.
+-/
+namespace Midfall.LoweringV3.QuotientArms
+
+/-- THE FIVE-AT-ONCE BUNDLE: the four registers every MODARITH7 block reads besides its own counter, plus
+    an arbitrary carried register 'x', all on 'mod7Env' at iteration 'm'. 'x' is a parameter rather than
+    a tenth lemma because the five blocks read five DIFFERENT counters. -/
+theorem mod7EnvBlock_gets {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (pcv accv cm : U256)
+    (hget_pc : VEnv.get V₀ "q_pc" = some pcv)
+    (hget_acc : VEnv.get V₀ "q_acc" = some accv)
+    (hget_cm : VEnv.get V₀ "q_const_mptr" = some cm)
+    (hget_r : VEnv.get V₀ "r" = some frModulusWord)
+    (x : Ident) (hx : x ≠ "q_acc") (hy : x ≠ "q_pc") (w : U256)
+    (hget_x : VEnv.get V₀ x = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_pc" = some (pc m)
+      ∧ VEnv.get (mod7Env V₀ pc acc m) "q_acc" = some (acc m)
+      ∧ VEnv.get (mod7Env V₀ pc acc m) "q_const_mptr" = some cm
+      ∧ VEnv.get (mod7Env V₀ pc acc m) "r" = some frModulusWord
+      ∧ VEnv.get (mod7Env V₀ pc acc m) x = some w :=
+  ⟨mod7Env_get_pc V₀ pc acc pcv hget_pc m,
+    mod7Env_get_acc V₀ pc acc accv hget_acc m,
+    mod7Env_get_other V₀ pc acc "q_const_mptr"
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") cm hget_cm m,
+    mod7Env_get_other V₀ pc acc "r"
+      (by decide : ("r" : Ident) ≠ "q_acc")
+      (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord hget_r m,
+    mod7Env_get_other V₀ pc acc x hx hy w hget_x m⟩
+
+/-- THE TWO-LAYER BUNDLE: block 'k+1' sits on block 'k' output as 'mod7Env (mod7Env V₀ pc acc N) pc2 acc2
+    N2' and the five reads pass through BOTH layers. This is the fact a chain step consumes whole. -/
+theorem mod7EnvBlock_gets_at2 {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc pc2 acc2 : Nat → U256) (pcv accv cm : U256)
+    (hget_pc : VEnv.get V₀ "q_pc" = some pcv)
+    (hget_acc : VEnv.get V₀ "q_acc" = some accv)
+    (hget_cm : VEnv.get V₀ "q_const_mptr" = some cm)
+    (hget_r : VEnv.get V₀ "r" = some frModulusWord)
+    (x : Ident) (hx : x ≠ "q_acc") (hy : x ≠ "q_pc") (w : U256)
+    (hget_x : VEnv.get V₀ x = some w) (N N2 : Nat) :
+    VEnv.get (mod7Env (mod7Env V₀ pc acc N) pc2 acc2 N2) "q_pc" = some (pc2 N2)
+      ∧ VEnv.get (mod7Env (mod7Env V₀ pc acc N) pc2 acc2 N2) "q_acc" = some (acc2 N2)
+      ∧ VEnv.get (mod7Env (mod7Env V₀ pc acc N) pc2 acc2 N2) "q_const_mptr" = some cm
+      ∧ VEnv.get (mod7Env (mod7Env V₀ pc acc N) pc2 acc2 N2) "r" = some frModulusWord
+      ∧ VEnv.get (mod7Env (mod7Env V₀ pc acc N) pc2 acc2 N2) x = some w := by
+  have h1 : VEnv.get (mod7Env V₀ pc acc N) "q_pc" = some (pc N) :=
+    mod7Env_get_pc V₀ pc acc pcv hget_pc N
+  have h2 : VEnv.get (mod7Env V₀ pc acc N) "q_acc" = some (acc N) :=
+    mod7Env_get_acc V₀ pc acc accv hget_acc N
+  have h3 : VEnv.get (mod7Env V₀ pc acc N) "q_const_mptr" = some cm :=
+    mod7Env_get_other V₀ pc acc "q_const_mptr"
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") cm hget_cm N
+  have h4 : VEnv.get (mod7Env V₀ pc acc N) "r" = some frModulusWord :=
+    mod7Env_get_other V₀ pc acc "r"
+      (by decide : ("r" : Ident) ≠ "q_acc")
+      (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord hget_r N
+  have h5 : VEnv.get (mod7Env V₀ pc acc N) x = some w :=
+    mod7Env_get_other V₀ pc acc x hx hy w hget_x N
+  exact ⟨mod7Env_get_pc (mod7Env V₀ pc acc N) pc2 acc2 (pc N) h1 N2,
+    mod7Env_get_acc (mod7Env V₀ pc acc N) pc2 acc2 (acc N) h2 N2,
+    mod7Env_get_other (mod7Env V₀ pc acc N) pc2 acc2 "q_const_mptr"
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") cm h3 N2,
+    mod7Env_get_other (mod7Env V₀ pc acc N) pc2 acc2 "r"
+      (by decide : ("r" : Ident) ≠ "q_acc")
+      (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord h4 N2,
+    mod7Env_get_other (mod7Env V₀ pc acc N) pc2 acc2 x hx hy w h5 N2⟩
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_const_mptr'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_const_mptr' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_const_mptr {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_cm : VEnv.get V₀ "q_const_mptr" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_const_mptr" = some w :=
+  mod7Env_get_other V₀ pc acc "q_const_mptr"
+    (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+    (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") w hget_cm m
+
+/-- 'VEnv.get' on 'mod7Env' at 'r'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'r' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_r {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_r : VEnv.get V₀ "r" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "r" = some w :=
+  mod7Env_get_other V₀ pc acc "r"
+    (by decide : ("r" : Ident) ≠ "q_acc")
+    (by decide : ("r" : Ident) ≠ "q_pc") w hget_r m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_has_top'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_has_top' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_has_top {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_ht : VEnv.get V₀ "q_has_top" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_has_top" = some w :=
+  mod7Env_get_other V₀ pc acc "q_has_top"
+    (by decide : ("q_has_top" : Ident) ≠ "q_acc")
+    (by decide : ("q_has_top" : Ident) ≠ "q_pc") w hget_ht m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_top'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_top' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_top {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_top : VEnv.get V₀ "q_top" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_top" = some w :=
+  mod7Env_get_other V₀ pc acc "q_top"
+    (by decide : ("q_top" : Ident) ≠ "q_acc")
+    (by decide : ("q_top" : Ident) ≠ "q_pc") w hget_top m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_flags'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_flags' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_flags {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_flags : VEnv.get V₀ "q_flags" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_flags" = some w :=
+  mod7Env_get_other V₀ pc acc "q_flags"
+    (by decide : ("q_flags" : Ident) ≠ "q_acc")
+    (by decide : ("q_flags" : Ident) ≠ "q_pc") w hget_flags m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_cond_ptr'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_cond_ptr' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_cond_ptr {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_cpv : VEnv.get V₀ "q_cond_ptr" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_cond_ptr" = some w :=
+  mod7Env_get_other V₀ pc acc "q_cond_ptr"
+    (by decide : ("q_cond_ptr" : Ident) ≠ "q_acc")
+    (by decide : ("q_cond_ptr" : Ident) ≠ "q_pc") w hget_cpv m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_counts_word'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_counts_word' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_counts_word {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_cw : VEnv.get V₀ "q_counts_word" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_counts_word" = some w :=
+  mod7Env_get_other V₀ pc acc "q_counts_word"
+    (by decide : ("q_counts_word" : Ident) ≠ "q_acc")
+    (by decide : ("q_counts_word" : Ident) ≠ "q_pc") w hget_cw m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_lin_count'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_lin_count' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_lin_count {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_lin : VEnv.get V₀ "q_lin_count" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_lin_count" = some w :=
+  mod7Env_get_other V₀ pc acc "q_lin_count"
+    (by decide : ("q_lin_count" : Ident) ≠ "q_acc")
+    (by decide : ("q_lin_count" : Ident) ≠ "q_pc") w hget_lin m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_row_count'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_row_count' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_row_count {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_row : VEnv.get V₀ "q_row_count" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_row_count" = some w :=
+  mod7Env_get_other V₀ pc acc "q_row_count"
+    (by decide : ("q_row_count" : Ident) ≠ "q_acc")
+    (by decide : ("q_row_count" : Ident) ≠ "q_pc") w hget_row m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_pairwise_count'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_pairwise_count' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_pairwise_count {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_pw : VEnv.get V₀ "q_pairwise_count" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_pairwise_count" = some w :=
+  mod7Env_get_other V₀ pc acc "q_pairwise_count"
+    (by decide : ("q_pairwise_count" : Ident) ≠ "q_acc")
+    (by decide : ("q_pairwise_count" : Ident) ≠ "q_pc") w hget_pw m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_mem_count'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_mem_count' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_mem_count {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_mem : VEnv.get V₀ "q_mem_count" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_mem_count" = some w :=
+  mod7Env_get_other V₀ pc acc "q_mem_count"
+    (by decide : ("q_mem_count" : Ident) ≠ "q_acc")
+    (by decide : ("q_mem_count" : Ident) ≠ "q_pc") w hget_mem m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_product_count'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_product_count' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_product_count {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_prod : VEnv.get V₀ "q_product_count" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_product_count" = some w :=
+  mod7Env_get_other V₀ pc acc "q_product_count"
+    (by decide : ("q_product_count" : Ident) ≠ "q_acc")
+    (by decide : ("q_product_count" : Ident) ≠ "q_pc") w hget_prod m
+
+/-- 'VEnv.get' on 'mod7Env' at 'q_sp'. 'mod7Env' rewrites only 'q_pc' and 'q_acc', so 'q_sp' passes through
+    from the block-chain input environment unchanged at every iteration. -/
+theorem mod7EnvBlock_get_sp {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hget_sp : VEnv.get V₀ "q_sp" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_sp" = some w :=
+  mod7Env_get_other V₀ pc acc "q_sp"
+    (by decide : ("q_sp" : Ident) ≠ "q_acc")
+    (by decide : ("q_sp" : Ident) ≠ "q_pc") w hget_sp m
+
+end Midfall.LoweringV3.QuotientArms
+
+namespace Midfall.LoweringV3.QuotientArms
+#print axioms Midfall.LoweringV3.QuotientArms.mod7EnvBlock_gets
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7EnvBlock_gets
+#print axioms Midfall.LoweringV3.QuotientArms.mod7EnvBlock_gets_at2
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7EnvBlock_gets_at2
+#print axioms Midfall.LoweringV3.QuotientArms.mod7EnvBlock_get_lin_count
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7EnvBlock_get_lin_count
+#print axioms Midfall.LoweringV3.QuotientArms.mod7EnvBlock_get_product_count
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7EnvBlock_get_product_count
+end Midfall.LoweringV3.QuotientArms
+
+/-!
+## MOD7E - THE EPILOGUE (emitted statements 20-22)
+
+Three links: the optional COND gate on flag bit 0 - the SAME bit the prologue's statement 4 branches on,
+so the same 'hb0' shape serves - then the two publishes 'q_top := q_acc' and 'q_has_top := 1'. The gate is
+a 'Step.ifTrue' over a 'Step.block' exactly as in the prologue, and its branch introduces NO new binding,
+so 'restore' is the identity by 'restore_same_len' and the branch's single write survives intact. The
+environment SHAPE is flag-independent for the same reason as in the prologue: writing 'q_acc' with the
+value it already holds is 'venvSet_same_of_get', so the FALSE case collapses onto the same term as the
+TRUE case with 'if b0 then _ else accv' in the value slot.
+
+Touch order inside the gate, from 'Step.argsCons' evaluating the REST before its head: 'r' and 'q_acc'
+are read first (neither touches memory), and only then does 'mload q_cond_ptr' touch 'cpv'. One touch, at
+'cpv', and only when the bit is set - the epilogue's whole contribution to 'quotientModarith7OpLen'.
+
+The three intermediate environments are 'abbrev', never 'let': MOD7D defect 1 is that 'rw' will not
+zeta-expand a 'let' to see a defeq, and this derivation has to rewrite through every one of them.
+
+EMITTED-SIDE ONLY. No equation against 'modarith7Form' is stated or implied.
+-/
+namespace Midfall.LoweringV3.QuotientArms
+
+/-- The value 'q_acc' holds after the epilogue gate: the 'mulmod' when flag bit 0 is set, otherwise the
+    value it came in with. -/
+abbrev mod7EpiAcc (st : EvmState) (cpv accv : U256) (b0 : Bool) : U256 :=
+  if b0 then wMulmod (loadWord st.memory cpv.toNat) accv else accv
+
+/-- The state after the epilogue gate: one 'touchMemory' at the condition pointer, and only when the
+    bit is set. -/
+abbrev mod7EpiSt (st : EvmState) (cpv : U256) (b0 : Bool) : EvmState :=
+  if b0 then touchMemory st cpv.toNat 32 else st
+
+/-- After statement 20. -/
+abbrev mod7EpiEnv20 {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (cpv accv : U256) (b0 : Bool) :
+    VEnv (Bridge.Dialect c g) :=
+  VEnv.set V "q_acc" (mod7EpiAcc st cpv accv b0)
+
+/-- After statement 21. -/
+abbrev mod7EpiEnv21 {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (cpv accv : U256) (b0 : Bool) :
+    VEnv (Bridge.Dialect c g) :=
+  VEnv.set (mod7EpiEnv20 V st cpv accv b0) "q_top" (mod7EpiAcc st cpv accv b0)
+
+/-- After statement 22: the epilogue's post-environment. -/
+abbrev mod7EpiEnv {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (cpv accv : U256) (b0 : Bool) :
+    VEnv (Bridge.Dialect c g) :=
+  VEnv.set (mod7EpiEnv21 V st cpv accv b0) "q_has_top" (BitVec.ofNat 256 1)
+
+/-- **THE MODARITH7 EPILOGUE**: emitted statements 20-22 as three 'Step.seqCons' links. 'hb0' is the
+    SAME shape as the prologue's - the gate tests flag bit 0, the bit the prologue's COND branch tested -
+    and the derivation needs nothing beyond the four registers the gate reads. -/
+theorem mod7Epilogue {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (fl cpv accv : U256) (st : EvmState) (b0 : Bool)
+    (hget_flags : VEnv.get V "q_flags" = some fl)
+    (hget_cpv : VEnv.get V "q_cond_ptr" = some cpv)
+    (hget_acc : VEnv.get V "q_acc" = some accv)
+    (hget_r : VEnv.get V "r" = some frModulusWord)
+    (hb0 : fl &&& BitVec.ofNat 256 1 = if b0 then BitVec.ofNat 256 1 else BitVec.ofNat 256 0) :
+    Step (D := Bridge.Dialect c g) funs V st (.stmts mod7EpilogueBody)
+      (.sres (mod7EpiEnv V st cpv accv b0) (mod7EpiSt st cpv b0) .normal) := by
+  -- statement 20 part 1: evaluate the gate condition 'q_flags &&& 1'
+  have k1 : Step (D := Bridge.Dialect c g) funs V st (.expr (ylit 1)) (.eres (.vals [(BitVec.ofNat 256 1)] st)) :=
+    qlit funs V st 1
+  have k2 : Step (D := Bridge.Dialect c g) funs V st (.expr (yvar "q_flags")) (.eres (.vals [fl] st)) :=
+    Step.var (D := Bridge.Dialect c g) hget_flags
+  have k3 : Step (D := Bridge.Dialect c g) funs V st (.args []) (.eres (.vals [] st)) :=
+    Step.argsNil (D := Bridge.Dialect c g)
+  have k4 : Step (D := Bridge.Dialect c g) funs V st (.args [(ylit 1)]) (.eres (.vals [(BitVec.ofNat 256 1)] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+      (v := (BitVec.ofNat 256 1)) (st2 := st) k3 k1
+  have k5 : Step (D := Bridge.Dialect c g) funs V st (.args [(yvar "q_flags"), (ylit 1)]) (.eres (.vals [fl, (BitVec.ofNat 256 1)] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [(ylit 1)]) (restvals := [(BitVec.ofNat 256 1)])
+      (st1 := st) (v := fl) (st2 := st) k4 k2
+  have kcond : Step (D := Bridge.Dialect c g) funs V st (.expr (yop EVM.Op.and [(yvar "q_flags"), (ylit 1)])) (.eres (.vals [(fl &&& (BitVec.ofNat 256 1))] st)) :=
+    Step.builtinOk (D := Bridge.Dialect c g) k5 (qbi_and st fl (BitVec.ofNat 256 1))
+  -- statement 20 part 2: the gate itself, a two-way split on flag bit 0
+  have s20 : Step (D := Bridge.Dialect c g) funs V st (.stmt (yif (yop EVM.Op.and [(yvar "q_flags"), (ylit 1)]) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))])) (.sres (mod7EpiEnv20 V st cpv accv b0) (mod7EpiSt st cpv b0) .normal) := by
+    cases b0
+    · -- bit clear: nothing written, nothing touched, so the gate's post-environment IS 'V'
+      show Step (D := Bridge.Dialect c g) funs V st (.stmt (yif (yop EVM.Op.and [(yvar "q_flags"), (ylit 1)]) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))]))
+        (.sres (VEnv.set V "q_acc" accv) st .normal)
+      rw [venvSet_same_of_get V "q_acc" accv hget_acc]
+      exact Step.ifFalse (D := Bridge.Dialect c g) kcond hb0
+    · refine Step.ifTrue (D := Bridge.Dialect c g) kcond ?_ ?_
+      · rw [hb0]; exact (by decide : (BitVec.ofNat 256 1 : U256) ≠ 0)
+      ·         -- the branch body, with 'argsCons' evaluating the REST before its head
+        have g1 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.expr (yvar "r")) (.eres (.vals [frModulusWord] st)) :=
+          Step.var (D := Bridge.Dialect c g) hget_r
+        have g2 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.args []) (.eres (.vals [] st)) :=
+          Step.argsNil (D := Bridge.Dialect c g)
+        have g3 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.args [(yvar "r")]) (.eres (.vals [frModulusWord] st)) :=
+          Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+            (v := frModulusWord) (st2 := st) g2 g1
+        have g4 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.expr (yvar "q_acc")) (.eres (.vals [accv] st)) :=
+          Step.var (D := Bridge.Dialect c g) hget_acc
+        have g5 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.args [(yvar "q_acc"), (yvar "r")]) (.eres (.vals [accv, frModulusWord] st)) :=
+          Step.argsCons (D := Bridge.Dialect c g) (rest := [(yvar "r")]) (restvals := [frModulusWord])
+            (st1 := st) (v := accv) (st2 := st) g3 g4
+        have g6 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.expr (yvar "q_cond_ptr")) (.eres (.vals [cpv] st)) :=
+          Step.var (D := Bridge.Dialect c g) hget_cpv
+        have g7 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.args [(yvar "q_cond_ptr")]) (.eres (.vals [cpv] st)) :=
+          Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+            (v := cpv) (st2 := st) g2 g6
+        have g8 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.expr (yop EVM.Op.mload [(yvar "q_cond_ptr")])) (.eres (.vals [(loadWord st.memory cpv.toNat)] (touchMemory st cpv.toNat 32))) :=
+          Step.builtinOk (D := Bridge.Dialect c g) g7 (qbi_mload_at st st.memory cpv rfl)
+        have g9 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.args [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]) (.eres (.vals [(loadWord st.memory cpv.toNat), accv, frModulusWord] (touchMemory st cpv.toNat 32))) :=
+          Step.argsCons (D := Bridge.Dialect c g) (rest := [(yvar "q_acc"), (yvar "r")])
+            (restvals := [accv, frModulusWord]) (st1 := st)
+            (v := (loadWord st.memory cpv.toNat)) (st2 := (touchMemory st cpv.toNat 32)) g5 g8
+        have g10 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.expr (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")])) (.eres (.vals [(wMulmod (loadWord st.memory cpv.toNat) accv)] (touchMemory st cpv.toNat 32))) :=
+          Step.builtinOk (D := Bridge.Dialect c g) g9
+            (qbi_mulmod_atFr (touchMemory st cpv.toNat 32) (loadWord st.memory cpv.toNat) accv)
+        have g11 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.stmt (yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))) (.sres (VEnv.set V "q_acc" (wMulmod (loadWord st.memory cpv.toNat) accv)) (touchMemory st cpv.toNat 32) .normal) :=
+          Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_acc"])
+            (vals := [(wMulmod (loadWord st.memory cpv.toNat) accv)]) g10 (by rfl)
+        have gchain : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))] :: funs) V st (.stmts [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))]) (.sres (VEnv.set V "q_acc" (wMulmod (loadWord st.memory cpv.toNat) accv)) (touchMemory st cpv.toNat 32) .normal) :=
+          Step.seqCons (D := Bridge.Dialect c g) (V1 := VEnv.set V "q_acc" (wMulmod (loadWord st.memory cpv.toNat) accv))
+            (st1 := (touchMemory st cpv.toNat 32)) g11 (Step.seqNil (D := Bridge.Dialect c g))
+        -- the branch adds no binding, so 'restore' is the identity and the write survives as written
+        have hnorm : restore V (VEnv.set V "q_acc" (wMulmod (loadWord st.memory cpv.toNat) accv))
+            = mod7EpiEnv20 V st cpv accv true :=
+          restore_same_len V (VEnv.set V "q_acc" (wMulmod (loadWord st.memory cpv.toNat) accv))
+            (venvSet_length V "q_acc" (wMulmod (loadWord st.memory cpv.toNat) accv))
+        rw [← hnorm]
+        exact Step.block (D := Bridge.Dialect c g) (body := [(yset "q_acc" (yop EVM.Op.mulmod [(yop EVM.Op.mload [(yvar "q_cond_ptr")]), (yvar "q_acc"), (yvar "r")]))]) gchain
+  -- statement 21: 'q_top := q_acc'
+  have haccE : VEnv.get (mod7EpiEnv20 V st cpv accv b0) "q_acc"
+      = some (mod7EpiAcc st cpv accv b0) :=
+    venvGet_set_same V "q_acc" (mod7EpiAcc st cpv accv b0) accv hget_acc
+  have s21 : Step (D := Bridge.Dialect c g) funs (mod7EpiEnv20 V st cpv accv b0) (mod7EpiSt st cpv b0) (.stmt (yset "q_top" (yvar "q_acc"))) (.sres (mod7EpiEnv21 V st cpv accv b0) (mod7EpiSt st cpv b0) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_top"])
+      (vals := [(mod7EpiAcc st cpv accv b0)])
+      (Step.var (D := Bridge.Dialect c g) haccE) (by rfl)
+  -- statement 22: 'q_has_top := 1'
+  have s22 : Step (D := Bridge.Dialect c g) funs (mod7EpiEnv21 V st cpv accv b0) (mod7EpiSt st cpv b0) (.stmt (yset "q_has_top" (ylit 1))) (.sres (mod7EpiEnv V st cpv accv b0) (mod7EpiSt st cpv b0) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_has_top"])
+      (vals := [(BitVec.ofNat 256 1)])
+      (qlit funs (mod7EpiEnv21 V st cpv accv b0) (mod7EpiSt st cpv b0) 1) (by rfl)
+  -- the three links, glued
+  exact Step.seqCons (D := Bridge.Dialect c g) (V1 := mod7EpiEnv20 V st cpv accv b0)
+        (st1 := mod7EpiSt st cpv b0) s20
+      (Step.seqCons (D := Bridge.Dialect c g) (V1 := mod7EpiEnv21 V st cpv accv b0)
+        (st1 := mod7EpiSt st cpv b0) s21
+      (Step.seqCons (D := Bridge.Dialect c g) (V1 := mod7EpiEnv V st cpv accv b0)
+        (st1 := mod7EpiSt st cpv b0) s22 (Step.seqNil (D := Bridge.Dialect c g))))
+
+end Midfall.LoweringV3.QuotientArms
+
+namespace Midfall.LoweringV3.QuotientArms
+#print axioms Midfall.LoweringV3.QuotientArms.mod7Epilogue
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7Epilogue
+end Midfall.LoweringV3.QuotientArms
+
+/-!
+## MOD7E - EMITTED-SIDE CERTIFICATES FOR THE THREE REGIONS, AND THE EPILOGUE'S CURSOR PIN
+
+The 'mod7_emitted_*' lemmas are the strongest evidence in this file: each is a bare 'rfl' against the
+emitter's own 'GenAst.qArmBodyModarith7', so the region a derivation is ABOUT is pinned to the generated
+text rather than paraphrased from it. MOD7D pinned the prologue ('List.take 15') and the epilogue
+('List.drop 20'); what was missing was the MID region and the total length, so nothing said the three
+regions are the WHOLE arm and not three overlapping slices of it. 'mod7_emitted_length' and
+'mod7_emitted_mid' close that gap, and 'mod7_emitted_epilogue_take' pins the epilogue index from both
+sides.
+
+'mod7EpiEnv_get_pc' is the one cursor fact the epilogue really has: statements 20-22 write 'q_acc',
+'q_top' and 'q_has_top' and NOTHING ELSE, so the epilogue advances the cursor by ZERO. That is the
+epilogue's contribution to 'quotientModarith7OpLen' ('VmValidator.lean:626-644'), and it is proved, not
+assumed.
+
+HONEST LIMIT. The affine cursor equation for the FIVE BLOCKS is NOT proved here. Each block's cursor is
+the walk-derived '(mod7LinFrom ... k).1' and no lemma in this file reduces it to 'pc_in + stride * k'.
+That - not the 'VEnv.get' facts, which MOD7E has now supplied - is what still stands between this file
+and the 23-link triple. Nothing here is an equation against 'modarith7Form'.
+-/
+namespace Midfall.LoweringV3.QuotientArms
+
+/-- **THE ARM IS EXACTLY 23 EMITTED STATEMENTS.** 'rfl' on the emitter's own list. -/
+theorem mod7_emitted_length (ctx : PartialCtx) (program : QuotientProgram)
+    (tcq : QuotientVmTemplateConstants) :
+    (GenAst.qArmBodyModarith7 ctx program tcq).length = 23 := rfl
+
+/-- **THE MID REGION, PINNED AT INDICES 15-19**: the five block loops and nothing else. With
+    'mod7_emitted_prologue' and 'mod7_emitted_epilogue' this says the three regions the derivations
+    cover PARTITION the emitted arm. -/
+theorem mod7_emitted_mid (ctx : PartialCtx) (program : QuotientProgram)
+    (tcq : QuotientVmTemplateConstants) :
+    List.take 5 (List.drop 15 (GenAst.qArmBodyModarith7 ctx program tcq)) = mod7MidBody tcq := rfl
+
+/-- The epilogue region pinned from BOTH sides of the index arithmetic. -/
+theorem mod7_emitted_epilogue_take (ctx : PartialCtx) (program : QuotientProgram)
+    (tcq : QuotientVmTemplateConstants) :
+    List.take 3 (List.drop 20 (GenAst.qArmBodyModarith7 ctx program tcq)) = mod7EpilogueBody := rfl
+
+/-- **THE EPILOGUE DOES NOT MOVE THE CURSOR.** Statements 20-22 write 'q_acc', 'q_top' and 'q_has_top'
+    only, so 'q_pc' survives the whole epilogue at the value the block chain left it: stride ZERO. -/
+theorem mod7EpiEnv_get_pc {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (pcv : U256) (st : EvmState) (cpv accv : U256) (b0 : Bool)
+    (hget_pc : VEnv.get V "q_pc" = some pcv) :
+    VEnv.get (mod7EpiEnv V st cpv accv b0) "q_pc" = some pcv :=
+  venvGet_set_ne (mod7EpiEnv21 V st cpv accv b0) "q_has_top" "q_pc" (BitVec.ofNat 256 1) pcv
+    (by decide : ("q_has_top" : Ident) ≠ "q_pc")
+    (venvGet_set_ne (mod7EpiEnv20 V st cpv accv b0) "q_top" "q_pc"
+      (mod7EpiAcc st cpv accv b0) pcv (by decide : ("q_top" : Ident) ≠ "q_pc")
+      (venvGet_set_ne V "q_acc" "q_pc" (mod7EpiAcc st cpv accv b0) pcv
+        (by decide : ("q_acc" : Ident) ≠ "q_pc") hget_pc))
+
+/-- The epilogue's post-value for 'q_acc', spelled once so a later triple's post-condition can name it. -/
+theorem mod7EpiEnv_get_acc {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (accv : U256) (st : EvmState) (cpv : U256) (b0 : Bool)
+    (hget_acc : VEnv.get V "q_acc" = some accv) :
+    VEnv.get (mod7EpiEnv V st cpv accv b0) "q_acc" = some (mod7EpiAcc st cpv accv b0) :=
+  venvGet_set_ne (mod7EpiEnv21 V st cpv accv b0) "q_has_top" "q_acc" (BitVec.ofNat 256 1)
+    (mod7EpiAcc st cpv accv b0) (by decide : ("q_has_top" : Ident) ≠ "q_acc")
+    (venvGet_set_ne (mod7EpiEnv20 V st cpv accv b0) "q_top" "q_acc"
+      (mod7EpiAcc st cpv accv b0) (mod7EpiAcc st cpv accv b0)
+      (by decide : ("q_top" : Ident) ≠ "q_acc")
+      (venvGet_set_same V "q_acc" (mod7EpiAcc st cpv accv b0) accv hget_acc))
+
+end Midfall.LoweringV3.QuotientArms
+
+namespace Midfall.LoweringV3.QuotientArms
+#print axioms Midfall.LoweringV3.QuotientArms.mod7_emitted_length
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7_emitted_length
+#print axioms Midfall.LoweringV3.QuotientArms.mod7_emitted_mid
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7_emitted_mid
+#print axioms Midfall.LoweringV3.QuotientArms.mod7EpiEnv_get_pc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7EpiEnv_get_pc
+#print axioms Midfall.LoweringV3.QuotientArms.mod7EpiEnv_get_acc
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7EpiEnv_get_acc
+end Midfall.LoweringV3.QuotientArms
+
+/-!
+## MOD7E HANDOFF - THE 'mod7Env' GET-FACTS AND THE EPILOGUE ARE DERIVED; THE TRIPLE IS NOT
+
+**BASE.** 'f5deff2' (MOD7D's landed state), branch 't/MOD7E', worktree '/Users/julian/midfall-f' - a path
+no other card used. 'QuotientArms.lean' 10471 -> 11007 lines, APPENDED ONLY: 'git diff --numstat f5deff2 HEAD' shows
+536 insertions and ZERO deletions - no line of anyone else's was touched.
+
+**PIECE 1 LANDED - THE FIVE 'VEnv.get' FACTS ON 'mod7Env'.** This is the prerequisite MOD7D named as the
+real blocker, and it is now done: 'mod7EnvBlock_gets' (the five-at-once bundle at iteration 'm'),
+'mod7EnvBlock_gets_at2' (the same five THROUGH TWO block layers, which is what a chain step consumes),
+and thirteen per-register lemmas 'mod7EnvBlock_get_const_mptr' / '_r' / '_has_top' / '_top' / '_flags' /
+'_cond_ptr' / '_counts_word' / '_lin_count' / '_row_count' / '_pairwise_count' / '_mem_count' /
+'_product_count' / '_sp'. All at '[propext, Quot.sound]', 'cone_sorries' 0, no 'sorry'. 'q_pc' and
+'q_acc' deliberately have NO alias: 'mod7Env_get_pc' / '_get_acc' already ARE those facts.
+
+**PIECE 2 LANDED - 'mod7Epilogue', EMITTED STATEMENTS 20-22 AS THREE 'Step.seqCons' LINKS.** At
+'[propext, Quot.sound]', 'cone_sorries' 0. Statement 20 is a 'Step.ifTrue' over a 'Step.block' on flag
+bit 0 - the SAME bit as the prologue's COND branch, so the SAME 'hb0' shape serves, exactly as MOD7D
+predicted - and statements 21-22 are two 'Step.assignVal' links. Two structural facts worth recording:
+  * the branch introduces NO new binding, so 'restore' is the identity by 'restore_same_len' and the
+    branch's single write survives as written. The prologue's COND branch needed a five-step 'rw' list to
+    collapse onto 'E4'; this one needs one lemma.
+  * the environment SHAPE is flag-independent for the same reason as in the prologue: writing 'q_acc'
+    with the value it already holds is 'venvSet_same_of_get', so the FALSE case collapses onto the TRUE
+    case with 'if b0 then _ else accv' in the value slot. One derivation, a two-way split inside the
+    gate link - not two.
+Written BY HAND against the landed 's4' template rather than through 'gen_pro.py': 'asm_pro.py' has the
+epilogue INPUTS ('gH' / 'txtH' / 'layersH' / 'stH_end' / 'stepsH' / 'COND_AND20*' / 'BODY_EPI') but NO
+epilogue OUTPUT - 'pro_template.txt' has no 'EPILOGUE' placeholder and 'gH' is keyed to 'V20'/'pcP'/
+'accP' names that a nonexistent 'asm_run.py' was supposed to produce. **CORRECTION TO THE BRIEF: the
+generator does NOT 'already run the generator over' the epilogue in any usable sense - the inputs are
+computed and then dropped.** 'python3 gen_pro.py && python3 asm_pro.py' reproduces the PROLOGUE only.
+
+**PIECE 3 NOT ATTEMPTED - THE TRIPLE. THE BLOCKER IS NOT WHAT THE BRIEF SAID.** MOD7D's diagnosis was
+that the missing piece was the five 'VEnv.get' facts on 'mod7Env'. That piece is now landed and it is
+NECESSARY BUT NOT SUFFICIENT. The remaining gap is the CURSOR ARITHMETIC: each block lemma's post-env is
+'mod7Env V₀ pc acc cntv.toNat' with 'pc' bound to the WALK-DERIVED function '(mod7LinFrom cm pcv accv st
+tcq.limbCount k).1' (and the 'Prod' / 'Pw' analogues), and NOTHING in this file reduces that to
+'pc_in + stride * k'. Without one such lemma per block - five inductions over the block walks - the arm
+statement cannot name its output cursor, so 'pc0 + 1 + (COND?2) + (CONST?1) + 5 + 21*lin + 23*row +
+17*pw + 3*mem + 5*prod' cannot be stated, let alone matched against 'quotientModarith7OpLen'. A triple
+whose post-condition is the un-collapsed nest of 'mod7Env's would elaborate and would move 'armcount', but
+it would NOT be the cursor contract the arm needs, and I chose not to land one and call it the triple.
+**THE NEXT CARD SHOULD PROVE 'mod7LinFrom_succ'-STYLE AFFINE CURSOR LEMMAS, NOT MORE ENVIRONMENT
+BOOKKEEPING.** The environment bookkeeping is finished.
+
+**WHAT I DID LAND INSTEAD, WHICH IS CHEAP AND STRONG.** 'mod7_emitted_length' and 'mod7_emitted_mid' and
+'mod7_emitted_epilogue_take': bare-'rfl' certificates against the emitter's own list, at **NO AXIOMS**.
+MOD7D pinned 'take 15' and 'drop 20' but nothing said the three regions are the WHOLE 23-statement arm;
+now they provably PARTITION it. And 'mod7EpiEnv_get_pc' PROVES the epilogue's cursor stride is ZERO -
+statements 20-22 write 'q_acc', 'q_top', 'q_has_top' and nothing else - which is the one term of the
+cursor equation the epilogue contributes, established rather than assumed.
+
+**DEFECT FOUND IN MY OWN FIRST DRAFT, RECORDED SO IT IS NOT REPEATED.** 'Step.ifTrue's branch subgoal is
+about '(.stmt (.block body))' with the goal's UNFOLDED post-environment, NOT about the 'yif' node. A
+'show' that re-states the 'yif' there fails with 'not definitionally equal to target' and the printed
+target is the only reliable way to see it. The prologue's 's4' bullet gets away without a 'show' because
+its 'E4' is a 'let' that 'rw [<- hnorm4] ' rewrites from the other side.
+
+**STILL NOT CLAIMED, AND STILL NOT MEASURED.** Everything in this file for MODARITH7 is an EMITTED-SIDE
+contract. No equation between any 'mod7*' walk and 'modarith7Form' exists or is implied. THIS CARD DID
+NOT LAND THE TRIPLE, so 'armcount.py' still lists 'modarith7' under 'qStepValue but NO triple' and the
+emitted-side count is UNCHANGED at 24. Landing the triple will NOT measure the reference side. No
+disagreement between the emitted and reference sides was exhibited or ruled out. 'PG_limbCountAgrees'
+appears nowhere in this work and is needed by none of it. No hypothesis was added to any row, 'ValidV3',
+a bundle or the root.
+-/
+
+namespace Midfall.LoweringV3.QuotientArms
+#print axioms Midfall.LoweringV3.QuotientArms.mod7Epilogue
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7Epilogue
+end Midfall.LoweringV3.QuotientArms
