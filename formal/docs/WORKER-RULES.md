@@ -112,7 +112,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
   `wc -l` before and after, and `git diff --stat` to confirm only your hunks appear.
 
 ## Deciding and gating facts that cannot be decided
-- **No walk-level fact about a CONCRETE program can be a `decide` theorem here.** `decide` cannot
+- **`decide` cannot reduce walk-level facts at FULL PROGRAM SIZE, but it DOES reduce them on SMALL concrete programs (2-4 bytes).** SEGLEG refuted both validator legs with plain `decide` on 2-4 byte witnesses: `quotientBytecodeOpsGo`, `bytecodeOpList`, `operandList` and `validateQuotientProgramOperands` all reduce at fixture size. **Build the small counterexample with `decide` rather than assuming it is banned** - a blanket ban would have blocked the cheap counterexamples that settled the question. The original limit holds for the real program. `decide` cannot
   kernel-reduce `quotientBytecodeOpsGo` or anything calling it (`validateQuotientProgram`,
   `validateQuotientProgramOperands`, `quotientBytecodeOps`, `bytecodeOpList` on a concrete program): the
   fuel-indexed match stays stuck even with unary fuel and a literal list. The VM and `native_decide` both
