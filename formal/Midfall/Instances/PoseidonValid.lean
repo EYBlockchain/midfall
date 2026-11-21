@@ -28,6 +28,16 @@
                                    quotient constants") - OBJ.7 gate 11. Measured sorry-free as
                                    `poseidonValid_generated_not`. Step 3 (the render rebuilt from
                                    `generateAll`) is the card's own split; see section V3.
+                                   **B4 (t/BOXe) LANDED THE MEASUREMENT §V3 CALLED FOR**: the exact
+                                   sub-condition is `poseidonRender.plan.vk.quotientConstOffsetWords
+                                   = none` (`ValidV3InhabitationF1.f1_payload_constOffset_none`),
+                                   the generator ACCEPTS this circuit once the four reservation
+                                   fields are filled (`genFilledRun_isOk`), the filled payload is a
+                                   FIXED POINT of the projection `generated` reads through
+                                   (`genFilledOut_plan_vk_is_the_payload_it_was_given`), and the
+                                   clause is therefore SATISFIABLE
+                                   (`f1GeneratedRender_generated`) - so this is a data-sourcing
+                                   defect (OBJ.10 + OBJ.8 step 3/4), NOT a frozen edit. See §V3.
     2  inputs           PROVED     `poseidonValid_inputs`, unchanged: three `rfl` and one
                                    `native_decide` (k = 6 = vk.domain.k).
     3  program          PROVED     MOVED OPEN -> PROVED BY OBJ.9 STEP 3: `poseidonValid_program`.
@@ -811,6 +821,23 @@ theorem poseidonValid_decidableHalf :
         two frozen ways out listed a few lines below ("WHY STEP 3 CANNOT LAND WITHOUT A FROZEN
         DECISION", option (i)), and it is the only exit that does not wait on M4.
   This card names the defect and takes neither exit.
+
+  **B4 (t/BOXe, `Midfall/Instances/ValidV3InhabitationF1.lean`) MEASURED BOTH EXITS AND NEITHER IS
+  NEEDED.** The circle is cut WITHOUT a frozen edit: `generateAll` run on the payload with the four
+  reservation fields filled (`PlanNewKats.vkFilled`, 31 / 1 / 32 / 3) returns `.ok`, and the plan
+  it returns carries that very payload back out - `genFilledOut_plan_vk_is_the_payload_it_was_given`,
+  proved field-wise through an injective ten-field signature, so exit (ii)'s `DecidableEq` is NOT
+  required. `f1GeneratedRender` is the render of exit (i) built without touching `Render`: F1 with
+  `plan`/`qblocks`/`model` re-sourced from the run, and `f1GeneratedRender_generated` is the
+  clause holding of it. **So `generated` is satisfiable and the F1 refutation is a data-sourcing
+  defect, not a spec defect.** What it does NOT change: `poseidonRender_notValid` stands, and
+  `f1_plan_isNotTheGeneratorsPlan` shows a SECOND, payload-independent refutation - the generator's
+  plan has `meta_.numPointSets = 3` against this render's raw 0, so re-sourcing the payload alone
+  cannot close the clause; the render has to carry the generated plan, which re-points the DERIVED
+  `pv` and therefore every `native_decide` clause in this file. That is a card, not an edit. And
+  `generated` is the sole REFUTED clause but not the sole BLOCKER: `payload`'s five point fields are
+  OPEN at the placeholder codec (B3's ticket), so no inhabitant of `ValidV3 poseidonRender` exists
+  today even with `generated` closed.
 
   **WHY STEP 3 CANNOT LAND WITHOUT A FROZEN DECISION.** `Render.generated` reads the generator
   payload from `R.plan.vk` - the payload is smuggled in through the plan, because `Render` has no

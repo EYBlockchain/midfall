@@ -87,6 +87,7 @@ import Midfall.Instances.PoseidonEnv
 import Midfall.Instances.PoseidonCoherence
 import Midfall.Instances.PoseidonV2
 import Midfall.Instances.PoseidonValid
+import Midfall.Instances.ValidV3InhabitationF1
 import Midfall.Instances.PoseidonPins
 import Midfall.Instances.ConstsKats
 import Midfall.Generator.Vk

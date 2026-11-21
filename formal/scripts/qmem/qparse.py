@@ -1,6 +1,9 @@
 import re, sys
 
-GENFILE = '/Users/julian/midfall-c/formal/Midfall/Lowering/GenAstQvm.lean'
+import os as _os
+GENFILE = _os.environ.get("QARMS_GENFILE") or _os.path.join(
+    _os.path.dirname(_os.path.abspath(__file__)), "..", "..",
+    "Midfall", "Lowering", "GenAstQvm.lean")
 D = "Bridge.Dialect c g"
 
 def sv(n):
