@@ -49,6 +49,12 @@
 -- 'runAddMul*_noRF' / 'affineSum_noRF' and 'consumed_agrees_at_affineSum' both families now stand
 -- at 25 of 26.
 --
+-- SECTION 10 (card SLOT2) is the SECOND slot-axis pass Qvm.lean:2277-2288 names: the OUT-OF-RANGE-NESS
+-- of the faulted slot, 'OORSlot (evalQuotientIdentityStep ...) consts.length', for 25 of the 26
+-- identity arms at a general cursor, plus 'noSlotFault_of_namesSlot_oorSlot', which composes this
+-- pass with CSLOT's membership pass into the row's second conjunct per arm
+-- ('evalQuotientIdentityStep_noSlotFault_25'). MODARITH7 alone is left, named in
+-- 'PG_stepNoRF_validated_slot2_modarith7_oor'.
 -- NOTHING HERE ADDS A HYPOTHESIS TO A ROW, to 'ValidV3', a bundle or the root (RULES); no statement
 -- names a fixture (D-P71); no 'native_decide'; the file has no sorry.
 import Midfall.Lowering.Qvm
@@ -2847,5 +2853,567 @@ def PG_stepNoRF_validated_shif2_modarith7_width : Prop :=
 #print axioms Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22
 #print axioms Midfall.Lowering.QvmShift.consumed_agrees_affineSum
 #print axioms Midfall.Lowering.QvmShift.consumed_agrees_at_affineSum
+
+/-! ### Section 10: the OUT-OF-RANGE pass - the faulted slot is beyond the table (card SLOT2)
+
+    THE MISSING THIRD LEG, and it is the SECOND of the two that Qvm.lean:2277-2288 says the third
+    per-arm fact really is. CSLOT landed MEMBERSHIP: 'NamesSlot (step ...) (walkerKonstSlots ...)'
+    for 25 arms, i.e. the faulted slot is one the walker NAMED. What the row still lacked is
+    OUT-OF-RANGE-NESS: that the faulted slot is the one the table LACKS, 'step = .error
+    (constSlotOutOfRange slot j) implies consts.length <= slot'. Qvm.lean:2287 predicted this pass
+    would be the shorter of the two because 'constAt_slotFault' already does the per-call work, and
+    it was: 'constAt_oorSlot' is six lines and no walker-side fact is needed here at all.
+
+    WHY MEMBERSHIP ALONE CANNOT REFUTE THE FAULT - the thing SHIF2 insisted on and this section is
+    the answer to. The two passes are independent and 'noSlotFault_of_namesSlot_oorSlot' is where
+    they compose: membership puts the faulted slot inside the walker's named set, out-of-range-ness
+    puts it at or beyond the end of the table, and validation ('checkQuotientConstSlot' plus
+    'numConsts_eq_build_length') bounds every named slot BELOW the table length. With the first
+    alone the fault could sit at a named in-range slot; with the second alone it could sit at an
+    unnamed out-of-range slot. So 25 of 26 on this axis moves the row exactly as far as 25 of 26 on
+    the other two and no further: per-arm coverage on all three axes is still not sufficient, and
+    the loop induction over the fuel-bounded segment is untouched by any of it.
+
+    WHAT IS CHEAPER HERE THAN IN CSLOT, and it is not the case split. 'NamesSlot' needed a
+    cursor-invariant induction ('foldRangeIdxM_namesSlot_range' carries 'P : Nat -> α -> Prop' plus
+    an advance hypothesis) because the i-th iteration's slot OFFSET depends on the cursor.
+    Out-of-range-ness is cursor-free: 'constAt consts s _' faults beyond the end of 'consts'
+    whatever 's' is, so 'foldRangeIdxM_oorSlot' needs no reachability predicate and no advance
+    lemma. That is why this axis reaches the six folded arms in one pass instead of needing the
+    prefix lemma, and why MODARITH7 fails here for a DIFFERENT reason again (see
+    'PG_stepNoRF_validated_slot2_modarith7_oor').
+
+    WHAT IS REUSED rather than rebuilt: 'constAt_ok_of_lt' and 'constAt_slotFault' (Qvm.lean section
+    9) do the per-call arithmetic; CSLOT's 'bind_ok_id'', 'limbLinearForm_unfold',
+    'limbLinBody_unfold', 'limbRowForm_unfold', 'limbPairwiseForm_unfold', 'pwInnerBody_unfold' and
+    'pwOuterBody_unfold' are the rfl bridges that make the counted bodies citable; NBF's
+    'runArmBody'/'affineSumArmBody' with their 'step_eq_*' bridges do the same for the RUN and
+    AFFINE_SUM arms. No new body definition was needed on this axis, and CSLOT's 'obtain' pattern
+    (the predicate is a forall over the fault, so a pair-pattern continuation is discharged by
+    casing the bound variable) reached every 'match' in the chain - the variable-body bridge was
+    NOT needed here, which is what the brief asked me to check before paying for it.
+
+    WHAT IS NOT HERE, named: MODARITH7, at the end of this section with its exact goal state.
+    NOTHING HERE ADDS A HYPOTHESIS TO A ROW, to 'ValidV3', a bundle or the root (RULES): 'hbound'
+    is a hypothesis on an ARM LEMMA, which RULES allows explicitly. No statement names a fixture
+    (D-P71) - the one witness below is a three-byte program and a three-entry table written inline,
+    the pattern Qvm.lean:2796 uses. No 'native_decide'. This section adds no sorry. -/
+
+
+/-- SLOT2's predicate. 'OORSlot x n' says: every 'constSlotOutOfRange' the computation can produce
+    names a slot at or beyond position 'n'. 'NamesSlot' (Qvm.lean section 9) says which slots the
+    computation NAMES; this says where the faulted one must SIT. The row needs both - membership
+    alone cannot refute a fault, as Qvm.lean:2277-2288 says. -/
+def OORSlot {α : Type} (x : Except QVMFault α) (n : Nat) : Prop :=
+  ∀ slot j, x = .error (QVMFault.constSlotOutOfRange slot j) → n ≤ slot
+
+namespace OORSlot
+
+theorem ok {α : Type} (a : α) (n : Nat) : OORSlot (Except.ok a) n := by
+  intro slot j h; cases h
+
+theorem error {α : Type} {e : QVMFault} (n : Nat)
+    (h : ∀ slot j, e ≠ QVMFault.constSlotOutOfRange slot j) :
+    OORSlot (Except.error (α := α) e) n := by
+  intro slot j hh
+  exact absurd (Except.error.inj hh) (h slot j)
+
+theorem never {α : Type} {x : Except QVMFault α} (n : Nat)
+    (h : ∀ slot j, x ≠ .error (QVMFault.constSlotOutOfRange slot j)) : OORSlot x n := by
+  intro slot j hh; exact absurd hh (h slot j)
+
+theorem bind {α β : Type} {x : Except QVMFault α} {f : α → Except QVMFault β}
+    {n : Nat} (hx : OORSlot x n) (hf : ∀ a, OORSlot (f a) n) : OORSlot (x >>= f) n := by
+  intro slot j h
+  cases x with
+  | ok a => exact hf a slot j h
+  | error e =>
+      have h2 : e = QVMFault.constSlotOutOfRange slot j := Except.error.inj h
+      subst h2
+      exact hx slot j rfl
+
+theorem pair_match {ε α β : Type} (e : ε × α)
+    (f : ε → α → Except QVMFault β) {n : Nat}
+    (h : ∀ x y, OORSlot (f x y) n) :
+    OORSlot (match e with | (x, y) => f x y) n := by
+  cases e with
+  | mk x y => exact h x y
+
+theorem ite {α : Type} {c : Prop} [inst : Decidable c] {x y : Except QVMFault α} {n : Nat}
+    (hx : OORSlot x n) (hy : OORSlot y n) : OORSlot (if c then x else y) n := by
+  cases inst with
+  | isTrue _ => exact hx
+  | isFalse _ => exact hy
+
+theorem except_map {α β : Type} (g : α → β) {x : Except QVMFault α} {n : Nat}
+    (hx : OORSlot x n) : OORSlot (Except.map g x) n := by
+  intro slot j h
+  cases x with
+  | ok a => exact absurd h (by intro h2; cases h2)
+  | error e =>
+      have h2 : e = QVMFault.constSlotOutOfRange slot j := Except.error.inj h
+      subst h2
+      exact hx slot j rfl
+
+theorem congr {α : Type} {x y : Except QVMFault α} {n : Nat}
+    (h : x = y) (hx : OORSlot x n) : OORSlot y n := h ▸ hx
+
+end OORSlot
+
+/-- THE PER-CALL FACT, lifted from 'constAt_ok_of_lt' as Qvm.lean:2287 predicts it would be: the
+    fault carries its own slot, and the only way 'constAt' produces it is 'consts.drop slot = []'. -/
+theorem constAt_oorSlot {consts : List Word256} {k idx : Nat} :
+    OORSlot (Midfall.Generator.constAt consts k idx) consts.length := by
+  intro s j h
+  have h2 : s = k := constAt_slotFault h
+  subst h2
+  unfold Midfall.Generator.constAt at h
+  cases hcs : consts.drop s with
+  | cons v rest =>
+      rw [hcs] at h
+      exact absurd h (fqFromU256_not_slotFault v s j)
+  | nil => exact List.drop_eq_nil_iff.mp hcs
+
+theorem byteAt_oorSlot (bytes : List Nat) (k n : Nat) :
+    OORSlot (Midfall.Generator.byteAt bytes k) n :=
+  OORSlot.never n (byteAt_not_slotFault bytes k)
+
+theorem popStack_oorSlot (stack : List QVMFr) (idx n : Nat) :
+    OORSlot (Midfall.Generator.popStack stack idx) n :=
+  OORSlot.never n (popStack_not_slotFault stack idx)
+
+theorem indexOrPanic_oorSlot (bytes : List Nat) (p n : Nat) :
+    OORSlot (Midfall.Generator.indexOrPanic bytes p) n :=
+  OORSlot.never n (indexOrPanic_not_slotFault bytes p)
+
+theorem readU16_oorSlot (bytes : List Nat) (k n : Nat) :
+    OORSlot (Midfall.Generator.readU16 bytes k) n := by
+  unfold Midfall.Generator.readU16
+  refine OORSlot.bind (byteAt_oorSlot bytes k n) (fun _ =>
+    OORSlot.bind (byteAt_oorSlot bytes (k+1) n) (fun _ => OORSlot.ok _ n))
+
+theorem readU32_oorSlot (bytes : List Nat) (k n : Nat) :
+    OORSlot (Midfall.Generator.readU32 bytes k) n := by
+  unfold Midfall.Generator.readU32
+  refine OORSlot.bind (byteAt_oorSlot bytes k n) (fun _ =>
+    OORSlot.bind (byteAt_oorSlot bytes (k+1) n) (fun _ =>
+      OORSlot.bind (byteAt_oorSlot bytes (k+2) n) (fun _ =>
+        OORSlot.bind (byteAt_oorSlot bytes (k+3) n) (fun _ => OORSlot.ok _ n))))
+
+/-- THE FOLD LEG, and it is where this pass is genuinely SHORTER than CSLOT's. 'NamesSlot' needed a
+    cursor invariant ('foldRangeIdxM_namesSlot_range' carries 'P : Nat → α → Prop' and an advance
+    hypothesis) because the i-th iteration's slot OFFSET depends on the cursor. Out-of-range-ness
+    does not: 'constAt consts s _' faults beyond the end of 'consts' whatever 's' is. So the
+    induction needs no reachability predicate and no advance lemma at all. -/
+theorem foldRangeIdxM_oorSlot {α : Type} :
+    ∀ (n : Nat) (init : α) (f : Nat → α → Except QVMFault α) (m : Nat),
+      (∀ i s, OORSlot (f i s) m) → OORSlot (Midfall.Generator.foldRangeIdxM n init f) m
+  | 0, init, f, m, _ => OORSlot.ok init m
+  | k+1, init, f, m, hf => by
+      show OORSlot (f 0 init >>= (fun x =>
+        Midfall.Generator.foldRangeIdxM k x (fun i => f (i+1)) >>= (fun y => Except.ok y))) m
+      refine OORSlot.bind (hf 0 init) (fun x => ?_)
+      rw [bind_ok_id']
+      exact foldRangeIdxM_oorSlot k x (fun i => f (i+1)) m (fun i s => hf (i+1) s)
+
+theorem affineLinearTerm_oorSlot {bytes : List Nat} {consts : List Word256}
+    {mem : QuotientRefMemory} {k : Nat} :
+    OORSlot (Midfall.Generator.affineLinearTerm bytes consts mem k) consts.length := by
+  unfold Midfall.Generator.affineLinearTerm
+  refine OORSlot.bind (readU16_oorSlot bytes k _) (fun _ =>
+    OORSlot.bind (byteAt_oorSlot bytes (k+2) _) (fun slot =>
+      OORSlot.bind constAt_oorSlot (fun _ => OORSlot.ok _ _)))
+
+theorem affineProductTerm_oorSlot {bytes : List Nat} {consts : List Word256}
+    {mem : QuotientRefMemory} {k : Nat} :
+    OORSlot (Midfall.Generator.affineProductTerm bytes consts mem k) consts.length := by
+  unfold Midfall.Generator.affineProductTerm
+  refine OORSlot.bind (readU16_oorSlot bytes k _) (fun _ =>
+    OORSlot.bind (readU16_oorSlot bytes (k+2) _) (fun _ =>
+      OORSlot.bind (byteAt_oorSlot bytes (k+4) _) (fun slot =>
+        OORSlot.bind constAt_oorSlot (fun _ => OORSlot.ok _ _))))
+
+theorem limbLinBody_oorSlot (bytes : List Nat) (consts : List Word256) (c : Nat) :
+    ∀ (i : Nat) (acc : QVMFr) (m : QuotientRefMemory),
+      OORSlot (limbLinBody bytes consts i (acc, c, m)) consts.length := by
+  intro i acc m
+  rw [limbLinBody_unfold bytes consts c i acc m]
+  refine OORSlot.bind (byteAt_oorSlot bytes c _) (fun _ =>
+    OORSlot.bind (readU16_oorSlot bytes (c+1) _) (fun _ =>
+      OORSlot.bind constAt_oorSlot (fun _ => OORSlot.ok _ _)))
+
+theorem limbLinearForm_oorSlot {bytes : List Nat} {consts : List Word256}
+    {mem : QuotientRefMemory} {k : Nat} :
+    OORSlot (limbLinearForm bytes consts mem k) consts.length := by
+  rw [limbLinearForm_unfold bytes consts mem k]
+  refine OORSlot.bind (foldRangeIdxM_oorSlot quotientVmLimbs (qvmFrZero, k, mem)
+      (limbLinBody bytes consts) consts.length
+      (fun i s => by obtain ⟨acc, c, m⟩ := s; exact limbLinBody_oorSlot bytes consts c i acc m))
+    (fun y => by obtain ⟨value, len, mem'⟩ := y; exact OORSlot.ok _ _)
+
+theorem limbRowForm_oorSlot {bytes : List Nat} {consts : List Word256}
+    {mem : QuotientRefMemory} {k : Nat} :
+    OORSlot (limbRowForm bytes consts mem k) consts.length := by
+  rw [limbRowForm_unfold bytes consts mem k]
+  refine OORSlot.bind (readU16_oorSlot bytes k _) (fun lhs => ?_)
+  obtain ⟨lhsValue, mem1⟩ := mem.literal lhs
+  refine OORSlot.bind (limbLinearForm_oorSlot (mem := mem1) (k := k + 2)) (fun y => ?_)
+  obtain ⟨v, len, m'⟩ := y
+  exact OORSlot.ok _ _
+
+theorem pwInnerBody_oorSlot (bytes : List Nat) (consts : List Word256)
+    (coeffs rhsBase : Nat) (lhsV : QVMFr) :
+    ∀ i j s, OORSlot (pwInnerBody bytes consts coeffs rhsBase i lhsV j s) consts.length := by
+  intro i j s
+  obtain ⟨acc, m⟩ := s
+  rw [pwInnerBody_unfold bytes consts coeffs rhsBase i lhsV j acc m]
+  obtain ⟨rhsValue, mem2⟩ := m.literal (rhsBase + j * qvmWordBytes)
+  refine OORSlot.bind (indexOrPanic_oorSlot bytes (coeffs + i + j) _) (fun slot =>
+    OORSlot.bind constAt_oorSlot (fun _ => OORSlot.ok _ _))
+
+theorem pwOuterBody_oorSlot (bytes : List Nat) (consts : List Word256)
+    (coeffs lhsBase rhsBase : Nat) :
+    ∀ i s, OORSlot (pwOuterBody bytes consts coeffs lhsBase rhsBase i s) consts.length := by
+  intro i s
+  obtain ⟨acc, m⟩ := s
+  rw [pwOuterBody_unfold bytes consts coeffs lhsBase rhsBase i acc m]
+  obtain ⟨lhsValue, mem1⟩ := m.literal (lhsBase + i * qvmWordBytes)
+  exact foldRangeIdxM_oorSlot quotientVmLimbs (acc, mem1)
+    (pwInnerBody bytes consts coeffs rhsBase i lhsValue) consts.length
+    (pwInnerBody_oorSlot bytes consts coeffs rhsBase lhsValue i)
+
+theorem limbPairwiseForm_oorSlot {bytes : List Nat} {consts : List Word256}
+    {mem : QuotientRefMemory} {k : Nat} :
+    OORSlot (limbPairwiseForm bytes consts mem k) consts.length := by
+  rw [limbPairwiseForm_unfold bytes consts mem k]
+  refine OORSlot.bind (readU16_oorSlot bytes k _) (fun lhsBase =>
+    OORSlot.bind (readU16_oorSlot bytes (k+2) _) (fun rhsBase =>
+      OORSlot.bind (byteAt_oorSlot bytes (k + 4 + quotientVmPairwiseCoeffs - 1) _) (fun _ =>
+        OORSlot.bind (foldRangeIdxM_oorSlot quotientVmLimbs (qvmFrZero, mem)
+            (pwOuterBody bytes consts (k + 4) lhsBase rhsBase) consts.length
+            (pwOuterBody_oorSlot bytes consts (k + 4) lhsBase rhsBase))
+          (fun y => OORSlot.ok _ _))))
+
+theorem runFoldL_oorSlot (bytes : List Nat) (consts : List Word256) (base : Nat) :
+    ∀ i s, OORSlot (runFoldL bytes consts base i s) consts.length := by
+  intro i s
+  unfold runFoldL
+  refine OORSlot.except_map (fun x => (qvmFrAdd s.1 x.1, s.2.1 + x.2.1, x.2.2))
+    (affineLinearTerm_oorSlot (bytes := bytes) (mem := s.2.2) (k := base + s.2.1))
+
+theorem runFoldP_oorSlot (bytes : List Nat) (consts : List Word256) (base : Nat) :
+    ∀ i s, OORSlot (runFoldP bytes consts base i s) consts.length := by
+  intro i s
+  unfold runFoldP
+  refine OORSlot.except_map (fun x => (qvmFrAdd s.1 x.1, s.2.1 + x.2.1, x.2.2))
+    (affineProductTerm_oorSlot (bytes := bytes) (mem := s.2.2) (k := base + s.2.1))
+
+theorem runArmBody_oorSlot (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (F : Nat → QVMFr × Nat × QuotientRefMemory →
+        Except QVMFault (QVMFr × Nat × QuotientRefMemory))
+    (hF : ∀ i s, OORSlot (F i s) consts.length) :
+    OORSlot (runArmBody bytes consts idx stack mem F) consts.length := by
+  unfold runArmBody
+  refine OORSlot.bind (readU16_oorSlot bytes (idx+1) _) (fun count =>
+    OORSlot.ite
+      (OORSlot.bind (popStack_oorSlot stack idx _) (fun p =>
+        OORSlot.bind (foldRangeIdxM_oorSlot count (p.1, 0, mem) F consts.length hF)
+          (fun y => OORSlot.ok _ _)))
+      (OORSlot.error _ (by intro s j hh; cases hh)))
+
+theorem affineSumArmBody_oorSlot (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (Fl Fp : Nat → QVMFr × Nat × QuotientRefMemory →
+        Except QVMFault (QVMFr × Nat × QuotientRefMemory))
+    (hl : ∀ i s, OORSlot (Fl i s) consts.length)
+    (hp : ∀ i s, OORSlot (Fp i s) consts.length) :
+    OORSlot (affineSumArmBody bytes consts idx stack mem Fl Fp) consts.length := by
+  unfold affineSumArmBody
+  refine OORSlot.bind (readU16_oorSlot bytes (idx+1) _) (fun _ =>
+    OORSlot.bind (readU16_oorSlot bytes (idx+3) _) (fun _ =>
+      OORSlot.ite
+        (OORSlot.bind (popStack_oorSlot stack idx _) (fun p =>
+          OORSlot.bind (foldRangeIdxM_oorSlot _ (p.1, 0, mem) Fl consts.length hl) (fun a =>
+            OORSlot.bind (foldRangeIdxM_oorSlot _ (a.1, a.2.1, a.2.2) Fp consts.length hp)
+              (fun b => OORSlot.ok _ _))))
+        (OORSlot.error _ (by intro s j hh; cases hh))))
+
+
+/-! #### The 19 flat arms -/
+
+theorem evalQuotientIdentityStep_oorSlot_flat
+    (bytes : List Nat) (consts : List Word256) (idx : Nat) (op : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hop : op = qOpPushConst \/ op = qOpPushMemLiteral \/ op = qOpPushMemToken \/ op = qOpPushMemTokenOffset \/ op = qOpPushMemU16 \/ op = qOpAdd \/ op = qOpMul \/ op = qOpNeg \/ op = qOpPushConstU8 \/ op = qOpAddConstU8 \/ op = qOpMulConstU8 \/ op = qOpAddConst \/ op = qOpMulConst \/ op = qOpAddMemU16 \/ op = qOpMulMemU16 \/ op = qOpAddMulMemMemConstU8 \/ op = qOpAddMulConstU8MemU16 \/ op = qOpAddMulMemMem \/ op = qOpPow5) :
+    OORSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx op stack mem)
+      consts.length := by
+  rcases hop with (h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h)
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (readU16_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind constAt_oorSlot (fun _ => OORSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (readU32_oorSlot bytes (idx+1) _) (fun _ => OORSlot.ok _ _)
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (byteAt_oorSlot bytes (idx+1) _) (fun _ => OORSlot.ok _ _)
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (byteAt_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind (readU32_oorSlot bytes (idx+2) _) (fun _ => OORSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (readU16_oorSlot bytes (idx+1) _) (fun _ => OORSlot.ok _ _)
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (popStack_oorSlot stack idx _) (fun x =>
+      OORSlot.bind (popStack_oorSlot x.2 idx _) (fun _ => OORSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (popStack_oorSlot stack idx _) (fun x =>
+      OORSlot.bind (popStack_oorSlot x.2 idx _) (fun _ => OORSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (popStack_oorSlot stack idx _) (fun _ => OORSlot.ok _ _)
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (byteAt_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind constAt_oorSlot (fun _ => OORSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (byteAt_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind constAt_oorSlot (fun _ =>
+        OORSlot.bind (popStack_oorSlot stack idx _) (fun _ => OORSlot.ok _ _)))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (byteAt_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind constAt_oorSlot (fun _ =>
+        OORSlot.bind (popStack_oorSlot stack idx _) (fun _ => OORSlot.ok _ _)))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (readU16_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind constAt_oorSlot (fun _ =>
+        OORSlot.bind (popStack_oorSlot stack idx _) (fun _ => OORSlot.ok _ _)))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (readU16_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind constAt_oorSlot (fun _ =>
+        OORSlot.bind (popStack_oorSlot stack idx _) (fun _ => OORSlot.ok _ _)))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (readU16_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind (popStack_oorSlot stack idx _) (fun _ => OORSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (readU16_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind (popStack_oorSlot stack idx _) (fun _ => OORSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (popStack_oorSlot stack idx _) (fun _ =>
+      OORSlot.bind (affineProductTerm_oorSlot (mem := mem)) (fun _ => OORSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (popStack_oorSlot stack idx _) (fun _ =>
+      OORSlot.bind (affineLinearTerm_oorSlot (mem := mem)) (fun _ => OORSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (readU16_oorSlot bytes (idx+1) _) (fun _ =>
+      OORSlot.bind (readU16_oorSlot bytes (idx+3) _) (fun _ =>
+        OORSlot.bind (popStack_oorSlot stack idx _) (fun _ => OORSlot.ok _ _)))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine OORSlot.bind (popStack_oorSlot stack idx _) (fun _ => OORSlot.ok _ _)
+
+/-! #### The six folded arms -/
+
+theorem step_oorSlot_lin7 (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    OORSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpLin7 stack mem)
+      consts.length := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := {decide := true}) only [reduceIte]
+  refine OORSlot.bind (limbLinearForm_oorSlot (mem := mem)) (fun y => ?_)
+  obtain ⟨value, len, mem'⟩ := y
+  exact OORSlot.ok _ _
+
+theorem step_oorSlot_bilin7Row (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    OORSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpBilin7Row stack mem)
+      consts.length := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := {decide := true}) only [reduceIte]
+  refine OORSlot.bind (limbRowForm_oorSlot (mem := mem)) (fun y => ?_)
+  obtain ⟨value, len, mem'⟩ := y
+  exact OORSlot.ok _ _
+
+theorem step_oorSlot_bilin7Pairwise (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    OORSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpBilin7Pairwise stack mem)
+      consts.length := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := {decide := true}) only [reduceIte]
+  refine OORSlot.bind (limbPairwiseForm_oorSlot (mem := mem)) (fun y => ?_)
+  obtain ⟨value, len, mem'⟩ := y
+  exact OORSlot.ok _ _
+
+theorem step_oorSlot_runP (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    OORSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+      qOpRunAddMulMemMemConstU8 stack mem) consts.length := by
+  rw [step_eq_runArmBody]
+  exact runArmBody_oorSlot bytes consts idx stack mem (runFoldP bytes consts (idx + 3))
+    (runFoldP_oorSlot bytes consts (idx + 3))
+
+theorem step_oorSlot_runL (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    OORSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+      qOpRunAddMulConstU8MemU16 stack mem) consts.length := by
+  rw [step_eq_runArmBodyL]
+  exact runArmBody_oorSlot bytes consts idx stack mem (runFoldL bytes consts (idx + 3))
+    (runFoldL_oorSlot bytes consts (idx + 3))
+
+theorem step_oorSlot_affineSum (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    OORSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpAffineSum stack mem)
+      consts.length := by
+  rw [step_eq_affineSumArmBody]
+  exact affineSumArmBody_oorSlot bytes consts idx stack mem
+    (runFoldL bytes consts (idx + 5)) (runFoldP bytes consts (idx + 5))
+    (runFoldL_oorSlot bytes consts (idx + 5)) (runFoldP_oorSlot bytes consts (idx + 5))
+
+
+/-! #### The 25-arm union, and what the two passes together buy -/
+
+/-- THE OUT-OF-RANGE PASS FOR 25 OF THE 26 IDENTITY ARMS AT A GENERAL CURSOR: the second of the two
+    slot-axis passes Qvm.lean:2277-2288 names. MODARITH7 is the one arm left and is named in
+    'PG_stepNoRF_validated_slot2_modarith7_oor'. -/
+theorem evalQuotientIdentityStep_oorSlot_25
+    (bytes : List Nat) (consts : List Word256) (idx : Nat) (op : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hop : (op = qOpPushConst \/ op = qOpPushMemLiteral \/ op = qOpPushMemToken \/ op = qOpPushMemTokenOffset \/ op = qOpPushMemU16 \/ op = qOpAdd \/ op = qOpMul \/ op = qOpNeg \/ op = qOpPushConstU8 \/ op = qOpAddConstU8 \/ op = qOpMulConstU8 \/ op = qOpAddConst \/ op = qOpMulConst \/ op = qOpAddMemU16 \/ op = qOpMulMemU16 \/ op = qOpAddMulMemMemConstU8 \/ op = qOpAddMulConstU8MemU16 \/ op = qOpAddMulMemMem \/ op = qOpPow5)
+      \/ op = qOpLin7 \/ op = qOpBilin7Row \/ op = qOpBilin7Pairwise
+      \/ op = qOpRunAddMulMemMemConstU8 \/ op = qOpRunAddMulConstU8MemU16 \/ op = qOpAffineSum) :
+    OORSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx op stack mem)
+      consts.length := by
+  rcases hop with (hflat | h6)
+  · exact evalQuotientIdentityStep_oorSlot_flat bytes consts idx op stack mem hflat
+  · rcases h6 with (h|h|h|h|h|h) <;> subst h
+    · exact step_oorSlot_lin7 bytes consts idx stack mem
+    · exact step_oorSlot_bilin7Row bytes consts idx stack mem
+    · exact step_oorSlot_bilin7Pairwise bytes consts idx stack mem
+    · exact step_oorSlot_runP bytes consts idx stack mem
+    · exact step_oorSlot_runL bytes consts idx stack mem
+    · exact step_oorSlot_affineSum bytes consts idx stack mem
+
+/-- THE TWO PASSES COMPOSE. Membership says the faulted slot is one the walker NAMED; out-of-range-ness
+    says it sits AT OR BEYOND the end of the table. A validated program bounds every named slot below
+    the table length ('checkQuotientConstSlot' plus 'numConsts_eq_build_length'), and then no slot
+    fault survives. Neither pass alone does this: with membership only the fault could be at a named
+    in-range slot, and with out-of-range-ness only it could be at an unnamed out-of-range slot. -/
+theorem noSlotFault_of_namesSlot_oorSlot {α : Type} {consts : List Word256}
+    {x : Except QVMFault α} {S : List Nat}
+    (h1 : NamesSlot x S) (h2 : OORSlot x consts.length)
+    (h3 : ∀ slot ∈ S, slot < consts.length) :
+    ∀ slot j, x ≠ .error (QVMFault.constSlotOutOfRange slot j) := by
+  intro slot j hh
+  have hlt := h3 slot (h1 slot j hh)
+  have hge := h2 slot j hh
+  omega
+
+/-- THE ROW'S SECOND CONJUNCT, PER ARM, FOR 25 OF THE 26 ARMS. Stated as an arm lemma with the
+    validation bound as a hypothesis (RULES allows a hypothesis on an ARM LEMMA and forbids adding one
+    to the row): 'hbound' is exactly what phase 2 gives for the slots the walker names, once
+    'numConsts_eq_build_length' identifies 'model.numConsts' with the table length. -/
+theorem evalQuotientIdentityStep_noSlotFault_25
+    (bytes : List Nat) (consts : List Word256) (idx : Nat) (op : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hop : (op = qOpPushConst \/ op = qOpPushMemLiteral \/ op = qOpPushMemToken \/ op = qOpPushMemTokenOffset \/ op = qOpPushMemU16 \/ op = qOpAdd \/ op = qOpMul \/ op = qOpNeg \/ op = qOpPushConstU8 \/ op = qOpAddConstU8 \/ op = qOpMulConstU8 \/ op = qOpAddConst \/ op = qOpMulConst \/ op = qOpAddMemU16 \/ op = qOpMulMemU16 \/ op = qOpAddMulMemMemConstU8 \/ op = qOpAddMulConstU8MemU16 \/ op = qOpAddMulMemMem \/ op = qOpPow5)
+      \/ op = qOpLin7 \/ op = qOpBilin7Row \/ op = qOpBilin7Pairwise
+      \/ op = qOpRunAddMulMemMemConstU8 \/ op = qOpRunAddMulConstU8MemU16 \/ op = qOpAffineSum)
+    (hw : ∃ os, Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx op = .ok os)
+    (hbound : ∀ slot ∈ walkerKonstSlots bytes idx op, slot < consts.length) :
+    ∀ slot j, Midfall.Generator.evalQuotientIdentityStep bytes consts idx op stack mem ≠
+      .error (QVMFault.constSlotOutOfRange slot j) := by
+  refine noSlotFault_of_namesSlot_oorSlot
+    (evalQuotientIdentityStep_constSlot_namedByWalker_25 bytes consts idx op stack mem hop hw)
+    (evalQuotientIdentityStep_oorSlot_25 bytes consts idx op stack mem hop) hbound
+
+/-- THE PASS IS NOT VACUOUS. PUSH_CONST over a three-byte program and a THREE-entry table really does
+    fault 'constSlotOutOfRange 99 0', and 3 <= 99 is exactly what 'OORSlot' claims of it. Without a
+    witness like this 'OORSlot' would be satisfied by any computation that never faults, and the
+    per-arm lemmas above would say nothing. -/
+theorem oorSlot_witness_not_vacuous :
+    Midfall.Generator.evalQuotientIdentityStep [qOpPushConst, 0, 99]
+        ([0, 1, 2] : List Midfall.Word256) 0 qOpPushConst ([] : List QVMFr) armsWitnessMem
+        = .error (QVMFault.constSlotOutOfRange 99 0)
+      ∧ OORSlot (Midfall.Generator.evalQuotientIdentityStep [qOpPushConst, 0, 99]
+          ([0, 1, 2] : List Midfall.Word256) 0 qOpPushConst ([] : List QVMFr) armsWitnessMem) 3 := by
+  refine ⟨rfl, ?_⟩
+  intro slot j h
+  have := Midfall.Lowering.QvmShift.evalQuotientIdentityStep_oorSlot_25 [qOpPushConst, 0, 99]
+    ([0, 1, 2] : List Midfall.Word256) 0 qOpPushConst ([] : List QVMFr) armsWitnessMem (Or.inl (Or.inl rfl))
+  exact this slot j (h ▸ rfl)
+
+/-- SLOT2 - THE ONE ARM THIS PASS DID NOT REACH, named with its exact goal state rather than glossed.
+    MODARITH7's out-of-range pass at a general cursor is still open:
+
+      OORSlot (evalQuotientIdentityStep bytes consts idx qOpModarith7 stack mem) consts.length
+
+    WHY IT IS THE LAST ONE HERE TOO, even though this pass needs no walker and no cursor invariant:
+    'modarith7Form' (VmReference.lean:637) puts its five counted blocks INSIDE the two flag branches,
+    so the interpreter's body after unfolding is the same 5-block chain FOUR times over - the COND bit
+    and the CONST bit each duplicate it - and a bind-by-bind refinement has to walk all four copies.
+    Unfolding and beta-reducing the whole body at once exceeds the 60 s tactic bound (measured: the
+    generic walker hits 'deterministic timeout at whnf, maximum number of heartbeats (200000)' on the
+    flattened term, and RULES forbids raising maxHeartbeats). What it needs is a def bridge of the
+    CSLOT pattern - extract the five blocks ONCE as a def, prove 'OORSlot' of the def, and bridge the
+    four inlined copies to it by 'rfl'/'cases' on the two decidable flag tests. That is mechanical,
+    not obstructed, and it is the same obstacle MODARITH7 presents on the other two axes.
+
+    NO CONTRACT DEFECT WAS FOUND ON THIS ARM EITHER: nothing here exhibits a validated program whose
+    step names an out-of-range slot, and nothing here rules one out - the arm was not measured. -/
+def PG_stepNoRF_validated_slot2_modarith7_oor : Prop :=
+  ∀ (bytes : List Nat) (consts : List Word256) (idx : Nat) (stack : List QVMFr)
+    (mem : QuotientRefMemory),
+    OORSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpModarith7 stack mem)
+      consts.length
+
+#print axioms Midfall.Lowering.QvmShift.evalQuotientIdentityStep_oorSlot_flat
+#print axioms Midfall.Lowering.QvmShift.step_oorSlot_lin7
+#print axioms Midfall.Lowering.QvmShift.step_oorSlot_bilin7Row
+#print axioms Midfall.Lowering.QvmShift.step_oorSlot_bilin7Pairwise
+#print axioms Midfall.Lowering.QvmShift.step_oorSlot_runP
+#print axioms Midfall.Lowering.QvmShift.step_oorSlot_runL
+#print axioms Midfall.Lowering.QvmShift.step_oorSlot_affineSum
+#print axioms Midfall.Lowering.QvmShift.foldRangeIdxM_oorSlot
+#print axioms Midfall.Lowering.QvmShift.limbLinearForm_oorSlot
+#print axioms Midfall.Lowering.QvmShift.limbRowForm_oorSlot
+#print axioms Midfall.Lowering.QvmShift.limbPairwiseForm_oorSlot
+#print axioms Midfall.Lowering.QvmShift.evalQuotientIdentityStep_oorSlot_25
+#print axioms Midfall.Lowering.QvmShift.evalQuotientIdentityStep_noSlotFault_25
+#print axioms Midfall.Lowering.QvmShift.constAt_oorSlot
+#print axioms Midfall.Lowering.QvmShift.PG_stepNoRF_validated_slot2_modarith7_oor
+
 
 end Midfall.Lowering.QvmShift
