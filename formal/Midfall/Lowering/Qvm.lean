@@ -5015,3 +5015,216 @@ def PG_segleg_opLenShiftOption : Prop :=
 #print axioms Midfall.Lowering.seg_opLenShift_false
 
 end Midfall.Lowering
+/-! ### OPTSHIFT: 'PG_segleg_opLenShiftOption' — LANDED, PROVED, NOT SORRIED
+
+OLENS stated this Prop, landed every arm of it, and measured the residue as "one 'cases' behind a four-way
+opcode split... a ~15-line follow-up, not a wall". **IT IS LANDED, AND IT WAS 15 LINES.**
+'seg_opLenShiftOption' below PROVES the committed Prop on [propext, Quot.sound] — no 'sorryAx', no
+'Classical.choice', no arithmetic beyond the arms OLENS landed, no heartbeat or recursion bump.
+
+**THE ONE IDEA THAT MAKES THE FOUR-WAY SPLIT UNNECESSARY.** The opcode split is a CONTEXT, not a choice, and
+'toOption' is a map that sends EVERY error to 'none' — so it commutes with 'ite' ('seg_tO_ite': one 'split'
+and 'rfl'). Pushing 'toOption' inward through the four flag-free 'ite's leaves two ite-chains whose branches
+are LITERALLY the same term: the only difference was the payload of the 'none' arm of the final 'match', and
+under 'toOption' that arm is 'none' on both sides whatever the string says. Then one
+'cases quotientOpcodeByteLen op' closes both by 'rfl'. 'by_cases' on the four opcodes — the shape ALIGN used
+at 'align_opLen_toOption' — is NOT needed here and does not even work as written: 'simp' will not discharge
+an 'ite' whose condition is a negated local hypothesis (the 'Decidable' slot does not match), which is why
+OLENS's measured residue looked like a case split rather than a push.
+
+**THE BIND.** Both sides share their left action after 'byteAtPanic_drop', so the bind is discharged by
+'seg_bind_toOption_congr' — the same-monad specialisation of ALIGN's 'align_bind_toOption', which needs no
+'x = .ok a' side condition because there is only one error type here.
+
+**THE WITNESS FIRST.** On OLENS's own refutation of 'PG_segleg_opLenShift' — 'segleg_unknownOpBytes' =
+[0x00, 0xff], c = 1, idx = 0, where the two sides are two DIFFERENT panics — the two 'toOption's agree, and
+'seg_opLenShiftOption_witness' prints that by 'decide' (RULES: 'decide' does reduce these readers at
+fixture size) before the general proof is trusted.
+
+**WHAT THIS BUYS, AND WHAT IT DOES NOT: THE TWO REPAIRED LEGS ARE STILL NOT DERIVABLE, FOR A REASON THE
+COMMITTED NOTE DID NOT NAME.** The legs are about the segment '(bytes.drop cursor).take (exprEnd - cursor)'.
+The Prop OLENS stated is about 'bytes.drop c' with NO 'take'. That is a THIRD obstacle, independent of the
+fault payload and independent of MODARITH7: a 'take' truncates a stride the untruncated buffer completes, so
+the option lemma cannot even be APPLIED to a segment walk. 'gap_take_vs_drop' measures it on a five-byte
+AFFINE_SUM program — truncated to two bytes the stride is 'none', untruncated it is 'some 5' — so the gap is
+real and not a notational one. The missing fact is EXTENSION MONOTONICITY: a successful stride survives
+appending bytes. It is named as 'PG_segleg_opLenExtend' below, stated and NOT sorried; its two reader cases
+are landed here ('seg_byteAtPanic_prefix', 'seg_readU16_prefix'), and the reduction is proved
+('seg_stride_transfer_of_extend'): the option lemma plus extension monotonicity yields exactly the stride
+transfer that 'align_walkClosed' consumes at every step of a segment walk. What is left after that is the
+induction over 'quotientBytecodeOpsGo' that SEGLEG already named, plus the same two ingredients for
+'visitQuotientOperands' on the 'reads' leg. **So the chain to 'PG_valp2_walkAlignment' does NOT close on
+this card: the repaired legs are now two named facts away, not one lemma away.** -/
+
+namespace Midfall.Lowering
+
+open Midfall
+open Midfall.Generator
+open Midfall.Generator (QVMFr QVMFault QuotientRefMemory)
+open Midfall.Generator.QuotientBuilder
+open Midfall.Generator.QuotientCertify
+open Midfall.Generator.QuotientValidator
+
+/-- **A BIND WHOSE TWO CONTINUATIONS AGREE UNDER 'toOption' AGREES UNDER 'toOption'.** The same-monad
+    specialisation of ALIGN's 'align_bind_toOption': where the two sides share ONE left action there is
+    nothing to compare, so no 'x = .ok a' side condition is needed and no axiom is used. -/
+theorem seg_bind_toOption_congr {α β ε : Type} (x : Except ε α) {f g : α → Except ε β}
+    (h : ∀ a, (f a).toOption = (g a).toOption) :
+    (x >>= f).toOption = (x >>= g).toOption := by
+  cases x with
+  | ok a => exact h a
+  | error e => rfl
+
+/-- **'toOption' COMMUTES WITH AN 'ite'.** This is what turns OLENS's four-way opcode split from a case
+    analysis into a push: 'toOption' sends every error to 'none', so it does not care which branch a
+    payload-dependent error came from. One 'split' and two 'rfl', no axioms. -/
+theorem seg_tO_ite {ε α : Type} {c : Prop} [inst : Decidable c] (a a' : Except ε α) :
+    (if c then a else a').toOption = (if c then a.toOption else a'.toOption) := by
+  split <;> rfl
+
+/-- **THE WITNESS, CHECKED BEFORE THE GENERAL PROOF.** OLENS's own counterexample to
+    'PG_segleg_opLenShift' — 'segleg_unknownOpBytes' = [0x00, 0xff] at c = 1, idx = 0, where the two sides
+    are the two different panics 'unknown quotient op FF at byte 0' and '... at byte 1'. Under 'toOption'
+    they are both 'none'. 'decide' reduces it at fixture size (RULES). -/
+theorem seg_opLenShiftOption_witness :
+    (Midfall.Generator.QuotientValidator.quotientOpLen
+        (Midfall.Lowering.segleg_unknownOpBytes.drop 1) 0).toOption =
+      (Midfall.Generator.QuotientValidator.quotientOpLen
+        Midfall.Lowering.segleg_unknownOpBytes (1 + 0)).toOption := by
+  decide
+
+/-- **'PG_segleg_opLenShiftOption', PROVED.** The shift lemma in the shape the legs actually consume: the
+    walk's SUCCESS list is what 'bytecodeOpList' reads, so the fault payload that kills
+    'PG_segleg_opLenShift' (OLENS's 'seg_opLenShift_false') is invisible here and the Prop becomes true.
+    OLENS's own arm rewrites do all the arithmetic — 'byteAtPanic_drop' makes the two left actions
+    identical, 'quotientReadU16_drop' + 'Nat.add_assoc' align the two RUN arms, and 'seg_affineSum_drop'
+    and 'seg_modarith7_drop' replace the other two arms outright. What is left is the final arm, and
+    'seg_tO_ite' pushes 'toOption' past the four flag-free 'ite's so the two sides become literally the
+    same term except inside the 'none' arm of the opcode-table 'match'; one 'cases' on that table lookup
+    closes it, 'none' against 'none' and 'some len' against 'some len'. No 'by_cases' on the opcodes, no
+    'omega', no 'decide' on the general goal, no heartbeat bump. -/
+theorem seg_opLenShiftOption : PG_segleg_opLenShiftOption := by
+  intro bytes c idx
+  unfold Midfall.Generator.QuotientValidator.quotientOpLen
+  simp only [Midfall.Generator.QuotientValidator.byteAtPanic_drop, Nat.add_assoc,
+    Midfall.Generator.QuotientValidator.quotientReadU16_drop,
+    Midfall.Lowering.seg_affineSum_drop, Midfall.Lowering.seg_modarith7_drop]
+  refine seg_bind_toOption_congr (Midfall.Generator.QuotientValidator.byteAtPanic bytes (c + idx) 3009) ?_
+  intro op
+  simp only [Midfall.Lowering.seg_tO_ite]
+  cases Midfall.Generator.quotientOpcodeByteLen op
+  · rfl
+  · rfl
+
+/-- **THE FORM THE WALK INDUCTION CONSUMES.** A successful segment stride IS the whole program's stride at
+    the shifted cursor. This is the one line of the option lemma that a walk can cite: 'align_walkClosed'
+    wants 'quotientOpLen bytes (c + j) = .ok len', and the segment walk only ever hands it the segment's
+    own '.ok'. -/
+theorem seg_opLen_shift_ok (bytes : List Nat) (c idx len : Nat)
+    (h : Midfall.Generator.QuotientValidator.quotientOpLen (bytes.drop c) idx = Except.ok len) :
+    Midfall.Generator.QuotientValidator.quotientOpLen bytes (c + idx) = Except.ok len := by
+  have h1 : (Midfall.Generator.QuotientValidator.quotientOpLen (bytes.drop c) idx).toOption =
+      (Midfall.Generator.QuotientValidator.quotientOpLen bytes (c + idx)).toOption :=
+    Midfall.Lowering.seg_opLenShiftOption bytes c idx
+  rw [h] at h1
+  have h2 : (Midfall.Generator.QuotientValidator.quotientOpLen bytes (c + idx)).toOption =
+      Option.some len := by rw [← h1]; rfl
+  exact align_tO_some h2
+
+/-- **EXTENSION MONOTONICITY OF THE PANIC-CLASS BYTE READ**: a read that succeeds in a buffer succeeds at
+    the same position with the same value in any extension of it. The proof is the 'drop' of an append:
+    '(bs ++ t).drop j = bs.drop j ++ t.drop (j - bs.length)', so a nonempty 'drop' stays nonempty with the
+    same head. -/
+theorem seg_byteAtPanic_prefix (bs t : List Nat) (j line v : Nat)
+    (h : Midfall.Generator.QuotientValidator.byteAtPanic bs j line = Except.ok v) :
+    Midfall.Generator.QuotientValidator.byteAtPanic (bs ++ t) j line = Except.ok v := by
+  cases h2 : bs.drop j with
+  | cons b rest =>
+      have h3 : (bs ++ t).drop j = b :: rest ++ t.drop (j - bs.length) := by
+        rw [List.drop_append, h2]
+      rw [Midfall.Generator.QuotientValidator.byteAtPanic, h3]
+      rw [Midfall.Generator.QuotientValidator.byteAtPanic, h2] at h
+      exact h
+  | nil =>
+      rw [Midfall.Generator.QuotientValidator.byteAtPanic, h2] at h
+      exact absurd h (by intro hh; cases hh)
+
+/-- The 'u16' twin: two elements of head are preserved by an append. -/
+theorem seg_readU16_prefix (bs t : List Nat) (j v : Nat)
+    (h : Midfall.Generator.QuotientValidator.readU16 bs j = Except.ok v) :
+    Midfall.Generator.QuotientValidator.readU16 (bs ++ t) j = Except.ok v := by
+  cases h2 : bs.drop j with
+  | cons b0 rest =>
+      cases h3 : rest with
+      | cons b1 rest2 =>
+          have h4 : (bs ++ t).drop j = b0 :: b1 :: rest2 ++ t.drop (j - bs.length) := by
+            rw [List.drop_append, h2, h3]
+          rw [Midfall.Generator.QuotientValidator.readU16, h4]
+          rw [Midfall.Generator.QuotientValidator.readU16, h2, h3] at h
+          exact h
+      | nil =>
+          rw [Midfall.Generator.QuotientValidator.readU16, h2, h3] at h
+          exact absurd h (by intro hh; cases hh)
+  | nil =>
+      rw [Midfall.Generator.QuotientValidator.readU16, h2] at h
+      exact absurd h (by intro hh; cases hh)
+
+/-- **THE THIRD OBSTACLE, NAMED SO THE NEXT CARD HAS ONE ADDRESS — STATED, NOT SORRIED.** The legs' segment
+    is '(bytes.drop cursor).take (exprEnd - cursor)'; 'PG_segleg_opLenShiftOption' speaks about
+    'bytes.drop c' with no 'take', so it cannot be applied to a segment walk until a truncated stride is
+    lifted back to the untruncated buffer. Extension monotonicity is that lift, and it is NOT cosmetic:
+    'gap_take_vs_drop' below measures a program where the two sides genuinely differ. Stated as a
+    'def : Prop' so nothing is added to a row, a bundle, 'ValidV3' or the root (RULES). Its two reader
+    cases are landed above; what is missing is the per-arm peel of 'quotientOpLen' itself, whose MODARITH7
+    arm has six reads behind two flag-gated 'ite's. -/
+def PG_segleg_opLenExtend : Prop :=
+  ∀ (bs t : List Nat) (j len : Nat),
+    Midfall.Generator.QuotientValidator.quotientOpLen bs j = Except.ok len →
+      Midfall.Generator.QuotientValidator.quotientOpLen (bs ++ t) j = Except.ok len
+
+/-- **THE GAP IS REAL, MEASURED.** A five-byte AFFINE_SUM program whose stride needs the 'u16' at bytes 3-4:
+    truncated to two bytes the stride errors ('none'), untruncated it is 'some 5'. So 'take' is a second
+    obstacle of its own, and no shift lemma about 'drop' can discharge it. Hand-checked by 'decide'; NOT an
+    '#eval' gate, so the KAT pin is untouched (RULES). -/
+def optshift_gapBytes : List Nat := [Midfall.Generator.qOpAffineSum, 0x00, 0x00, 0x00, 0x00]
+
+theorem gap_take_vs_drop :
+    (Midfall.Generator.QuotientValidator.quotientOpLen
+        ((Midfall.Lowering.optshift_gapBytes.drop 0).take 2) 0).toOption = none ∧
+      (Midfall.Generator.QuotientValidator.quotientOpLen
+          Midfall.Lowering.optshift_gapBytes 0).toOption ≠ none := by
+  refine ⟨by decide, ?_⟩
+  intro he
+  have h2 : (Midfall.Generator.QuotientValidator.quotientOpLen
+      Midfall.Lowering.optshift_gapBytes 0).toOption = Option.some 5 := by decide
+  rw [h2] at he
+  exact absurd he (by decide)
+
+/-- **THE REDUCTION: OPTION LEMMA + EXTENSION MONOTONICITY ⟹ THE STRIDE TRANSFER THE WALK INDUCTION NEEDS.**
+    The 'take' and the 'drop' differ by exactly a suffix — 'List.take_append_drop' — so extension
+    monotonicity moves the segment's stride onto 'bytes.drop cursor' and 'seg_opLen_shift_ok' moves it onto
+    'bytes'. This is the fact 'align_walkClosed' cites at every step of a segment walk; what remains after it
+    is the induction over 'quotientBytecodeOpsGo' SEGLEG named, not a new arithmetic fact. -/
+theorem seg_stride_transfer_of_extend (hext : PG_segleg_opLenExtend)
+    (bytes : List Nat) (c n j len : Nat)
+    (h : Midfall.Generator.QuotientValidator.quotientOpLen
+        ((bytes.drop c).take n) j = Except.ok len) :
+    Midfall.Generator.QuotientValidator.quotientOpLen bytes (c + j) = Except.ok len := by
+  have h2 : (bytes.drop c).drop n = bytes.drop (c + n) := @List.drop_drop Nat n c bytes
+  have h1 : ((bytes.drop c).take n) ++ bytes.drop (c + n) = bytes.drop c := by
+    rw [← h2, List.take_append_drop]
+  have hstep := hext ((bytes.drop c).take n) (bytes.drop (c + n)) j len h
+  rw [h1] at hstep
+  exact seg_opLen_shift_ok bytes c j len hstep
+
+#print axioms Midfall.Lowering.seg_bind_toOption_congr
+#print axioms Midfall.Lowering.seg_tO_ite
+#print axioms Midfall.Lowering.seg_opLenShiftOption_witness
+#print axioms Midfall.Lowering.seg_opLenShiftOption
+#print axioms Midfall.Lowering.seg_opLen_shift_ok
+#print axioms Midfall.Lowering.seg_byteAtPanic_prefix
+#print axioms Midfall.Lowering.seg_readU16_prefix
+#print axioms Midfall.Lowering.gap_take_vs_drop
+#print axioms Midfall.Lowering.seg_stride_transfer_of_extend
+
+end Midfall.Lowering
