@@ -2759,3 +2759,34 @@ whose emitted addresses are representable, which is the Rust `usize` domain.
    remains a registered OPEN row until they are added with a consumer.
 4. No `ValidV3`, bundle or root hypothesis was added beyond this conjunct; the headline signature
    is unchanged.
+
+## D-QVM2 — **Approved: restate ROW.Q.3 over a fixed, validated segment (retires the universal row)**
+
+> **Status: APPROVED.** Drafted and signed 2026-11-21, in the OpenCode session on
+> `/Users/julian/midfall`, after ROWFALSE (`0955bac`) proved that `qinterpRefines_qvmLoop` fails
+> for two further reasons beyond D-QVM1's window: a template table can disagree with the reference
+> labels, and the universal `∀ s` admits `[NEG]` at an empty stack (the emitted arm runs, the
+> reference returns `stackUnderflow`). The question put to the human: *"The sound repair is to
+> restate the contract over a FIXED emitted segment, with table agreement and segment validation
+> supplied by the caller. Do you authorize that restatement?"* The human answered: **"Yes, restate
+> over a fixed validated segment (Recommended)."**
+
+**Decision.** `qinterpRefines_qvmLoop` is RETIRED under W13 (its negation is proved). The replacement
+is a contract over a fixed `QSegment` `s`, with the caller supplying:
+
+1. `s.inWindow` and the D-QVM1 fit (`s.base + s.exprEnd < 2^256`);
+2. full template-table agreement (`tcq` = the table the reference labels come from);
+3. a segment stack-safety certificate, the row counterpart of
+   `validateQuotientProgram`/`qvm_validated_noBoundsFault` (the validator rejects `[NEG]` at
+   depth 0, which is exactly BOXD's second refutation);
+4. the start state the prologue establishes (`q_sp = program.stackMptr`, `q_has_top = 0`).
+
+**Open design point for the QVM agent, not a hypothesis to add silently.** The row's old `Top :=
+qinterpTop` is not the output of a segment ending in `foldMain`/`foldSelector`: those arms consume
+the cached top and write the accumulator at `evalNumerMptr`, so the replacement must state the
+output predicate the fold arms actually produce. The agent states it against the reference's
+`evalQuotientIdentity` value and reports; no root, bundle or `ValidV3` hypothesis is added.
+
+**Consequences.** The old row's sorry and its register row are deleted in the same commit that adds
+the replacement (W13); the ROWFALSE refutations stay as the W12 falsifiers of the retired text.
+`q_blockSim`'s named-leaf list is re-pointed to the replacement.
