@@ -8,7 +8,8 @@
     root lowering_sound ...... not yet reported (WP A0)
     block rows ............... 0 INTEGRATED of 7
     exhibits ................. 2 PRESENT of 4 (c, T3.11)
-    ValidV3 at F1 ............ NOT INHABITED; blocking clause = generated
+    ValidV3 at F1 ............ NOT INHABITED; blocking clauses = generated (REFUTED at F1, but
+                               SATISFIABLE per B4) + payload point half (OPEN, B3 ticket)
                                clause table 5 PROVED / 1 HALF / 1 REFUTED (c, OBJ.9 + R.7)
     root lowering_correctW ... not yet reported (WP C0)
     root generator_correct ... not yet reported (WP D2)
