@@ -7603,3 +7603,993 @@ theorem qArmValueAll_bilin7Pairwise {c : ExternalCalls} {g : ExternalGas}
 #cone_sorries Midfall.LoweringV3.QuotientArms.qArmValueAll_bilin7Pairwise
 
 end Midfall.LoweringV3.QuotientArms
+
+namespace Midfall.LoweringV3.QuotientArms
+
+/-!
+## MOD7 - the MODARITH7 arm: FIVE CHAINED block loops over THREE inner walks
+
+MODARITH7 is the last QVM arm with a reference value ('qStepValue_modarith7', QuotientFrame:472) and no
+emitted triple. Its emitted body ('GenAstQvm.lean:286-288') is 23 top-level statements and NINE 'yfor'
+nodes: a flag-gated prologue, then five sequential block loops whose cursors CHAIN - each block starts
+at the previous block's output cursor - three of which nest a limb loop and one of which nests two.
+
+THE TOUCH ORDER, DERIVED (not guessed). 'Step.argsCons' evaluates the REST of an argument list before
+its head ('BigStep.lean:209-212'), so within one accumulator statement 'q_acc := addmod [q_acc, X, r]'
+the order is 'r', then 'X', then 'q_acc'. Applying that inside each block body:
+  * LIN block, per limb iteration: 'mulmod [mload(cm + (qconst<<5)), mload q_ptr, r]' evaluates the
+    rest '[mload q_ptr, r]' first, so the order is LIMB-PTR, THEN CONST-SLOT - LIN7's order, because
+    LIN7's body is byte-identical to this one.
+  * ROW block, per limb iteration: CONST-SLOT, THEN RHS - BILIN7_ROW's order, again byte-identical.
+  * PAIR block, per inner iteration: COEFF, THEN CONST-SLOT, THEN RHS - BILIN7_PAIRWISE's order.
+  * MEM block, per iteration: LIMB-PTR, THEN CONST-SLOT - the same body as the LIN block's inner one,
+    and therefore the same order, NOT the ROW block's.
+  * PRODUCT block, per iteration: 'mulmod [mulmod [mload q_lhs, mload q_rhs, r], mload cptr, r]':
+    the rest of the outer 'mulmod' is '[mload cptr, r]', so the order is CONST-SLOT, THEN RHS, THEN
+    LHS - a THIRD distinct order, and the only one where the two memory operands are read in the
+    reverse of their source order.
+  * The prologue runs in SOURCE order because each read is its own statement: 'touch(pc)' for the flag
+    word, then (if COND) 'touch(pc+1)', then (if CONST) 'touch(pc')' and 'touch(cptr)'.
+The TOTALS per block are stated in the handoff below.
+
+WHAT THIS CARD LANDED AND WHERE IT STOPPED: the two drivers, the cursor-chain lemma, and TWO of the five
+blocks - MEM (flat) and LIN (nested). The triple did NOT fit this box; the remaining steps are named
+exactly in the HANDOFF section at the end of this file rather than left implied.
+
+WHAT THIS SECTION LANDS. Two generic block-loop drivers ('mod7LitLoop' for a loop bounded by a literal
+'q_i < ylit N', 'mod7VarLoop' for a loop bounded by a register 'q_blk < q_count'), which factor out the
+part every one of the nine loops shares - the 'init' step, the guard step at a symbolic counter, the
+post step 'q_ctr := q_ctr + 1', the 'Step.forLoop' ascription and the 'restore' that drops the counter
+binding and keeps the writes. Each block then supplies only its own per-iteration step.
+
+WHY THE ENVIRONMENT IS A RECURSIVE DEF AND NOT A CLOSED FORM. Every block body writes 'q_pc' and then
+'q_acc', but 'q_acc' is buried under the prologue's later 'let's, so the two writes do not commute with
+the cons of the block counter. 'mod7Env' therefore records the writes in the order the body makes them,
+which costs nothing: the only facts ever needed about a loop-head environment are its lookups, and those
+are 'mod7Env_get_pc' / '_get_acc' / '_get_other' by induction, with no swap lemma anywhere.
+
+CANONICITY: NONE, for the same reason as the three limb arms - every field operation is a 'mulmod' or an
+'addmod' at 'frModulusWord', and 'wMulmod'/'wAddmod' reduce by 'qvmFrModulus' before the 256-bit wrap,
+so the wrap is lossless and no 'x.toNat < qvmFrModulus' hypothesis is needed.
+
+'PG_limbCountAgrees' is used ONLY as an arm-lemma hypothesis ('hlimbs'), never on a row, on 'ValidV3', a
+bundle or the root (RULES). The fold-level equation against 'modarith7Form' is NOT claimed here and must
+not be inferred: like the three limb arms, what lands is an EMITTED-SIDE contract.
+-/
+
+/-- A block whose body introduces no net bindings leaves the environment the same LENGTH, and 'restore'
+    of an equal-length environment is the identity. Every MODARITH7 block body needs this. -/
+theorem restore_same_len {D : YulSemantics.Dialect} (V Vb : VEnv D) (h : Vb.length = V.length) :
+    restore V Vb = Vb := by
+  show Vb.drop (Vb.length - V.length) = _
+  rw [h, Nat.sub_self, List.drop_zero]
+
+/-- 'VEnv.set' at two DIFFERENT registers that are both already bound: the two writes commute, because
+    each replaces its binding IN PLACE ('VEnv.set' is length- and order-preserving, BigStep.lean:97).
+    This is the one fact that lets a block loop whose body writes 'q_pc' and then 'q_acc' carry a
+    CLOSED-FORM loop-head environment instead of a chain of 'm' nested writes. -/
+theorem venvSet_swap {D : YulSemantics.Dialect} : ∀ (V : VEnv D) (x y : Ident) (vx vy : D.Value),
+    x ≠ y → (∃ a, VEnv.get V x = some a) → (∃ b, VEnv.get V y = some b) →
+    VEnv.set (VEnv.set V x vx) y vy = VEnv.set (VEnv.set V y vy) x vx
+  | [], _, _, _, _, _, hx, _ => absurd hx (by simp [VEnv.get])
+  | (p, vp) :: rest, x, y, vx, vy, hxy, hx, hy => by
+      by_cases hpx : p = x
+      · -- the head IS 'x': both sides reduce to '(p, vx) :: set rest y vy'
+        subst hpx
+        simp only [venvSet_cons_eq, venvSet_cons_ne rest p y vp vy hxy,
+          venvSet_cons_ne rest p y vx vy hxy]
+      · by_cases hpy : p = y
+        · -- the head IS 'y': both sides reduce to '(p, vy) :: set rest x vx'
+          subst hpy
+          simp only [venvSet_cons_eq, venvSet_cons_ne rest p x vp vx hpx,
+            venvSet_cons_ne rest p x vy vx hpx]
+        · obtain ⟨a, hxa⟩ := hx
+          obtain ⟨b, hyb⟩ := hy
+          have hx' : VEnv.get rest x = some a := by
+            rw [venvGet_cons_ne rest p x vp hpx] at hxa; exact hxa
+          have hy' : VEnv.get rest y = some b := by
+            rw [venvGet_cons_ne rest p y vp hpy] at hyb; exact hyb
+          rw [venvSet_cons_ne rest p x vp vx hpx, venvSet_cons_ne rest p y vp vy hpy,
+              venvSet_cons_ne (VEnv.set rest x vx) p y vp vy hpy,
+              venvSet_cons_ne (VEnv.set rest y vy) p x vp vx hpx]
+          exact congrArg (fun X : VEnv D => (p, vp) :: X)
+            (venvSet_swap rest x y vx vy hxy ⟨a, hx'⟩ ⟨b, hy'⟩)
+
+/-- THE LOOP-HEAD ENVIRONMENT of one block loop after 'm' iterations: the start environment with 'q_pc'
+    and 'q_acc' rewritten to their values at iteration 'm'. Closed form, so every lookup is one rewrite
+    and the per-iteration shape is 'mod7Env_step'. -/
+def mod7Env {c : ExternalCalls} {g : ExternalGas} (V₀ : VEnv (Bridge.Dialect c g))
+    (pc acc : Nat → U256) (m : Nat) : VEnv (Bridge.Dialect c g) :=
+  VEnv.set (VEnv.set V₀ "q_pc" (pc m)) "q_acc" (acc m)
+
+theorem mod7Env_length {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (m : Nat) :
+    (mod7Env V₀ pc acc m).length = V₀.length := by
+  rw [mod7Env, venvSet_length, venvSet_length]
+
+theorem mod7Env_get_pc {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hw : VEnv.get V₀ "q_pc" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_pc" = some (pc m) := by
+  rw [mod7Env]
+  exact venvGet_set_ne (VEnv.set V₀ "q_pc" (pc m)) "q_acc" "q_pc" (acc m) (pc m)
+    (by decide : ("q_acc" : String) ≠ "q_pc")
+    (venvGet_set_same V₀ "q_pc" (pc m) w hw)
+
+theorem mod7Env_get_acc {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (w : U256)
+    (hw : VEnv.get V₀ "q_acc" = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) "q_acc" = some (acc m) := by
+  rw [mod7Env]
+  exact venvGet_set_same (VEnv.set V₀ "q_pc" (pc m)) "q_acc" (acc m) w
+    (venvGet_set_ne V₀ "q_pc" "q_acc" (pc m) w (by decide : ("q_pc" : String) ≠ "q_acc") hw)
+
+/-- Every OTHER register of a block loop-head environment keeps its value across the iterations: this is
+    what lets one driver serve five blocks whose environments differ only in what they carry. -/
+theorem mod7Env_get_other {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (x : Ident)
+    (hx : x ≠ "q_acc") (hy : x ≠ "q_pc") (w : U256) (hw : VEnv.get V₀ x = some w) (m : Nat) :
+    VEnv.get (mod7Env V₀ pc acc m) x = some w := by
+  rw [mod7Env]
+  exact venvGet_set_ne (VEnv.set V₀ "q_pc" (pc m)) "q_acc" x (acc m) w hx.symm
+    (venvGet_set_ne V₀ "q_pc" x (pc m) w hy.symm hw)
+
+/-- THE PER-ITERATION SHAPE: 'mod7Env' at 'm + 1' is 'mod7Env' at 'm' with the body's two writes
+    re-applied, PROVIDED both registers are already bound in the start environment (which they are in
+    every MODARITH7 block: the prologue binds 'q_acc' and the render binds 'q_pc'). -/
+theorem mod7Env_step {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (m : Nat)
+    (hp : ∃ w, VEnv.get V₀ "q_pc" = some w) (ha : ∃ w, VEnv.get V₀ "q_acc" = some w) :
+    mod7Env V₀ pc acc (m + 1)
+      = VEnv.set (VEnv.set (mod7Env V₀ pc acc m) "q_pc" (pc (m + 1))) "q_acc" (acc (m + 1)) := by
+  obtain ⟨w1, hw1⟩ := hp
+  obtain ⟨w2, hw2⟩ := ha
+  have hswap : VEnv.set (VEnv.set (VEnv.set V₀ "q_pc" (pc m)) "q_acc" (acc m)) "q_pc" (pc (m + 1))
+      = VEnv.set (VEnv.set (VEnv.set V₀ "q_pc" (pc m)) "q_pc" (pc (m + 1))) "q_acc" (acc m) :=
+    venvSet_swap (VEnv.set V₀ "q_pc" (pc m)) "q_acc" "q_pc" (acc m) (pc (m + 1))
+      (by decide : ("q_acc" : String) ≠ "q_pc")
+      ⟨w2, venvGet_set_ne V₀ "q_pc" "q_acc" (pc m) w2
+        (by decide : ("q_pc" : String) ≠ "q_acc") hw2⟩
+      ⟨pc m, venvGet_set_same V₀ "q_pc" (pc m) w1 hw1⟩
+  unfold mod7Env
+  show VEnv.set (VEnv.set V₀ "q_pc" (pc (m + 1))) "q_acc" (acc (m + 1)) = _
+  rw [hswap, venvSet_set_same, venvSet_set_same]
+
+/-- THE LOOP-HEAD PREDICATE BOTH DRIVERS USE: the counter binding on top of the block environment. -/
+def mod7LoopInv {c : ExternalCalls} {g : ExternalGas} (ctr : Ident)
+    (envOf : Nat → VEnv (Bridge.Dialect c g)) (stOf : Nat → EvmState)
+    (m : Nat) (W : VEnv (Bridge.Dialect c g)) (u : EvmState) : Prop :=
+  W = ((ctr, BitVec.ofNat 256 m) :: envOf m) ∧ u = stOf m
+
+/-- THE POST BLOCK of every MODARITH7 loop, spelled: 'q_ctr := q_ctr + 1'. -/
+def mod7Post (ctr : Ident) : Block EVM.Op := [yset ctr (yop EVM.Op.add [yvar ctr, ylit 1])]
+
+/-- THE INIT BLOCK of every MODARITH7 loop, spelled: 'let q_ctr := 0'. -/
+def mod7Init (ctr : Ident) : Block EVM.Op := [ylet ctr (ylit 0)]
+
+theorem mod7LoopInv_mk {c : ExternalCalls} {g : ExternalGas} (ctr : Ident)
+    (envOf : Nat → VEnv (Bridge.Dialect c g)) (stOf : Nat → EvmState) (m : Nat) :
+    mod7LoopInv ctr envOf stOf m ((ctr, BitVec.ofNat 256 m) :: envOf m) (stOf m) := ⟨rfl, rfl⟩
+
+/-- THE GENERIC BLOCK-LOOP DRIVER, LITERAL BOUND: a loop of the emitted shape
+    'for q_ctr := 0; q_ctr < ylit N; q_ctr := q_ctr + 1 do BODY end' run from a loop-head environment
+    whose 'q_pc'/'q_acc' are rewritten by every iteration. 'qLimbWalk' does the induction on the
+    iterations REMAINING; everything else here is the 'init' step, the guard step at a symbolic counter,
+    the post step, the 'Step.forLoop' ascription and the 'restore'. The five MODARITH7 block loops and
+    all three inner limb loops are instances of it, which is why the arm is 5 per-iteration lemmas and
+    not 9 loop proofs. -/
+theorem mod7LitLoop {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g))
+    (ctr : Ident) (N : Nat) (hfit : N < 2 ^ 256)
+    (body : Block EVM.Op)
+    (envOf : Nat → VEnv (Bridge.Dialect c g)) (stOf : Nat → EvmState)
+    (hbody : ∀ m, m < N →
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+          ((ctr, BitVec.ofNat 256 m) :: envOf m) (stOf m) (.stmt (.block body))
+          (.sres ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1)) .normal))
+    (hlen : ∀ m, (envOf m).length = (envOf 0).length) :
+    Step (D := Bridge.Dialect c g) funs (envOf 0) (stOf 0)
+      (.stmt (Stmt.forLoop (mod7Init ctr) (yop EVM.Op.lt [yvar ctr, ylit N]) (mod7Post ctr) body))
+      (.sres (envOf N) (stOf N) .normal) := by
+  have hinit : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+      (envOf 0) (stOf 0) (.stmts (mod7Init ctr))
+      (.sres ((ctr, BitVec.ofNat 256 0) :: envOf 0) (stOf 0) .normal) :=
+    Step.seqCons (D := Bridge.Dialect c g)
+      (V1 := ((ctr, BitVec.ofNat 256 0) :: envOf 0)) (st1 := stOf 0)
+      (Step.letVal (D := Bridge.Dialect c g) (vars := [ctr])
+        (qlit (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) (envOf 0) (stOf 0) 0) rfl)
+      (Step.seqNil (D := Bridge.Dialect c g))
+  -- one guard step at a symbolic counter: 'lt (q_ctr, ylit N)' with 'q_ctr' bound at the head.
+  have hcond : ∀ (m : Nat) (W : VEnv (Bridge.Dialect c g)) (u : EvmState), m < 2 ^ 256 →
+      VEnv.get W ctr = some (BitVec.ofNat 256 m) →
+      Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) W u
+        (.expr (yop EVM.Op.lt [yvar ctr, ylit N])) (.eres (.vals [b2w (decide (m < N))] u)) := by
+    intro m W u hm hget
+    have e1 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        W u (.expr (ylit N)) (.eres (.vals [BitVec.ofNat 256 N] u)) :=
+      qlit (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) W u N
+    have e2 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        W u (.args [ylit N]) (.eres (.vals [BitVec.ofNat 256 N] u)) :=
+      Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := u)
+        (v := BitVec.ofNat 256 N) (st2 := u) (Step.argsNil (D := Bridge.Dialect c g)) e1
+    have e3 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        W u (.args [yvar ctr, ylit N])
+          (.eres (.vals [BitVec.ofNat 256 m, BitVec.ofNat 256 N] u)) :=
+      Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit N]) (restvals := [BitVec.ofNat 256 N])
+        (st1 := u) (v := BitVec.ofNat 256 m) (st2 := u) e2
+        (Step.var (D := Bridge.Dialect c g) hget)
+    have e4 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        W u (.expr (yop EVM.Op.lt [yvar ctr, ylit N]))
+          (.eres (.vals [b2w (decide ((BitVec.ofNat 256 m).toNat < (BitVec.ofNat 256 N).toNat))] u)) :=
+      Step.builtinOk (D := Bridge.Dialect c g) e3 (QBI_LT u _ _)
+    rw [toNat_ofNat_id hm, toNat_ofNat_id hfit] at e4
+    exact e4
+  -- the post block, at the OUTER function environment: 'Step.block' then 'restore_set'.
+  have hpost : ∀ m, m + 1 < 2 ^ 256 →
+      Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1))
+        (.stmt (.block (mod7Post ctr)))
+        (.sres ((ctr, BitVec.ofNat 256 (m + 1)) :: envOf (m + 1)) (stOf (m + 1)) .normal) := by
+    intro m hm1
+    have g1 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1)) (.expr (ylit 1))
+        (.eres (.vals [BitVec.ofNat 256 1] (stOf (m + 1)))) :=
+      qlit (hoist (Bridge.Dialect c g) (mod7Post ctr) ::
+        hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1)) 1
+    have g2 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1)) (.args [ylit 1])
+        (.eres (.vals [BitVec.ofNat 256 1] (stOf (m + 1)))) :=
+      Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+        (st1 := stOf (m + 1)) (v := BitVec.ofNat 256 1) (st2 := stOf (m + 1))
+        (Step.argsNil (D := Bridge.Dialect c g)) g1
+    have g3 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1))
+        (.args [yvar ctr, ylit 1])
+        (.eres (.vals [BitVec.ofNat 256 m, BitVec.ofNat 256 1] (stOf (m + 1)))) :=
+      Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 1]) (restvals := [BitVec.ofNat 256 1])
+        (st1 := stOf (m + 1)) (v := BitVec.ofNat 256 m) (st2 := stOf (m + 1)) g2
+        (Step.var (D := Bridge.Dialect c g) (venvGet_cons_eq (envOf (m + 1)) ctr _))
+    have g4 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1))
+        (.expr (yop EVM.Op.add [yvar ctr, ylit 1]))
+        (.eres (.vals [BitVec.ofNat 256 m + BitVec.ofNat 256 1] (stOf (m + 1)))) :=
+      Step.builtinOk (D := Bridge.Dialect c g) g3 (qbi_add (stOf (m + 1)) _ _)
+    rw [ofNat_add_one hm1] at g4
+    have g5 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1))
+        (.stmts (mod7Post ctr))
+        (.sres (VEnv.set ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) ctr
+          (BitVec.ofNat 256 (m + 1))) (stOf (m + 1)) .normal) :=
+      Step.seqCons (D := Bridge.Dialect c g)
+        (V1 := VEnv.set ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) ctr (BitVec.ofNat 256 (m + 1)))
+        (st1 := stOf (m + 1))
+        (Step.assignVal (D := Bridge.Dialect c g) (vars := [ctr])
+          (vals := [BitVec.ofNat 256 (m + 1)]) g4 (by rfl)) (Step.seqNil (D := Bridge.Dialect c g))
+    have g6 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1))
+        (.stmt (.block (mod7Post ctr)))
+        (.sres (restore ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1))
+          (VEnv.set ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) ctr (BitVec.ofNat 256 (m + 1))))
+          (stOf (m + 1)) .normal) :=
+      Step.block (D := Bridge.Dialect c g) (body := mod7Post ctr) g5
+    convert g6 using 1
+    · rw [restore_set, venvSet_cons_eq]
+  have hiter : ∀ m W u, m < N → mod7LoopInv ctr envOf stOf m W u →
+      ∃ cv stc Vb stb Vp stp,
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) W u
+          (.expr (yop EVM.Op.lt [yvar ctr, ylit N])) (.eres (.vals [cv] stc)) ∧
+        cv ≠ (Bridge.Dialect c g).zero ∧
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) W stc
+          (.stmt (.block body)) (.sres Vb stb .normal) ∧
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) Vb stb
+          (.stmt (.block (mod7Post ctr))) (.sres Vp stp .normal) ∧
+        mod7LoopInv ctr envOf stOf (m + 1) Vp stp := by
+    intro m W u hm hInv
+    obtain ⟨rfl, rfl⟩ := hInv
+    have hm1 : m + 1 < 2 ^ 256 := by omega
+    have hcv : (b2w (decide (m < N)) : U256) ≠ (Bridge.Dialect c g).zero := by
+      rw [decide_eq_true hm]; exact b2w_true_ne_zero
+    refine ⟨b2w (decide (m < N)), stOf m, _, _, _, _,
+      hcond m _ _ (by omega : m < 2 ^ 256)
+        (venvGet_cons_eq (envOf m) ctr _), hcv, hbody m hm, hpost m hm1, ?_⟩
+    · exact mod7LoopInv_mk ctr envOf stOf (m + 1)
+  have hexit : ∀ W u, mod7LoopInv ctr envOf stOf N W u →
+      ∃ cv st', Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+          W u (.expr (yop EVM.Op.lt [yvar ctr, ylit N])) (.eres (.vals [cv] st')) ∧
+        cv = (Bridge.Dialect c g).zero ∧ mod7LoopInv ctr envOf stOf N W st' := by
+    intro W u hInv
+    obtain ⟨rfl, rfl⟩ := hInv
+    have hz : (b2w (decide (N < N)) : U256) = (Bridge.Dialect c g).zero := by
+      rw [decide_eq_false (Nat.lt_irrefl N)]; exact b2w_false_eq_zero
+    exact ⟨b2w (decide (N < N)), stOf N, hcond N _ _ hfit (venvGet_cons_eq (envOf N) ctr _),
+      hz, ⟨rfl, rfl⟩⟩
+  obtain ⟨Vend, uend, hloop, hInvN⟩ :=
+    qLimbWalk (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+      (yop EVM.Op.lt [yvar ctr, ylit N]) (mod7Post ctr) body N
+      (mod7LoopInv ctr envOf stOf) hexit hiter
+      ((ctr, BitVec.ofNat 256 0) :: envOf 0) (stOf 0) ⟨rfl, rfl⟩
+  have hAB : Vend = ((ctr, BitVec.ofNat 256 N) :: envOf N) ∧ uend = stOf N := hInvN
+  rw [hAB.1, hAB.2] at hloop
+  have hforRaw : Step (D := Bridge.Dialect c g) funs (envOf 0) (stOf 0)
+      (.stmt (Stmt.forLoop (mod7Init ctr) (yop EVM.Op.lt [yvar ctr, ylit N]) (mod7Post ctr) body))
+      (.sres (restore (envOf 0) ((ctr, BitVec.ofNat 256 N) :: envOf N)) (stOf N) .normal) :=
+    Step.forLoop (D := Bridge.Dialect c g) (init := mod7Init ctr)
+      (c := yop EVM.Op.lt [yvar ctr, ylit N]) (post := mod7Post ctr) (body := body) hinit hloop
+  have hres : restore (envOf 0) ((ctr, BitVec.ofNat 256 N) :: envOf N) = envOf N := by
+    have hlen' : ((ctr, BitVec.ofNat 256 N) :: envOf N).length - (envOf 0).length = 1 := by
+      rw [List.length_cons, hlen N]; omega
+    show ((ctr, BitVec.ofNat 256 N) :: envOf N).drop _ = _
+    rw [hlen', List.drop_succ_cons, List.drop_zero]
+  rw [hres] at hforRaw
+  exact hforRaw
+
+/-- THE GENERIC BLOCK-LOOP DRIVER, REGISTER BOUND: the five MODARITH7 block loops are
+    'for q_blk := 0; q_blk < q_count; q_blk := q_blk + 1 do BODY end' where 'q_count' is a BYTE VALUE
+    read out of the program, not a template constant. Same shape as 'mod7LitLoop'; the guard compares
+    two registers, so the bound is a hypothesis about the environment instead of a literal, and the
+    iteration count is 'cntv.toNat'. -/
+theorem mod7VarLoop {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g))
+    (ctr cntVar : Ident) (cntv : U256) (N : Nat) (hcntv : cntv = BitVec.ofNat 256 N)
+    (hfit : N < 2 ^ 256) (hctr_ne_cnt : ctr ≠ cntVar)
+    (body : Block EVM.Op)
+    (envOf : Nat → VEnv (Bridge.Dialect c g)) (stOf : Nat → EvmState)
+    (hget_cnt : ∀ m, VEnv.get (envOf m) cntVar = some cntv)
+    (hbody : ∀ m, m < N →
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+          ((ctr, BitVec.ofNat 256 m) :: envOf m) (stOf m) (.stmt (.block body))
+          (.sres ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1)) .normal))
+    (hlen : ∀ m, (envOf m).length = (envOf 0).length) :
+    Step (D := Bridge.Dialect c g) funs (envOf 0) (stOf 0)
+      (.stmt (Stmt.forLoop (mod7Init ctr) (yop EVM.Op.lt [yvar ctr, yvar cntVar]) (mod7Post ctr) body))
+      (.sres (envOf N) (stOf N) .normal) := by
+  have hcnt_lift : ∀ m, VEnv.get ((ctr, BitVec.ofNat 256 m) :: envOf m) cntVar = some cntv := by
+    intro m
+    rw [venvGet_cons_ne (envOf m) ctr cntVar (BitVec.ofNat 256 m) hctr_ne_cnt]
+    exact hget_cnt m
+  have hinit : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+      (envOf 0) (stOf 0) (.stmts (mod7Init ctr))
+      (.sres ((ctr, BitVec.ofNat 256 0) :: envOf 0) (stOf 0) .normal) :=
+    Step.seqCons (D := Bridge.Dialect c g)
+      (V1 := ((ctr, BitVec.ofNat 256 0) :: envOf 0)) (st1 := stOf 0)
+      (Step.letVal (D := Bridge.Dialect c g) (vars := [ctr])
+        (qlit (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) (envOf 0) (stOf 0) 0) rfl)
+      (Step.seqNil (D := Bridge.Dialect c g))
+  have hcond : ∀ (m : Nat) (W : VEnv (Bridge.Dialect c g)) (u : EvmState), m < 2 ^ 256 →
+      VEnv.get W ctr = some (BitVec.ofNat 256 m) → VEnv.get W cntVar = some cntv →
+      Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) W u
+        (.expr (yop EVM.Op.lt [yvar ctr, yvar cntVar])) (.eres (.vals [b2w (decide (m < N))] u)) := by
+    intro m W u hm hget hcnt
+    have e1 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        W u (.expr (yvar cntVar)) (.eres (.vals [cntv] u)) :=
+      Step.var (D := Bridge.Dialect c g) hcnt
+    have e2 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        W u (.args [yvar cntVar]) (.eres (.vals [cntv] u)) :=
+      Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := u)
+        (v := cntv) (st2 := u) (Step.argsNil (D := Bridge.Dialect c g)) e1
+    have e3 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        W u (.args [yvar ctr, yvar cntVar]) (.eres (.vals [BitVec.ofNat 256 m, cntv] u)) :=
+      Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar cntVar]) (restvals := [cntv])
+        (st1 := u) (v := BitVec.ofNat 256 m) (st2 := u) e2
+        (Step.var (D := Bridge.Dialect c g) hget)
+    have e4 : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        W u (.expr (yop EVM.Op.lt [yvar ctr, yvar cntVar]))
+          (.eres (.vals [b2w (decide ((BitVec.ofNat 256 m).toNat < cntv.toNat))] u)) :=
+      Step.builtinOk (D := Bridge.Dialect c g) e3 (QBI_LT u _ _)
+    rw [hcntv, toNat_ofNat_id hfit, toNat_ofNat_id hm] at e4
+    exact e4
+  have hpost : ∀ m, m + 1 < 2 ^ 256 →
+      Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1))
+        (.stmt (.block (mod7Post ctr)))
+        (.sres ((ctr, BitVec.ofNat 256 (m + 1)) :: envOf (m + 1)) (stOf (m + 1)) .normal) := by
+    intro m hm1
+    have g1 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1)) (.expr (ylit 1))
+        (.eres (.vals [BitVec.ofNat 256 1] (stOf (m + 1)))) :=
+      qlit (hoist (Bridge.Dialect c g) (mod7Post ctr) ::
+        hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1)) 1
+    have g2 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1)) (.args [ylit 1])
+        (.eres (.vals [BitVec.ofNat 256 1] (stOf (m + 1)))) :=
+      Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+        (st1 := stOf (m + 1)) (v := BitVec.ofNat 256 1) (st2 := stOf (m + 1))
+        (Step.argsNil (D := Bridge.Dialect c g)) g1
+    have g3 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1))
+        (.args [yvar ctr, ylit 1])
+        (.eres (.vals [BitVec.ofNat 256 m, BitVec.ofNat 256 1] (stOf (m + 1)))) :=
+      Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 1]) (restvals := [BitVec.ofNat 256 1])
+        (st1 := stOf (m + 1)) (v := BitVec.ofNat 256 m) (st2 := stOf (m + 1)) g2
+        (Step.var (D := Bridge.Dialect c g) (venvGet_cons_eq (envOf (m + 1)) ctr _))
+    have g4 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1))
+        (.expr (yop EVM.Op.add [yvar ctr, ylit 1]))
+        (.eres (.vals [BitVec.ofNat 256 m + BitVec.ofNat 256 1] (stOf (m + 1)))) :=
+      Step.builtinOk (D := Bridge.Dialect c g) g3 (qbi_add (stOf (m + 1)) _ _)
+    rw [ofNat_add_one hm1] at g4
+    have g5 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Post ctr) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1)) (.stmts (mod7Post ctr))
+        (.sres (VEnv.set ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) ctr
+          (BitVec.ofNat 256 (m + 1))) (stOf (m + 1)) .normal) :=
+      Step.seqCons (D := Bridge.Dialect c g)
+        (V1 := VEnv.set ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) ctr (BitVec.ofNat 256 (m + 1)))
+        (st1 := stOf (m + 1))
+        (Step.assignVal (D := Bridge.Dialect c g) (vars := [ctr])
+          (vals := [BitVec.ofNat 256 (m + 1)]) g4 (by rfl)) (Step.seqNil (D := Bridge.Dialect c g))
+    have g6 : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+        ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) (stOf (m + 1))
+        (.stmt (.block (mod7Post ctr)))
+        (.sres (restore ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1))
+          (VEnv.set ((ctr, BitVec.ofNat 256 m) :: envOf (m + 1)) ctr (BitVec.ofNat 256 (m + 1))))
+          (stOf (m + 1)) .normal) :=
+      Step.block (D := Bridge.Dialect c g) (body := mod7Post ctr) g5
+    convert g6 using 1
+    · rw [restore_set, venvSet_cons_eq]
+  have hiter : ∀ m W u, m < N → mod7LoopInv ctr envOf stOf m W u →
+      ∃ cv stc Vb stb Vp stp,
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) W u
+          (.expr (yop EVM.Op.lt [yvar ctr, yvar cntVar])) (.eres (.vals [cv] stc)) ∧
+        cv ≠ (Bridge.Dialect c g).zero ∧
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) W stc
+          (.stmt (.block body)) (.sres Vb stb .normal) ∧
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs) Vb stb
+          (.stmt (.block (mod7Post ctr))) (.sres Vp stp .normal) ∧
+        mod7LoopInv ctr envOf stOf (m + 1) Vp stp := by
+    intro m W u hm hInv
+    obtain ⟨rfl, rfl⟩ := hInv
+    have hm1 : m + 1 < 2 ^ 256 := by omega
+    have hcv : (b2w (decide (m < N)) : U256) ≠ (Bridge.Dialect c g).zero := by
+      rw [decide_eq_true hm]; exact b2w_true_ne_zero
+    refine ⟨b2w (decide (m < N)), stOf m, _, _, _, _,
+      hcond m _ _ (by omega : m < 2 ^ 256)
+        (venvGet_cons_eq (envOf m) ctr _) (hcnt_lift m), hcv, hbody m hm, hpost m hm1, ?_⟩
+    · exact mod7LoopInv_mk ctr envOf stOf (m + 1)
+  have hexit : ∀ W u, mod7LoopInv ctr envOf stOf N W u →
+      ∃ cv st', Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+          W u (.expr (yop EVM.Op.lt [yvar ctr, yvar cntVar])) (.eres (.vals [cv] st')) ∧
+        cv = (Bridge.Dialect c g).zero ∧ mod7LoopInv ctr envOf stOf N W st' := by
+    intro W u hInv
+    obtain ⟨rfl, rfl⟩ := hInv
+    have hz : (b2w (decide (N < N)) : U256) = (Bridge.Dialect c g).zero := by
+      rw [decide_eq_false (Nat.lt_irrefl N)]; exact b2w_false_eq_zero
+    exact ⟨b2w (decide (N < N)), stOf N, hcond N _ _ hfit (venvGet_cons_eq (envOf N) ctr _)
+      (hcnt_lift N), hz, ⟨rfl, rfl⟩⟩
+  obtain ⟨Vend, uend, hloop, hInvN⟩ :=
+    qLimbWalk (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+      (yop EVM.Op.lt [yvar ctr, yvar cntVar]) (mod7Post ctr) body N
+      (mod7LoopInv ctr envOf stOf) hexit hiter
+      ((ctr, BitVec.ofNat 256 0) :: envOf 0) (stOf 0) ⟨rfl, rfl⟩
+  have hAB : Vend = ((ctr, BitVec.ofNat 256 N) :: envOf N) ∧ uend = stOf N := hInvN
+  rw [hAB.1, hAB.2] at hloop
+  have hforRaw : Step (D := Bridge.Dialect c g) funs (envOf 0) (stOf 0)
+      (.stmt (Stmt.forLoop (mod7Init ctr) (yop EVM.Op.lt [yvar ctr, yvar cntVar]) (mod7Post ctr) body))
+      (.sres (restore (envOf 0) ((ctr, BitVec.ofNat 256 N) :: envOf N)) (stOf N) .normal) :=
+    Step.forLoop (D := Bridge.Dialect c g) (init := mod7Init ctr)
+      (c := yop EVM.Op.lt [yvar ctr, yvar cntVar]) (post := mod7Post ctr) (body := body) hinit hloop
+  have hres : restore (envOf 0) ((ctr, BitVec.ofNat 256 N) :: envOf N) = envOf N := by
+    have hlen' : ((ctr, BitVec.ofNat 256 N) :: envOf N).length - (envOf 0).length = 1 := by
+      rw [List.length_cons, hlen N]; omega
+    show ((ctr, BitVec.ofNat 256 N) :: envOf N).drop _ = _
+    rw [hlen', List.drop_succ_cons, List.drop_zero]
+  rw [hres] at hforRaw
+  exact hforRaw
+
+#print axioms Midfall.LoweringV3.QuotientArms.mod7LitLoop
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7LitLoop
+#print axioms Midfall.LoweringV3.QuotientArms.mod7VarLoop
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7VarLoop
+
+end Midfall.LoweringV3.QuotientArms
+
+namespace Midfall.LoweringV3.QuotientArms
+
+/-- A 256-bit word is the 'ofNat' of its own 'toNat': the round trip the register-bound block driver
+    needs, since its iteration count is 'cntv.toNat'. -/
+theorem mod7_ofNat_toNat (x : U256) : x = BitVec.ofNat 256 x.toNat := by
+  refine BitVec.eq_of_toNat_eq ?_
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt x.isLt]
+
+/-- The block environment at iteration 0 is the start environment itself, PROVIDED 'pc'/'acc' agree
+    with what is already bound there: both writes are in-place no-ops. -/
+theorem mod7Env_zero {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256)
+    (hp : VEnv.get V₀ "q_pc" = some (pc 0)) (ha : VEnv.get V₀ "q_acc" = some (acc 0)) :
+    mod7Env V₀ pc acc 0 = V₀ := by
+  rw [mod7Env,
+      venvSet_same_of_get (VEnv.set V₀ "q_pc" (pc 0)) "q_acc" (acc 0)
+        (venvGet_set_ne V₀ "q_pc" "q_acc" (pc 0) (acc 0) (by decide : ("q_pc" : Ident) ≠ "q_acc") ha),
+      venvSet_same_of_get V₀ "q_pc" (pc 0) hp]
+
+/-- The length fact the block drivers ask for, in the form they ask for it. -/
+theorem mod7Env_length0 {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) :
+    ∀ m, (mod7Env V₀ pc acc m).length = (mod7Env V₀ pc acc 0).length := by
+  intro m
+  rw [mod7Env_length, mod7Env_length]
+
+/-- DROPPING THE THREE 'let's a limb body introduces while keeping both register writes. This is the
+    shape fact every flat limb-block iteration needs, and it is the reason 'mod7Env' is written as two
+    'VEnv.set's rather than as conses: 'q_acc' is buried under the prologue's later bindings, so the
+    body's write lands IN PLACE and 'restore' removes exactly the three locals. -/
+theorem restore_limb3 {D : YulSemantics.Dialect} (V : VEnv D) (ctr : Ident)
+    (iv : D.Value) (w slot ptr pc' acc' : D.Value)
+    (hctr_acc : ctr ≠ "q_acc") (hctr_pc : ctr ≠ "q_pc") :
+    restore ((ctr, iv) :: V)
+      (VEnv.set (VEnv.set (("q_ptr", ptr) :: ("qconst", slot) :: ("q_word", w) :: (ctr, iv) :: V)
+        "q_pc" pc') "q_acc" acc')
+      = (ctr, iv) :: VEnv.set (VEnv.set V "q_pc" pc') "q_acc" acc' := by
+  have hp1 : VEnv.set (("q_ptr", ptr) :: ("qconst", slot) :: ("q_word", w) :: (ctr, iv) :: V)
+      "q_pc" pc'
+      = ("q_ptr", ptr) :: ("qconst", slot) :: ("q_word", w) :: (ctr, iv) :: VEnv.set V "q_pc" pc' := by
+    rw [venvSet_c3 ((ctr, iv) :: V) "q_word" "qconst" "q_ptr" w slot ptr pc' "q_pc"
+          (by decide : ("q_word" : Ident) ≠ "q_pc") (by decide : ("qconst" : Ident) ≠ "q_pc")
+          (by decide : ("q_ptr" : Ident) ≠ "q_pc"),
+        venvSet_cons_ne V ctr "q_pc" iv pc' hctr_pc]
+  have hp2 : VEnv.set (("q_ptr", ptr) :: ("qconst", slot) :: ("q_word", w) :: (ctr, iv) ::
+      VEnv.set V "q_pc" pc') "q_acc" acc'
+      = ("q_ptr", ptr) :: ("qconst", slot) :: ("q_word", w) :: (ctr, iv) ::
+        VEnv.set (VEnv.set V "q_pc" pc') "q_acc" acc' := by
+    rw [venvSet_c3 ((ctr, iv) :: VEnv.set V "q_pc" pc') "q_word" "qconst" "q_ptr" w slot ptr acc'
+          "q_acc" (by decide : ("q_word" : Ident) ≠ "q_acc")
+          (by decide : ("qconst" : Ident) ≠ "q_acc") (by decide : ("q_ptr" : Ident) ≠ "q_acc"),
+        venvSet_cons_ne (VEnv.set V "q_pc" pc') ctr "q_acc" iv acc' hctr_acc]
+  rw [hp1, hp2]
+  unfold restore
+  have hlen : List.length (("q_ptr", ptr) :: ("qconst", slot) :: ("q_word", w) :: (ctr, iv) ::
+      VEnv.set (VEnv.set V "q_pc" pc') "q_acc" acc')
+      - List.length ((ctr, iv) :: V) = 3 := by
+    simp only [List.length_cons]
+    rw [venvSet_length, venvSet_length]
+    omega
+  rw [hlen]
+  rfl
+
+/-- THE LIMB WALK from an arbitrary start triple: 'm' iterations of the emitted limb body. This is
+    'lin7Walk' re-rooted so a MODARITH7 block can start it at a carried accumulator instead of zero. -/
+def mod7LimbFrom (cm pcv accv : U256) (st : EvmState) (m : Nat) : U256 × U256 × EvmState :=
+  lin7Walk cm m (pcv, accv, st)
+
+/-- ONE ITERATION of the emitted limb body inside a MODARITH7 block loop, at a symbolic block counter
+    'ctr' and a symbolic loop-head environment 'V₀': 'lin7_iter' wrapped in 'Step.block' with the
+    'restore' carried. It serves the LIN block's INNER loop and the MEM block's whole body, which are
+    the same five statements. -/
+theorem mod7Limb_iter {c : ExternalCalls} {g : ExternalGas}
+    (tcq : QuotientVmTemplateConstants) (funs : FunEnv (Bridge.Dialect c g)) (ctr : Ident)
+    (V₀ : VEnv (Bridge.Dialect c g)) (pcv accv cm : U256) (st : EvmState) (m : Nat)
+    (hctr_acc : ctr ≠ "q_acc") (hctr_pc : ctr ≠ "q_pc")
+    (hctr_cm : ctr ≠ "q_const_mptr") (hctr_r : ctr ≠ "r")
+    (hget_pc : VEnv.get V₀ "q_pc" = some pcv)
+    (hget_acc : VEnv.get V₀ "q_acc" = some accv)
+    (hget_cm : VEnv.get V₀ "q_const_mptr" = some cm)
+    (hget_r : VEnv.get V₀ "r" = some frModulusWord) :
+    let pc := fun k => (mod7LimbFrom cm pcv accv st k).1
+    let acc := fun k => (mod7LimbFrom cm pcv accv st k).2.1
+    let stw := fun k => (mod7LimbFrom cm pcv accv st k).2.2
+    Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+      ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) (stw m) (.stmt (.block (lin7Body tcq)))
+      (.sres ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc (m + 1)) (stw (m + 1)) .normal) := by
+  intro pc acc stw
+  have hpcW : VEnv.get ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "q_pc" = some (pc m) := by
+    rw [venvGet_cons_ne (mod7Env V₀ pc acc m) ctr "q_pc" (BitVec.ofNat 256 m) hctr_pc]
+    exact mod7Env_get_pc V₀ pc acc pcv hget_pc m
+  have haccW : VEnv.get ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "q_acc" = some (acc m) := by
+    rw [venvGet_cons_ne (mod7Env V₀ pc acc m) ctr "q_acc" (BitVec.ofNat 256 m) hctr_acc]
+    exact mod7Env_get_acc V₀ pc acc accv hget_acc m
+  have hcmW : VEnv.get ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "q_const_mptr" = some cm := by
+    rw [venvGet_cons_ne (mod7Env V₀ pc acc m) ctr "q_const_mptr" (BitVec.ofNat 256 m) hctr_cm]
+    exact mod7Env_get_other V₀ pc acc "q_const_mptr"
+      (by decide : ("q_const_mptr" : Ident) ≠ "q_acc") (by decide : ("q_const_mptr" : Ident) ≠ "q_pc")
+      cm hget_cm m
+  have hrW : VEnv.get ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "r" = some frModulusWord := by
+    rw [venvGet_cons_ne (mod7Env V₀ pc acc m) ctr "r" (BitVec.ofNat 256 m) hctr_r]
+    exact mod7Env_get_other V₀ pc acc "r" (by decide : ("r" : Ident) ≠ "q_acc")
+      (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord hget_r m
+  have hpcS : pc (m + 1) = pc m + BitVec.ofNat 256 3 := rfl
+  have haccS : acc (m + 1) = wAddmod (acc m) (wMulmod
+      (loadWord (stw m).memory ((cm + ((((loadWord (stw m).memory (pc m).toNat) >>> 248) &&& 0xff) <<< 5))).toNat)
+      (loadWord (stw m).memory (((loadWord (stw m).memory (pc m).toNat) >>> 232) &&& 65535).toNat)) := rfl
+  have h1 : Step (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (lin7Body tcq) :: hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+      ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) (stw m) (.stmts (lin7Body tcq))
+      (.sres (VEnv.set (VEnv.set (("q_ptr", ((loadWord (stw m).memory (pc m).toNat) >>> 232) &&& 65535) ::
+        ("qconst", ((loadWord (stw m).memory (pc m).toNat) >>> 248) &&& 0xff) ::
+        ("q_word", loadWord (stw m).memory (pc m).toNat) ::
+        (ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "q_pc" (pc m + BitVec.ofNat 256 3))
+        "q_acc" (wAddmod (acc m) (wMulmod
+          (loadWord (stw m).memory ((cm + ((((loadWord (stw m).memory (pc m).toNat) >>> 248) &&& 0xff) <<< 5))).toNat)
+          (loadWord (stw m).memory (((loadWord (stw m).memory (pc m).toNat) >>> 232) &&& 65535).toNat))))
+        (touchMemory (touchMemory (touchMemory (stw m) (pc m).toNat 32)
+          (((loadWord (stw m).memory (pc m).toNat) >>> 232) &&& 65535).toNat 32)
+          ((cm + ((((loadWord (stw m).memory (pc m).toNat) >>> 248) &&& 0xff) <<< 5))).toNat 32) .normal) :=
+    lin7_iter (hoist (Bridge.Dialect c g) (lin7Body tcq) ::
+      hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+      ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) (stw m) (pc m) (acc m) cm
+      hpcW haccW hcmW hrW
+  have hstep : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) (mod7Init ctr) :: funs)
+      ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) (stw m) (.stmt (.block (lin7Body tcq)))
+      (.sres (restore ((ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m)
+        (VEnv.set (VEnv.set (("q_ptr", ((loadWord (stw m).memory (pc m).toNat) >>> 232) &&& 65535) ::
+          ("qconst", ((loadWord (stw m).memory (pc m).toNat) >>> 248) &&& 0xff) ::
+          ("q_word", loadWord (stw m).memory (pc m).toNat) ::
+          (ctr, BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "q_pc" (pc m + BitVec.ofNat 256 3))
+          "q_acc" (wAddmod (acc m) (wMulmod
+            (loadWord (stw m).memory ((cm + ((((loadWord (stw m).memory (pc m).toNat) >>> 248) &&& 0xff) <<< 5))).toNat)
+            (loadWord (stw m).memory (((loadWord (stw m).memory (pc m).toNat) >>> 232) &&& 65535).toNat)))))
+        (stw (m + 1)) .normal) :=
+    Step.block (D := Bridge.Dialect c g) (body := lin7Body tcq) h1
+  convert hstep using 1
+  · rw [restore_limb3 (mod7Env V₀ pc acc m) ctr (BitVec.ofNat 256 m)
+        (loadWord (stw m).memory (pc m).toNat)
+        (((loadWord (stw m).memory (pc m).toNat) >>> 248) &&& 0xff)
+        (((loadWord (stw m).memory (pc m).toNat) >>> 232) &&& 65535)
+        (pc m + BitVec.ofNat 256 3)
+        (wAddmod (acc m) (wMulmod
+          (loadWord (stw m).memory ((cm + ((((loadWord (stw m).memory (pc m).toNat) >>> 248) &&& 0xff) <<< 5))).toNat)
+          (loadWord (stw m).memory (((loadWord (stw m).memory (pc m).toNat) >>> 232) &&& 65535).toNat)))
+        hctr_acc hctr_pc,
+      mod7Env_step V₀ pc acc m ⟨pcv, hget_pc⟩ ⟨accv, hget_acc⟩, hpcS, haccS]
+
+/-- THE LIMB LOOP of MODARITH7's LIN block, run from an arbitrary loop-head environment:
+    'tcq.limbCount' iterations of the emitted limb body, so the cursor advances by '3 * limbCount' and
+    the accumulator CARRIES THROUGH from 'accv' rather than restarting at zero (which is what 'lin7From'
+    does, and why this lemma had to be written). -/
+theorem mod7LimbLoop {c : ExternalCalls} {g : ExternalGas}
+    (tcq : QuotientVmTemplateConstants) (funs : FunEnv (Bridge.Dialect c g))
+    (V₀ : VEnv (Bridge.Dialect c g)) (pcv accv cm : U256) (st : EvmState)
+    (hfit : tcq.limbCount < 2 ^ 256)
+    (hget_pc : VEnv.get V₀ "q_pc" = some pcv)
+    (hget_acc : VEnv.get V₀ "q_acc" = some accv)
+    (hget_cm : VEnv.get V₀ "q_const_mptr" = some cm)
+    (hget_r : VEnv.get V₀ "r" = some frModulusWord) :
+    let pc := fun k => (mod7LimbFrom cm pcv accv st k).1
+    let acc := fun k => (mod7LimbFrom cm pcv accv st k).2.1
+    let stw := fun k => (mod7LimbFrom cm pcv accv st k).2.2
+    Step (D := Bridge.Dialect c g) funs V₀ st
+      (.stmt (Stmt.forLoop (mod7Init "q_i") (yop EVM.Op.lt [yvar "q_i", ylit tcq.limbCount])
+        (mod7Post "q_i") (lin7Body tcq)))
+      (.sres (mod7Env V₀ pc acc tcq.limbCount) (stw tcq.limbCount) .normal) := by
+  intro pc acc stw
+  have hbody : ∀ m, m < tcq.limbCount →
+      Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Init "q_i") :: funs)
+        (("q_i", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) (stw m)
+        (.stmt (.block (lin7Body tcq)))
+        (.sres (("q_i", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc (m + 1)) (stw (m + 1)) .normal) :=
+    fun m _ => mod7Limb_iter tcq funs "q_i" V₀ pcv accv cm st m
+      (by decide : ("q_i" : Ident) ≠ "q_acc") (by decide : ("q_i" : Ident) ≠ "q_pc")
+      (by decide : ("q_i" : Ident) ≠ "q_const_mptr") (by decide : ("q_i" : Ident) ≠ "r")
+      hget_pc hget_acc hget_cm hget_r
+  have h := mod7LitLoop funs "q_i" tcq.limbCount hfit (lin7Body tcq)
+    (mod7Env V₀ pc acc) stw hbody (mod7Env_length0 V₀ pc acc)
+  rw [mod7Env_zero V₀ pc acc hget_pc hget_acc] at h
+  exact h
+
+/-- **THE MEM BLOCK**: 'q_mem_count' iterations of the emitted limb body at a stride of 3 bytes, run
+    from the prologue environment. The FIRST MODARITH7 block landed, and the pattern the other four
+    follow: the driver does the induction, 'mod7Limb_iter' does one iteration, and the block walk is
+    'lin7Walk' re-rooted at the carried accumulator. -/
+theorem mod7MemBlock {c : ExternalCalls} {g : ExternalGas}
+    (tcq : QuotientVmTemplateConstants) (funs : FunEnv (Bridge.Dialect c g))
+    (V₀ : VEnv (Bridge.Dialect c g)) (pcv accv cm cntv : U256) (st : EvmState)
+    (hget_pc : VEnv.get V₀ "q_pc" = some pcv)
+    (hget_acc : VEnv.get V₀ "q_acc" = some accv)
+    (hget_cm : VEnv.get V₀ "q_const_mptr" = some cm)
+    (hget_r : VEnv.get V₀ "r" = some frModulusWord)
+    (hget_cnt : VEnv.get V₀ "q_mem_count" = some cntv) :
+    let pc := fun k => (mod7LimbFrom cm pcv accv st k).1
+    let acc := fun k => (mod7LimbFrom cm pcv accv st k).2.1
+    let stw := fun k => (mod7LimbFrom cm pcv accv st k).2.2
+    Step (D := Bridge.Dialect c g) funs V₀ st
+      (.stmt (Stmt.forLoop (mod7Init "q_mem_block")
+        (yop EVM.Op.lt [yvar "q_mem_block", yvar "q_mem_count"])
+        (mod7Post "q_mem_block") (lin7Body tcq)))
+      (.sres (mod7Env V₀ pc acc cntv.toNat) (stw cntv.toNat) .normal) := by
+  intro pc acc stw
+  have hbody : ∀ m, m < cntv.toNat →
+      Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Init "q_mem_block") :: funs)
+        (("q_mem_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) (stw m)
+        (.stmt (.block (lin7Body tcq)))
+        (.sres (("q_mem_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc (m + 1))
+          (stw (m + 1)) .normal) :=
+    fun m _ => mod7Limb_iter tcq funs "q_mem_block" V₀ pcv accv cm st m
+      (by decide : ("q_mem_block" : Ident) ≠ "q_acc") (by decide : ("q_mem_block" : Ident) ≠ "q_pc")
+      (by decide : ("q_mem_block" : Ident) ≠ "q_const_mptr")
+      (by decide : ("q_mem_block" : Ident) ≠ "r")
+      hget_pc hget_acc hget_cm hget_r
+  have hget_cnt' : ∀ m, VEnv.get (mod7Env V₀ pc acc m) "q_mem_count" = some cntv := fun m =>
+    mod7Env_get_other V₀ pc acc "q_mem_count"
+      (by decide : ("q_mem_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_mem_count" : Ident) ≠ "q_pc") cntv hget_cnt m
+  have h := mod7VarLoop funs "q_mem_block" "q_mem_count" cntv cntv.toNat (mod7_ofNat_toNat cntv)
+    cntv.isLt
+    (by decide : ("q_mem_block" : Ident) ≠ "q_mem_count") (lin7Body tcq)
+    (mod7Env V₀ pc acc) stw hget_cnt' hbody (mod7Env_length0 V₀ pc acc)
+  rw [mod7Env_zero V₀ pc acc hget_pc hget_acc] at h
+  exact h
+
+#print axioms Midfall.LoweringV3.QuotientArms.mod7Limb_iter
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7Limb_iter
+#print axioms Midfall.LoweringV3.QuotientArms.mod7LimbLoop
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7LimbLoop
+#print axioms Midfall.LoweringV3.QuotientArms.mod7MemBlock
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7MemBlock
+
+end Midfall.LoweringV3.QuotientArms
+
+namespace Midfall.LoweringV3.QuotientArms
+
+/-- THE LIN BLOCK WALK: 'm' whole limb loops. One outer iteration is 'lin7Walk' run 'L' times, so the
+    cursor chains by '3 * L' = 'limbBlockStride' per outer iteration - the stride the walker's
+    'limbTerms' uses at 'VmValidator.lean:1070'. -/
+def mod7LinStep (cm : U256) (L : Nat) (s : U256 × U256 × EvmState) : U256 × U256 × EvmState :=
+  lin7Walk cm L s
+
+def mod7LinWalk (cm : U256) (L : Nat) : Nat → U256 × U256 × EvmState → U256 × U256 × EvmState
+  | 0, s => s
+  | m + 1, s => mod7LinStep cm L (mod7LinWalk cm L m s)
+
+def mod7LinFrom (cm pcv accv : U256) (st : EvmState) (L m : Nat) : U256 × U256 × EvmState :=
+  mod7LinWalk cm L m (pcv, accv, st)
+
+/-- THE CURSOR CHAIN, ONCE FOR ALL THREE NESTED BLOCKS: run an inner limb loop from the outer block's
+    loop-head environment, drop the outer counter binding the way 'Step.block's 'restore' does, and the
+    result is the outer environment at the next iteration. Stated abstractly in 'pc'/'acc' so LIN, ROW
+    and PAIR all instantiate it with their own walk. -/
+theorem mod7Env_chain {c : ExternalCalls} {g : ExternalGas}
+    (V₀ : VEnv (Bridge.Dialect c g)) (pc acc : Nat → U256) (ctr : Ident) (iv : U256) (m : Nat)
+    (pc' acc' : U256)
+    (hpc : pc' = pc (m + 1)) (hacc : acc' = acc (m + 1))
+    (hctr_acc : ctr ≠ "q_acc") (hctr_pc : ctr ≠ "q_pc")
+    (hp : ∃ w, VEnv.get V₀ "q_pc" = some w) (ha : ∃ w, VEnv.get V₀ "q_acc" = some w) :
+    restore ((ctr, iv) :: mod7Env V₀ pc acc m)
+      (mod7Env ((ctr, iv) :: mod7Env V₀ pc acc m) (fun _ => pc') (fun _ => acc') 1)
+      = (ctr, iv) :: mod7Env V₀ pc acc (m + 1) := by
+  have key : mod7Env ((ctr, iv) :: mod7Env V₀ pc acc m) (fun _ => pc') (fun _ => acc') 1
+      = (ctr, iv) :: mod7Env V₀ pc acc (m + 1) := by
+    show VEnv.set (VEnv.set ((ctr, iv) :: mod7Env V₀ pc acc m) "q_pc" pc') "q_acc" acc' = _
+    rw [venvSet_cons_ne (mod7Env V₀ pc acc m) ctr "q_pc" iv pc' hctr_pc,
+        venvSet_cons_ne (VEnv.set (mod7Env V₀ pc acc m) "q_pc" pc') ctr "q_acc" iv acc' hctr_acc,
+        hpc, hacc, ← mod7Env_step V₀ pc acc m hp ha]
+  rw [key]
+  refine restore_same_len _ _ ?_
+  simp only [List.length_cons]
+  rw [mod7Env_length, mod7Env_length]
+
+/-- **THE LIN BLOCK**: 'q_lin_count' iterations of a loop that itself runs 'tcq.limbCount' iterations of
+    the emitted limb body. This is CSLOT's sub-obstacle (c) - a NESTED fold induction inside the chained
+    cursor - and it is where the cursor of block 'b + 1' is the OUTPUT cursor of block 'b': the inner
+    loop starts at 'pc m', not at the block's base. The stride is '3 * limbCount = limbBlockStride',
+    which is what 'quotientModarith7OpLen' adds at 'VmValidator.lean:638'. -/
+theorem mod7LinBlock {c : ExternalCalls} {g : ExternalGas}
+    (tcq : QuotientVmTemplateConstants) (funs : FunEnv (Bridge.Dialect c g))
+    (V₀ : VEnv (Bridge.Dialect c g)) (pcv accv cm cntv : U256) (st : EvmState)
+    (hfit : tcq.limbCount < 2 ^ 256)
+    (hget_pc : VEnv.get V₀ "q_pc" = some pcv)
+    (hget_acc : VEnv.get V₀ "q_acc" = some accv)
+    (hget_cm : VEnv.get V₀ "q_const_mptr" = some cm)
+    (hget_r : VEnv.get V₀ "r" = some frModulusWord)
+    (hget_cnt : VEnv.get V₀ "q_lin_count" = some cntv) :
+    let pc := fun k => (mod7LinFrom cm pcv accv st tcq.limbCount k).1
+    let acc := fun k => (mod7LinFrom cm pcv accv st tcq.limbCount k).2.1
+    let stw := fun k => (mod7LinFrom cm pcv accv st tcq.limbCount k).2.2
+    let inner := Stmt.forLoop (mod7Init "q_i") (yop EVM.Op.lt [yvar "q_i", ylit tcq.limbCount])
+      (mod7Post "q_i") (lin7Body tcq)
+    Step (D := Bridge.Dialect c g) funs V₀ st
+      (.stmt (Stmt.forLoop (mod7Init "q_lin_block")
+        (yop EVM.Op.lt [yvar "q_lin_block", yvar "q_lin_count"]) (mod7Post "q_lin_block") [inner]))
+      (.sres (mod7Env V₀ pc acc cntv.toNat) (stw cntv.toNat) .normal) := by
+  intro pc acc stw inner
+  have hbody : ∀ m, m < cntv.toNat →
+      Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Init "q_lin_block") :: funs)
+        (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) (stw m)
+        (.stmt (.block [inner]))
+        (.sres (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc (m + 1))
+          (stw (m + 1)) .normal) := by
+    intro m hm
+    have hpcW : VEnv.get (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "q_pc" = some (pc m) := by
+      rw [venvGet_cons_ne (mod7Env V₀ pc acc m) "q_lin_block" "q_pc" (BitVec.ofNat 256 m)
+        (by decide : ("q_lin_block" : Ident) ≠ "q_pc")]
+      exact mod7Env_get_pc V₀ pc acc pcv hget_pc m
+    have haccW : VEnv.get (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "q_acc" = some (acc m) := by
+      rw [venvGet_cons_ne (mod7Env V₀ pc acc m) "q_lin_block" "q_acc" (BitVec.ofNat 256 m)
+        (by decide : ("q_lin_block" : Ident) ≠ "q_acc")]
+      exact mod7Env_get_acc V₀ pc acc accv hget_acc m
+    have hcmW : VEnv.get (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "q_const_mptr" = some cm := by
+      rw [venvGet_cons_ne (mod7Env V₀ pc acc m) "q_lin_block" "q_const_mptr" (BitVec.ofNat 256 m)
+        (by decide : ("q_lin_block" : Ident) ≠ "q_const_mptr")]
+      exact mod7Env_get_other V₀ pc acc "q_const_mptr"
+        (by decide : ("q_const_mptr" : Ident) ≠ "q_acc")
+        (by decide : ("q_const_mptr" : Ident) ≠ "q_pc") cm hget_cm m
+    have hrW : VEnv.get (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) "r" = some frModulusWord := by
+      rw [venvGet_cons_ne (mod7Env V₀ pc acc m) "q_lin_block" "r" (BitVec.ofNat 256 m)
+        (by decide : ("q_lin_block" : Ident) ≠ "r")]
+      exact mod7Env_get_other V₀ pc acc "r" (by decide : ("r" : Ident) ≠ "q_acc")
+        (by decide : ("r" : Ident) ≠ "q_pc") frModulusWord hget_r m
+    have hinner := mod7LimbLoop tcq
+      (hoist (Bridge.Dialect c g) [inner] :: hoist (Bridge.Dialect c g) (mod7Init "q_lin_block") :: funs)
+      (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) (pc m) (acc m) cm (stw m)
+      hfit hpcW haccW hcmW hrW
+    have hraw : Step (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g) (mod7Init "q_lin_block") :: funs)
+        (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m) (stw m) (.stmt (.block [inner]))
+        (.sres (restore (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m)
+          (mod7Env (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m)
+            (fun _ => (mod7LimbFrom cm (pc m) (acc m) (stw m) tcq.limbCount).1)
+            (fun _ => (mod7LimbFrom cm (pc m) (acc m) (stw m) tcq.limbCount).2.1) 1))
+          (stw (m + 1)) .normal) := by
+      convert Step.block (D := Bridge.Dialect c g) (body := [inner])
+        (Step.seqCons (D := Bridge.Dialect c g) (V1 := _) (st1 := _) hinner
+          (Step.seqNil (D := Bridge.Dialect c g))) using 1
+      · rfl
+    have hchain : restore (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m)
+        (mod7Env (("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc m)
+          (fun _ => (mod7LimbFrom cm (pc m) (acc m) (stw m) tcq.limbCount).1)
+          (fun _ => (mod7LimbFrom cm (pc m) (acc m) (stw m) tcq.limbCount).2.1) 1)
+        = ("q_lin_block", BitVec.ofNat 256 m) :: mod7Env V₀ pc acc (m + 1) :=
+      mod7Env_chain V₀ pc acc "q_lin_block" (BitVec.ofNat 256 m) m
+        ((mod7LimbFrom cm (pc m) (acc m) (stw m) tcq.limbCount).1)
+        ((mod7LimbFrom cm (pc m) (acc m) (stw m) tcq.limbCount).2.1)
+        rfl rfl
+        (by decide : ("q_lin_block" : Ident) ≠ "q_acc")
+        (by decide : ("q_lin_block" : Ident) ≠ "q_pc")
+        ⟨pcv, hget_pc⟩ ⟨accv, hget_acc⟩
+    rw [hchain] at hraw
+    exact hraw
+  have hget_cnt' : ∀ m, VEnv.get (mod7Env V₀ pc acc m) "q_lin_count" = some cntv := fun m =>
+    mod7Env_get_other V₀ pc acc "q_lin_count"
+      (by decide : ("q_lin_count" : Ident) ≠ "q_acc")
+      (by decide : ("q_lin_count" : Ident) ≠ "q_pc") cntv hget_cnt m
+  have h := mod7VarLoop funs "q_lin_block" "q_lin_count" cntv cntv.toNat (mod7_ofNat_toNat cntv)
+    cntv.isLt (by decide : ("q_lin_block" : Ident) ≠ "q_lin_count")
+    [inner] (mod7Env V₀ pc acc) stw hget_cnt' hbody (mod7Env_length0 V₀ pc acc)
+  rw [mod7Env_zero V₀ pc acc hget_pc hget_acc] at h
+  exact h
+
+#print axioms Midfall.LoweringV3.QuotientArms.mod7Env_chain
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7Env_chain
+#print axioms Midfall.LoweringV3.QuotientArms.mod7LinBlock
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7LinBlock
+
+end Midfall.LoweringV3.QuotientArms
+
+/-!
+## MOD7 HANDOFF - the exact state of the remaining three blocks, the prologue and the triple
+
+**LANDED BY THIS CARD** (every one at '[propext, Quot.sound]', '#cone_sorries' 0, no 'sorry', appended to
+'QuotientArms.lean' with ZERO deletions of anyone else's line):
+
+* 'venvSet_swap' - two in-place 'VEnv.set's at DIFFERENT bound registers commute. This is the fact the
+  three prior limb cards did not need and MODARITH7 does, because 'q_acc' is buried under the prologue's
+  later 'let's rather than being the head binding as it is in LIN7.
+* 'mod7Env' plus 'mod7Env_length' / '_get_pc' / '_get_acc' / '_get_other' / '_zero' / '_step' - the
+  CLOSED-FORM loop-head environment of a block, with the collapse lemma 'mod7Env_step' that makes one
+  iteration's two writes fold back into the closed form.
+* 'mod7LitLoop' and 'mod7VarLoop' - the two generic block-loop drivers (literal bound 'q_i < ylit N' for
+  the INNER limb loops, register bound 'q_blk < q_count' for the five OUTER block loops). Between them
+  they absorb the 'init' step, the guard step at a symbolic counter, the post step, the 'Step.forLoop'
+  ascription and the 'restore', so a block is now ONE per-iteration lemma, not a loop proof.
+* 'mod7LimbFrom' / 'mod7Limb_iter' / 'mod7LimbLoop' - the limb loop RE-ROOTED at a carried accumulator.
+  'lin7From' starts at zero, which is right for LIN7 and wrong for every MODARITH7 block, so this had to
+  be written; 'mod7Limb_iter' is 'lin7_iter' inside 'Step.block' with the 'restore' carried by
+  'restore_limb3'.
+* 'mod7MemBlock' - **BLOCK 4 of 5** (stride 3). Flat: the driver at 'lin7Body' directly.
+* 'mod7LinStep' / 'mod7LinWalk' / 'mod7LinFrom', 'mod7Env_chain', 'mod7LinBlock' - **BLOCK 1 of 5**
+  (stride '3 * limbCount = limbBlockStride' = 21). NESTED: the outer body is a whole inner limb loop,
+  and 'mod7Env_chain' is the cursor-chaining step - CSLOT's sub-obstacle (c), a nested-fold induction
+  under a chained cursor, now proved once and abstractly so ROW and PAIR instantiate the same lemma.
+
+**THE TOUCH ORDER AND THE TOTALS, AS DERIVED (see the section header for the argument).** Per MEM-block
+iteration: 'touch(pc)', 'touch(ptr)', 'touch(cptr)' - 3 touches, LIN7's order. Per LIN-block outer
+iteration: '3 * limbCount' touches in that same per-limb order, no extra touch at the outer level (the
+outer body is exactly the inner loop). Per ROW iteration: 'touch(pc)', 'touch(lhs)' from the three
+pre-statements, then per limb 'touch(cptr)', 'touch(rhs)' - '2 + 2 * limbCount' = 16, BILIN7_ROW's
+order. Per PAIR block: 'touch(pc)' for the word, then per outer 'i' a 'touch(lhs-word)', then per inner
+'j' 'touch(coeff)', 'touch(cptr)', 'touch(rhs)' - '1 + limbCount * (1 + 3 * limbCount)' = 150 at
+'limbCount = 7', BILIN7_PAIRWISE's order. Per PRODUCT iteration: 'touch(pc)', 'touch(cptr)',
+'touch(rhs)', 'touch(lhs)' - 4 touches, and this is the ONLY block whose two memory operands are read
+in the reverse of their source order.
+
+**WHAT REMAINS, IN THE ORDER THAT COSTS LEAST, WITH THE EXACT SHAPE OF EACH STEP.**
+
+1. **PRODUCT block (block 5, stride 5).** Needs 'mod7Prod_iter': the six-statement body of emitted
+   statement [19], derived the way 'lin7_iter' is derived - and note the accumulator's third touch order
+   above. Its body 'let's FOUR locals ('q_word', 'qconst', 'q_lhs', 'q_rhs'), so 'restore_limb3'
+   generalizes to a 'restore_prod4' with one more 'venvSet_c3' (or 'venvSet_c4', already in this file at
+   'QuotientArms:4955') and 'drop 4'. Then a 'mod7ProdStep'/'mod7ProdWalk'/'mod7ProdFrom' triple and
+   'mod7VarLoop' at 'ctr := "q_product_block"', 'cntVar := "q_product_count"' - the call site is
+   'mod7MemBlock' with those names substituted.
+2. **ROW block (block 2, stride '2 + 3 * limbCount = rowBlockStride' = 23).** The outer body is three
+   pre-statements ('let q_lhs := shr 240 (mload q_pc)', 'q_pc += 2', 'let q_lhs_value := mload q_lhs')
+   and then the inner limb loop over 'bilin7RowBody'. Reuse 'bilin7Row_iter' ('QuotientArms:5048')
+   exactly as 'mod7Limb_iter' reuses 'lin7_iter'; the inner loop is 'mod7LitLoop' with
+   'body := bilin7RowBody' and the walk 'bilin7RowWalk cm lv' re-rooted at a carried accumulator (same
+   re-rooting as 'mod7LimbFrom'). The outer body's net new bindings are TWO conses ('q_lhs',
+   'q_lhs_value'), so its 'restore' drops 2 after the inner loop's own 'restore' has already dropped
+   the inner counter and the limb locals. 'mod7Env_chain' applies unchanged.
+3. **PAIR block (block 3, stride '2 * byteU16Bytes + limbPairwiseCoeffs = pairwiseBlockStride' = 17).**
+   Six pre-statements ('q_pair_word', 'q_lhs_base', 'q_rhs_base', 'q_pc += byteU32Bytes', 'q_coeff_pc',
+   'q_pc += limbPairwiseCoeffs') then the DOUBLE loop. 'bilin7PwInner_iter' and 'bilin7PwOuter_iter'
+   already exist and take their environment as a parameter, so the double loop from an arbitrary
+   loop-head environment is 'mod7LitLoop' applied twice - inner at a symbolic 'q_i', then outer - which
+   is what PAIRW did at the arm level. Net new conses at the outer body level: FOUR ('q_pair_word',
+   'q_lhs_base', 'q_rhs_base', 'q_coeff_pc'); 'q_lhs_value' is bound INSIDE the outer limb body and is
+   restored by it.
+4. **THE PROLOGUE (emitted statements 0-14) and EPILOGUE (20-22).** The prologue needs: the flag guard
+   'q_flags > 3' taking its FALSE branch (hypothesis: the flag byte is at most 3); the two optional
+   branches 'if q_flags &&& 1' and 'if q_flags &&& 2' - CSLOT's obstacle (a), the header congruence that
+   transports the flag-dependent 'afterCond'/'afterConst', and it is a case split on two bits, four
+   branches, with the 'let qconst' inside the second branch restored by 'Step.block'; the counts word
+   and FIVE byte extracts, for which 'qbi_byte1' and 'qbi_byte3' must be added (only 'qbi_byte0',
+   'qbi_byte2', 'qbi_byte4' exist, at 'QuotientArms:85-92'); and the spill guard 'if q_has_top' at the
+   EMPTY stack, which is 'Step.ifFalse' on 'hget_ht' exactly as in every landed arm. The epilogue is the
+   conditional 'q_acc := mulmod (mload q_cond_ptr) q_acc r' (again gated on bit 0), then
+   'q_top := q_acc', 'q_has_top := 1'.
+5. **THE TRIPLE.** 'qArmRun_modarith7' chains the 23 statements with 'Step.seqCons' - the five block
+   lemmas are single 'Step.forLoop' facts, so the chain is 23 links, not 23 proofs - then
+   'qArmValue_modarith7' wraps it in 'StmtsContract' and 'qArmValueAll_modarith7' lifts it with
+   'StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)'. Copy the shape of
+   'qArmValueAll_bilin7Pairwise' at 'QuotientArms:7571'.
+
+**THE CURSOR EQUATION THE ASSEMBLY HAS TO STATE**, derived from the emitted text and agreeing with
+'quotientModarith7OpLen' ('VmValidator.lean:626-644'):
+
+    pc_final = pc0 + 1 + (if COND then 2 else 0) + (if CONST then 1 else 0) + 5
+                     + 21 * linCount + 23 * rowCount + 17 * pwCount
+                     + 3 * memCount + 5 * prodCount
+
+and the walker's per-block strides are 'limbBlockStride' 21, 'rowBlockStride' 23,
+'pairwiseBlockStride' 17, then 3 and 5 - so the five block lemmas above each advance the cursor by
+exactly the walker's stride times the count, which is what makes the arm reachable at all.
+
+**WHAT THIS CARD DOES NOT CLAIM, STATED RATHER THAN LEFT IMPLIED.** No equation between any 'mod7*' walk
+and 'modarith7Form' exists, and none is implied: like LIN7, BILIN7_ROW and BILIN7_PAIRWISE before it,
+what landed here is an EMITTED-SIDE contract. 'PG_stepNoRF_validated_cs_modarith7'
+('QvmShift.lean:2444') is UNTOUCHED by this card and is not the same deliverable: it is a const-slot
+correspondence between the reference interpreter and the walker, in a file SHIF2 owns. 'hlimbs'
+('PG_limbCountAgrees') appears nowhere in this section as anything but an arm-lemma hypothesis, and the
+two block lemmas landed do not even need it - they are stated for a symbolic 'tcq.limbCount' with only
+'tcq.limbCount < 2 ^ 256' to make the guard's word comparison round-trip.
+-/
+
+namespace Midfall.LoweringV3.QuotientArms
+
+/-- **THE CHECK THAT THE TWO BLOCK LEMMAS LANDED ARE ABOUT THE EMITTED TEXT, NOT A PARAPHRASE OF IT.**
+    Emitted statement 15 of 'qArmBodyModarith7' IS the LIN block lemma's for-loop and emitted statement
+    18 IS the MEM block lemma's - plain 'rfl' on the emitted list, so nothing was re-spelled by hand and
+    no reader equation is involved. The remaining indices are 16 (ROW), 17 (PAIR) and 19 (PRODUCT),
+    which is where the next card picks up. -/
+theorem mod7_emitted_blocks (ctx : PartialCtx) (program : QuotientProgram)
+    (tcq : QuotientVmTemplateConstants) :
+    (∃ rest, List.drop 15 (GenAst.qArmBodyModarith7 ctx program tcq)
+        = (Stmt.forLoop (mod7Init "q_lin_block")
+            (yop EVM.Op.lt [yvar "q_lin_block", yvar "q_lin_count"]) (mod7Post "q_lin_block")
+            [Stmt.forLoop (mod7Init "q_i") (yop EVM.Op.lt [yvar "q_i", ylit tcq.limbCount])
+              (mod7Post "q_i") (lin7Body tcq)]) :: rest)
+      ∧ (∃ rest, List.drop 18 (GenAst.qArmBodyModarith7 ctx program tcq)
+        = (Stmt.forLoop (mod7Init "q_mem_block")
+            (yop EVM.Op.lt [yvar "q_mem_block", yvar "q_mem_count"]) (mod7Post "q_mem_block")
+            (lin7Body tcq)) :: rest) := by
+  refine ⟨⟨List.drop 16 (GenAst.qArmBodyModarith7 ctx program tcq), ?_⟩,
+    ⟨List.drop 19 (GenAst.qArmBodyModarith7 ctx program tcq), ?_⟩⟩ <;> rfl
+
+#print axioms Midfall.LoweringV3.QuotientArms.mod7_emitted_blocks
+#cone_sorries Midfall.LoweringV3.QuotientArms.mod7_emitted_blocks
+
+end Midfall.LoweringV3.QuotientArms
