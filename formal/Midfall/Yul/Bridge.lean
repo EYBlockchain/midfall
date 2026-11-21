@@ -1222,6 +1222,39 @@ theorem Run_worldEq_of_noWriters {c g prog st0 V' st' o}
     (hn : NoWriters prog) (h : Run c g prog st0 V' st' o) : WorldEq st0 st' := by
   sorry
 
+/-- **THE LOCAL PER-OP TABLE FOR 'Run_worldEq_of_noWriters'.** A non-writer local built-in
+    preserves every world component. The proof is the op case split plus `stepOp`'s argument
+    match; the writer constructors are excluded by `h`, and every surviving arm is a memory or
+    environment read/write that `WorldEq` does not compare. PROVED, no `decide`, no fixture.
+
+    This is half (b) of the hole's own docstring; the step induction and the scan's subterm
+    closure are still the remaining work, and `Run_worldEq_of_noWriters` stays registered. -/
+theorem stepOp_worldEq_ok {op : Op} (h : Op.isWriter op = false) {args : List U256} {st : EvmState}
+    {rets : List U256} {st' : EvmState} (hr : stepOp op args st = some (.ok rets st')) :
+    WorldEq st st' := by
+  unfold stepOp at hr
+  simp only [bin, un, ter, rd0, rd1, guardStatic] at hr
+  repeat' (split at hr <;> try simp at hr)
+  all_goals (try (unfold Op.isWriter at h; cases h))
+  all_goals (try (obtain ⟨-, rfl⟩ := hr; simp [WorldEq, touchMemory, touchMemory2]))
+
+theorem stepOp_worldEq_halt {op : Op} (h : Op.isWriter op = false) {args : List U256}
+    {st : EvmState} {st' : EvmState} (hr : stepOp op args st = some (.halt st')) :
+    WorldEq st st' := by
+  unfold stepOp at hr
+  simp only [bin, un, ter, rd0, rd1, guardStatic] at hr
+  repeat' (split at hr <;> try simp at hr)
+  all_goals (try (unfold Op.isWriter at h; cases h))
+  all_goals (try (obtain ⟨-, rfl⟩ := hr; simp [WorldEq, touchMemory, touchMemory2]))
+
+/-- `staticcall` never installs the response world (`finishCall` guards on `kind ≠ .staticcall`),
+    so it preserves every `WorldEq` component. This is the one external builtin that is not a
+    writer, and the other half of the per-op table. -/
+theorem finishCall_staticcall_worldEq (st : EvmState) (response : CallResponse)
+    (io is oo os : Nat) :
+    WorldEq st (finishCall .staticcall st response io is oo os) := by
+  simp [finishCall, WorldEq, touchMemory2, touchMemory]
+
 
 /-! ### MF-4: a failed staticcall reverts with the pinned selector
 
