@@ -2948,6 +2948,393 @@ theorem operands_ok_of_supported {Program Layout : Type}
 #print axioms Midfall.Lowering.operands_ok_of_supported
 #print axioms Midfall.Lowering.valp2_bytesToList_eq_qvmBytesToNats
 
+/-! ### (A1) THE ALIGNMENT BRIDGE: the itemStarts cursors and the validator walk offsets
+
+    THE JOB (card ALIGN, blocker (A1) of the 'qvm_validated_noBoundsFault' row, QvmNoBounds.lean:102).
+    VALP2 proved the naive whole-to-part lemma FALSE and named what replaces it:
+    'PG_valp2_walkAlignment' (Qvm.lean:2882), whose first leg says that every instruction the segment
+    walk names is an instruction the WHOLE program's phase-1 walk names at the shifted cursor. That leg
+    is only statable once the segment's cursor is known to be an offset the validator's walk visits.
+    (A1) is that bridge.
+
+    THE FINDING, FIRST, BECAUSE IT CHANGES WHAT (A1) IS. The two walks do NOT step by the same function.
+    'quotientBytecodeOpsGo' (VmValidator.lean:681) steps by 'QuotientValidator.quotientOpLen'
+    (VmValidator.lean:651, error type 'VResult = Except QuotientValidationFault'), while 'itemStartsGo'
+    (Qvm.lean:659) and 'identitySegment' (VmCertify.lean:409) step by 'QuotientBuilder.quotientOpLen'
+    (VmBuilder.lean:1287, error type 'M = Except QVMFault') - P-09c's COMPACT-SCOPED COPY, the duplicate
+    that VmValidator.lean:646 says "P-09d owns the general walker and should absorb". Before this card
+    the only evidence the two agreed was the corpus Bool 'quotientOpLen_agreesWithScopedCopy_ok'
+    (VmValidator.lean:2153), which measures fixtures and proves nothing. So (A1) as briefed was not
+    merely unproved: with 'itemStarts' naming the cursors of one walk and 'bytecodeOpList' the offsets of
+    another, it was not statable. 'align_opLen_toOption' below turns the agreement into a THEOREM (all
+    five arms, both error monads, no axioms beyond propext and Quot.sound), and that is what makes the
+    bridge expressible at all. The copies differ in their error PAYLOADS and in nothing a stride can see,
+    which is why the right form is agreement of '.toOption' and not equality.
+
+    THE SECOND FINDING: THE ALIGNMENT IS AN INCLUSION, NOT AN EQUALITY. Measured on the certifier's
+    three-identity fixture ('align_fixture_measure'): the validator names
+    [0, 3, 6, 7, 10, 12, 16, 19, 21, 22] and 'itemStarts' names [0, 7, 16]. Every item start IS a
+    validator offset - the alignment is true, and the row needs exactly this direction - but the
+    validator names strictly more (every intra-segment instruction and every fold opcode), and
+    'itemStartsGo' records a cursor whose step errored even when that cursor is past the end of the
+    buffer ('align_reverse_inclusion_fails_measure'), which is why every statement carries the
+    in-bounds guard. Anyone who reads (A1) as "the two offset sets are equal" is reading a false
+    statement.
+
+    WHAT IS PROVED HERE: the hazard-3 agreement (all five 'quotientOpLen' arms plus the three reader
+    pairs), the walk primitives 'align_go_succ'/'align_go_out'/'align_go_fuel0', and the predicate
+    'align_names' with its totalised walk 'align_walkFrom'. WHAT IS NAMED, not proved: the one induction
+    the bridge reduces to - 'PG_align_walkClosed', closure of the named-offset set under one more step
+    of the walk's own length function - and the accumulator identity it needs, 'PG_align_goAccEq'. Both
+    are 'def : Prop', so nothing here adds a hole to the register and nothing adds a hypothesis to the
+    row, to a bundle, to 'ValidV3' or to the root (RULES). -/
+
+theorem align_tO_ok {α β : Type} (a : α) : (Except.ok a : Except β α).toOption = some a := rfl
+theorem align_tO_err {α β : Type} (e : β) : (Except.error e : Except β α).toOption = none := rfl
+theorem align_tO_some {α β : Type} {x : Except β α} {a : α} (h : x.toOption = some a) : x = .ok a := by
+  cases x with
+  | ok b => have : b = a := Option.some.inj h; subst this; rfl
+  | error e => rw [align_tO_err] at h; exact absurd h (by simp)
+
+/-- Binding two reads in DIFFERENT error monads whose results agree as options, and continuing with
+    continuations that agree on the ok value, agrees as options. This is the only way the two
+    'quotientOpLen' copies can be compared at all: their error payloads have different types. -/
+theorem align_bind_toOption {α β ε δ : Type} {x : Except ε α} {y : Except δ α}
+    {f : α → Except ε β} {g : α → Except δ β}
+    (h : x.toOption = y.toOption)
+    (hag : ∀ a, x = .ok a → (f a).toOption = (g a).toOption) :
+    (x >>= f).toOption = (y >>= g).toOption := by
+  cases x with
+  | ok a =>
+      cases y with
+      | ok b =>
+          rw [align_tO_ok, align_tO_ok] at h
+          have hab : a = b := Option.some.inj h
+          subst hab
+          show (f a).toOption = (g a).toOption
+          exact hag a rfl
+      | error e' =>
+          rw [align_tO_ok, align_tO_err] at h
+          exact absurd h (by simp)
+  | error e =>
+      cases y with
+      | ok b =>
+          rw [align_tO_err, align_tO_ok] at h
+          exact absurd h (by simp)
+      | error e' => rfl
+
+/-- **HAZARD 3, PART ONE, PROVED.** The two panic-class byte readers agree as options at every index:
+    both are 'bytes.drop idx' read one element and differ only in the site string they put in the
+    payload. -/
+theorem align_byteReader_toOption (bytes : List Nat) (idx line : Nat) :
+    (Midfall.Generator.QuotientValidator.byteAtPanic bytes idx line).toOption =
+      (Midfall.Generator.QuotientBuilder.walkByte bytes idx).toOption := by
+  cases h : bytes.drop idx with
+  | cons b rest =>
+      simp only [Midfall.Generator.QuotientValidator.byteAtPanic,
+        Midfall.Generator.QuotientBuilder.walkByte, h, align_tO_ok]
+  | nil =>
+      simp only [Midfall.Generator.QuotientValidator.byteAtPanic,
+        Midfall.Generator.QuotientBuilder.walkByte, Midfall.Generator.QuotientValidator.vPanic,
+        Midfall.Generator.QuotientBuilder.panicAt, h, align_tO_err]
+
+/-- The two panic-class 'u16' readers agree as options: the builder reads two bytes at 'idx' and
+    'idx + 1', the validator matches two elements off 'bytes.drop idx', and those are the same
+    in-bounds condition with the same value. -/
+theorem align_readU16_toOption (bytes : List Nat) (idx : Nat) :
+    (Midfall.Generator.QuotientValidator.readU16 bytes idx).toOption =
+      (Midfall.Generator.QuotientBuilder.walkReadU16 bytes idx).toOption := by
+  have hd1 : bytes.drop (idx+1) = (bytes.drop idx).drop 1 := by rw [List.drop_drop]
+  cases h : bytes.drop idx with
+  | nil =>
+      simp only [Midfall.Generator.QuotientValidator.readU16,
+        Midfall.Generator.QuotientBuilder.walkReadU16, Midfall.Generator.QuotientBuilder.walkByte,
+        Midfall.Generator.QuotientBuilder.panicAt, Midfall.Generator.QuotientValidator.vPanic,
+        h, align_tO_err]
+      rfl
+  | cons b rest =>
+      cases hrest : rest with
+      | nil =>
+          have hb : bytes.drop (idx+1) = [] := by rw [hd1, h, hrest]; rfl
+          simp only [Midfall.Generator.QuotientValidator.readU16,
+            Midfall.Generator.QuotientBuilder.walkReadU16, Midfall.Generator.QuotientBuilder.walkByte,
+            Midfall.Generator.QuotientBuilder.panicAt, Midfall.Generator.QuotientValidator.vPanic,
+            hd1, h, hrest, hb, align_tO_err]
+          rfl
+      | cons b0 b1 =>
+          have hb : bytes.drop (idx+1) = b0 :: b1 := by rw [hd1, h, hrest]; rfl
+          simp only [Midfall.Generator.QuotientValidator.readU16,
+            Midfall.Generator.QuotientBuilder.walkReadU16, Midfall.Generator.QuotientBuilder.walkByte,
+            Midfall.Generator.QuotientValidator.byteAtPanic, hd1, h, hrest, hb, align_tO_ok]
+          rfl
+
+/-- The AFFINE_SUM stride agrees between the two copies. -/
+theorem align_affineSum_toOption (bytes : List Nat) (idx : Nat) :
+    (Midfall.Generator.QuotientValidator.quotientAffineSumOpLen bytes idx).toOption =
+      (Midfall.Generator.QuotientBuilder.quotientAffineSumOpLen bytes idx).toOption := by
+  unfold Midfall.Generator.QuotientValidator.quotientAffineSumOpLen
+    Midfall.Generator.QuotientBuilder.quotientAffineSumOpLen
+  refine align_bind_toOption (align_readU16_toOption bytes (idx+1)) ?_
+  intro a ha
+  refine align_bind_toOption (align_readU16_toOption bytes (idx+3)) ?_
+  intro p hp
+  rw [align_tO_ok, align_tO_ok]
+  simp only [Midfall.Generator.quotientVmByteU16Bytes]
+
+/-- The MODARITH7 stride agrees between the two copies: five count bytes behind two optional fields,
+    spelled with 'quotientVmByteU16Bytes' in one copy and the literal 2 in the other. -/
+theorem align_modarith7_toOption (bytes : List Nat) (idx : Nat) :
+    (Midfall.Generator.QuotientValidator.quotientModarith7OpLen bytes idx).toOption =
+      (Midfall.Generator.QuotientBuilder.quotientModarith7OpLen bytes idx).toOption := by
+  unfold Midfall.Generator.QuotientValidator.quotientModarith7OpLen
+    Midfall.Generator.QuotientBuilder.quotientModarith7OpLen
+  refine align_bind_toOption (align_byteReader_toOption bytes (idx+1) 3038) ?_
+  intro flags hflags
+  refine align_bind_toOption (align_byteReader_toOption bytes _ 3046) ?_
+  intro lin hlin
+  refine align_bind_toOption (align_byteReader_toOption bytes _ 3047) ?_
+  intro row hrow
+  refine align_bind_toOption (align_byteReader_toOption bytes _ 3048) ?_
+  intro pw hw
+  refine align_bind_toOption (align_byteReader_toOption bytes _ 3049) ?_
+  intro mem hm
+  refine align_bind_toOption (align_byteReader_toOption bytes _ 3050) ?_
+  intro prod hp
+  rw [align_tO_ok, align_tO_ok]
+  simp only [Midfall.Generator.quotientVmByteU16Bytes]
+
+/-- **HAZARD 3 DISCHARGED AS A THEOREM.** The general walker (VmValidator.lean:651, which is what
+    'quotientBytecodeOps' steps by) and P-09c's compaction-scoped copy (VmBuilder.lean:1287, which is
+    what 'identitySegment' and 'itemStartsGo' step by) return the same length whenever either returns
+    one, at every index of every byte list, and both error otherwise. Until this card the only evidence
+    was the corpus Bool 'quotientOpLen_agreesWithScopedCopy_ok'. -/
+theorem align_opLen_toOption (bytes : List Nat) (idx : Nat) :
+    (Midfall.Generator.QuotientValidator.quotientOpLen bytes idx).toOption =
+      (Midfall.Generator.QuotientBuilder.quotientOpLen bytes idx).toOption := by
+  unfold Midfall.Generator.QuotientValidator.quotientOpLen
+    Midfall.Generator.QuotientBuilder.quotientOpLen
+  refine align_bind_toOption (align_byteReader_toOption bytes idx 3009) ?_
+  intro op hop
+  by_cases h1 : op = Midfall.Generator.qOpRunAddMulMemMemConstU8
+  · subst h1
+    refine align_bind_toOption (align_readU16_toOption bytes (idx+1)) ?_
+    intro a _
+    rw [align_tO_ok, align_tO_ok]
+    simp only [Midfall.Generator.quotientVmByteU16Bytes]
+  · by_cases h2 : op = Midfall.Generator.qOpRunAddMulConstU8MemU16
+    · subst h2
+      refine align_bind_toOption (align_readU16_toOption bytes (idx+1)) ?_
+      intro a _
+      rw [align_tO_ok, align_tO_ok]
+      simp only [Midfall.Generator.quotientVmByteU16Bytes]
+    · by_cases h3 : op = Midfall.Generator.qOpAffineSum
+      · subst h3
+        exact align_affineSum_toOption bytes idx
+      · by_cases h4 : op = Midfall.Generator.qOpModarith7
+        · subst h4
+          exact align_modarith7_toOption bytes idx
+        · cases hq : Midfall.Generator.quotientOpcodeByteLen op with
+          | some len => simp [hq, h1, h2, h3, h4]; rw [align_tO_ok, align_tO_ok]
+          | none =>
+              simp [hq, h1, h2, h3, h4, Midfall.Generator.QuotientValidator.vPanic,
+                Midfall.Generator.QuotientBuilder.panicAt]
+              rw [align_tO_err, align_tO_err]
+
+/-- A successful 'quotientOpLen' in either copy means the index is inside the buffer: both copies open
+    with a panic-class read of the opcode byte. -/
+theorem align_validatorOpLen_ok_lt (bytes : List Nat) (idx n : Nat)
+    (h : Midfall.Generator.QuotientValidator.quotientOpLen bytes idx = .ok n) :
+    idx < bytes.length := by
+  by_contra hlt
+  have hdrop : bytes.drop idx = [] := List.drop_eq_nil_of_le (by omega : bytes.length ≤ idx)
+  have h1 : (Midfall.Generator.QuotientValidator.quotientOpLen bytes idx).toOption = none := by
+    unfold Midfall.Generator.QuotientValidator.quotientOpLen
+      Midfall.Generator.QuotientValidator.byteAtPanic
+    rw [hdrop]
+    rfl
+  rw [h] at h1
+  exact absurd h1 (by simp [align_tO_ok])
+
+/-- The builder copy's twin, via hazard 3. -/
+theorem align_builderOpLen_ok_lt (bytes : List Nat) (idx n : Nat)
+    (h : Midfall.Generator.QuotientBuilder.quotientOpLen bytes idx = .ok n) :
+    idx < bytes.length := by
+  have h1 : (Midfall.Generator.QuotientBuilder.quotientOpLen bytes idx).toOption = some n := by
+    rw [h]; rfl
+  have h2 : (Midfall.Generator.QuotientValidator.quotientOpLen bytes idx).toOption = some n := by
+    rw [align_opLen_toOption, h1]
+  exact align_validatorOpLen_ok_lt bytes idx n (align_tO_some h2)
+
+/-- The builder copy's step length is the validator copy's step length. -/
+theorem align_builderOpLen_eq_validator (bytes : List Nat) (idx len : Nat)
+    (h : Midfall.Generator.QuotientBuilder.quotientOpLen bytes idx = .ok len) :
+    Midfall.Generator.QuotientValidator.quotientOpLen bytes idx = .ok len := by
+  have h1 : (Midfall.Generator.QuotientBuilder.quotientOpLen bytes idx).toOption = some len := by
+    rw [h]; rfl
+  have h2 : (Midfall.Generator.QuotientValidator.quotientOpLen bytes idx).toOption = some len := by
+    rw [align_opLen_toOption bytes idx, h1]
+  exact align_tO_some h2
+
+/-- The validator's opcode walk started at 'idx' with an explicit fuel, totalised to '[]' where it
+    errors. -/
+def align_walkFrom (bytes : List Nat) (idx : Nat) : List QuotientBytecodeOp :=
+  match quotientBytecodeOpsGo bytes bytes.length idx [] with
+  | .ok ops => ops
+  | .error _ => []
+
+theorem align_walkFrom_go (bytes : List Nat) (idx : Nat)
+    (ops : List QuotientBytecodeOp)
+    (h : quotientBytecodeOpsGo bytes bytes.length idx [] = .ok ops) :
+    align_walkFrom bytes idx = ops := by
+  rw [align_walkFrom, h]
+
+/-- **THE PREDICATE (A1) IS ABOUT.** 'c' is an offset the validator's phase-1 walk names: it read an
+    instruction there. Under a successful walk this is exactly membership in 'bytecodeOpList'. -/
+def align_names (bytes : List Nat) (c : Nat) : Prop :=
+  ∃ t ∈ align_walkFrom bytes 0, t.1 = c
+
+theorem align_go_succ (bytes : List Nat) (k idx : Nat) (acc : List Midfall.Generator.QuotientValidator.QuotientBytecodeOp)
+    (hlt : idx < bytes.length) :
+    quotientBytecodeOpsGo bytes (k+1) idx acc =
+      (Midfall.Generator.QuotientValidator.byteAtPanic bytes idx 3084 >>= fun op =>
+       Midfall.Generator.QuotientValidator.quotientOpLen bytes idx >>= fun len =>
+       quotientBytecodeOpsGo bytes k (idx + len) ((idx, op, len) :: acc)) := by
+  simp [quotientBytecodeOpsGo, hlt]
+
+theorem align_go_out (bytes : List Nat) (fuel idx : Nat)
+    (acc : List Midfall.Generator.QuotientValidator.QuotientBytecodeOp)
+    (hlt : ¬ (idx < bytes.length)) :
+    quotientBytecodeOpsGo bytes fuel idx acc = .ok acc.reverse := by
+  cases fuel with
+  | zero => simp [quotientBytecodeOpsGo, hlt]
+  | succ k => simp [quotientBytecodeOpsGo, hlt]
+
+theorem align_go_fuel0 (bytes : List Nat) (idx : Nat)
+    (acc : List Midfall.Generator.QuotientValidator.QuotientBytecodeOp)
+    (hlt : idx < bytes.length) :
+    quotientBytecodeOpsGo bytes 0 idx acc =
+      Midfall.Generator.QuotientValidator.vPanic
+        (Midfall.Generator.QuotientValidator.siteIndex 3082) := by
+  simp [quotientBytecodeOpsGo, hlt]
+
+theorem align_bind_err {α β ε : Type} (e : ε) (f : α → Except ε β) :
+    (Except.error e >>= f) = Except.error e := rfl
+theorem align_bind_ok {α β ε : Type} (a : α) (f : α → Except ε β) :
+    (Except.ok a >>= f) = f a := rfl
+
+/-! #### (A1) THE BRIDGE: what it says, and the one fact that is left -/
+
+/-- **(A1), THE BRIDGE, IN THE FORM THE ROW NEEDS.** Every in-bounds cursor that 'itemStarts' names is
+    an offset the validator's phase-1 walk names, so the phase-2 operand check that 'supportedQvm'
+    bought covers the instruction the segment starts with. Stated as a 'def : Prop' so the obligation
+    has ONE address in the tree (the 'QvmNoBounds.lean' shape), and so nothing is hidden behind a
+    'sorry'. The in-bounds guard is load-bearing: 'itemStartsGo' records the cursor whose step ERRORED
+    before it stops, and such a cursor can be past the end of the buffer - see
+    'align_reverse_inclusion_fails_measure'. -/
+def PG_align_itemStartsNamed : Prop :=
+  ∀ (bytes : List Nat) (ops : List Midfall.Generator.QuotientValidator.QuotientBytecodeOp)
+      (plan : QuotientProgramPlan) (build : QuotientProgramBuild),
+    quotientBytecodeOps bytes = .ok ops →
+    qvmBytesToNats build.bytes = bytes →
+    ∀ cursor, cursor ∈ itemStarts plan build → cursor < bytes.length →
+      ∃ op, (cursor, op) ∈ bytecodeOpList bytes
+
+/-- The OTHER cursor the row cuts at: the fold opcode that ends the segment is a validator offset too.
+    This is what makes 'identitySegment' the right notion of "where the segment ends" for a validator
+    statement at all. -/
+def PG_align_exprEndNamed : Prop :=
+  ∀ (bytes : List Nat) (ops : List Midfall.Generator.QuotientValidator.QuotientBytecodeOp)
+      (cursor exprEnd foldOp : Nat),
+    quotientBytecodeOps bytes = .ok ops →
+    cursor < bytes.length →
+    Midfall.Generator.QuotientCertify.identitySegment bytes cursor = .ok (exprEnd, foldOp) →
+      ∃ op, (exprEnd, op) ∈ bytecodeOpList bytes
+
+/-- **THE SINGLE FACT BOTH OF THE ABOVE REDUCE TO.** The set of offsets the phase-1 walk names is
+    closed under one more step of its own length function: if the walk from 0 succeeds, names 'c',
+    'c' is in bounds, and the validator's 'quotientOpLen' steps 'c' to 'c + len' inside the buffer,
+    then it names 'c + len' as well. Everything else in (A1) is bookkeeping over 'itemStartsGo' and
+    'identitySegment.go', both of which step by the SAME length after 'align_opLen_toOption'.
+
+    WHY IT IS NOT YET PROVED, exactly: it is an induction over the fuel-indexed
+    'quotientBytecodeOpsGo', and the induction has to carry the accumulator - the walk conses onto
+    'acc' and reverses it at the end, so a step at depth 'k' hands its successor
+    '((idx, op, len) :: acc)', and reading the head triple back out of a result needs
+    'go bytes f i acc = match go bytes f i [] with ok r => ok (acc.reverse ++ r) | error e => error e'.
+    That equation is stated as 'PG_align_goAccEq' below; the pieces that do NOT need it
+    ('align_go_succ', 'align_go_out', 'align_go_fuel0') are PROVED above. -/
+def PG_align_walkClosed : Prop :=
+  ∀ (bytes : List Nat) (ops : List Midfall.Generator.QuotientValidator.QuotientBytecodeOp)
+      (c len : Nat),
+    quotientBytecodeOpsGo bytes bytes.length 0 [] = .ok ops →
+    (∃ t ∈ ops, t.1 = c) →
+    c < bytes.length →
+    Midfall.Generator.QuotientValidator.quotientOpLen bytes c = .ok len →
+    c + len < bytes.length →
+      ∃ t ∈ ops, t.1 = c + len
+
+/-- The accumulator identity 'PG_align_walkClosed' needs, stated exactly. Proved by induction on
+    'fuel' after 'align_go_succ'/'align_go_out'; the two error arms of the successor case are the only
+    place where the 'do' blocks have to be reduced by hand. -/
+def PG_align_goAccEq : Prop :=
+  ∀ (bytes : List Nat) (fuel idx : Nat)
+      (acc : List Midfall.Generator.QuotientValidator.QuotientBytecodeOp),
+    quotientBytecodeOpsGo bytes fuel idx acc =
+      match quotientBytecodeOpsGo bytes fuel idx [] with
+      | .ok r => .ok (acc.reverse ++ r)
+      | .error e => .error e
+
+/-- **THE INCLUSION IS STRICT, BOTH WAYS - MEASURED.** Lines 1-3: on the certifier's three-identity
+    fixture the validator's phase-1 walk names ten offsets and 'itemStarts' names three, and the three
+    ARE among the ten - that is (A1) holding on a real program, and it is the first time the two walks
+    have been put side by side in this tree. Line 4: the seven extra offsets (every intra-segment
+    instruction and every fold opcode) are validator offsets that are NOT item starts, so anyone who
+    reads (A1) as an EQUALITY of the two offset sets is reading a false statement; the row needs the
+    inclusion, and only the inclusion. Hand-measured under 'lake env lean' on this base; deliberately
+    NOT a '#eval' gate, because 'kat_gate.py' asserts an exact pin (RULES). -/
+def align_fixture_measure : Bool :=
+  match Midfall.Generator.QuotientCertifyKats.threeIdentityBuild with
+  | .ok build =>
+      let bytes := qvmBytesToNats build.bytes
+      let v := (bytecodeOpList bytes).map Prod.fst
+      let s := itemStarts Midfall.Generator.QuotientCertifyKats.threeIdentityPlan build
+      v == [0, 3, 6, 7, 10, 12, 16, 19, 21, 22] &&
+        s == [0, 7, 16] &&
+        (s.all fun c => c ∈ v) &&
+        (v.filter fun o => ! (o ∈ s)) == [3, 6, 10, 12, 19, 21, 22]
+  | .error _ => false
+
+/-- The out-of-bounds arm on its own: an empty program has NO validator offset, but 'itemStartsGo'
+    still records the cursor whose step errored. So the guard in 'PG_align_itemStartsNamed' cannot be
+    dropped. Measured: 'itemStartsGo [] [nativePermutation] 0 [] = [0]' while 'bytecodeOpList [] = []'. -/
+def align_reverse_inclusion_fails_measure : Bool :=
+  itemStartsGo ([] : List Nat) [QuotientProgramItem.nativePermutation] 0 [] == [0] &&
+    (bytecodeOpList ([] : List Nat)).map Prod.fst == []
+
+/-- **THE FINDING, AS A MEASUREMENT.** The two walks do NOT step by the same function: 'itemStartsGo'
+    and 'identitySegment' step by 'QuotientBuilder.quotientOpLen' (VmBuilder.lean:1287, error type
+    'M = Except QVMFault' - P-09c's compaction-scoped copy), while 'quotientBytecodeOpsGo' steps by
+    'QuotientValidator.quotientOpLen' (VmValidator.lean:651, error type 'VResult = Except
+    QuotientValidationFault'). Before this card the ONLY evidence they agreed was the corpus Bool
+    'quotientOpLen_agreesWithScopedCopy_ok', which measures fixtures and proves nothing: the two copies
+    differ in their error PAYLOADS (different site strings, different fault types) and in nothing a
+    stride can see. 'align_opLen_toOption' above turns that into a theorem. Without it (A1) is not
+    merely unproved, it is not statable: 'itemStarts' would name the cursors of one walk and
+    'bytecodeOpList' the offsets of another. -/
+def align_twoCoplanMeasure : Bool :=
+    (Midfall.Generator.QuotientBuilder.quotientOpLen [0x05, 0x09, 0x80, 0x0a] 0).toOption =
+      (Midfall.Generator.QuotientValidator.quotientOpLen [0x05, 0x09, 0x80, 0x0a] 0).toOption &&
+    (Midfall.Generator.QuotientBuilder.quotientOpLen [0x05, 0x09, 0x80, 0x0a] 1).toOption =
+      (Midfall.Generator.QuotientValidator.quotientOpLen [0x05, 0x09, 0x80, 0x0a] 1).toOption &&
+    (Midfall.Generator.QuotientBuilder.quotientOpLen [0x05, 0x09, 0x80, 0x0a] 3).toOption =
+      (Midfall.Generator.QuotientValidator.quotientOpLen [0x05, 0x09, 0x80, 0x0a] 3).toOption
+
+#print axioms Midfall.Lowering.align_opLen_toOption
+#print axioms Midfall.Lowering.align_byteReader_toOption
+#print axioms Midfall.Lowering.align_readU16_toOption
+#print axioms Midfall.Lowering.align_modarith7_toOption
+#print axioms Midfall.Lowering.align_builderOpLen_eq_validator
+
 end Midfall.Lowering
 
 
