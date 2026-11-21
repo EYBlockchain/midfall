@@ -108,6 +108,7 @@ import Midfall.Lowering.GenAstQuotient
 import Midfall.Lowering.GenAstQvm
 import Midfall.Lowering.GenAstQvmFamilies
 import Midfall.Lowering.QuotientInterp
+import Midfall.Lowering.QuotientLoopCompose
 import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmWalk
