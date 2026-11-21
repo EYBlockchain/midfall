@@ -689,7 +689,6 @@ def quotientBytecodeOpsGo (bytes : List Nat) :
         quotientBytecodeOpsGo bytes fuel (idx + len) ((idx, op, len) :: acc)
       else
         .ok acc.reverse
-termination_by fuel => fuel
 
 /-- rust: QVM:3066-3068 (`quotient_bytecode_ops`), the entry point, guarded for the
     same byte-domain reason. -/
