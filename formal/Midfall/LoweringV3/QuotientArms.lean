@@ -7302,4 +7302,304 @@ theorem bilin7PwOuter_exit {c : ExternalCalls} {g : ExternalGas}
 
 
 
+
+/-- The outer loop-head environment as the invariant states it, named so the arm lemma can
+    point at it. -/
+def bilin7PwOuterInvEnv {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g))
+    (b32 coeffN cm pc : U256) (st : EvmState) (N m : Nat) : VEnv (Bridge.Dialect c g) :=
+  (("q_i", BitVec.ofNat 256 m) :: ("q_acc", (bilin7PwFrom b32 coeffN cm pc st N m).1) ::
+     ("q_coeff_pc", (bilin7PwPre b32 coeffN pc st).2.2.1) :: ("q_rhs_base", (bilin7PwPre b32 coeffN pc st).2.1) :: ("q_lhs_base", (bilin7PwPre b32 coeffN pc st).1) ::
+     ("q_word", loadWord st.memory pc.toNat) :: VEnv.set V "q_pc" (bilin7PwPre b32 coeffN pc st).2.2.2.1)
+
+/-- **THE EMITTED BILIN7_PAIRWISE ARM, RUN FROM ITS OWN ENTRY REGISTERS.** Six pre-loop statements,
+    the spill guard at the EMPTY stack, the zero accumulator, the NESTED loop, and the two publishes.
+    'qLimbWalk' has already been applied INSIDE 'bilin7PwOuter_iter' for the inner loop; here it is
+    applied a second time for the outer loop. -/
+theorem qArmRun_bilin7Pairwise {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (pc cm : U256)
+    (hlimbs : tcq.limbCount = quotientVmLimbs)
+    (hfit : tcq.limbCount < 2 ^ 256)
+    (hget_pc : VEnv.get V "q_pc" = some pc)
+    (hget_ht : VEnv.get V "q_has_top" = some 0)
+    (hget_cm : VEnv.get V "q_const_mptr" = some cm)
+    (hget_r : VEnv.get V "r" = some frModulusWord) :
+    let b32 := BitVec.ofNat 256 tcq.byteU32Bytes
+    let cn := BitVec.ofNat 256 tcq.limbPairwiseCoeffs
+    let wd := loadWord st.memory pc.toNat
+    let lb := wd >>> 240
+    let rb := (wd >>> 224) &&& (65535 : U256)
+    let cp := pc + b32
+    let pc2 := pc + b32 + cn
+    let st1 := touchMemory st pc.toNat 32
+    let base := (("q_coeff_pc", cp) :: ("q_rhs_base", rb) :: ("q_lhs_base", lb) ::
+                   ("q_word", wd) :: VEnv.set V "q_pc" pc2)
+    ExecStmts (Bridge.Dialect c g) funs V st (GenAst.qArmBodyBilin7Pairwise ctx program tcq)
+      (VEnv.set (VEnv.set (("q_acc", (bilin7PwFrom b32 cn cm pc st quotientVmLimbs quotientVmLimbs).1) :: base)
+          "q_top" (bilin7PwFrom b32 cn cm pc st quotientVmLimbs quotientVmLimbs).1)
+        "q_has_top" (BitVec.ofNat 256 1))
+      (bilin7PwFrom b32 cn cm pc st quotientVmLimbs quotientVmLimbs).2 .normal := by
+  intro b32 cn wd lb rb cp pc2 st1 base
+  unfold GenAst.qArmBodyBilin7Pairwise
+  rw [← hlimbs]
+  let E1 : VEnv (Bridge.Dialect c g) := (("q_word", wd) :: V)
+  let E2 : VEnv (Bridge.Dialect c g) := (("q_lhs_base", lb) :: E1)
+  let E3 : VEnv (Bridge.Dialect c g) := (("q_rhs_base", rb) :: E2)
+  let E4 : VEnv (Bridge.Dialect c g) := (VEnv.set E3 "q_pc" cp)
+  let E5 : VEnv (Bridge.Dialect c g) := (("q_coeff_pc", cp) :: E4)
+  let U0 : VEnv (Bridge.Dialect c g) := (("q_acc", BitVec.ofNat 256 0) :: base)
+  let F := bilin7PwFrom b32 cn cm pc st tcq.limbCount tcq.limbCount
+  -- s1: let q_word := mload q_pc                       [touch(pc)]
+  have t1a : Step (D := Bridge.Dialect c g) funs V st (.expr (yvar "q_pc")) (.eres (.vals [pc] st)) :=
+    Step.var (D := Bridge.Dialect c g) hget_pc
+  have t1b : Step (D := Bridge.Dialect c g) funs V st (.args [yvar "q_pc"]) (.eres (.vals [pc] st)) :=
+    (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st) (v := pc) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g)) t1a)
+  have t1c : Step (D := Bridge.Dialect c g) funs V st (.expr (yop EVM.Op.mload [(yvar "q_pc")])) (.eres (.vals [wd] st1)) :=
+    Step.builtinOk (D := Bridge.Dialect c g) t1b (qbi_mload_at st st.memory pc rfl)
+  have s1 : Step (D := Bridge.Dialect c g) funs V st (.stmt (ylet "q_word" (yop EVM.Op.mload [(yvar "q_pc")]))) (.sres E1 st1 .normal) :=
+    Step.letVal (D := Bridge.Dialect c g) t1c rfl
+  -- s2: let q_lhs_base := shr 240 (mload q_pc)
+  have hpcE1 : VEnv.get E1 "q_pc" = some pc := by
+    rw [venvGet_cons_ne V "q_word" "q_pc" wd (by decide : ("q_word" : String) ≠ "q_pc")]
+    exact hget_pc
+  have t2a : Step (D := Bridge.Dialect c g) funs E1 st1 (.expr (yvar "q_word")) (.eres (.vals [wd] st1)) :=
+    Step.var (D := Bridge.Dialect c g) (venvGet_cons_eq V "q_word" wd)
+  have t2b : Step (D := Bridge.Dialect c g) funs E1 st1 (.expr (ylit 240)) (.eres (.vals [BitVec.ofNat 256 240] st1)) :=
+    qlit funs E1 st1 240
+  have t2b' : Step (D := Bridge.Dialect c g) funs E1 st1 (.args [yvar "q_word"]) (.eres (.vals [wd] st1)) :=
+    (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st1) (v := wd) (st2 := st1) (Step.argsNil (D := Bridge.Dialect c g)) t2a)
+  have t2c : Step (D := Bridge.Dialect c g) funs E1 st1 (.args [ylit 240, (yvar "q_word")]) (.eres (.vals [BitVec.ofNat 256 240, wd] st1)) :=
+    (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_word"]) (restvals := [wd]) (st1 := st1) (v := BitVec.ofNat 256 240) (st2 := st1) t2b' t2b)
+  have t2d : Step (D := Bridge.Dialect c g) funs E1 st1 (.expr (yop EVM.Op.shr [(ylit 240), (yvar "q_word")])) (.eres (.vals [lb] st1)) :=
+    Step.builtinOk (D := Bridge.Dialect c g) t2c (qbi_shr240 st1 wd)
+  have s2 : Step (D := Bridge.Dialect c g) funs E1 st1 (.stmt (ylet "q_lhs_base" (yop EVM.Op.shr [(ylit 240), (yvar "q_word")]))) (.sres E2 st1 .normal) :=
+    Step.letVal (D := Bridge.Dialect c g) t2d rfl
+  -- s3: let q_rhs_base := and (shr 224 q_word) 65535
+  have hwdE2 : VEnv.get E2 "q_word" = some wd := by
+    rw [venvGet_cons_ne E1 "q_lhs_base" "q_word" lb (by decide : ("q_lhs_base" : String) ≠ "q_word")]
+    exact venvGet_cons_eq V "q_word" wd
+  have t3a : Step (D := Bridge.Dialect c g) funs E2 st1 (.expr (yvar "q_word")) (.eres (.vals [wd] st1)) :=
+    Step.var (D := Bridge.Dialect c g) hwdE2
+  have t3b : Step (D := Bridge.Dialect c g) funs E2 st1 (.args [yvar "q_word"]) (.eres (.vals [wd] st1)) :=
+    (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st1) (v := wd) (st2 := st1) (Step.argsNil (D := Bridge.Dialect c g)) t3a)
+  have t3c0 : Step (D := Bridge.Dialect c g) funs E2 st1 (.expr (ylit 224)) (.eres (.vals [BitVec.ofNat 256 224] st1)) :=
+    qlit funs E2 st1 224
+  have t3c1 : Step (D := Bridge.Dialect c g) funs E2 st1 (.args [ylit 224, (yvar "q_word")]) (.eres (.vals [BitVec.ofNat 256 224, wd] st1)) :=
+    (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_word"]) (restvals := [wd]) (st1 := st1) (v := BitVec.ofNat 256 224) (st2 := st1) t3b t3c0)
+  have t3c : Step (D := Bridge.Dialect c g) funs E2 st1 (.expr (yop EVM.Op.shr [(ylit 224), (yvar "q_word")])) (.eres (.vals [wd >>> 224] st1)) :=
+    Step.builtinOk (D := Bridge.Dialect c g) t3c1 (qbi_shr224 st1 wd)
+  have t3d : Step (D := Bridge.Dialect c g) funs E2 st1 (.expr (ylit 65535)) (.eres (.vals [BitVec.ofNat 256 65535] st1)) :=
+    qlit funs E2 st1 65535
+  have t3e : Step (D := Bridge.Dialect c g) funs E2 st1 (.args [(yop EVM.Op.shr [(ylit 224), (yvar "q_word")]), ylit 65535]) (.eres (.vals [wd >>> 224, BitVec.ofNat 256 65535] st1)) :=
+    (Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 65535]) (restvals := [BitVec.ofNat 256 65535]) (st1 := st1) (v := wd >>> 224) (st2 := st1) (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st1) (v := BitVec.ofNat 256 65535) (st2 := st1) (Step.argsNil (D := Bridge.Dialect c g)) t3d) t3c)
+  have t3f : Step (D := Bridge.Dialect c g) funs E2 st1 (.expr (yop EVM.Op.and [(yop EVM.Op.shr [(ylit 224), (yvar "q_word")]), (ylit 65535)])) (.eres (.vals [rb] st1)) :=
+    Step.builtinOk (D := Bridge.Dialect c g) t3e (qbi_and st1 (wd >>> 224) (BitVec.ofNat 256 65535))
+  have s3 : Step (D := Bridge.Dialect c g) funs E2 st1 (.stmt (ylet "q_rhs_base" (yop EVM.Op.and [(yop EVM.Op.shr [(ylit 224), (yvar "q_word")]), (ylit 65535)]))) (.sres E3 st1 .normal) :=
+    Step.letVal (D := Bridge.Dialect c g) t3f rfl
+  -- s4: q_pc := q_pc + tcq.byteU32Bytes
+  have hpcE3 : VEnv.get E3 "q_pc" = some pc :=
+    venvGet_c3 V "q_word" "q_lhs_base" "q_rhs_base" wd lb rb pc "q_pc" (by decide : ("q_word" : String) ≠ "q_pc") (by decide : ("q_lhs_base" : String) ≠ "q_pc") (by decide : ("q_rhs_base" : String) ≠ "q_pc") hget_pc
+  have t4a : Step (D := Bridge.Dialect c g) funs E3 st1 (.expr (yvar "q_pc")) (.eres (.vals [pc] st1)) :=
+    Step.var (D := Bridge.Dialect c g) hpcE3
+  have t4b : Step (D := Bridge.Dialect c g) funs E3 st1 (.expr (ylit tcq.byteU32Bytes)) (.eres (.vals [b32] st1)) :=
+    qlit funs E3 st1 tcq.byteU32Bytes
+  have t4c : Step (D := Bridge.Dialect c g) funs E3 st1 (.args [yvar "q_pc", ylit tcq.byteU32Bytes]) (.eres (.vals [pc, b32] st1)) :=
+    (Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit tcq.byteU32Bytes]) (restvals := [b32]) (st1 := st1) (v := pc) (st2 := st1) (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st1) (v := b32) (st2 := st1) (Step.argsNil (D := Bridge.Dialect c g)) t4b) t4a)
+  have t4d : Step (D := Bridge.Dialect c g) funs E3 st1 (.expr (yop EVM.Op.add [(yvar "q_pc"), (ylit tcq.byteU32Bytes)])) (.eres (.vals [cp] st1)) :=
+    Step.builtinOk (D := Bridge.Dialect c g) t4c (qbi_add st1 pc b32)
+  have s4 : Step (D := Bridge.Dialect c g) funs E3 st1 (.stmt (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit tcq.byteU32Bytes)]))) (.sres E4 st1 .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_pc"]) (vals := [cp]) t4d (by rfl)
+  -- s5: let q_coeff_pc := q_pc
+  have hpcE4 : VEnv.get E4 "q_pc" = some cp :=
+    venvGet_set_same E3 "q_pc" cp pc hpcE3
+  have t5a : Step (D := Bridge.Dialect c g) funs E4 st1 (.expr (yvar "q_pc")) (.eres (.vals [cp] st1)) :=
+    Step.var (D := Bridge.Dialect c g) hpcE4
+  have t5b : Step (D := Bridge.Dialect c g) funs E4 st1 (.args [yvar "q_pc"]) (.eres (.vals [cp] st1)) :=
+    (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st1) (v := cp) (st2 := st1) (Step.argsNil (D := Bridge.Dialect c g)) t5a)
+  have s5 : Step (D := Bridge.Dialect c g) funs E4 st1 (.stmt (ylet "q_coeff_pc" (yvar "q_pc"))) (.sres E5 st1 .normal) :=
+    Step.letVal (D := Bridge.Dialect c g) t5a rfl
+  -- s6: q_pc := q_pc + tcq.limbPairwiseCoeffs
+  have hpcE5 : VEnv.get E5 "q_pc" = some cp := by
+    rw [venvGet_cons_ne E4 "q_coeff_pc" "q_pc" cp (by decide : ("q_coeff_pc" : String) ≠ "q_pc")]
+    exact hpcE4
+  have t6a : Step (D := Bridge.Dialect c g) funs E5 st1 (.expr (yvar "q_pc")) (.eres (.vals [cp] st1)) :=
+    Step.var (D := Bridge.Dialect c g) hpcE5
+  have t6b : Step (D := Bridge.Dialect c g) funs E5 st1 (.expr (ylit tcq.limbPairwiseCoeffs)) (.eres (.vals [cn] st1)) :=
+    qlit funs E5 st1 tcq.limbPairwiseCoeffs
+  have t6c : Step (D := Bridge.Dialect c g) funs E5 st1 (.args [yvar "q_pc", ylit tcq.limbPairwiseCoeffs]) (.eres (.vals [cp, cn] st1)) :=
+    (Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit tcq.limbPairwiseCoeffs]) (restvals := [cn]) (st1 := st1) (v := cp) (st2 := st1) (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st1) (v := cn) (st2 := st1) (Step.argsNil (D := Bridge.Dialect c g)) t6b) t6a)
+  have t6d : Step (D := Bridge.Dialect c g) funs E5 st1 (.expr (yop EVM.Op.add [(yvar "q_pc"), (ylit tcq.limbPairwiseCoeffs)])) (.eres (.vals [pc2] st1)) :=
+    Step.builtinOk (D := Bridge.Dialect c g) t6c (qbi_add st1 cp cn)
+  have s6raw : Step (D := Bridge.Dialect c g) funs E5 st1 (.stmt (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit tcq.limbPairwiseCoeffs)]))) (.sres (VEnv.set E5 "q_pc" pc2) st1 .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_pc"]) (vals := [pc2]) t6d (by rfl)
+  have s6 : Step (D := Bridge.Dialect c g) funs E5 st1 (.stmt (yset "q_pc" (yop EVM.Op.add [(yvar "q_pc"), (ylit tcq.limbPairwiseCoeffs)]))) (.sres base st1 .normal) := by
+    -- 'VEnv.set E5 "q_pc" pc2' is a DOUBLE write of 'q_pc' (s4 wrote 'cp'); the last write wins.
+    have h6 : VEnv.set E5 "q_pc" pc2 = base := by
+      show VEnv.set (("q_coeff_pc", cp) :: VEnv.set (("q_rhs_base", rb) :: ("q_lhs_base", lb)
+            :: ("q_word", wd) :: V) "q_pc" cp) "q_pc" pc2
+        = ("q_coeff_pc", cp) :: ("q_rhs_base", rb) :: ("q_lhs_base", lb) :: ("q_word", wd)
+            :: VEnv.set V "q_pc" pc2
+      rw [venvSet_cons_ne (VEnv.set (("q_rhs_base", rb) :: ("q_lhs_base", lb) :: ("q_word", wd) :: V)
+            "q_pc" cp) "q_coeff_pc" "q_pc" cp pc2 (by decide : ("q_coeff_pc" : String) ≠ "q_pc"),
+          venvSet_set_same,
+          venvSet_c3 V "q_word" "q_lhs_base" "q_rhs_base" wd lb rb pc2 "q_pc"
+            (by decide : ("q_word" : String) ≠ "q_pc") (by decide : ("q_lhs_base" : String) ≠ "q_pc")
+            (by decide : ("q_rhs_base" : String) ≠ "q_pc")]
+    convert s6raw using 1
+    · rw [h6]
+  -- s7: the spill guard at the EMPTY stack takes the FALSE branch
+  have hht : VEnv.get (("q_coeff_pc", cp) :: ("q_rhs_base", rb) :: ("q_lhs_base", lb) ::
+      ("q_word", wd) :: VEnv.set V "q_pc" pc2) "q_has_top" = some 0 :=
+    venvGet_c4 (VEnv.set V "q_pc" pc2) "q_word" "q_lhs_base" "q_rhs_base" "q_coeff_pc" wd lb rb cp 0 "q_has_top"
+      (by decide : ("q_word" : String) ≠ "q_has_top") (by decide : ("q_lhs_base" : String) ≠ "q_has_top")
+      (by decide : ("q_rhs_base" : String) ≠ "q_has_top") (by decide : ("q_coeff_pc" : String) ≠ "q_has_top")
+      (venvGet_set_ne V "q_pc" "q_has_top" pc2 0 (by decide : ("q_pc" : String) ≠ "q_has_top") hget_ht)
+  have s7 : Step (D := Bridge.Dialect c g) funs base st1 (.stmt (yif (yvar "q_has_top")
+        [yif (yop EVM.Op.gt [yvar "q_sp", ylit program.guards.stackLast])
+            [yexpr (ycall "q_program_fail" [])],
+         yexpr (yop EVM.Op.mstore [yvar "q_sp", yvar "q_top"]),
+         yset "q_sp" (yop EVM.Op.add [yvar "q_sp", ylit 32])])) (.sres base st1 .normal) :=
+    Step.ifFalse (Step.var (D := Bridge.Dialect c g) hht) rfl
+  -- s8: let q_acc := 0
+  have s8 : Step (D := Bridge.Dialect c g) funs base st1 (.stmt (ylet "q_acc" (ylit 0))) (.sres U0 st1 .normal) :=
+    Step.letVal (D := Bridge.Dialect c g) (qlit funs base st1 0) rfl
+  -- s9: the OUTER limb loop, whose body block contains the whole INNER loop
+  have hinit : Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) lin7Init :: funs) U0 st1 (.stmts lin7Init) (.sres (("q_i", BitVec.ofNat 256 0) :: U0) st1 .normal) :=
+    Step.seqCons (D := Bridge.Dialect c g) (V1 := (("q_i", BitVec.ofNat 256 0) :: U0)) (st1 := st1)
+      (Step.letVal (D := Bridge.Dialect c g) (vars := ["q_i"]) (qlit (hoist (Bridge.Dialect c g) lin7Init :: funs) U0 st1 0) rfl)
+      (Step.seqNil (D := Bridge.Dialect c g))
+  have hInv0 : bilin7PwOuterInv V b32 cn cm pc st tcq.limbCount 0 (("q_i", BitVec.ofNat 256 0) :: U0) st1 :=
+    ⟨rfl, rfl⟩
+  have hiter : ∀ m W u, m < tcq.limbCount → bilin7PwOuterInv V b32 cn cm pc st tcq.limbCount m W u →
+      ∃ cv stc Vb stb Vp stp,
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) lin7Init :: funs) W u (.expr (lin7Cond tcq)) (.eres (.vals [cv] stc)) ∧
+        cv ≠ (Bridge.Dialect c g).zero ∧
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) lin7Init :: funs) W stc (.stmt (.block (bilin7PwOuterBody tcq))) (.sres Vb stb .normal) ∧
+        Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) lin7Init :: funs) Vb stb (.stmt (.block lin7Post)) (.sres Vp stp .normal) ∧
+        bilin7PwOuterInv V b32 cn cm pc st tcq.limbCount (m + 1) Vp stp := by
+    intro m W u hmlt hInv
+    obtain ⟨rfl, rfl⟩ := hInv
+    exact bilin7PwOuter_one tcq (hoist (Bridge.Dialect c g) lin7Init :: funs) V st pc cm b32 cn hfit m hmlt hget_pc hget_cm hget_r
+  have hexit : ∀ W u, bilin7PwOuterInv V b32 cn cm pc st tcq.limbCount tcq.limbCount W u →
+      ∃ cv st', Step (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) lin7Init :: funs) W u (.expr (lin7Cond tcq)) (.eres (.vals [cv] st')) ∧
+        cv = (Bridge.Dialect c g).zero ∧
+        bilin7PwOuterInv V b32 cn cm pc st tcq.limbCount tcq.limbCount W st' := by
+    intro W u hInv
+    obtain ⟨rfl, rfl⟩ := hInv
+    exact bilin7PwOuter_exit tcq (hoist (Bridge.Dialect c g) lin7Init :: funs) V st pc cm b32 cn hfit tcq.limbCount rfl
+  obtain ⟨Vend, uend, hloop, hInvN⟩ :=
+    qLimbWalk (D := Bridge.Dialect c g) (hoist (Bridge.Dialect c g) lin7Init :: funs) (lin7Cond tcq)
+      lin7Post (bilin7PwOuterBody tcq) tcq.limbCount (bilin7PwOuterInv V b32 cn cm pc st tcq.limbCount)
+      hexit hiter (("q_i", BitVec.ofNat 256 0) :: U0) st1 hInv0
+  have hAB : Vend = bilin7PwOuterInvEnv V b32 cn cm pc st tcq.limbCount tcq.limbCount ∧ uend = F.2 := hInvN
+  rw [hAB.1, hAB.2] at hloop
+  have s9raw : Step (D := Bridge.Dialect c g) funs U0 st1 (.stmt (Stmt.forLoop lin7Init (lin7Cond tcq) lin7Post (bilin7PwOuterBody tcq))) (.sres (restore U0 (bilin7PwOuterInvEnv V b32 cn cm pc st tcq.limbCount tcq.limbCount)) F.2 .normal) :=
+    Step.forLoop (D := Bridge.Dialect c g) (init := lin7Init) (c := lin7Cond tcq) (post := lin7Post)
+      (body := bilin7PwOuterBody tcq) hinit hloop
+  -- 'restore' drops exactly the 'q_i' the loop head bound: the loop's own 'q_acc' write lands IN
+  -- PLACE on 'U0', which is the environment the pre-loop left behind.
+  have h9 : restore U0 (bilin7PwOuterInvEnv V b32 cn cm pc st tcq.limbCount tcq.limbCount)
+      = VEnv.set U0 "q_acc" F.1 := by
+    show restore U0 (("q_i", BitVec.ofNat 256 tcq.limbCount) :: VEnv.set U0 "q_acc" F.1)
+        = VEnv.set U0 "q_acc" F.1
+    rw [restore_pw_cons_len U0 (VEnv.set U0 "q_acc" F.1) "q_i" (BitVec.ofNat 256 tcq.limbCount)
+          (venvSet_length U0 "q_acc" F.1)]
+  have s9 : Step (D := Bridge.Dialect c g) funs U0 st1 (.stmt (Stmt.forLoop lin7Init (lin7Cond tcq) lin7Post (bilin7PwOuterBody tcq))) (.sres (VEnv.set U0 "q_acc" F.1) F.2 .normal) :=
+    h9 ▸ s9raw
+  -- s10, s11: publish the accumulator
+  let B : VEnv (Bridge.Dialect c g) := base
+  have t10a : VEnv.get (VEnv.set U0 "q_acc" F.1) "q_acc" = some F.1 :=
+    venvGet_set_same U0 "q_acc" F.1 (BitVec.ofNat 256 0)
+      (venvGet_cons_eq B "q_acc" (BitVec.ofNat 256 0))
+  have s10 : Step (D := Bridge.Dialect c g) funs (VEnv.set U0 "q_acc" F.1) F.2 (.stmt (yset "q_top" (yvar "q_acc"))) (.sres (VEnv.set (VEnv.set U0 "q_acc" F.1) "q_top" F.1) F.2 .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_top"]) (vals := [F.1]) (Step.var (D := Bridge.Dialect c g) t10a) (by rfl)
+  have s11 : Step (D := Bridge.Dialect c g) funs (VEnv.set (VEnv.set U0 "q_acc" F.1) "q_top" F.1) F.2 (.stmt (yset "q_has_top" (ylit 1))) (.sres (VEnv.set (VEnv.set (VEnv.set U0 "q_acc" F.1) "q_top" F.1) "q_has_top" (BitVec.ofNat 256 1)) F.2 .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_has_top"]) (vals := [BitVec.ofNat 256 1])
+      (qlit funs (VEnv.set (VEnv.set U0 "q_acc" F.1) "q_top" F.1) F.2 1) (by rfl)
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := E1) (st1 := st1) s1 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := E2) (st1 := st1) s2 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := E3) (st1 := st1) s3 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := E4) (st1 := st1) s4 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := E5) (st1 := st1) s5 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := base) (st1 := st1) s6 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := base) (st1 := st1) s7 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := U0) (st1 := st1) s8 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set U0 "q_acc" F.1)) (st1 := F.2) s9 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (VEnv.set U0 "q_acc" F.1) "q_top" F.1)) (st1 := F.2) s10 ?_
+  exact Step.seqCons (D := Bridge.Dialect c g) (V1 := (VEnv.set (VEnv.set (VEnv.set U0 "q_acc" F.1) "q_top" F.1) "q_has_top" (BitVec.ofNat 256 1))) (st1 := F.2) s11 (Step.seqNil (D := Bridge.Dialect c g))
+
+/-- **ARM BILIN7_PAIRWISE: THE CONTRACT.** **THIS TRIPLE IS AN EMITTED-SIDE CONTRACT, NOT A
+    REFERENCE-TIED VALUE REFINEMENT.** It pins what the emitter's own 'GenAst.qArmBodyBilin7Pairwise'
+    computes from the registers it reads; the fold-level equation against 'limbPairwiseForm' does NOT
+    exist here and is not implied by it, exactly as for LIN7 and BILIN7_ROW. **THE TWO HYPOTHESES ARE
+    THE RECORDED SCOPE LIMITATION 'PG_limbCountAgrees', NOT TECHNICALITIES, and they are hypotheses of
+    THIS ARM LEMMA only - no row, no 'ValidV3', no bundle, no root (RULES).** The post-state is the one
+    THIS derivation produces: 'bilin7PwFrom' touches 'pc' once in the pre-loop, then per outer
+    iteration the lhs word at 'q_lhs_base + 32*q_i' FIRST and then, per inner iteration, coeff,
+    const-slot, rhs - '1 + limbCount * (1 + 3 * limbCount)' 'touchMemory' applications, and no
+    canonicity side-condition anywhere. -/
+theorem qArmValue_bilin7Pairwise {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc cm : U256)
+    (hlimbs : tcq.limbCount = quotientVmLimbs)
+    (hfit : tcq.limbCount < 2 ^ 256) :
+    StmtsContract (D := Bridge.Dialect c g) funs (GenAst.qArmBodyBilin7Pairwise ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧
+        VEnv.get V "q_has_top" = some 0 ∧
+        VEnv.get V "q_const_mptr" = some cm ∧
+        VEnv.get V "r" = some frModulusWord)
+      (fun V st V' st' o => o = .normal
+        ∧ st' = (bilin7PwFrom (BitVec.ofNat 256 tcq.byteU32Bytes) (BitVec.ofNat 256 tcq.limbPairwiseCoeffs)
+                   cm pc st quotientVmLimbs quotientVmLimbs).2
+        ∧ V' = (VEnv.set (VEnv.set (("q_acc", (bilin7PwFrom (BitVec.ofNat 256 tcq.byteU32Bytes)
+                        (BitVec.ofNat 256 tcq.limbPairwiseCoeffs) cm pc st quotientVmLimbs quotientVmLimbs).1)
+                        :: (("q_coeff_pc", (pc + BitVec.ofNat 256 tcq.byteU32Bytes)) ::
+                            ("q_rhs_base", (((loadWord st.memory pc.toNat) >>> 224) &&& (65535 : U256))) ::
+                            ("q_lhs_base", ((loadWord st.memory pc.toNat) >>> 240)) ::
+                            ("q_word", (loadWord st.memory pc.toNat)) ::
+                            VEnv.set V "q_pc" (pc + BitVec.ofNat 256 tcq.byteU32Bytes + BitVec.ofNat 256 tcq.limbPairwiseCoeffs)))
+                      "q_top" (bilin7PwFrom (BitVec.ofNat 256 tcq.byteU32Bytes)
+                        (BitVec.ofNat 256 tcq.limbPairwiseCoeffs) cm pc st quotientVmLimbs quotientVmLimbs).1)
+                  "q_has_top" (BitVec.ofNat 256 1))) := by
+  intro V st hpre
+  have hrun := qArmRun_bilin7Pairwise ctx program tcq funs V st pc cm hlimbs hfit hpre.1 hpre.2.1
+    hpre.2.2.1 hpre.2.2.2
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl⟩⟩
+
+/-- **ARM BILIN7_PAIRWISE: THE EVERY-RUN FORM.** -/
+theorem qArmValueAll_bilin7Pairwise {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc cm : U256)
+    (hlimbs : tcq.limbCount = quotientVmLimbs)
+    (hfit : tcq.limbCount < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (GenAst.qArmBodyBilin7Pairwise ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧
+        VEnv.get V "q_has_top" = some 0 ∧
+        VEnv.get V "q_const_mptr" = some cm ∧
+        VEnv.get V "r" = some frModulusWord)
+      (fun V st V' st' o => o = .normal
+        ∧ st' = (bilin7PwFrom (BitVec.ofNat 256 tcq.byteU32Bytes) (BitVec.ofNat 256 tcq.limbPairwiseCoeffs)
+                   cm pc st quotientVmLimbs quotientVmLimbs).2
+        ∧ V' = (VEnv.set (VEnv.set (("q_acc", (bilin7PwFrom (BitVec.ofNat 256 tcq.byteU32Bytes)
+                        (BitVec.ofNat 256 tcq.limbPairwiseCoeffs) cm pc st quotientVmLimbs quotientVmLimbs).1)
+                        :: (("q_coeff_pc", (pc + BitVec.ofNat 256 tcq.byteU32Bytes)) ::
+                            ("q_rhs_base", (((loadWord st.memory pc.toNat) >>> 224) &&& (65535 : U256))) ::
+                            ("q_lhs_base", ((loadWord st.memory pc.toNat) >>> 240)) ::
+                            ("q_word", (loadWord st.memory pc.toNat)) ::
+                            VEnv.set V "q_pc" (pc + BitVec.ofNat 256 tcq.byteU32Bytes + BitVec.ofNat 256 tcq.limbPairwiseCoeffs)))
+                      "q_top" (bilin7PwFrom (BitVec.ofNat 256 tcq.byteU32Bytes)
+                        (BitVec.ofNat 256 tcq.limbPairwiseCoeffs) cm pc st quotientVmLimbs quotientVmLimbs).1)
+                  "q_has_top" (BitVec.ofNat 256 1))) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (qArmValue_bilin7Pairwise ctx program tcq funs pc cm hlimbs hfit)
+
+#print axioms Midfall.LoweringV3.QuotientArms.qArmRun_bilin7Pairwise
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmRun_bilin7Pairwise
+#print axioms Midfall.LoweringV3.QuotientArms.qArmValue_bilin7Pairwise
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmValue_bilin7Pairwise
+#print axioms Midfall.LoweringV3.QuotientArms.qArmValueAll_bilin7Pairwise
+#cone_sorries Midfall.LoweringV3.QuotientArms.qArmValueAll_bilin7Pairwise
+
 end Midfall.LoweringV3.QuotientArms
