@@ -17,8 +17,9 @@ will feed Closure.manifest (DG.3, not landed yet). Everything else is the STATUS
 (DG.8). A verdict that is a GATE is logged as a Lean error, so it exits non-zero and `sorries.sh
 --env` fails with it; a verdict that is a REPORT is info.
 
-`#assert_no_refuted_sorry` is deliberately NOT run here yet: that is DG.6, and today it errors on
-`Midfall.Instances.PoseidonV2.poseidon_valid`, which PL.1 has not removed yet.
+`#assert_no_refuted_sorry` (DG.6) runs below: PL.1/W13 deleted the last registered sorry with a
+proved negation (`Midfall.Instances.PoseidonV2.poseidon_valid`), so a refuted row is now a gate
+failure rather than a reported status.
 -/
 open Midfall.Tools.Done
 open Midfall Midfall.Lowering Midfall.LoweringV2 Midfall.Generator
@@ -29,8 +30,8 @@ open Midfall.Instances.PoseidonValid
 --    deletes it; it is no longer what the register's ROOT column or this report measures.
 #cone_report Midfall.LoweringV3.lowering_correct under [Midfall]
 #cone_report Midfall.LoweringV3.lowering_sound under [Midfall]
-#eval IO.println "RETIRED (D-P74 item 3): Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon - the V2 fixture headline; reported here as retired, deleted by PL.H (WP A13). Its cone is not the progress measure."
-#cone_sorries Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon
+#eval IO.println "RETIRED (D-P74 item 3): the V2 fixture headline Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon was DELETED by PL.1/W13 together with its refuted poseidon_valid input; the surviving V2 root is Midfall.LoweringV2.lowering_equivalence_of_blocks. Neither is the progress measure."
+#assert_no_refuted_sorry [Midfall]
 
 -- (ii) executable exhibits (names fixed by PLAN-V3; none exists at this commit)
 #exhibits [Midfall.Instances.PoseidonExhibit.fixture_returns_abiTrue_ok,

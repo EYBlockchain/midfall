@@ -29,9 +29,10 @@
   root (D-P74 item 3): its cone is the simulation rows, `prefix_sim` and the scan leaves only, so
   WP A1/A3/A4/A6/A9/A10/A11 lower it before the progress side closes.
 
-  THE V2 HEADLINE IS RETIRED, NOT DELETED. `Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon`
-  stays in the tree until PL.H deletes it, and is reported as RETIRED (D-P74 item 3). The register's
-  ROOT column, `#cone_report` and `verify.sh` are keyed to THIS declaration.
+  THE V2 HEADLINE WAS DELETED BY PL.1/W13. `Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon`
+  is gone, together with its refuted `poseidon_valid` input; the surviving V2 root is the generic
+  `Midfall.LoweringV2.lowering_equivalence_of_blocks`. The register's ROOT column, `#cone_report` and
+  `verify.sh` are keyed to THIS declaration.
 
   W12. FALSIFIER, LANDED AND PROVED: `lowering_correct_needs_valid`
   (`Instances/StatementsV3Falsifiers.lean` §F10) - the root with `hR : ValidV3 R` DROPPED is false at
@@ -138,9 +139,10 @@ def gap_lowering_correct_witness_unexhibited : String :=
     native []` (PLAN-V3 §5 M7:973, §6:1227). `sorryAx` is in the allow-list HERE because the leaves
     are still open: the honest version of the gate while they are open must name sorryAx or the build is
     red on every honest version of this file. **The native list is EMPTY**, which is the half of the
-    gate D-P71 exists for: no fixture computation reaches the root. The retired V2 headline's cone, by
-    contrast, is asserted with `native [Midfall.Instances.PoseidonV2.poseidonModel_isOk]`
-    (`Midfall/Tools/ConeReport.lean:89-93`). Deleting `sorryAx` from the list below is the commit that
+    gate D-P71 exists for: no fixture computation reaches the root. The surviving V2 root's cone, by
+    contrast, is asserted in `Midfall/Tools/ConeReport.lean` with an EMPTY native list too, after
+    PL.1/W13 re-pointed it from the deleted deployment headline to the generic composition. Deleting
+    `sorryAx` from the list below is the commit that
     closes the objective (PL.H, WP A13). -/
 open Midfall.Tools.Done in
 #assert_axioms Midfall.LoweringV3.lowering_correct

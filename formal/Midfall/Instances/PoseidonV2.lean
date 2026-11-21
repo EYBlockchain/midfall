@@ -1,18 +1,19 @@
 /-
   Midfall.Instances.PoseidonV2
 
-  C.1 (SEM / SKELETON): THE HEADLINE, STATED AT A DEPLOYMENT. This file forms the first
+  C.1 (SEM / SKELETON): THE DEPLOYMENT RENDER AND ITS BLOCK CONTRACTS. This file forms the first
   `Midfall.LoweringV2.Render` in the tree - `poseidonRender` - out of D.1's five generator-side
   terms (`Instances/PoseidonInputs.lean`) and D.2's five verifier-side terms
-  (`Instances/PoseidonEnv.lean`), states `lowering_equivalence_poseidon` for EVERY pairing
-  product, and proves it from exactly three named sorried lemmas. Until this file there was no
-  cone root: the two existing roots are the generic composition theorem and the generic end-to-end
-  corollary, and neither is a deployment, so `#cone_sorries` measured nothing that a card could
-  move.
+  (`Instances/PoseidonEnv.lean`). It used to state the unconditional deployment headline
+  `lowering_equivalence_poseidon`; W13/PL.1 DELETED that theorem and its `poseidon_valid` input,
+  because `poseidonRender_notValid` proves the `Valid` hypothesis they rested on is false. The
+  conditional `poseidon_block_contracts` and the two open block lemmas it glues remain, and the
+  generic V2 root `Midfall.LoweringV2.lowering_equivalence_of_blocks` is the surviving cone root.
 
-  WHAT THIS FILE IS NOT. It proves nothing about the program. The three lemmas are `sorry`, they
-  are registered in SORRY.md, and each says what would discharge it. What is delivered is that the
-  obligations are now stated AT A RENDER - typed, kernel-checked, with a dependency cone.
+  WHAT THIS FILE IS NOT. It proves nothing about the program. The two remaining block lemmas are
+  `sorry`, they are registered in SORRY.md, and each says what would discharge it. What is
+  delivered is that the block obligations are stated AT A RENDER - typed, kernel-checked, with a
+  dependency cone.
 
   ## THE ONE JUDGEMENT CALL: `Render.model`
 
@@ -55,12 +56,14 @@
       render by any of the three channels `Statements.lean:136-138` names, even with the bare
       `Model` in hand. It is true (the render's model is a projection of exactly that call) and it
       is not provable by computation here. That is a finding about `Valid`, not about this card.
-  (d) `poseidon_valid` is REFUTED-AT-TYPED-IN-META, not open. D.3
+  (d) The `Valid` lemma this file used to state is REFUTED-AT-TYPED-IN-META, not open. D.3
       (`Instances/PoseidonCoherence.lean`) proves `Valid.layout` and `Valid.circuitMeta`
       unsatisfiable at `poseidonPlanV2.meta_`, root cause `check2_typedInProtocolIsDefault`
-      (`planM.protocol = protocolPlanDefault`, by `rfl`). The headline is still statable because
-      `LoweringEquivalence R product` takes no `R.Valid` hypothesis (`Statements` §5); `Valid`
-      enters only through `blockContracts_of_valid`, and that is where the sorry sits.
+      (`planM.protocol = protocolPlanDefault`, by `rfl`). W13/PL.1 DELETED that lemma and the two
+      headline theorems built on it; `poseidonRender_notValid` is the proof that no theorem may
+      take `poseidonRender.Valid` as a hypothesis and be read as a fact about this render. The
+      conditional `poseidon_block_contracts` below keeps its `hR` binder as the documented shape of
+      the gluing lemma and is not applied at this render.
 
   ## THE IMPORT CONE, and the one edit outside this file
 
@@ -78,8 +81,10 @@
 
   ## WHAT THE CONE SAYS
 
-  `#cone_sorries lowering_equivalence_poseidon` is the first real number for the headline root and
-  ConeReport prints it, with `#cone_avoids` beside it.
+  This file is no longer a cone root: W13/PL.1 deleted the deployment headline and ConeReport now
+  roots the V2 side at the generic `Midfall.LoweringV2.lowering_equivalence_of_blocks`. The two
+  block lemmas below remain registered; the conditional `poseidon_block_contracts` is not a root and
+  must not be treated as one while `poseidonRender_notValid` stands.
 -/
 import Midfall.Instances.PoseidonEnv
 import Midfall.Instances.PoseidonInputs
@@ -168,29 +173,9 @@ theorem poseidonRender_plan_isD1 : poseidonRender.plan = poseidonPlanV2 := rfl
 theorem poseidonRender_vk_isD2 : poseidonRender.vk = poseidonVkExec := rfl
 theorem poseidonRender_E_isD2 : poseidonRender.E = poseidonE := rfl
 
-/-! ## 4. THE THREE LEMMAS -/
+/-! ## 4. THE BLOCK LEMMAS -/
 
-/-- **LEMMA 1 OF 3 - STATUS: REFUTED-AT-TYPED-IN-META.** `poseidonRender.Valid`, the eleven
-    computation clauses of `Statements` §2.
-
-    NOT merely open. D.3 proves two of the eleven UNSATISFIABLE at the plan this render carries:
-    `check2_circuitMeta_holds` is false and `check1_validLayout_holds` is false, and the root
-    cause is `check2_typedInProtocolIsDefault` - `poseidonPlanV2.meta_.protocol =
-    protocolPlanDefault`, by `rfl`. The typed-in `poseidonMeta` (`DeployedProfile.lean:81`)
-    carries no `ProtocolPlan` because the halo2 `ConstraintSystem` of the circuit is not in the
-    tree, and `ProofCalldataLayout.fromProtocol` refuses a default protocol. No amount of
-    computation discharges this lemma at this plan. A third clause, `model`, is true but not
-    machine-dischargeable either (gap (c)).
-
-    WHAT WOULD DISCHARGE IT: porting `ProtocolPlan::from_constraint_system` - the circuit gap, and
-    D.3's plan-level blocker - so that `poseidonPlanV2.meta_` is the ported meta rather than a
-    transcription of counts. Then `circuitMeta` and `layout` become computations like the other
-    clauses. The headline below does NOT depend on this lemma being dischargeable; it depends on it
-    being STATED, because `Valid` enters only through `blockContracts_of_valid`. -/
-theorem poseidon_valid : poseidonRender.Valid := by
-  sorry
-
-/-- **LEMMA 2 OF 3 - STATUS: OPEN.** The quotient block: the one `Partial` that
+/-- **THE QUOTIENT BLOCK - STATUS: OPEN.** The quotient block: the one `Partial` that
     `blockContracts_of_valid` cannot cover generically, because its code is a function of
     `poseidonRender.qblocks` as well as of the plan view (GAP G3 - the unported QRS:2000
     `compact_quotient_computation_blocks`; `qblocks` here is CHECKED data sliced out of the
@@ -208,7 +193,7 @@ theorem poseidon_quotient_block (product : PairingProduct) :
     poseidonRender.BlockContractsAt product (fun q => q = Partial.quotientLin) := by
   sorry
 
-/-- **LEMMA 3 OF 3 - STATUS: OPEN.** Program-level rejection at this render (`Blocks.lean:134`):
+/-- **THE REJECTION LEMMA - STATUS: OPEN.** Program-level rejection at this render (`Blocks.lean:134`):
     where the Lean verifier does not accept, outside the logup-panic bad set, every run of the
     generated program reverts or halts. This is the half of soundness the block contracts do not
     cover, because they assume a snapshot exists.
@@ -220,12 +205,16 @@ theorem poseidon_quotient_block (product : PairingProduct) :
 theorem poseidon_rejects (product : PairingProduct) : poseidonRender.Rejects product := by
   sorry
 
-/-! ## 5. THE HEADLINE -/
+/-! ## 5. THE BLOCK CONTRACTS (CONDITIONAL) -/
 
 /-- The two halves of `BlockContractsAt` glued: the generic six from `blockContracts_of_valid`,
-    which covers every partial but `.quotientLin`, and the quotient one from lemma 2. NO SORRY
-    HERE - it is a re-indexing of the two hypotheses, and it is the only place the split is paid
-    for. -/
+    which covers every partial but `.quotientLin`, and the quotient one from the quotient-block
+    lemma. NO SORRY HERE - it is a re-indexing of the two hypotheses, and it is the only place the
+    split is paid for.
+
+    W13/PL.1 KEPT this conditional lemma only. Its `hR : poseidonRender.Valid` binder is refuted at
+    this render by `poseidonRender_notValid`, so no unconditional headline is built from it and the
+    lemma must not be restated without the binder (that restatement would be false). -/
 theorem poseidon_block_contracts (product : PairingProduct) (hR : poseidonRender.Valid) :
     poseidonRender.BlockContractsAt product (fun _ => True) := by
   refine fun hpc H vkAddr cd ms instW inst Snap h1 h2 h3 q _ => ?_
@@ -233,32 +222,5 @@ theorem poseidon_block_contracts (product : PairingProduct) (hR : poseidonRender
   · exact poseidon_quotient_block product hpc H vkAddr cd ms instW inst Snap h1 h2 h3 q hq
   · exact blockContracts_of_valid poseidonRender product hR hpc H vkAddr cd ms instW inst Snap
       h1 h2 h3 q hq
-
-/-- **THE HEADLINE, AT THE DEPLOYMENT, FOR EVERY PAIRING PRODUCT.**
-    `LoweringEquivalence poseidonRender product` - the three-part statement of `Statements` §5
-    (soundness under poisoned precompiles and any gas oracle, total completeness under the honest
-    ones, two outcomes) quantified over every world, layout, hash, VK address, calldata and entry
-    frame. No hypothesis on the product, and no `R.Valid` hypothesis in the statement.
-
-    Proved from exactly three sorried lemmas - `poseidon_valid` (REFUTED-AT-TYPED-IN-META),
-    `poseidon_quotient_block` (open), `poseidon_rejects` (open) - through the generic composition
-    theorem `lowering_equivalence_of_blocks`. ST.4's headline asks every conjunct for
-    `G1CodecHeadlineLaws`, and the progress half of `BlockContractsAt` is now gated on the SAME
-    bundle (ST.5 step 3, pulled forward: the seven frozen laws are not derivable from four, and
-    the only in-tree witness at a real codec, `CurveSurface.g1CodecZ_laws`, sits behind the
-    `imports_avoid` wall of `Tools/ConeReport.lean`, so citing it here would have polluted the
-    cone). The fourth conjunct, totality, is the composition's own registered sorry
-    `bodyTotal_of_valid`. `#cone_sorries` on it is the progress measure of EXECUTION-V2 §6,
-    printed by ConeReport. -/
-theorem lowering_equivalence_poseidon (product : PairingProduct) :
-    LoweringEquivalence poseidonRender product :=
-  lowering_equivalence_of_blocks poseidonRender product poseidon_valid
-    (poseidon_block_contracts product poseidon_valid) (poseidon_rejects product)
-
-/-- The headline states a deployment, not a non-vacuity: `HypothesesInhabited` (`Statements` §8)
-    is a separate obligation this card does not claim, and `poseidon_valid` is refuted at the
-    typed-in meta. Recorded so nobody mistakes a stated headline for an inhabited one. -/
-theorem lowering_equivalence_poseidon_is_the_root (product : PairingProduct) :
-    LoweringEquivalence poseidonRender product := lowering_equivalence_poseidon product
 
 end Midfall.Instances.PoseidonV2
