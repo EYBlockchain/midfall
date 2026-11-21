@@ -3256,13 +3256,18 @@ def PG_align_exprEndNamed : Prop :=
     then it names 'c + len' as well. Everything else in (A1) is bookkeeping over 'itemStartsGo' and
     'identitySegment.go', both of which step by the SAME length after 'align_opLen_toOption'.
 
-    WHY IT IS NOT YET PROVED, exactly: it is an induction over the fuel-indexed
+    WHY IT WAS NOT YET PROVED, exactly: it is an induction over the fuel-indexed
     'quotientBytecodeOpsGo', and the induction has to carry the accumulator - the walk conses onto
     'acc' and reverses it at the end, so a step at depth 'k' hands its successor
     '((idx, op, len) :: acc)', and reading the head triple back out of a result needs
     'go bytes f i acc = match go bytes f i [] with ok r => ok (acc.reverse ++ r) | error e => error e'.
     That equation is stated as 'PG_align_goAccEq' below; the pieces that do NOT need it
-    ('align_go_succ', 'align_go_out', 'align_go_fuel0') are PROVED above. -/
+    ('align_go_succ', 'align_go_out', 'align_go_fuel0') are PROVED above.
+
+    **WALKC: THIS IS NOW PROVED**, as 'align_walkClosed' below, from 'align_go_closed' over the walk
+    history relation 'align_chain'. The statement is untouched: what was missing was the theorem, and the
+    in-bounds guard 'c + len < bytes.length' is load-bearing exactly as ALIGN warned - it is what kills
+    the arm where a recorded offset's successor is the terminal cursor. -/
 def PG_align_walkClosed : Prop :=
   ∀ (bytes : List Nat) (ops : List Midfall.Generator.QuotientValidator.QuotientBytecodeOp)
       (c len : Nat),
@@ -3275,7 +3280,13 @@ def PG_align_walkClosed : Prop :=
 
 /-- The accumulator identity 'PG_align_walkClosed' needs, stated exactly. Proved by induction on
     'fuel' after 'align_go_succ'/'align_go_out'; the two error arms of the successor case are the only
-    place where the 'do' blocks have to be reduced by hand. -/
+    place where the 'do' blocks have to be reduced by hand.
+
+    **WALKC: THIS IS NOW PROVED**, as 'align_goAccEq' below, with no change to the statement. The do
+    blocks are NOT reduced by hand and never needed to be: both sides of the equation contain the SAME do
+    block, so the accumulator case goes by case-splitting the two actions it binds over
+    ('cases h : byteAtPanic bytes idx 3084', 'cases h : quotientOpLen bytes idx') and letting
+    'align_bind_ok'/'align_bind_err' - both 'rfl' - do the reduction. -/
 def PG_align_goAccEq : Prop :=
   ∀ (bytes : List Nat) (fuel idx : Nat)
       (acc : List Midfall.Generator.QuotientValidator.QuotientBytecodeOp),
@@ -3334,6 +3345,249 @@ def align_twoCoplanMeasure : Bool :=
 #print axioms Midfall.Lowering.align_readU16_toOption
 #print axioms Midfall.Lowering.align_modarith7_toOption
 #print axioms Midfall.Lowering.align_builderOpLen_eq_validator
+
+/-! #### WALKC: THE INDUCTION OVER THE FUEL-INDEXED WALK - (A1') CLOSED
+
+    ALIGN named exactly one missing theorem between its primitives and the bridge: the closure of the
+    validator's named-offset set under one more step of its own length function, plus the accumulator
+    identity that induction needs. Both are PROVED below, so 'PG_align_goAccEq' and 'PG_align_walkClosed'
+    are now discharged theorems ('align_goAccEq', 'align_walkClosed'), not named Props. Nothing here
+    adds a hypothesis to the row, to a bundle, to 'ValidV3' or to the root (RULES): the Props keep their
+    committed statements verbatim and are discharged by a term of exactly that type, so a statement
+    drift would stop the file elaborating.
+
+    HOW THE INDUCTION GOES, since this is the fight ALIGN lost. The accumulator identity
+    'align_goAccEq_aux' is an induction on 'fuel' with 'idx' and 'acc' generalized, and it needs NOTHING
+    that was not already in ALIGN's hands: 'align_go_succ'/'align_go_out'/'align_go_fuel0' split every
+    case on the in-bounds test, and the two 'do' blocks on the two sides of the equation are the SAME do
+    block, so the accumulator cases never have to be reduced symbolically at all - it is enough to
+    'cases h : byteAtPanic bytes idx 3084' and 'cases h : quotientOpLen bytes idx', which substitutes
+    into the goal and leaves 'align_bind_ok'/'align_bind_err' to kill the binds, both 'rfl'. THAT is the
+    whole way through the do-block fight: never rewrite a do-block, case-split the actions it binds
+    over. The two error arms of the successor case are then 'simp only [align_bind_err]' and nothing
+    else, and the ok arm is two instances of the IH plus 'reverse_cons' and 'nil_append'.
+
+    'PG_align_walkClosed' then needs one ingredient that is NOT about accumulators: a triple in the
+    result carries the length the validator itself assigned at its own offset, so the hypothesis
+    'quotientOpLen bytes c = .ok len' pins WHICH triple of offset 'c' it is. That is 'align_go_genuine',
+    proved over the inductive relation 'align_chain' - the walk's history, recording that every triple
+    was read in bounds with its own correct length and that the cursor after the head triple is the
+    current one. 'align_chain_succ' is the one-step-on property of that history: the successor of a
+    recorded offset is either recorded too or is the current cursor. With those two the closure
+    induction is three lines per case, and the out-of-bounds arm is where the in-bounds guard of the
+    Prop pays for itself: a successor equal to the terminal cursor would be past the end, contradicting
+    the guard. 'align_go_succ_ok' is the one new peel lemma the in-bounds arm needs, and it is the same
+    case-split-the-actions trick.
+
+    AXIOM HYGIENE, AND A FINDING. These theorems depend on [propext, Classical.choice, Quot.sound], and
+    the 'Classical.choice' is NOT introduced here: it is in the DEFINITION 'quotientBytecodeOpsGo'
+    (VmValidator.lean:681) itself, so EVERY theorem about the walk inherits it - including this row the
+    moment it cites one, and including 'align_walkFrom' which ALIGN already committed. The source is the
+    redundant 'termination_by fuel => fuel' clause (VmValidator.lean:694) on an already-structural
+    recursion: the identical definition with that clause deleted depends on no axioms at all (measured
+    both ways in this worktree). Deleting the clause is a one-line change that would make the whole walk
+    cone constructive; it is NOT made here because it re-forges a generated port definition that every
+    other card's proofs reduce through, and because a killed concurrent rebuild of it is exactly the
+    false-KAT-red hazard in RULES. -/
+
+theorem align_goAccEq_aux (bytes : List Nat) :
+    ∀ (fuel idx : Nat) (acc : List QuotientBytecodeOp),
+      quotientBytecodeOpsGo bytes fuel idx acc =
+        match quotientBytecodeOpsGo bytes fuel idx [] with
+        | .ok r => .ok (acc.reverse ++ r)
+        | .error e => .error e := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro idx acc
+      by_cases hlt : idx < bytes.length
+      · rw [align_go_fuel0 bytes idx acc hlt, align_go_fuel0 bytes idx [] hlt]
+        unfold Midfall.Generator.QuotientValidator.vPanic
+        rfl
+      · rw [align_go_out bytes 0 idx acc hlt, align_go_out bytes 0 idx [] hlt]
+        simp only [List.reverse_nil, List.append_nil]
+  | succ k ih =>
+      intro idx acc
+      by_cases hlt : idx < bytes.length
+      · rw [align_go_succ bytes k idx acc hlt, align_go_succ bytes k idx [] hlt]
+        cases h1 : Midfall.Generator.QuotientValidator.byteAtPanic bytes idx 3084 with
+        | error e => simp only [align_bind_err]
+        | ok op =>
+            cases h2 : Midfall.Generator.QuotientValidator.quotientOpLen bytes idx with
+            | error e => simp only [align_bind_ok, align_bind_err]
+            | ok len =>
+                simp only [align_bind_ok]
+                rw [ih (idx + len) ((idx, op, len) :: acc), ih (idx + len) ((idx, op, len) :: [])]
+                cases h3 : quotientBytecodeOpsGo bytes k (idx + len) [] with
+                | ok r =>
+                    simp only [List.reverse_cons, List.reverse_nil, List.cons_append,
+                      List.append_assoc, List.nil_append]
+                | error e => rfl
+      · rw [align_go_out bytes (k + 1) idx acc hlt, align_go_out bytes (k + 1) idx [] hlt]
+        simp only [List.reverse_nil, List.append_nil]
+
+theorem align_goAccEq : PG_align_goAccEq := fun bytes fuel idx acc => align_goAccEq_aux bytes fuel idx acc
+
+/-! #### WALKC: the walk history, and closure under one more step -/
+
+inductive align_chain : List Nat → List QuotientBytecodeOp → Nat → Prop
+  | nil : ∀ (bytes : List Nat) (idx : Nat), align_chain bytes [] idx
+  | step : ∀ (bytes : List Nat) (t : QuotientBytecodeOp) (rest : List QuotientBytecodeOp)
+      (idx : Nat),
+      align_chain bytes rest t.1 →
+        idx = t.1 + t.2.2 →
+        t.1 < bytes.length →
+        Midfall.Generator.QuotientValidator.quotientOpLen bytes t.1 = .ok t.2.2 →
+        align_chain bytes (t :: rest) idx
+
+theorem align_chain_succ {bytes : List Nat} {acc : List QuotientBytecodeOp} {idx : Nat}
+    (hchain : align_chain bytes acc idx) {t : QuotientBytecodeOp} (ht : t ∈ acc) :
+    (∃ t' ∈ acc, t'.1 = t.1 + t.2.2) ∨ t.1 + t.2.2 = idx := by
+  induction hchain with
+  | nil _ => cases ht
+  | step u rest jidx hrec hidx hlt hlen hih =>
+      simp only [List.mem_cons] at ht
+      cases ht with
+      | inl heq =>
+          subst heq
+          right
+          exact hidx.symm
+      | inr hrest =>
+          cases hih hrest with
+          | inl hex =>
+              obtain ⟨w, hw, hw1⟩ := hex
+              left
+              exact ⟨w, List.mem_cons.mpr (Or.inr hw), hw1⟩
+          | inr hsucc =>
+              left
+              exact ⟨u, List.mem_cons.mpr (Or.inl rfl), hsucc.symm⟩
+
+theorem align_chain_genuine {bytes : List Nat} {acc : List QuotientBytecodeOp} {idx : Nat}
+    (hchain : align_chain bytes acc idx) {t : QuotientBytecodeOp} (ht : t ∈ acc) :
+    t.1 < bytes.length ∧
+      Midfall.Generator.QuotientValidator.quotientOpLen bytes t.1 = .ok t.2.2 := by
+  induction hchain with
+  | nil _ => cases ht
+  | step u rest jidx hrec hidx hlt hlen hih =>
+      simp only [List.mem_cons] at ht
+      cases ht with
+      | inl heq =>
+          subst heq
+          exact ⟨hlt, hlen⟩
+      | inr hrest => exact hih hrest
+
+theorem align_go_succ_ok {bytes : List Nat} {k idx : Nat}
+    {acc ops : List QuotientBytecodeOp}
+    (hlt : idx < bytes.length)
+    (h : quotientBytecodeOpsGo bytes (k + 1) idx acc = .ok ops) :
+    ∃ op len, quotientBytecodeOpsGo bytes k (idx + len) ((idx, op, len) :: acc) = .ok ops ∧
+      Midfall.Generator.QuotientValidator.quotientOpLen bytes idx = .ok len ∧
+        Midfall.Generator.QuotientValidator.byteAtPanic bytes idx 3084 = .ok op := by
+  rw [align_go_succ bytes k idx acc hlt] at h
+  cases h1 : Midfall.Generator.QuotientValidator.byteAtPanic bytes idx 3084 with
+  | error e =>
+      rw [h1] at h
+      simp only [align_bind_err] at h
+      exact absurd h (by simp)
+  | ok op =>
+      cases h2 : Midfall.Generator.QuotientValidator.quotientOpLen bytes idx with
+      | error e =>
+          rw [h1, h2] at h
+          simp only [align_bind_ok, align_bind_err] at h
+          exact absurd h (by simp)
+      | ok len =>
+          rw [h1, h2] at h
+          simp only [align_bind_ok] at h
+          exact ⟨op, len, h, rfl, rfl⟩
+
+theorem align_go_genuine (bytes : List Nat) :
+    ∀ (fuel idx : Nat) (acc ops : List QuotientBytecodeOp),
+      align_chain bytes acc idx →
+      quotientBytecodeOpsGo bytes fuel idx acc = .ok ops →
+      ∀ t ∈ ops, t.1 < bytes.length ∧
+        Midfall.Generator.QuotientValidator.quotientOpLen bytes t.1 = .ok t.2.2 := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro idx acc ops hchain hgo t ht
+      by_cases hlt : idx < bytes.length
+      · rw [align_go_fuel0 bytes idx acc hlt] at hgo
+        exact absurd hgo (by simp [Midfall.Generator.QuotientValidator.vPanic])
+      · rw [align_go_out bytes 0 idx acc hlt] at hgo
+        simp only [Except.ok.injEq] at hgo
+        subst hgo
+        exact align_chain_genuine hchain (List.mem_reverse.mp ht)
+  | succ k ih =>
+      intro idx acc ops hchain hgo t ht
+      by_cases hlt : idx < bytes.length
+      · obtain ⟨op, len, hrec, hlen, _hop⟩ := align_go_succ_ok hlt hgo
+        have hchain' : align_chain bytes ((idx, op, len) :: acc) (idx + len) :=
+          align_chain.step bytes (idx, op, len) acc (idx + len) hchain rfl hlt hlen
+        exact ih (idx + len) ((idx, op, len) :: acc) ops hchain' hrec t ht
+      · rw [align_go_out bytes (k + 1) idx acc hlt] at hgo
+        simp only [Except.ok.injEq] at hgo
+        subst hgo
+        exact align_chain_genuine hchain (List.mem_reverse.mp ht)
+
+theorem align_go_closed (bytes : List Nat) :
+    ∀ (fuel idx : Nat) (acc ops : List QuotientBytecodeOp),
+      align_chain bytes acc idx →
+      quotientBytecodeOpsGo bytes fuel idx acc = .ok ops →
+      ∀ t ∈ ops, t.1 + t.2.2 < bytes.length → ∃ t' ∈ ops, t'.1 = t.1 + t.2.2 := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro idx acc ops hchain hgo t ht hlt
+      by_cases hidx : idx < bytes.length
+      · rw [align_go_fuel0 bytes idx acc hidx] at hgo
+        exact absurd hgo (by simp [Midfall.Generator.QuotientValidator.vPanic])
+      · rw [align_go_out bytes 0 idx acc hidx] at hgo
+        simp only [Except.ok.injEq] at hgo
+        subst hgo
+        cases align_chain_succ hchain (List.mem_reverse.mp ht) with
+        | inl hex =>
+            obtain ⟨w, hw, hw1⟩ := hex
+            exact ⟨w, List.mem_reverse.mpr hw, hw1⟩
+        | inr hsucc =>
+            have : idx < bytes.length := hsucc ▸ hlt
+            exact absurd this hidx
+  | succ k ih =>
+      intro idx acc ops hchain hgo t ht hlt
+      by_cases hidx : idx < bytes.length
+      · obtain ⟨op, len, hrec, hlen, _hop⟩ := align_go_succ_ok hidx hgo
+        have hchain' : align_chain bytes ((idx, op, len) :: acc) (idx + len) :=
+          align_chain.step bytes (idx, op, len) acc (idx + len) hchain rfl hidx hlen
+        exact ih (idx + len) ((idx, op, len) :: acc) ops hchain' hrec t ht hlt
+      · rw [align_go_out bytes (k + 1) idx acc hidx] at hgo
+        simp only [Except.ok.injEq] at hgo
+        subst hgo
+        cases align_chain_succ hchain (List.mem_reverse.mp ht) with
+        | inl hex =>
+            obtain ⟨w, hw, hw1⟩ := hex
+            exact ⟨w, List.mem_reverse.mpr hw, hw1⟩
+        | inr hsucc =>
+            have : idx < bytes.length := hsucc ▸ hlt
+            exact absurd this hidx
+
+theorem align_walkClosed : PG_align_walkClosed := by
+  intro bytes ops c len hgo hc hc_lt hlen hclt
+  obtain ⟨t, ht, htc⟩ := hc
+  have hgen := align_go_genuine bytes bytes.length 0 [] ops (align_chain.nil bytes 0) hgo t ht
+  have hlen2 : t.2.2 = len := by
+    have h1 : Midfall.Generator.QuotientValidator.quotientOpLen bytes t.1 = .ok t.2.2 := hgen.2
+    rw [htc, hlen] at h1
+    exact (Except.ok.inj h1).symm
+  have hlt' : t.1 + t.2.2 < bytes.length := by
+    rw [htc, hlen2]
+    exact hclt
+  obtain ⟨t', ht', ht'1⟩ :=
+    align_go_closed bytes bytes.length 0 [] ops (align_chain.nil bytes 0) hgo t ht hlt'
+  exact ⟨t', ht', by rw [← htc, ← hlen2]; exact ht'1⟩
+
+#print axioms Midfall.Lowering.align_goAccEq
+#print axioms Midfall.Lowering.align_walkClosed
+#print axioms Midfall.Lowering.align_go_closed
+#print axioms Midfall.Lowering.align_go_genuine
 
 end Midfall.Lowering
 
