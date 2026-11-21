@@ -110,3 +110,15 @@ Read this whole file before starting. Card briefs reference it instead of restat
   and the write-back silently truncates the file. **For any file over ~1500 lines, patch with python
   or a bash heredoc against the file on disk. NEVER read-then-write a large file.** Verify with
   `wc -l` before and after, and `git diff --stat` to confirm only your hunks appear.
+
+## Deciding and gating facts that cannot be decided
+- **No walk-level fact about a CONCRETE program can be a `decide` theorem here.** `decide` cannot
+  kernel-reduce `quotientBytecodeOpsGo` or anything calling it (`validateQuotientProgram`,
+  `validateQuotientProgramOperands`, `quotientBytecodeOps`, `bytecodeOpList` on a concrete program): the
+  fuel-indexed match stays stuck even with unary fuel and a literal list. The VM and `native_decide` both
+  compute it, and `native_decide` is banned outside `Midfall/Instances`. **Use a hand-measured Bool or a
+  proved structural lemma instead.** (VALP2, measured.)
+- **`kat_gate.py` asserts an EXACT pin (currently 1640/118).** Adding an `#eval -- expect` gate without
+  moving the pin reddens the gate; moving the pin is an ownership breach unless disclosed and reconciled
+  by the orchestrator. **If the KAT will not fit your budget, hand-measure as a Bool and claim neither way
+  for KAT itself** - that is what VALP2 did and it is the standard.
