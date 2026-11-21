@@ -95,3 +95,14 @@ Read this whole file before starting. Card briefs reference it instead of restat
 - Never write a claim a tool did not print, including your own wrapper exit codes.
 - If you find a defect in the generated contract or the generator rather than in the Lean port, that is
   a standing request from the human: stop, land the counterexample, and report it loudly.
+
+## Patching large GENERATED files (added after two near-losses in 24 hours)
+- Two workers nearly destroyed each other's committed work in QuotientArms.lean (4500+ lines of
+  generated proof terms) by textual patch on GENERIC anchors such as "have a2", "have y6", "have z12".
+  One such patch clobbered 18 lines across nine arms; the build caught it.
+- NEVER patch a large generated file by matching generic line content. Anchor on a UNIQUE string (the
+  theorem name, or a comment marker you wrote), or insert at a line number you have just verified.
+- Prefer many small appends at the end of the file over in-place edits in the middle.
+- After ANY edit to a large file, run `git diff --stat` and `git diff` and confirm the changed hunks are
+  ONLY yours. If a hunk is not yours, restore from HEAD with git show and re-apply; do not commit.
+- WIP-commit before the edit, so recovery costs nothing.
