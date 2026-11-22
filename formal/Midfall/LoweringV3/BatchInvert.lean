@@ -230,6 +230,22 @@ theorem wMulmodAt_eq_zero_iff {r x y : U256} (hp : Nat.Prime r.toNat)
       exact Nat.eq_zero_of_dvd_of_lt hdy hy
   · rintro (rfl | rfl) <;> simp
 
+
+/-- A non-zero modulus makes `mulmod` canonical: the result is `< r`. This is what turns the
+backward pass's stored inverses into the summary's "output word `< r`" clause. -/
+theorem wMulmodAt_toNat_lt {r a b : U256} (hr : r ≠ 0) :
+    (wMulmodAt a b r).toNat < r.toNat := by
+  have hrpos : 0 < r.toNat := by
+    have h : r.toNat ≠ 0 := by
+      intro h0
+      exact hr (BitVec.eq_of_toNat_eq (by simpa using h0))
+    omega
+  rw [wMulmodAt, ite_eq_right hr]
+  rw [BitVec.toNat_ofNat]
+  have hlt : r.toNat < 2 ^ 256 := by simpa using BitVec.isLt r
+  have := Nat.mod_lt (a.toNat * b.toNat) hrpos
+  omega
+
 /-- The non-zero form the summary's `ret ≠ 0` arm consumes. -/
 theorem wMulmodAt_ne_zero_iff {r x y : U256} (hp : Nat.Prime r.toNat)
     (hx : x.toNat < r.toNat) (hy : y.toNat < r.toNat) :
@@ -894,6 +910,112 @@ theorem bwdInvVal_inv (mem : Nat → UInt8) (a k : Nat) (rw invAll : U256)
   rw [bwdInvVal, wMulmodAt_assoc hr, ← hstep]
   exact bwdAll_inv mem a k rw invAll hr hk hinv j hj
 
+/-! ## 4d. THE BACKWARD STORE CHAIN (`bwdMem`)
+
+  `bwdMem` writes `I j` at `a + 32*(k-(j+1))` (descending from `a+32*(k-1)`), exactly the backward
+  pass's stores. The four lemmas are the read/window facts the loop invariant needs: words not yet
+  reached are original (`untouched`), reached words hold `I (k-1-i)` (`written`), and memory outside
+  the batch and the forward scratch is untouched (`outside`, `scratch`). -/
+
+def bwdMem (mem : Nat → UInt8) (a k : Nat) (I : Nat → U256) : Nat → (Nat → UInt8)
+  | 0 => mem
+  | j + 1 => storeWord (bwdMem mem a k I j) (a + 32 * (k - (j + 1))) (I j)
+
+theorem storeWord_outside (mem : Nat → UInt8) (p x : Nat) (v : U256)
+    (h : x < p ∨ p + 32 ≤ x) : storeWord mem p v x = mem x := by
+  unfold storeWord
+  rw [ite_eq_right]
+  rintro ⟨h1, h2⟩
+  omega
+
+theorem loadWord_bwdMem_untouched (mem : Nat → UInt8) (a k : Nat) (I : Nat → U256) :
+    ∀ (j i : Nat), 1 ≤ k → j ≤ k - 1 → i < k - j →
+      loadWord (bwdMem mem a k I j) (a + 32 * i) = loadWord mem (a + 32 * i) := by
+  intro j
+  induction j with
+  | zero => intro i hk hj hi; rfl
+  | succ j ih =>
+      intro i hk hj hi
+      simp only [bwdMem]
+      have hdisj : a + 32 * i + 32 ≤ a + 32 * (k - (j + 1)) := by omega
+      rw [Midfall.Yul.Word.loadWord_storeWord_disjoint _ _ _ _ (Or.inl hdisj)]
+      exact ih i hk (by omega) (by omega)
+
+theorem loadWord_bwdMem_written (mem : Nat → UInt8) (a k : Nat) (I : Nat → U256) :
+    ∀ (j i : Nat), 1 ≤ k → j ≤ k - 1 → k - j ≤ i → i < k →
+      loadWord (bwdMem mem a k I j) (a + 32 * i) = I (k - 1 - i) := by
+  intro j
+  induction j with
+  | zero => intro i hk hj hlo hhi; omega
+  | succ j ih =>
+      intro i hk hj hlo hhi
+      simp only [bwdMem]
+      by_cases hnew : i = k - (j + 1)
+      · subst hnew
+        rw [Midfall.Yul.Word.loadWord_storeWord_same]
+        rw [show k - 1 - (k - (j + 1)) = j by omega]
+      · have hdisj : a + 32 * (k - (j + 1)) + 32 ≤ a + 32 * i := by omega
+        rw [Midfall.Yul.Word.loadWord_storeWord_disjoint _ _ _ _ (Or.inr hdisj)]
+        exact ih i hk (by omega) (by omega) (by omega)
+
+theorem bwdMem_outside (mem : Nat → UInt8) (a k : Nat) (I : Nat → U256) :
+    ∀ (j : Nat) (x : Nat), 1 ≤ k → j ≤ k - 1 → (x < a ∨ a + 32 * k ≤ x) →
+      bwdMem mem a k I j x = mem x := by
+  intro j
+  induction j with
+  | zero => intro x hk hj hx; rfl
+  | succ j ih =>
+      intro x hk hj hx
+      simp only [bwdMem]
+      rw [storeWord_outside _ _ _ _ (by
+        rcases hx with h | h
+        · left; omega
+        · right; omega)]
+      exact ih x hk (by omega) hx
+
+theorem bwdMem_scratch (mem : Nat → UInt8) (a k s : Nat) (I : Nat → U256) :
+    ∀ (j : Nat) (x : Nat), 1 ≤ k → j ≤ k - 1 →
+      ((a + 32 * k ≤ s) ∨ (s + 32 * k ≤ a)) → s ≤ x → x < s + 32 * k →
+      bwdMem mem a k I j x = mem x := by
+  intro j
+  induction j with
+  | zero => intro x hk hj hdisj hx hx2; rfl
+  | succ j ih =>
+      intro x hk hj hdisj hx hx2
+      simp only [bwdMem]
+      rw [storeWord_outside _ _ _ _ (by
+        rcases hdisj with h | h
+        · right; omega
+        · left; omega)]
+      exact ih x hk (by omega) hdisj hx hx2
+
+
+
+/-- The closed form of the `mptr` walk: for `j ≤ k-1`, `bwdMptr a k j` is the word
+`a + 32*(k-1-j)`. -/
+theorem bwdMptr_eq (a k j : Nat) (he : a + 32 * k < 2 ^ 256) (hj : j ≤ k - 1) :
+    bwdMptr a k j = BitVec.ofNat 256 (a + 32 * (k - 1 - j)) := by
+  unfold bwdMptr
+  have hX : a + 32 * (k - 1) < 2 ^ 256 := by omega
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_sub, BitVec.toNat_ofNat, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt (by omega : 32 * j < 2 ^ 256),
+    Nat.mod_eq_of_lt hX,
+    Nat.mod_eq_of_lt (by omega : a + 32 * (k - 1 - j) < 2 ^ 256)]
+  omega
+
+/-- The closed form of the `gp_mptr` walk: for `j ≤ k-3`, it is `s + 32*(k-3-j)`. -/
+theorem bwdGp_eq (s k j : Nat) (hs : s + 32 * k < 2 ^ 256) (hj : j ≤ k - 3) :
+    bwdGp s k j = BitVec.ofNat 256 (s + 32 * (k - 3 - j)) := by
+  unfold bwdGp
+  have hX : s + 32 * (k - 3) < 2 ^ 256 := by omega
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_sub, BitVec.toNat_ofNat, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt (by omega : 32 * j < 2 ^ 256),
+    Nat.mod_eq_of_lt hX,
+    Nat.mod_eq_of_lt (by omega : s + 32 * (k - 3 - j) < 2 ^ 256)]
+  omega
+
 /-! ## 5. PREMISE GAP PG-BATCHINVERT (exact statements; no hypothesis added to a row)
 
   **(1) CLOSED at §4b: `bi_forward_loop` IS PROVED, with the statement-9 canonicality pre.**
@@ -1030,6 +1152,7 @@ theorem bwdInvVal_inv (mem : Nat → UInt8) (a k : Nat) (rw invAll : U256)
 #assert_axioms loadWord_writeWords_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_eq_zero_iff [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_ne_zero_iff [propext, Classical.choice, Quot.sound]
+#assert_axioms wMulmodAt_toNat_lt [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_assoc [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_comm [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdAll_inv [propext, Classical.choice, Quot.sound]
@@ -1041,6 +1164,14 @@ theorem bwdInvVal_inv (mem : Nat → UInt8) (a k : Nat) (rw invAll : U256)
 #assert_axioms bwdEnv_get_second_mptr [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_r [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_ret [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdMem_outside [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdMem_scratch [propext, Classical.choice, Quot.sound]
+#assert_axioms loadWord_bwdMem_untouched [propext, Classical.choice, Quot.sound]
+#assert_axioms loadWord_bwdMem_written [propext, Classical.choice, Quot.sound]
+#assert_axioms storeWord_outside [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdMptr_eq [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdGp_eq [propext, Classical.choice, Quot.sound]
+
 
 
 end Midfall.LoweringV3.BatchInvert
