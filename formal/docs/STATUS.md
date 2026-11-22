@@ -8,10 +8,10 @@ The QVM lane stays with its existing agent (midfall-c/d).
 
 ## 1. Verified - PROGRESS
 
-    root lowering_correct .... 15 OPEN sorried leaves (snapshotOf_prepareMsgs, q_blockProgS,
+    root lowering_correct .... 14 OPEN sorried leaves (snapshotOf_prepareMsgs, q_blockProgS,
                                q_blockSim, block_live, fp_*, gasFree_of_valid, lag_*, pcs_*,
-                               tp_*, vk_*)
-    root lowering_sound ...... 7 OPEN sorried leaves (the sim rows, prefix_sim, run_split,
+                               tp_*, vk_blockProgS)
+    root lowering_sound ...... 6 OPEN sorried leaves (the sim rows, prefix_sim, run_split,
                                snapshotOf_prepareMsgs)
     block rows ............... 1 INTEGRATED of 7 (traceReturn); 2 SORRY, 4 NONE
     exhibits ................. 4 PRESENT, 0 MISSING of 4
@@ -19,7 +19,7 @@ The QVM lane stays with its existing agent (midfall-c/d).
                                payload point half OPEN (B3)
     root lowering_correctW ... not reported (C0 not started)
     root generator_correct ... not reported (D2 not started)
-    register ................. 79 rows / 15 ROOT; 0 REFUTED, 1 VACUOUS
+    register ................. 78 rows / 14 ROOT; 0 REFUTED, 1 VACUOUS
     KAT ...................... 1648/119 (full gate, 2026-11-22)
     frozen axioms ............ 5 named + 159 native_decide; roots are standard three + sorryAx,
                                native []
@@ -108,6 +108,12 @@ conjunct; the headline signature is unchanged.
 
 ## 4c. Parallel results merged (2026-11-22)
 
+- **A3R** `f980410`: `vk_blockSim` PROVED (`VkClean.lean` §6, `rows.lean` cites it), using D-QVM1's
+  `fit1_of_valid`/`fit2_of_valid` and the generated disjointness facts. Root 15 -> 14, sound
+  7 -> 6, register 79 -> 78 / 14. `vk_blockProgS` remains; its universal/existence halves are
+  named in the A3R report (`StmtsTotal`/`wpSS_exists_C`/`vk_all_param`).
+
+
 - **B1/W13** `a3b047d`: refuted `poseidon_valid` cone deleted; `#assert_no_refuted_sorry` wired;
   `SORRY.md` now **0 REFUTED**; S.10 count-free prose.
 - **GASFREE** `d8aa4e2`: `runBody_gas_oblivious` PROVED; root 17 -> 16 at that point.
@@ -125,6 +131,6 @@ conjunct; the headline signature is unchanged.
 
 ## 5. Last three merges
 
+- `f980410` A3 - `vk_blockSim` proved; root 14, sound 6, register 78/14
 - `308edf8` C1/WID.2 - IVC fixture KATs; KAT 1648/119
 - `e66fc58` EXHIBITS - both missing exhibits; 4/4 PRESENT
-- `fec9822` EXITSOUND - `Run_worldEq_of_noWriters` + `twoOutcomes` proved; root 15, sound 7
