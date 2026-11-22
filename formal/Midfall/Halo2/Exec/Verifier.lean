@@ -780,8 +780,13 @@ def collectQueries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
       else
         pure []
     -- :624 permutation.queries(vk, x). blinding_factors is computed INSIDE the
-    -- Rust fn (:150), so the i32::MAX panic at circuit.rs:2510 is observed here,
-    -- after this proof's advice and instance queries have been built.
+    -- Rust fn (:150). The FIRST call on this path is in
+    -- partially_evaluate_identities (mod.rs:509), which linearize runs before
+    -- collectQueries, so a bf above i32::MAX has already aborted there. The
+    -- re-computation here is kept because the Rust does it; in Rust
+    -- permutation.queries(vk, x) is evaluated eagerly when the chain is built,
+    -- before the advice/instance closures are consumed, while the port builds
+    -- those closures first - unobservable because the earlier call has failed.
     let bf ← vk.cs.blindingFactors
     let perm ← pe.queries (p := p) vk.domain bf x proof
     -- :625-626 lookups then trashcans, flat over the per-proof vectors. D-P61 (card
