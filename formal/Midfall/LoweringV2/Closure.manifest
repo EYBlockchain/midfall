@@ -1,4 +1,4 @@
-# closure_fingerprint: 4823 project declarations, 526 external leaves, digest bd27cd298a04fc1a
+# closure_fingerprint: 4823 project declarations, 526 external leaves, digest 3e2ca9c5253cec99
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws inductive 0e89d3fd0bde015d 0000000000000000
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws.mk ctor 8c653d323d8fefae 0000000000000000
 DECL Midfall.Assumptions.Eip2537 Midfall.Assumptions.Eip2537.Holds inductive 55066eb9f6565c8a 0000000000000000
@@ -3756,7 +3756,7 @@ DECL Midfall.Lowering.InlineConstants Midfall.Lowering.Inline.solConstantLine?._
 DECL Midfall.Lowering.InlineConstants Midfall.Lowering.Inline.solConstantLine?.match_1 def d20a1ea3c2d5a7ed b585b91fcdeac1d3
 DECL Midfall.Lowering.InlineConstants Midfall.Lowering.Inline.strDrop def 4d5ea7cd9e6d8d1c eeac54d0f9c76152
 DECL Midfall.Lowering.Inv Midfall.Lowering.ChallengesGood inductive d7b85b91f4c07171 0000000000000000
-DECL Midfall.Lowering.Inv Midfall.Lowering.ChallengesGood.mk ctor 1315fa9ea7cba1ac 0000000000000000
+DECL Midfall.Lowering.Inv Midfall.Lowering.ChallengesGood.mk ctor f61cf2ac32ed2b54 0000000000000000
 DECL Midfall.Lowering.Inv Midfall.Lowering.EnvAgrees inductive c0207f58f1c59317 0000000000000000
 DECL Midfall.Lowering.Inv Midfall.Lowering.EnvAgrees.mk ctor fb5564d6a92f9c80 0000000000000000
 DECL Midfall.Lowering.Inv Midfall.Lowering.PlanView inductive 28893073c8df664e 0000000000000000
