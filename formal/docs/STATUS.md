@@ -1,15 +1,15 @@
 # STATUS - midfall
 
-**As of:** `7349592` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
+**As of:** `e7f3107` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
 EXIT=0, KAT 1648/119, `axiom_sweep: ok`, closure fingerprint 4823 declarations / 526 external
-leaves / `bd27cd298a04fc1a`. The later QVM PLSEG commit is quick-gate green.
+leaves / `bd27cd298a04fc1a`. The later A3/QVM commits are quick-gate green. Current report:
+root **11 / sound 5**, register **75 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
 
 ## 1. Verified - PROGRESS
 
-    root lowering_correct .... 12 OPEN sorried leaves (q_blockProgS, q_blockSim, block_live,
+    root lowering_correct .... 11 OPEN sorried leaves (q_blockProgS, q_blockSim, block_live,
                                fp_blockProgS, fp_blockSim, lag_blockProgS, lag_blockSim,
-                               pcs_blockProgS, pcs_blockSim, tp_blockProgS, tp_blockSim,
-                               vk_blockProgS)
+                               pcs_blockProgS, pcs_blockSim, tp_blockProgS, tp_blockSim)
     root lowering_sound ...... 5 OPEN sorried leaves (q_blockSim, fp_blockSim, lag_blockSim,
                                pcs_blockSim, tp_blockSim)
     block rows ............... 1 INTEGRATED of 7 (traceReturn); 2 SORRY, 4 NONE
@@ -18,7 +18,7 @@ leaves / `bd27cd298a04fc1a`. The later QVM PLSEG commit is quick-gate green.
                                payload point half OPEN (B3)
     root lowering_correctW ... not reported (C0 not started)
     root generator_correct ... not reported (D2 not started)
-    register ................. 76 rows / 12 ROOT; 0 REFUTED, 1 VACUOUS
+    register ................. 75 rows / 11 ROOT; 0 REFUTED, 1 VACUOUS
     KAT ...................... 1648/119 (full gate)
     axiom roots .............. standard three + sorryAx, native []
 
@@ -31,8 +31,11 @@ and the `snapshotOf_prepareMsgs` retirement.
 
 ## 2. In flight
 
-- **A3/vk_blockProgS** on `t/A3R`: the frozen header clause and the six header-window equations are
-  landed; the remaining universal/existence `StmtsTotal` halves are mechanical and in flight.
+- **A3 COMPLETE** (`127cfe7`): `vk_blockSim` and `vk_blockProgS` both PROVED; the vkLoading pair
+  is closed. Root 12 -> 11, register 76/12 -> 75/11.
+- **A4/lagrange** on `t/A4`: the render-free loop tranche (vocab + `lag_sq_loop`,
+  `lag_denoms_loop`, `lag_lblind_loop`) is in flight. A5/`batch_invert_summary` is a prerequisite
+  of the row, and `lag_agrees` is off by one (STATUS §4).
 - **QVM** (`midfall-c/d`): D-QVM2 executed; `QInterpRefinesSegment` stated; QIDENT/BINDINV/PLSEG
   landed. `q_blockSim`/`q_blockProgS` remain.
 
@@ -67,6 +70,8 @@ D-GATE1 (PG-VKHEADER `constantsLength`, programOk `GasFree`, snapshot retirement
 
 ## 5. Last three merges
 
-- `7349592` PLSEG - builder_segments_total still open; precise `PG_planSegmentCursorFacts` handoff
+- `e7f3107` SPILL2 - all six push arms chain across their spill; new window gap recorded
+- `127cfe7` A3 - `vk_blockProgS` proved; root 11, register 75/11
+- `7349592` PLSEG - builder_segments_total still open; precise handoff
 - `d0bf226` SNAPSHOT - `snapshotOf_prepareMsgs` retired; root 12, sound 5, register 76/12
 - `8b72779` PG-VKHEADER - frozen `PayloadAgrees.constantsLength` + six header-window equations
