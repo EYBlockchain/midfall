@@ -8,6 +8,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
   option AND it reads stale oleans for sibling modules you just edited, so a file can pass under
   lake env lean and FAIL lake build.
 - Plain lake build only. NEVER ram_guard --limit 6G: it is KILLED at 11.8 GiB and leaves .olean files
+- **NEVER `pkill -f <pattern>` a gate or a build.** SPILL2 ran `pkill -f kat_gate.py` to restart its own KAT and killed EVERY kat_gate on the box - another card's run ~50 min in, plus at least one other. Gate runs cost 17-35 min each, so that is hours of lost verification across cards. **Kill by PID from your own job list, never by pattern.** The same applies to `lake`: a pattern kill can destroy a sibling build and leave a missing olean and a FALSE red.**
   missing, which produces FALSE register reds.
 - A fresh worktree should be made with formal/scripts/newbox.sh, which APFS-clones the warm .lake
   (~30 s, 9842 oleans) so the build is incremental (~2 min) instead of a 30-55 min cold build.
