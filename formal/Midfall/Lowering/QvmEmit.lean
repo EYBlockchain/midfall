@@ -318,6 +318,85 @@ theorem limbRowForm_eq_denoteLimbRow (bytes : List Nat) (consts : List Word256)
       simp only [hd, Except.map, bind, Except.bind, pure, Except.pure]
       rw [h7]
 
+
+/-! #### Fold transport for the shape decoders -/
+
+theorem foldlM_prod_snd {ε α β γ : Type} (f : α → β → Except ε α) :
+    ∀ (l : List β) (a : α) (m : γ),
+      l.foldlM (fun (p : α × γ) b => (f p.1 b).map (fun a' => (a', p.2))) (a, m)
+      = (l.foldlM f a).map (fun a' => (a', m)) := by
+  intro l
+  induction l with
+  | nil => intro a m; rfl
+  | cons b rest ih =>
+      intro a m
+      simp only [List.foldlM_cons]
+      cases h : f a b with
+      | error e => rfl
+      | ok a' => exact ih a' m
+
+theorem foldlM_state_eq {ε α γ : Type} (l : List Nat)
+    (step : α × γ → Nat → Except ε (α × γ)) (den : α → Nat → Except ε α)
+    (mem : γ) (init : α)
+    (hstep : ∀ j ∈ l, ∀ a, step (a, mem) j = (den a j).map (fun a' => (a', mem))) :
+    l.foldlM step (init, mem) = (l.foldlM den init).map (fun a' => (a', mem)) := by
+  induction l generalizing init with
+  | nil => rfl
+  | cons j rest ih =>
+      simp only [List.foldlM_cons]
+      rw [hstep j (by simp) init]
+      cases h : den init j with
+      | error e => rfl
+      | ok a' => exact ih a' (fun k hk => hstep k (by simp [hk]))
+
+theorem foldRangeIdxM_eq_foldlM_bounded {α β ε : Type} (d : β) :
+    ∀ (terms : List β) (f : Nat → α → Except ε α) (g : β → α → Except ε α),
+      (∀ i a, i < terms.length → f i a = g (terms.getD i d) a) →
+      ∀ init, Midfall.Generator.foldRangeIdxM terms.length init f =
+        terms.foldlM (fun a b => g b a) init := by
+  intro terms
+  induction terms with
+  | nil => intro f g h init; rfl
+  | cons c rest ih =>
+      intro f g h init
+      show (f 0 init >>= fun x =>
+              Midfall.Generator.foldRangeIdxM rest.length x (fun i => f (i + 1)) >>= fun y => Except.ok y) = _
+      have key : ∀ x, Midfall.Generator.foldRangeIdxM rest.length x (fun i => f (i + 1)) =
+          rest.foldlM (fun a b => g b a) x :=
+        ih (fun i => f (i + 1)) g (by
+          intro j a hj
+          have := h (j + 1) a (by simpa using hj)
+          rwa [List.getD_cons_succ] at this)
+      simp only [key, List.foldlM_cons, QvmEmit.except_bind_ok]
+      rw [h 0 init (by simp)]
+      rfl
+
+theorem getD_range (i n : Nat) (h : i < n) : (List.range n).getD i 0 = i := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_range h]
+  rfl
+
+theorem foldRangeIdxM_range {ε α : Type} (n : Nat) (f : Nat → α → Except ε α) (init : α) :
+    Midfall.Generator.foldRangeIdxM n init f =
+      (List.range n).foldlM (fun a i => f i a) init := by
+  have h := foldRangeIdxM_eq_foldlM_bounded (α := α) (β := Nat) (ε := ε) (d := 0)
+    (terms := List.range n) f (fun b a => f b a) ?_ init
+  · simpa using h
+  · intro i a hi
+    rw [getD_range i n (by simpa [List.length_range] using hi)]
+
+theorem foldlM_congr_of_mem {ε α : Type} (l : List Nat)
+    (f g : Nat → α → Except ε α) (h : ∀ j ∈ l, f j = g j) :
+    ∀ init, l.foldlM (fun a j => f j a) init = l.foldlM (fun a j => g j a) init := by
+  induction l with
+  | nil => intro init; rfl
+  | cons j rest ih =>
+      intro init
+      simp only [List.foldlM_cons]
+      rw [h j (by simp)]
+      cases hgj : g j init with
+      | error e => rfl
+      | ok a => exact ih (fun k hk => h k (by simp [hk])) a
+
 /-! ### 3. The builder side, and what is named rather than sorried -/
 
 /-- The builder's slot map agrees with its constant table: every coefficient the builder can
