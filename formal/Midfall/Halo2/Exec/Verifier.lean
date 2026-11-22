@@ -1361,10 +1361,13 @@ def raWindow_kats_ok : Bool :=
              a.rotations == [-2, -1, 0, 1] && a.lIS.size == 4
   | none => false
 
-/-- The instance inner products the window feeds: column [7] opened at rotation +2
-    takes l_i_s[maxRot - rot ..] = l_i_s[0 .. 1] = [8], so the evaluation is 7 * 8 =
-    56 = 5 mod 17... measured 16, which is what the pin records. The point of pinning
-    it is that a mover who changed the offset arithmetic changes this number. -/
+/-- The instance inner products the window feeds. `raCs` has two instance queries:
+    column 0 at rotation +1, with values `[3, 5]`, takes
+    `l_i_s[maxRot - 1 ..] = l_i_s[1 .. 3] = [6, 3]`, so its evaluation is
+    `3*6 + 5*3 = 33 = 16 mod 17`; column 1 at rotation +2, with value `[7]`, takes
+    `l_i_s[0 .. 1] = [8]`, so its evaluation is `7*8 = 56 = 5 mod 17`. The gate
+    pins `[[16, 5]]`. The point of pinning both is that a mover who changed the
+    offset arithmetic changes these numbers. -/
 def raInstanceEval_kats_ok : Bool :=
   match raRun with
   | some a => (a.instanceEvals.toList.map (fun (r : Array (Fr 17)) => ZMod.val <$> r.toList))
