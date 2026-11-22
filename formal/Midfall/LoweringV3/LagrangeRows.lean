@@ -35,6 +35,7 @@
 import Midfall.LoweringV3.QuotientRows
 import Midfall.LoweringV2.Blocks.VkLoading
 import Midfall.Yul.LoopRule
+import Midfall.Yul.Word
 import Midfall.Tools.ConeSorries
 import Midfall.Tools.Done
 
@@ -440,3 +441,251 @@ theorem lag_sq_loop {c : ExternalCalls} {g : ExternalGas} (funs : FunEnv (Bridge
           exact hrgV
   intro V' st' o hrun
   exact hmain V' st' o hrun
+
+/-! ## 6. THE DENOMINATOR WINDOW (T3.9.b) -/
+
+/-- The word the denominator loop writes at step `i`: `addmod(x, sub(r, pow_i), r)`. -/
+def denomVal (rw x : U256) (pows : Nat → U256) (i : Nat) : U256 :=
+  wAddmodAt x (rw - pows i) rw
+
+/-- The memory a run of `j` stores leaves: `f 0` at `D`, `f 1` at `D + 32`, …, `f (j-1)` at
+`D + 32 (j-1)`. The denominator window is written LEFT TO RIGHT, so this is the shape the loop's
+invariant carries. -/
+def writeWords (mem : Nat → UInt8) (D : Nat) (f : Nat → U256) : Nat → (Nat → UInt8)
+  | 0 => mem
+  | j + 1 => storeWord (writeWords mem D f j) (D + 32 * j) (f j)
+
+/-- Reading back a word that was written: the `i`-th store is the value read at `D + 32 i`. -/
+theorem loadWord_writeWords_lt (mem : Nat → UInt8) (D : Nat) (f : Nat → U256) :
+    ∀ {j i : Nat}, i < j → loadWord (writeWords mem D f j) (D + 32 * i) = f i
+  | 0, i, h => absurd h (Nat.not_lt_zero i)
+  | j + 1, i, h => by
+      by_cases hij : i = j
+      · subst hij
+        rw [writeWords, Midfall.Yul.Word.loadWord_storeWord_same]
+      · have hi : i < j := Nat.lt_of_le_of_ne (Nat.le_of_lt_succ h) hij
+        have hne : D + 32 * i ≠ D + 32 * j := by omega
+        have hdisj : D + 32 * i + 32 ≤ D + 32 * j := by omega
+        rw [writeWords, show loadWord (storeWord (writeWords mem D f j) (D + 32 * j) (f j))
+              (D + 32 * i) = loadWord (writeWords mem D f j) (D + 32 * i) from
+            Midfall.Yul.Word.loadWord_storeWord_disjoint _ _ _ _ (Or.inl hdisj)]
+        exact loadWord_writeWords_lt mem D f hi
+
+/-- A store inside the window leaves every byte OUTSIDE the window where it was. This is the frame
+half of the denominator loop's post. -/
+theorem writeWords_outside (mem : Nat → UInt8) (D : Nat) (f : Nat → U256) :
+    ∀ {j a : Nat}, (a < D ∨ D + 32 * j ≤ a) → writeWords mem D f j a = mem a
+  | 0, a, _ => rfl
+  | j + 1, a, h => by
+      rw [writeWords]
+      have hnot : ¬ (D + 32 * j ≤ a ∧ a < D + 32 * j + 32) := by
+        rintro ⟨h1, h2⟩
+        omega
+      rw [storeWord, ite_eq_right hnot]
+      exact writeWords_outside mem D f (j := j) (a := a) (by omega)
+
+/-- Statement 7 of the inner scope, at every table and layout: the denominator walk. PROVED by
+kernel reduction. (T3.9.b's "statement form by kernel_rfl".) -/
+theorem lag_denoms_loop_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 7 1 =
+      [GenAst.yfor
+        [GenAst.ylet "pow_of_omega" (GenAst.yop EVM.Op.mload [Blocks.VkLoading.vkSite "OMEGA_INV_TO_L_MPTR" consts])]
+        (GenAst.yop EVM.Op.lt [GenAst.yvar "mptr", GenAst.yvar "mptr_end"])
+        [GenAst.yset "mptr" (GenAst.yop EVM.Op.add [GenAst.yvar "mptr", GenAst.ylit 32])]
+        [ GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.yvar "mptr",
+            GenAst.yop EVM.Op.addmod [GenAst.yvar "x",
+              GenAst.yop EVM.Op.sub [Blocks.VkLoading.vkSite "r" consts, GenAst.yvar "pow_of_omega"],
+              Blocks.VkLoading.vkSite "r" consts]])
+        , GenAst.yset "pow_of_omega" (GenAst.yop EVM.Op.mulmod
+            [GenAst.yvar "pow_of_omega", GenAst.yvar "omega", Blocks.VkLoading.vkSite "r" consts]) ]] := by
+  kernel_rfl
+
+/-- The 256-bit embedding of a Nat below `2^256` is exact: the `toNat` that `stepOp`'s
+`mstore`/`mload` compute. -/
+theorem ofNat_toNat {n : Nat} (h : n < 2 ^ 256) : (BitVec.ofNat 256 n).toNat = n := by
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt h]
+
+/-- **LOOP 2** (statement 7, GenAst.lean:880-887): the denominators `x - ω_i`. Bound = `n + m`.
+LEAF T3.9.b. VERBATIM from the evidence (:483-499), with the two renames of port change (a).
+The invariant is the SHARED-WINDOW template: `mptr = D + 32 j`, the running power is
+`omegaPows rw om w0 j`, memory is the first `j` stores (`writeWords`, read back by
+`loadWord_writeWords_lt`), and outside the window memory is untouched (`writeWords_outside`). -/
+theorem lag_denoms_loop {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (hr : consts.lookup "r" = none) (k n m aL : Nat)
+    (hL : consts.lookup "OMEGA_INV_TO_L_MPTR" = some aL) (hLb : aL < 2 ^ 256)
+    (D : Nat) (hD : D + 32 * (n + m) < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 7 1)
+      (fun V _ => VEnv.get V "mptr" = some (BitVec.ofNat 256 D) ∧
+        VEnv.get V "mptr_end" = some (BitVec.ofNat 256 (D + 32 * (n + m))) ∧
+        (VEnv.get V "x").isSome ∧ (VEnv.get V "omega").isSome ∧ (VEnv.get V "r").isSome)
+      (fun V st V' st' o => o = .normal ∧
+        ∃ x om rw, VEnv.get V "x" = some x ∧ VEnv.get V "omega" = some om ∧
+          VEnv.get V "r" = some rw ∧
+          V' = VEnv.set V "mptr" (BitVec.ofNat 256 (D + 32 * (n + m))) ∧
+          (∀ i, i < n + m → loadWord st'.memory (D + 32 * i) =
+            wAddmodAt x (rw - omegaPows rw om (loadWord st.memory aL) i) rw) ∧
+          MemSameOutside st st' D (32 * (n + m)) ∧ st'.env = st.env ∧
+          st'.halted = st.halted) := by
+  rw [lag_denoms_loop_form]
+  simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
+    GenAst.yexpr, Blocks.VkLoading.vkSite, hr, hL]
+  intro V st hpre
+  obtain ⟨hmp, hme, hxsome, homsome, hrsome⟩ := hpre
+  obtain ⟨x, hx⟩ := QuotientRows.isSome_elim hxsome
+  obtain ⟨om, hom⟩ := QuotientRows.isSome_elim homsome
+  obtain ⟨rw, hrw⟩ := QuotientRows.isSome_elim hrsome
+  let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
+    fun V' st' o => o = .normal ∧
+      ∃ x om rw, VEnv.get V "x" = some x ∧ VEnv.get V "omega" = some om ∧
+        VEnv.get V "r" = some rw ∧
+        V' = VEnv.set V "mptr" (BitVec.ofNat 256 (D + 32 * (n + m))) ∧
+        (∀ i, i < n + m → loadWord st'.memory (D + 32 * i) =
+          wAddmodAt x (rw - omegaPows rw om (loadWord st.memory aL) i) rw) ∧
+        MemSameOutside st st' D (32 * (n + m)) ∧ st'.env = st.env ∧
+        st'.halted = st.halted
+  let P : Nat → U256 := denomVal rw x (omegaPows rw om (loadWord st.memory aL))
+  change Midfall.Yul.WpTac.AllRuns funs V st
+    [Stmt.forLoop
+      [Stmt.letDecl ["pow_of_omega"] (some (Expr.builtin Op.mload
+        [Expr.lit (Literal.number aL)]))]
+      (Expr.builtin Op.lt [Expr.var "mptr", Expr.var "mptr_end"])
+      [Stmt.assign ["mptr"] (Expr.builtin Op.add [Expr.var "mptr", Expr.lit (Literal.number 32)])]
+      [ Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var "mptr",
+          Expr.builtin Op.addmod [Expr.var "x",
+            Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"], Expr.var "r"]])
+      , Stmt.assign ["pow_of_omega"] (Expr.builtin Op.mulmod
+          [Expr.var "pow_of_omega", Expr.var "omega", Expr.var "r"]) ]] Q
+  let Inv : VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+    fun V' st' => ∃ j, j ≤ n + m ∧
+      V' = ("pow_of_omega", omegaPows rw om (loadWord st.memory aL) j) ::
+        VEnv.set V "mptr" (BitVec.ofNat 256 (D + 32 * j)) ∧
+      VEnv.get V' "mptr" = some (BitVec.ofNat 256 (D + 32 * j)) ∧
+      VEnv.get V' "mptr_end" = some (BitVec.ofNat 256 (D + 32 * (n + m))) ∧
+      VEnv.get V' "pow_of_omega" = some (omegaPows rw om (loadWord st.memory aL) j) ∧
+      VEnv.get V' "x" = some x ∧ VEnv.get V' "omega" = some om ∧
+      VEnv.get V' "r" = some rw ∧
+      ∃ aw, st' = { st with activeWords := aw, memory := writeWords st.memory D P j }
+  have hmain : Midfall.Yul.WpTac.AllRuns funs V st
+      [Stmt.forLoop
+        [Stmt.letDecl ["pow_of_omega"] (some (Expr.builtin Op.mload
+          [Expr.lit (Literal.number aL)]))]
+        (Expr.builtin Op.lt [Expr.var "mptr", Expr.var "mptr_end"])
+        [Stmt.assign ["mptr"] (Expr.builtin Op.add [Expr.var "mptr", Expr.lit (Literal.number 32)])]
+        [ Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var "mptr",
+            Expr.builtin Op.addmod [Expr.var "x",
+              Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"], Expr.var "r"]])
+        , Stmt.assign ["pow_of_omega"] (Expr.builtin Op.mulmod
+            [Expr.var "pow_of_omega", Expr.var "omega", Expr.var "r"]) ]] Q := by
+    refine allRuns_for_cons_wp (Bridge.Dialect c g) (Bopen c g) (Cnone _)
+      (Bopen_sound c g) (Cnone_sound _) (n := 20) Inv ?hinit ?hstep
+    · -- init: 'pow_of_omega := mload(aL)' establishes the invariant at j = 0
+      refine ⟨rfl, ⟨?_⟩⟩
+      show Inv (["pow_of_omega"].zip
+          [loadWord st.memory (BitVec.ofNat 256 aL).toNat] ++ V)
+        (touchMemory st (BitVec.ofNat 256 aL).toNat 32)
+      rw [ofNat_toNat hLb]
+      have hzip : (["pow_of_omega"].zip [loadWord st.memory aL]) ++ V =
+          (("pow_of_omega", loadWord st.memory aL) :: V) := rfl
+      rw [hzip]
+      refine ⟨0, Nat.zero_le _, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · -- the environment: the initial mptr binding is already D
+        change ("pow_of_omega", loadWord st.memory aL) :: V =
+          ("pow_of_omega", omegaPows rw om (loadWord st.memory aL) 0) ::
+            VEnv.set V "mptr" (BitVec.ofNat 256 D)
+        rw [venv_set_eq_self hmp]
+        rfl
+      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
+          (y := "mptr") (v := loadWord st.memory aL) (by decide)]
+        exact hmp
+      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
+          (y := "mptr_end") (v := loadWord st.memory aL) (by decide)]
+        exact hme
+      · rfl
+      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
+          (y := "x") (v := loadWord st.memory aL) (by decide)]
+        exact hx
+      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
+          (y := "omega") (v := loadWord st.memory aL) (by decide)]
+        exact hom
+      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
+          (y := "r") (v := loadWord st.memory aL) (by decide)]
+        exact hrw
+      · exact ⟨_, rfl⟩
+    · -- one iteration
+      intro Vi sti hInv
+      simp only [Inv] at hInv
+      obtain ⟨j, hj, hV, hmpj, hmej, hpowj, hxj, homj, hrj, aw, hst⟩ := hInv
+      subst hV
+      subst hst
+      unfold wpIter
+      simp only [wpE, wpA, hmpj, hmej]
+      refine ⟨?_, ?_⟩
+      · -- guard false: j = n + m, the window is complete
+        intro hguard
+        have h0 : b2w ((BitVec.ofNat 256 (D + 32 * j)).ult
+            (BitVec.ofNat 256 (D + 32 * (n + m)))) = (0 : U256) := hguard
+        have hjk : j = n + m := by
+          have hle : D + 32 * (n + m) ≤ D + 32 * j :=
+            LoopRule.lt_guard_false (by omega) hD h0
+          omega
+        refine ⟨?allRuns⟩
+        intro V' st' o hrun
+        cases hrun with
+        | seqNil =>
+            subst hjk
+            refine ⟨rfl, x, om, rw, hx, hom, hrw, ?_, ?_, ?_, rfl, rfl⟩
+            · rw [restore_cons_set (D := Bridge.Dialect c g) (V := V) (y := "pow_of_omega")
+                (x := "mptr")]
+            · intro i hi
+              exact loadWord_writeWords_lt st.memory D P hi
+            · intro a ha
+              exact writeWords_outside st.memory D P (j := n + m) (a := a) ha
+      · -- guard true: j < n + m, one store
+        sorry
+  intro V' st' o hrun
+  exact hmain V' st' o hrun
+/-! ## 7. INVERSION HELPERS FOR THE SEMANTIC LOOP PROOFS (T3.9.b/d) -/
+
+theorem eval_var_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : Ident} {av : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.var x) (.vals [av] st')) :
+    VEnv.get V x = some av ∧ st' = st := by
+  cases h with
+  | var hget => exact ⟨hget, rfl⟩
+
+theorem eval_lit_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {n : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (.number n)) (.vals [cv] st')) :
+    cv = BitVec.ofNat 256 n ∧ st' = st := by
+  cases h
+  exact ⟨rfl, rfl⟩
+
+theorem eval_builtin_vals_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {op : EVM.Op} {args : List (Expr EVM.Op)}
+    {vals : List U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.builtin op args) (.vals vals st')) :
+    ∃ argvals st1, EvalArgs (Bridge.Dialect c g) funs V st args (.vals argvals st1) ∧
+      (Bridge.Dialect c g).Builtin op argvals st1 (.ok vals st') := by
+  cases h with
+  | builtinOk hargs hbi => exact ⟨_, _, hargs, hbi⟩
+
+theorem eval_lt_mptr_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.lt [Expr.var "mptr", Expr.var "mptr_end"]) (.vals [cv] st')) :
+    ∃ mp me, VEnv.get V "mptr" = some mp ∧ VEnv.get V "mptr_end" = some me ∧
+      cv = b2w (mp.ult me) ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil htail =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hme, rfl⟩ := eval_var_inv htail
+              obtain ⟨hmp, rfl⟩ := eval_var_inv hhead
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨_, _, hmp, hme, rfl, rfl⟩
+
