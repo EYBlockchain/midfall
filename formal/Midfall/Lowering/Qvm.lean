@@ -5227,4 +5227,98 @@ theorem seg_stride_transfer_of_extend (hext : PG_segleg_opLenExtend)
 #print axioms Midfall.Lowering.gap_take_vs_drop
 #print axioms Midfall.Lowering.seg_stride_transfer_of_extend
 
+/-! ### IDVALUE: the identity row's exact decomposition: what a proof of `qvm_compile_correct_identity` needs
+
+    P-QVMARMS diagnosed the six Qvm holes as one shared gap - the per-opcode agreement between
+    `evalQuotientIdentityStep.consumed` and the validator's `quotientOpLen`. That table is now
+    complete (QvmShift section 11 and `evalQuotientIdentityStep_consumed_agrees_26`), but it is
+    NOT what `qvm_compile_correct_identity` is missing: that row's statement never mentions the
+    validator or `quotientOpLen`. Its hypotheses are `identityExpr`, `compactQuotientRuns` and
+    `finalizedIdentitySegment`, and its conclusion is a VALUE equation. The width table is the
+    missing piece for `builder_segments_total`/`qvm_validated_noBoundsFault` (segment boundaries
+    and fault classes), not for this value equation.
+
+    The value equation decomposes into THREE named facts, and the reduction below is PROVED:
+    the emitter's body evaluates to the expression (before compaction), compaction preserves the
+    value of a finalized segment, and the emitted body's fold is where
+    `finalizedIdentitySegment` expects it. Each is recorded as a `def : Prop` (the
+    `PG_qvmNoBounds_stepErrorIsReachable` precedent), not as a hypothesis on the row, a bundle
+    or `ValidV3`. -/
+
+/-- The emitter-value fact, BEFORE compaction: the body `identityExpr` writes (its final fold
+    stripped by `finalizedIdentitySegment`) evaluates, under every valuation, to the
+    expression's denotation. This is the semantic induction over `emitExpr`'s peepholes
+    (pow5, MODARITH7, the limb family, the limb-decomposition residue split, the fused
+    product/add peepholes, the accumulator-leaf cases and the generic stack path) together
+    with the shape decoders' denotation tie. The interpreter-side LIN7 half is PROVED in
+    `QvmEmit.limbLinearForm_eq_denoteLin`; the builder half is `QvmEmit.PG_termFold_structure`,
+    and the other three shape decoders have no tie at all yet. -/
+def PG_identity_emitterValue : Prop :=
+  ∀ (r : QuotientShapeRecognizers) (_hr : RecognizersSound r)
+    (s₀ s₁ : QuotientProgramBuilder) (e : QuotientExpr) (t : QuotientTarget) (gap : Option Nat)
+    (body : List Nat),
+    identityExpr r s₀ e t gap = .ok s₁ →
+    exprBounded e →
+    (∀ c ∈ s₁.consts, c.toNat < qvmFrModulus) →
+    finalizedIdentitySegment (s₁.bytes.drop s₀.bytes.length) = some body →
+    ∀ ρ, ∃ v mem',
+      Midfall.Generator.evalQuotientIdentity body s₁.consts (memOfρ ρ (leafKeys e))
+        = .ok (v, mem') ∧ evalExprρ ρ e = .ok v
+
+/-- Compaction preserves a finalized identity segment's VALUE: `compactQuotientRuns` may
+    rewrite adjacent fused ops into RUN/AFFINE_SUM (or reorder a mixed run's linear block
+    before its product block), but the interpreter reads the same terms and the same
+    accumulator order, so the value is unchanged. The memory is deliberately existential -
+    the same reason the row's memory is existential. -/
+def PG_identity_compactionValue : Prop :=
+  ∀ (bytes cseg pre seg : List Nat),
+    compactQuotientRuns bytes = .ok cseg →
+    finalizedIdentitySegment bytes = some pre →
+    finalizedIdentitySegment cseg = some seg →
+    ∀ (consts : List Word256) (mem : QuotientRefMemory) (v : QVMFr) (mem' : QuotientRefMemory),
+      Midfall.Generator.evalQuotientIdentity pre consts mem = .ok (v, mem') →
+      ∃ mem'', Midfall.Generator.evalQuotientIdentity seg consts mem = .ok (v, mem'')
+
+/-- `identityExpr` always ends with its fold instruction, so the emitted body has a
+    `finalizedIdentitySegment`. This is an APPEND-ONLY fact about the emitter: `emitExpr`
+    and the peepholes only append to `s.bytes`, and `foldIdentity` appends FOLD_MAIN or
+    FOLD_SELECTOR+u24 last. Nothing in the tree states that the emitter appends, which is
+    the only reason this is not proved here. -/
+def PG_identity_preFold : Prop :=
+  ∀ (r : QuotientShapeRecognizers) (s₀ s₁ : QuotientProgramBuilder) (e : QuotientExpr)
+    (t : QuotientTarget) (gap : Option Nat),
+    identityExpr r s₀ e t gap = .ok s₁ →
+    ∃ body, finalizedIdentitySegment (s₁.bytes.drop s₀.bytes.length) = some body
+
+/-- **THE IDENTITY ROW'S PROVED DECOMPOSITION.** `qvm_compile_correct_identity` follows from
+    the three facts above - and from nothing else. The proof is the whole reduction: unfold
+    nothing, apply the emitter fact to the pre-compaction body, then transport its value
+    across compaction. The row itself is unchanged; this theorem carries the three facts as
+    hypotheses of ITS OWN (WORKER-RULES: never add a hypothesis to a row), so it can be cited
+    by the next card without touching the statement. -/
+theorem qvm_compile_correct_identity_of_parts
+    (hemit : PG_identity_emitterValue) (hcomp : PG_identity_compactionValue)
+    (hpre : PG_identity_preFold)
+    (r : QuotientShapeRecognizers) (hr : RecognizersSound r)
+    (s₀ s₁ : QuotientProgramBuilder) (e : QuotientExpr) (t : QuotientTarget) (gap : Option Nat)
+    (hb : exprBounded e)
+    (hidentity : identityExpr r s₀ e t gap = .ok s₁)
+    (hconsts : ∀ c ∈ s₁.consts, c.toNat < qvmFrModulus)
+    (cseg seg : List Nat)
+    (hcompact : compactQuotientRuns (s₁.bytes.drop s₀.bytes.length) = .ok cseg)
+    (hseg : finalizedIdentitySegment cseg = some seg)
+    (ρ : Valuation) :
+    ∃ v mem', Midfall.Generator.evalQuotientIdentity seg s₁.consts (memOfρ ρ (leafKeys e)) =
+      .ok (v, mem') ∧ evalExprρ ρ e = .ok v := by
+  obtain ⟨body, hbody⟩ := hpre r s₀ s₁ e t gap hidentity
+  obtain ⟨v, mem', hv, hval⟩ :=
+    hemit r hr s₀ s₁ e t gap body hidentity hb hconsts hbody ρ
+  obtain ⟨mem'', hseg'⟩ :=
+    hcomp (s₁.bytes.drop s₀.bytes.length) cseg body seg hcompact hbody hseg
+      s₁.consts (memOfρ ρ (leafKeys e)) v mem' hv
+  exact ⟨v, mem'', hseg', hval⟩
+
+#print axioms Midfall.Lowering.qvm_compile_correct_identity_of_parts
+
+
 end Midfall.Lowering
