@@ -77,15 +77,20 @@ theorem vk_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
     words S3-S8 read as the literals `vk_sliceV3` compares them to. The two progress pins at
     `ValidV3` are `VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3` / `_CODEHASH_WORD_V3`.
 
-    WHAT REMAINS (mechanical, not a premise gap): `StmtsTotal = StmtsContract ∧ StmtsContractAll`.
-    (a) Exhibit one run of the 13-statement slice from `StageInv .start`: S1 passes from
-    `Frame.vkCode`/`vkHash`/`vkNonEmpty` plus the two pins and `projectedCodeHash`; the six header
-    checks from `vk_hdr_word_read_of_valid` plus `PayloadAgrees`; the three calldata checks from
-    `envelopeOk` (forced by `LeanAccepts`'s `Decoded`) and `Frame.calldata`; every `iszero(success)`
-    guard skips because the chain stays 1. (b) Transfer every run: the same guard facts rule out the
-    revert arm of `VkClean.vk_clean_walkV3`, and `stageInv_vk_of_clean` gives `StageInv .vk`. No
-    hypothesis is added to the row; `hacc`/`hcomp` are not consumed by the guards (every obligation
-    is a fact of `StageInv .start`, `Frame` and `ValidV3`). -/
+    **THE UNIVERSAL HALF IS PROVED** (`VkClean.vk_all_normal`, cone 0, standard three): every run
+    of the slice from `StageInv .start`, under `LeanAccepts`, exits `.normal` at `StageInv .vk`.
+    `vkBody_normal` carries the 13 statements with `vkS1_skipT` (`vkGuard_zero` from
+    `Frame.vkCode`/`vkHash`/`vkNonEmpty`, `consts_lookup_EXPECTED_VK_LENGTH_V3`/`_CODEHASH_WORD_V3`
+    and `projectedCodeHash`), the six headers with `vk_hdr_succ_one`/`vk_hdr_read_values`, the three
+    calldata checks with `vk_cdl_succ_one`/`vk_cdsz_succ_one` (`envelope_calldata_facts` from
+    `LeanAccepts`'s `Decoded`), and `vkS9_skipT` for S9/S13; `vk_clean_walkV3` supplies the
+    `StageInv .vk` transfer.
+
+    WHAT REMAINS: the EXISTENCE half `StmtsContract` - exhibit one run of the 13-statement slice
+    from `StageInv .start`. It is not a premise gap: every guard and every value is already proved,
+    so the run is a forward `Step` construction (or `wpSS_exists_C` with a live existential
+    transformer; `wp_run` cannot start from the symbolic `V` because `VEnv.get` is stuck, so the
+    manual construction is the direct route). Once exhibited, `vk_all_normal` gives its post. -/
 theorem vk_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash) (vkAddr : U256) (cd : Bytes)
