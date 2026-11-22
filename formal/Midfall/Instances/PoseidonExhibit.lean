@@ -436,45 +436,60 @@ def mutationVerdictOk (vk : VerifyingKey (Fr blsR) G₁z) (π : Bytes) (m : Muta
     leanVerdictClass (verifyNative (Gₜ := G₁z) NativeReplay.envReal Features.solidity
       paramsAtTrapdoor vk fixturePublicInstance cand) == expectedVerdictClass m
 
-/-- A chunk of the corpus, eight mutants at a time. The chunking is a proof-engineering device only:
-    `native_decide` per chunk keeps each tactic call well under the 60 s bound, and the exhibition
-    theorem below assembles the chunks. The chunk predicates are the SAME computation. -/
+/-- A chunk of the corpus, four mutants at a time. The chunking is a proof-engineering device only:
+    `native_decide` per chunk keeps each tactic call well under the 60 s bound (the measured scalar
+    run is ~10 s per mutant), and the exhibition theorem below assembles the chunks. The chunk
+    predicates are the SAME computation. -/
 def mutationChunkOk (k : Nat) : Bool :=
   match NativeReplay.vkF1 with
   | none => false
-  | some vk => (mutationRecords.drop k |>.take 8).all (mutationVerdictOk vk NativeReplay.proofBytes)
+  | some vk => (mutationRecords.drop k |>.take 4).all (mutationVerdictOk vk NativeReplay.proofBytes)
 
 theorem mutationRecords_length : mutationRecords.length = 77 := by native_decide
 
 theorem mutationChunk_0 : mutationChunkOk 0 = true := by native_decide
+theorem mutationChunk_4 : mutationChunkOk 4 = true := by native_decide
 theorem mutationChunk_8 : mutationChunkOk 8 = true := by native_decide
+theorem mutationChunk_12 : mutationChunkOk 12 = true := by native_decide
 theorem mutationChunk_16 : mutationChunkOk 16 = true := by native_decide
+theorem mutationChunk_20 : mutationChunkOk 20 = true := by native_decide
 theorem mutationChunk_24 : mutationChunkOk 24 = true := by native_decide
+theorem mutationChunk_28 : mutationChunkOk 28 = true := by native_decide
 theorem mutationChunk_32 : mutationChunkOk 32 = true := by native_decide
+theorem mutationChunk_36 : mutationChunkOk 36 = true := by native_decide
 theorem mutationChunk_40 : mutationChunkOk 40 = true := by native_decide
+theorem mutationChunk_44 : mutationChunkOk 44 = true := by native_decide
 theorem mutationChunk_48 : mutationChunkOk 48 = true := by native_decide
+theorem mutationChunk_52 : mutationChunkOk 52 = true := by native_decide
 theorem mutationChunk_56 : mutationChunkOk 56 = true := by native_decide
+theorem mutationChunk_60 : mutationChunkOk 60 = true := by native_decide
 theorem mutationChunk_64 : mutationChunkOk 64 = true := by native_decide
+theorem mutationChunk_68 : mutationChunkOk 68 = true := by native_decide
 theorem mutationChunk_72 : mutationChunkOk 72 = true := by native_decide
+theorem mutationChunk_76 : mutationChunkOk 76 = true := by native_decide
 
 /-- The whole corpus check, as one Bool: 77 records, and every chunk green. -/
 def mutantsLeanRejects : Bool :=
   mutationRecords.length == 77 &&
-    mutationChunkOk 0 && mutationChunkOk 8 && mutationChunkOk 16 && mutationChunkOk 24 &&
-    mutationChunkOk 32 && mutationChunkOk 40 && mutationChunkOk 48 && mutationChunkOk 56 &&
-    mutationChunkOk 64 && mutationChunkOk 72
+    mutationChunkOk 0 && mutationChunkOk 4 && mutationChunkOk 8 && mutationChunkOk 12 &&
+    mutationChunkOk 16 && mutationChunkOk 20 && mutationChunkOk 24 && mutationChunkOk 28 &&
+    mutationChunkOk 32 && mutationChunkOk 36 && mutationChunkOk 40 && mutationChunkOk 44 &&
+    mutationChunkOk 48 && mutationChunkOk 52 && mutationChunkOk 56 && mutationChunkOk 60 &&
+    mutationChunkOk 64 && mutationChunkOk 68 && mutationChunkOk 72 && mutationChunkOk 76
 
 /-- **EXHIBIT 4 OF 4 (REF.12): EVERY MUTANT OF THE F1 PROOF IS REJECTED WITH THE RUST CLASS.** The
     corpus is `mutations.json`'s own 77 entries - one single-bit flip per transcript read plus the
     truncation, trailing-byte, empty and unmutated control - and Lean's `verifyNative` class is
     compared with the class the Rust verifier recorded for that same byte string. Proved by
-    `native_decide` in ten chunks, each under the 60 s tactic bound; the assembly is by rewriting the
-    ten proved chunk facts, so nothing is assumed. -/
+    `native_decide` in twenty chunks, each under the 60 s tactic bound; the assembly is by rewriting the
+    twenty proved chunk facts, so nothing is assumed. -/
 theorem mutants_leanRejects_ok : mutantsLeanRejects = true := by
   rw [mutantsLeanRejects]
-  simp only [mutationRecords_length, mutationChunk_0, mutationChunk_8, mutationChunk_16,
-    mutationChunk_24, mutationChunk_32, mutationChunk_40, mutationChunk_48, mutationChunk_56,
-    mutationChunk_64, mutationChunk_72]
+  simp only [mutationRecords_length,
+    mutationChunk_0, mutationChunk_4, mutationChunk_8, mutationChunk_12, mutationChunk_16, mutationChunk_20,
+    mutationChunk_24, mutationChunk_28, mutationChunk_32, mutationChunk_36, mutationChunk_40, mutationChunk_44,
+    mutationChunk_48, mutationChunk_52, mutationChunk_56, mutationChunk_60, mutationChunk_64, mutationChunk_68,
+    mutationChunk_72, mutationChunk_76]
   decide
 
 #print axioms fixture_leanAccepts_ok
