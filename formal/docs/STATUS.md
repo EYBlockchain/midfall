@@ -234,3 +234,23 @@ The calldata codec component (`calldata_roundtrip`, `calldata_canonical`,
 `repack_spec_of_decodeRust`) remains with the port-audit lane, after its D-GATE6/7/F4–F7 fixes.
 `calldata_roundtrip`/`calldata_canonical` are independent encode/decode proofs; `repack_spec_of_decodeRust`
 depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be claimed as a shortcut.
+
+## 11. Current integration
+
+At `79c116b`: A5's generalized staticcall tail lets and D1's `PresWidthSeq` closure framework are merged.
+The affected proof modules and `Midfall.LoweringV3.GeneratorTheorem` were rebuilt directly
+(`3304 jobs`), `check_orphans` is `231`, and the root's `assert_axioms` are the standard four
+(native `[]`). The full quick gate's `PoseidonExhibit` replay was deferred to free the machine for
+the D2 KAT and the row lanes; the full gate still needs a final run.
+
+Active lanes:
+- **D2/CERT.0** at `3253c5c`, register `115/11`, KAT gate in flight.
+- **Port audit** F4–F7 pushed; D-GATE6/7 (`SupportedV2.rotationDistinct`, `WellFormed` phase
+  totals, `PortAuditKzg`) staged; frozen hashes/closure pending.
+- **Vacuity audit** (`t/VACUITY`) reviewing the root/`ValidV3`/`EndToEndV3`/`Done`/QVM/CERT
+  hypotheses; the single `SORRY.md` VACUOUS row is the legacy `end_to_end_acc_complete`.
+- **Calldata** (`t/CALLDATA`) proving `calldata_roundtrip`/`calldata_canonical`/`repack`.
+- **A4** `runBody_mono` (ST.13), **A5/A6/A9/A11/D1** row residuals.
+
+The root remains **11 / 5**, register `73/11` on main (`115/11` on D2). No row, bundle,
+`ValidV3`, `ValidW`, or root hypothesis was added.
