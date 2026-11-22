@@ -1344,6 +1344,33 @@ theorem bytesToNatBE_readBytes_32 (mem : Nat → UInt8) (p : Nat) :
   rw [hmap] at hlt
   exact hlt
 
+/-- Splitting a 32-byte read into two adjacent reads. -/
+theorem readBytes_append (mem : Nat → UInt8) (p m n : Nat) :
+    readBytes mem p (m + n) = readBytes mem p m ++ readBytes mem (p + m) n := by
+  unfold readBytes
+  rw [List.range_add, List.map_append]
+  congr 1
+  rw [List.map_map]
+  show List.map (fun i => mem (p + (m + i))) (List.range n) =
+    List.map (fun i => mem (p + m + i)) (List.range n)
+  apply List.map_eq_map_iff.mpr
+  intro i hi
+  congr 1
+  omega
+
+/-- A store outside a read window is invisible to that read. -/
+theorem readBytes_storeWord_outside (mem : Nat → UInt8) (q : Nat) (v : U256) (p n : Nat)
+    (h : q + 32 ≤ p ∨ p + n ≤ q) :
+    readBytes (storeWord mem q v) p n = readBytes mem p n := by
+  unfold readBytes
+  apply List.map_eq_map_iff.mpr
+  intro i hi
+  have hi' : i < n := List.mem_range.mp hi
+  unfold storeWord
+  rw [if_neg]
+  rintro ⟨h1, h2⟩
+  omega
+
 #assert_axioms Midfall.LoweringV3.PcsRows.decode_exists [propext, Classical.choice, Quot.sound]
   native []
 #assert_axioms Midfall.LoweringV3.PcsRows.inline_loopBody_false
@@ -1361,6 +1388,10 @@ theorem bytesToNatBE_readBytes_32 (mem : Nat → UInt8) (p : Nat) :
 #assert_axioms Midfall.LoweringV3.PcsRows.readBytes_storeWord_32
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.bytesToNatBE_readBytes_32
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.readBytes_append
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.readBytes_storeWord_outside
   [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.PcsRows
