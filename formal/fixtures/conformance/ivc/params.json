@@ -1,0 +1,36 @@
+{
+  "accumulator": {
+    "fixed_scalar_tail": [],
+    "kind": "pointAndScalar",
+    "limb_bits": 56,
+    "num_limbs": 7,
+    "offset": 4,
+    "payload_words": 12
+  },
+  "curve": "BLS12-381",
+  "external_quotient": {
+    "authorized": true,
+    "codehash_word": "0x4a179319f2a68f9ed2082c60ac77bdb5adcfda918a7c3917f4ecb23264cee575",
+    "runtime_len": 9656
+  },
+  "final_acc_offset": 4,
+  "format": "compressed",
+  "g1_compressed_hex": "97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb",
+  "g2_compressed_hex": "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8",
+  "ivc_g2_compressed_hex": "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8",
+  "ivc_k": 19,
+  "ivc_max_k": 19,
+  "ivc_s_g2_compressed_hex": "a4bbe1a24fcc4f988c6ef268d0c1160eac0a0c4f53d80bd74f3d2e4667be27408625a83825354e27c70859883102eb4307acb569b3187c0fd1993980aa52a6e9e2080b9697fab96abd5c5f1c3b988256f2d99366f1bbccf13cf0e20702fee18c",
+  "ivc_srs_sha256": "42caf1bdd81b6774082c5ce4870feadcfcaf54782c774a8f1a587285c373ccb0",
+  "k": 20,
+  "max_k": 20,
+  "n_g2_compressed_hex": "b3e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8",
+  "num_instances": 16,
+  "s_g2_compressed_hex": "a4bbe1a24fcc4f988c6ef268d0c1160eac0a0c4f53d80bd74f3d2e4667be27408625a83825354e27c70859883102eb4307acb569b3187c0fd1993980aa52a6e9e2080b9697fab96abd5c5f1c3b988256f2d99366f1bbccf13cf0e20702fee18c",
+  "schema": 1,
+  "schema_extension": 2,
+  "srs_kind": "midnight-production",
+  "srs_sha256": "f154f09899abd588daee161eacc4bc9aaab936f7afb4beeab9d2ebc99cea89b6",
+  "trapdoor_note": "unknown: the Midnight ceremony SRS has no exported trapdoor; WID.4 owns the seeded test-SRS bundle",
+  "trapdoor_s_be_hex": null
+}

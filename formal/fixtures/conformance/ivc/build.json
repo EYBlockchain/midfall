@@ -1,0 +1,54 @@
+{
+  "command": "HALO2_SOLIDITY_RUN_IVC_BENCH=1 SRS_DIR=<srs> SOLC=<solc-0.8.30> cargo test --release -p halo2_solidity_verifier --features evm,truncated-challenges,in-circuit-fewer-point-sets --test ivc_keccak_solidity export_ivc_decider_conformance_bundle -- --nocapture",
+  "cs_degree": 5,
+  "decider_k": 20,
+  "exporter": "proofs/solidity-verifier/tests/ivc_keccak_solidity.rs::export_ivc_decider_conformance_bundle",
+  "features": [
+    "evm",
+    "truncated-challenges",
+    "in-circuit-fewer-point-sets"
+  ],
+  "files": [
+    {
+      "bytes": 9372,
+      "name": "vk.json",
+      "sha256": "121a3c48525cc7cc73c930e6e3efe1edeb914b69ff8df71e28b7779d4b72a064"
+    },
+    {
+      "bytes": 3176480,
+      "name": "cs.json",
+      "sha256": "8345a896b5716bdf8cf2e2b4c22932e8f435bd6703baee8fe7beab0891bd0fb0"
+    },
+    {
+      "bytes": 2125,
+      "name": "params.json",
+      "sha256": "0ceed773db1be4f88154c8bcfd1f444dd6fd31a53fe083d06729b9a3bae50b10"
+    },
+    {
+      "bytes": 150888,
+      "name": "Halo2Verifier.sol",
+      "sha256": "c9347fde1dfeed43fd1dcc53cf9b6d165b02123e25497cf47001c7b3a6bd93b9"
+    },
+    {
+      "bytes": 78333,
+      "name": "Halo2VerifyingKey.sol",
+      "sha256": "f758587480759d1fc694da6e4d1d6d52352a8d3e530e053feed73c078e2934a2"
+    },
+    {
+      "bytes": 97477,
+      "name": "Halo2QuotientEvaluator.sol",
+      "sha256": "4086ef353eb00d62c9b803ff494d6f272ef32e2d1244fe4eed042b924b83d52e"
+    }
+  ],
+  "final_acc_offset": 4,
+  "fixture": "ivc-decider",
+  "ivc_k": 19,
+  "num_instances": 16,
+  "quotient_codehash": "0x4a179319f2a68f9ed2082c60ac77bdb5adcfda918a7c3917f4ecb23264cee575",
+  "quotient_runtime_len": 9656,
+  "schema": 1,
+  "solc": "0.8.30+commit.73712a01.Darwin.appleclang",
+  "srs_dir": "/Users/julian/midfall/zk_stdlib/examples/assets",
+  "srs_kind": "midnight-production",
+  "wall_clock_seconds": 279.076897584
+}

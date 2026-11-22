@@ -1,0 +1,480 @@
+{
+  "advice_column_phase": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "advice_queries": [
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      0
+    ],
+    [
+      3,
+      0
+    ],
+    [
+      4,
+      0
+    ],
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      1
+    ],
+    [
+      2,
+      1
+    ],
+    [
+      5,
+      0
+    ],
+    [
+      6,
+      0
+    ],
+    [
+      7,
+      0
+    ],
+    [
+      8,
+      0
+    ],
+    [
+      9,
+      0
+    ],
+    [
+      10,
+      0
+    ],
+    [
+      11,
+      0
+    ],
+    [
+      12,
+      0
+    ],
+    [
+      13,
+      0
+    ],
+    [
+      3,
+      1
+    ],
+    [
+      4,
+      1
+    ],
+    [
+      5,
+      1
+    ],
+    [
+      6,
+      1
+    ],
+    [
+      7,
+      1
+    ],
+    [
+      8,
+      1
+    ],
+    [
+      9,
+      1
+    ],
+    [
+      10,
+      1
+    ],
+    [
+      0,
+      -1
+    ],
+    [
+      1,
+      -1
+    ],
+    [
+      2,
+      -1
+    ],
+    [
+      3,
+      -1
+    ],
+    [
+      4,
+      -1
+    ],
+    [
+      5,
+      -1
+    ],
+    [
+      6,
+      -1
+    ],
+    [
+      7,
+      -1
+    ],
+    [
+      8,
+      -1
+    ],
+    [
+      9,
+      -1
+    ],
+    [
+      10,
+      -1
+    ],
+    [
+      11,
+      -1
+    ],
+    [
+      12,
+      -1
+    ],
+    [
+      13,
+      -1
+    ],
+    [
+      14,
+      0
+    ]
+  ],
+  "blinding_factors": 9,
+  "cs_degree": 5,
+  "extended_k": 22,
+  "fixed_commitments_compressed_hex": [
+    "a27edeb6cb53bebf636d32f580c64522890ddce64ce75094b02fc29b587b0808b6af78e3f11ea3c1c125f0985291e854",
+    "8815390329a004b20aa17178b73fbc5bc75cf38543e2dba99f423624135187f4f7515a3b8efc9b37a5b4d54e62529d25",
+    "965292276c3511d63dbf61179246c633ec1cbf9b8382eba32e35f8907edc09259a2d308c8604c210c63d59923327ad83",
+    "82a23b4f1ebe7f57e7492b90cb4e9e4e497de52bce2458ac72f14feb8152d93837fc00b69d0a92d5d89c12e742116cb8",
+    "8f1cb5eb5320547862bf553c3822fc78764bad62d640aebca2154c0c9c02bc4db2cd5113d78f1ad8f366446df2017658",
+    "aacfc1d2842e61b5e7c02808b26aa75ecf8b7c5f18f8c487754dee3335c4a0af0a5ebd6ec1633366e4e6a3fb29d88f05",
+    "86b4d595e229a98c69e491eca33a7581d62662a3bad01216ff4f8615833ed398e46925a9bd9ae6dc6d834465093986d8",
+    "a19164d42b9c987f9ba16af31327d95fff0da911b853294b0845afe85bd6bb2f11ce89373172ec378b567b067b65062c",
+    "a2a95feec8a51dae29ec960db7a65f92c31852271694b5a5725d9c20777f4a44f566e0a41633e6579003e3ba2e940677",
+    "98d8949fa81872c49008a22f299092cc2c732bf017af44e582c0bf748d841352ad86cef5060d659ae4772ce144f05254",
+    "a0b05f07364fa6e34d1531c1210f25ee2161123a8df7c9b1ef096ae841df15ddbf72051278f772762561f6588bada9e5",
+    "885b6410030ecdc020942851047cf2379c9c9bb218540241434381109f505f21842aadb79e1290bf15d09779052c830e",
+    "9842a8cec63398e3cd72495091717037ed2687fe07e288a66dbddadb866eab042e668795097a24350329af3a2faa15e8",
+    "abc13cf9c2ca9c1f9580396ab49accc9a59f313f4b8fb07f49e94a94d92b3e43a072f1699b28c1d2a20821ce6fb0f9b7",
+    "b7cf809a3994c83dd1b6936c60abe4857c95db3e37d4afe261e970ce15c6e534ef5ffc4d669585c7611c98887002aeb7",
+    "c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "9177fcb80f59ee7879011aaa431d79de98dff9ee46b668f3f29bc4d4892ec8510d355a08ba4f9a1d4e700153b223d458",
+    "b1acfea52284cb289f07c847aa50aa05845813693a743e808d48c8b6490ebd104db1845347b8f83120da6b7a36081585",
+    "a2fad9181895f66bbb41c04bd127b86c89a1b5709ec24df2d56036902f3196d418b5a3277cc908cede5bdabb00f6daa4",
+    "84cdedcde78f20dc3ceb28113122a98cf7b8a957113b4de93050cb8c6923a676a65a5c275483fa130368c6e0ecec04d8",
+    "a40a34d0f0a20de35a43c3c430ceeed69e926c496160c3ca0fd8a8da907fcbe46c658fb8d889490aaec58c181d31dfca",
+    "9881c6bd8858bd8b97665133b6973c198ee2888dd97caf3dd6887c6ae8f8f54c5a2b8aa20faa23a2faf9cb87f090680b",
+    "8af966e41ea9239d086facb6231e36c6375c693ef10fd08f679ef6192a4b6436e4d514ad88fa3b245e97016e24004f09",
+    "94fe3fd785df4b2960c8913451e0863365a6ccad0237b71908d5cfd1a6cb7156f5b6975c455ee63a28a5b4f6eaa36243",
+    "87f469889f896d47a2bc3b4bdee08c95cc7e3a9515557945499f91a2c7d8d66d037762c43ccc712fbc481730307eccac",
+    "8feeaf3400fdce99f07322763518f5b1b872256290dd7f9a5f249ad8175d9f83f26e29ae0d8cea1c551d24473d17db3c",
+    "b59078118c901ed72545178529af5fe037c7b2b6b22b29ca3c8dfb13f404b21b566aedffc8aca0f0e8371b022ba01495"
+  ],
+  "fixed_queries": [
+    [
+      9,
+      0
+    ],
+    [
+      4,
+      0
+    ],
+    [
+      5,
+      0
+    ],
+    [
+      6,
+      0
+    ],
+    [
+      7,
+      0
+    ],
+    [
+      8,
+      0
+    ],
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      0
+    ],
+    [
+      3,
+      0
+    ],
+    [
+      10,
+      0
+    ],
+    [
+      11,
+      0
+    ],
+    [
+      12,
+      0
+    ],
+    [
+      13,
+      0
+    ],
+    [
+      14,
+      0
+    ],
+    [
+      15,
+      0
+    ],
+    [
+      16,
+      0
+    ],
+    [
+      17,
+      0
+    ],
+    [
+      18,
+      0
+    ],
+    [
+      19,
+      0
+    ],
+    [
+      20,
+      0
+    ],
+    [
+      21,
+      0
+    ],
+    [
+      22,
+      0
+    ],
+    [
+      23,
+      0
+    ],
+    [
+      24,
+      0
+    ],
+    [
+      25,
+      0
+    ],
+    [
+      26,
+      0
+    ]
+  ],
+  "instance_queries": [
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      0
+    ]
+  ],
+  "k": 20,
+  "n": 1048576,
+  "nb_public_inputs": 16,
+  "num_advice_columns": 15,
+  "num_challenges": 0,
+  "num_committed_instances": 1,
+  "num_fixed_columns": 27,
+  "num_instance_columns": 2,
+  "num_lookups": 2,
+  "num_trashcans": 1,
+  "omega_be_hex": "03e1c54bcb947035a57a6e07cb98de4a2f69e02d265e09d9fece7e0e39898d4b",
+  "omega_inv_be_hex": "6c39442eade0092768ac033fa6f608750624a1bb17dbc026ef97c3573a28fc8c",
+  "permutation_commitments_compressed_hex": [
+    "92ac3f3991c25df7626c1348ca20bdbced766899c1cf3ff3506010165b5f8fab54fb3fe1beb56f9166f66c180b1a9ca7",
+    "98d0daacd88f6a6d6881104c834b52f1f31c7257deb12da5ea5a52b324df13f6e25be59031ca96eaba4a20ffcb4aa299",
+    "ac7a1ed9d86199f9fd10bc37dfe68f7e41b06d67e26d32e76dd5aa91cfb8e9d2dddd19917ce725ecd5fa31892e40a09e",
+    "afc4b14d2e3c92766e691e89d7d5420d5184c99a579d64ef3558a00dc5c9ba6e61f703576c398ac81c9b56bb287842b8",
+    "b1d0471ed498902807470f368eb9848a346e49391654a1baa122a30bdc35ffe102617dbaf5bb254e93109ebff52c5933",
+    "8fd08d0b24484f6fabcad175b645382d1f7662a2d23e88151cd9e1e7d378000e2755a51832cedc5f11a4d3aaa8716be0",
+    "80986f7215a9b5e4bc69608acaeb755cc0ed4dd7bd88976da07e9c47756f1c9b90ef494c5cc3031ac6c9b5570fe5c45d",
+    "87fbc806a6091debd94a272e0f8912d0ea4e50d28d2358893f82f9e7fe238ae18b5dcd80f3c48c799e1d008b8528faad",
+    "b40d8858cc561fd6afcbccfeedd5dc7620dd7a435855772fac8557a9584d4fd4893080fba0a2803d9a1fd103340bf564",
+    "95729cefbcc59141c9692c20e8453fcb4e62c3f3f1bc1589ab5a7e23578dd50a95c4bdbe6d195bf4982bd6d3dc0fe4b4",
+    "b888bad3ba90802d54a09378050070491cdd8f30f9e23cf5c9e453c12022ec87ab87cfb34daf555f5a5c522b7ce8f1bc",
+    "853762fc34a47bbe32d6fad79a9ea896b9638b617e16565b4a4558d09029cf7d96d6e8ab0f836215dbc82c102b155432",
+    "a50f008e185c195727754b694c000bd4e7c7913d32906f924fe1f7eee842905cde425696e5a806cf8911a93e79e630b9",
+    "ad79ba73856c257ef12f910759d89be30ece14dca2a34d81ec196cd53b53532238fe0b1c53a21c752b8c15222cf7ca91",
+    "b907b1ea8b50437251c2f6c5c8f65fcac7ede522e9608f63a30417e6db49f6a458b20ebbf0bfbb26e8949080446ad45a",
+    "86f40a2b9f0177cb6be6c5d46bcbc5860cfdffd0db8cf2a9be3637689dc883abd4a6b0cc23226354b4d8b1f36e084ccc",
+    "a26f1a1cb3133c63d253ae68312f83dfa0ac92b7e22e896a8e15730129f9e39fd0dd4d74c9b531736b2fb17c857f5ee1",
+    "a985088cf2983bdb3d92e867278320f6eaaf915109cea032c18ac23a369f5dc2f996e661592c063453710ac4a226901f"
+  ],
+  "quotient_poly_degree": 4,
+  "scalar_num_bits": 255,
+  "schema": 1,
+  "selector_flags": [
+    {
+      "col_idx": 0,
+      "is_simple": false
+    },
+    {
+      "col_idx": 1,
+      "is_simple": false
+    },
+    {
+      "col_idx": 2,
+      "is_simple": false
+    },
+    {
+      "col_idx": 3,
+      "is_simple": false
+    },
+    {
+      "col_idx": 4,
+      "is_simple": false
+    },
+    {
+      "col_idx": 5,
+      "is_simple": false
+    },
+    {
+      "col_idx": 6,
+      "is_simple": false
+    },
+    {
+      "col_idx": 7,
+      "is_simple": false
+    },
+    {
+      "col_idx": 8,
+      "is_simple": false
+    },
+    {
+      "col_idx": 9,
+      "is_simple": false
+    },
+    {
+      "col_idx": 10,
+      "is_simple": false
+    },
+    {
+      "col_idx": 11,
+      "is_simple": false
+    },
+    {
+      "col_idx": 12,
+      "is_simple": false
+    },
+    {
+      "col_idx": 13,
+      "is_simple": false
+    },
+    {
+      "col_idx": 14,
+      "is_simple": true
+    },
+    {
+      "col_idx": 15,
+      "is_simple": true
+    },
+    {
+      "col_idx": 16,
+      "is_simple": true
+    },
+    {
+      "col_idx": 17,
+      "is_simple": false
+    },
+    {
+      "col_idx": 18,
+      "is_simple": true
+    },
+    {
+      "col_idx": 19,
+      "is_simple": false
+    },
+    {
+      "col_idx": 20,
+      "is_simple": true
+    },
+    {
+      "col_idx": 21,
+      "is_simple": true
+    },
+    {
+      "col_idx": 22,
+      "is_simple": true
+    },
+    {
+      "col_idx": 23,
+      "is_simple": true
+    },
+    {
+      "col_idx": 24,
+      "is_simple": true
+    },
+    {
+      "col_idx": 25,
+      "is_simple": true
+    },
+    {
+      "col_idx": 26,
+      "is_simple": false
+    }
+  ],
+  "transcript_repr_be_hex": "39e6dda9e589ea59d362b137fbdd4ee60d639c67def2489c975514e7a68252d3",
+  "truncated_challenges": true
+}
