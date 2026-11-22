@@ -2,8 +2,8 @@
 
 **As of:** `fec9822` (2026-11-22). **FULL GATE GREEN at `29be14f`:** `verify.sh: ok (full)`,
 EXIT=0, KAT 1640/118. After the B1/GASFREE/EXITSOUND merges the combined tree reports
-`lowering_correct` **15** OPEN leaves, `lowering_sound` **7**, register **80 / 15 ROOT**,
-**0 REFUTED**, `assert_no_refuted_sorry: ok`; `verify.sh --quick` and `--report` are green.
+`lowering_correct` **15** OPEN leaves, `lowering_sound` **7**, register **79 / 15 ROOT**,
+**0 REFUTED**, exhibits **4 / 4**, `assert_no_refuted_sorry: ok`; `verify.sh --quick` and `--report` are green.
 The QVM lane stays with its existing agent (midfall-c/d).
 
 ## 1. Verified - PROGRESS
@@ -14,13 +14,13 @@ The QVM lane stays with its existing agent (midfall-c/d).
     root lowering_sound ...... 7 OPEN sorried leaves (the sim rows, prefix_sim, run_split,
                                snapshotOf_prepareMsgs)
     block rows ............... 1 INTEGRATED of 7 (traceReturn); 2 SORRY, 4 NONE
-    exhibits ................. 2 PRESENT, 2 MISSING of 4
+    exhibits ................. 4 PRESENT, 0 MISSING of 4
     ValidV3 at F1 ............ NOT INHABITED; blocking clause = generated (REFUTED at F1);
                                payload point half OPEN (B3)
     root lowering_correctW ... not reported (C0 not started)
     root generator_correct ... not reported (D2 not started)
-    register ................. 80 rows / 15 ROOT; 0 REFUTED, 1 VACUOUS
-    KAT ...................... 1640/118 pinned (last known; not run on this branch)
+    register ................. 79 rows / 15 ROOT; 0 REFUTED, 1 VACUOUS
+    KAT ...................... 1648/119 pinned (WID.2; the merged-tree full gate is the authority)
     frozen axioms ............ 5 named + 159 native_decide; roots are standard three + sorryAx,
                                native []
 
@@ -106,8 +106,25 @@ conjunct; the headline signature is unchanged.
   stale "11 clauses"/"1792" prose remains. B5 is not met: OBJ.10/OBJ.12/T3.3 are absent, OBJ.11
   needs cargo and a human/Rust re-export decision.
 
+## 4c. Parallel results merged (2026-11-22)
+
+- **B1/W13** `a3b047d`: refuted `poseidon_valid` cone deleted; `#assert_no_refuted_sorry` wired;
+  `SORRY.md` now **0 REFUTED**; S.10 count-free prose.
+- **GASFREE** `d8aa4e2`: `runBody_gas_oblivious` PROVED; root 17 -> 16 at that point.
+- **EXITSOUND** `fec9822`: `Run_worldEq_of_noWriters` and `twoOutcomes_of_exitDiscipline` PROVED;
+  root 17 -> 16 and sound 8 -> 7 at that point.
+- **EXHIBITS** `e66fc58`: `fixture_leanAccepts_ok` and `mutants_leanRejects_ok` PROVED; the report
+  now prints **4 PRESENT, 0 MISSING**.
+- **C1/WID.2** `308edf8`: IVC fixture-partial KATs and the F1 negative control; KAT pin moved
+  deliberately 1640/118 -> **1648/119**. WID.3/WID.4 are blocked: `cargo` is not on PATH and the
+  `zk_stdlib/examples/assets/midnight-srs-2p19` / `-2p20` assets are absent; the exporter file is
+  also shared with B5/OBJ.11.
+- **gasFree_of_valid** remains OPEN: `GasCallOk` is strictly weaker than `GasFree` and no clause
+  carries the latter. The proof is either a frozen `programOk` clause or a per-emitter structural
+  library; both are decisions, so it was not weakened.
+
 ## 5. Last three merges
 
-- `1460013` EXITSOUND - per-op `WorldEq` table + `ScanClean` infrastructure (root unchanged)
-- `29be14f` STATUS/QUEUE - PREFIXLIVE landed; D-QVM2 signed
-- `76ccfe5` PREFIXLIVE - `prefix_live` PROVED; root 18 -> 17, register 85 -> 84
+- `308edf8` C1/WID.2 - IVC fixture KATs; KAT 1648/119
+- `e66fc58` EXHIBITS - both missing exhibits; 4/4 PRESENT
+- `fec9822` EXITSOUND - `Run_worldEq_of_noWriters` + `twoOutcomes` proved; root 15, sound 7
