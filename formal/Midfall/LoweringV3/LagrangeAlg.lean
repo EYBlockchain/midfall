@@ -9,6 +9,7 @@
 import Midfall.Halo2.Exec.Arith
 import Midfall.Halo2.Exec.Domain
 import Midfall.Halo2.Exec.Verifier
+import Midfall.Lowering.Snapshot
 import Mathlib.Data.Nat.Digits.Defs
 import Mathlib.Tactic
 
@@ -142,6 +143,7 @@ end Midfall.LoweringV3.LagrangeAlg
 namespace Midfall.Halo2
 
 open Midfall.LoweringV3.LagrangeAlg
+open Midfall.Lowering
 
 variable {F : Type} [Field F] [DecidableEq F]
 
@@ -410,5 +412,31 @@ theorem rotateOmega_mul_neg_range (d : EvaluationDomain F) (v : F) {L i : Nat} (
   · have hpos : ¬ (0 : Int) ≤ -(((L - i : Nat)) : Int) := by omega
     rw [if_neg hpos]
     rw [Int.natAbs_neg, Int.natAbs_natCast, powVartime_eq_pow, EvaluationDomain.getOmegaInv]
+
+
+theorem lIRange_toList_get? (d : EvaluationDomain F) (x xn : F) (rots : List Int) (i : Nat)
+    (h : ∀ r ∈ rots, x - d.rotateOmega 1 (Rotation.value r) ≠ 0) :
+    (d.lIRange x xn rots).toList[i]? =
+      (rots[i]?).map (fun r => d.rotateOmega
+        ((x - d.rotateOmega 1 (Rotation.value r))⁻¹ * ((xn - 1) * d.barycentricWeight))
+        (Rotation.value r)) := by
+  rw [lIRange_toList_of_ne_zero d x xn rots h, List.getElem?_map]
+
+theorem snapshotLagrangeStep_ok {p : ℕ} [Fact (Nat.Prime p)] {G : Type}
+    (vk : VerifyingKey (Fr p) G) (s2 : SnapAlgebra p G)
+    {l : SnapLagrange p G} (hl : snapshotLagrangeStep (G₁ := G) vk s2 = .ok l) :
+    ∃ tri, lagrangeTriple vk s2.alg.x s2.alg.xn = .ok tri ∧
+      l.lagrange = tri ∧ l.instanceEval = instanceEvalOf vk s2.alg := by
+  cases htri : lagrangeTriple vk s2.alg.x s2.alg.xn with
+  | error e => simp [snapshotLagrangeStep, htri] at hl
+  | ok tri =>
+      simp only [snapshotLagrangeStep, htri] at hl
+      have hrec : l = ({ toSnapAlgebra := s2, lagrange := tri, instanceEval := instanceEvalOf vk s2.alg } : SnapLagrange p G) := by
+        change Except.ok ({ toSnapAlgebra := s2, lagrange := tri, instanceEval := instanceEvalOf vk s2.alg } : SnapLagrange p G) = Except.ok l at hl
+        injection hl with h
+        exact h.symm
+      refine ⟨tri, rfl, ?_, ?_⟩
+      · rw [hrec]
+      · rw [hrec]
 
 end Midfall.Halo2

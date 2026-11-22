@@ -54,6 +54,7 @@ open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
 open Midfall.LoweringV2 Midfall.Lowering.GenAst
 open Midfall.LoweringV3.QuotientRows
 open Midfall.Yul.Wp Midfall.Yul.LoopRule Midfall.Yul.WpBridge
+open Midfall.LoweringV3.LagrangeAlg
 
 variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [Group G₁] [Group G₂] [Group Gₜ]
@@ -3133,3 +3134,44 @@ used by `hW` must be the row `instanceEvalOf` reads. Without a link such as
 `snapshotLagrangeStep` whose selected `instanceEval` is nonzero). This is a missing LEAF
 premise (like `hl`/`hxn`), not a row hypothesis; the next lane must add it and document it.
 -/
+
+/-! ## 12. T3.9.g: CANONICAL WORDS, INVERSES AND THE ROTATION INDEX -/
+
+theorem frWord_inj {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) :
+    Function.Injective (Midfall.Halo2.frWord (p := p)) := by
+  intro a b h
+  apply ZMod.val_injective p
+  have := congrArg BitVec.toNat h
+  rwa [Midfall.Halo2.frWord_toNat hp, Midfall.Halo2.frWord_toNat hp] at this
+
+theorem wMulmodAt_zero_right (a r : U256) : wMulmodAt a 0 r = 0 := by
+  simp [wMulmodAt]
+
+theorem wMulmodAt_zero_left (a r : U256) : wMulmodAt 0 a r = 0 := by
+  simp [wMulmodAt]
+
+theorem wMulmodAt_eq_one_field {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    {iw dw : U256} {iF dF : Fr p}
+    (hi : iw = Midfall.Halo2.frWord iF) (hd : dw = Midfall.Halo2.frWord dF)
+    (h : wMulmodAt iw dw (BitVec.ofNat 256 p : U256) = 1) : iF * dF = 1 := by
+  apply frWord_inj hp
+  rw [frWord_mul hp, ← hi, ← hd, h, frWord_one]
+
+/-- The rotations `lagrangeTriple` uses, indexed by `L = numNegLagranges`. -/
+def gRots (L : Nat) : List Int :=
+  List.map (fun i => -((L : Nat) : Int) + (i : Int))
+    (List.flatMap (fun a => pure ((a : Nat) : Int)) (List.range (L + 1)))
+
+theorem gRots_length (L : Nat) : (gRots L).length = L + 1 := by
+  simp [gRots, List.length_map, List.length_range]
+
+theorem gRots_get? (L i : Nat) :
+    (gRots L)[i]? = if i ≤ L then some (-((L : Nat) : Int) + (i : Int)) else none := by
+  by_cases hi : i ≤ L
+  · rw [if_pos hi]
+    unfold gRots
+    rw [flatMap_pure, List.map_map, List.getElem?_map, List.getElem?_range (by omega)]
+    rfl
+  · rw [if_neg hi]
+    rw [List.getElem?_eq_none_iff, gRots_length]
+    omega
