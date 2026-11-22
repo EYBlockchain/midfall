@@ -9,10 +9,10 @@
 -- WHAT THIS FILE IS, AND WHAT IT IS NOT. It lands the ROW.TP statements at the ONE row shape
 -- (D-P74 item 2: 'BlockSim'/'BlockProgS' over 'StageInv'), the schedule vocabulary the SEM
 -- children are stated in ('TEv', 'tpWalk', 'tpEvents', 'TEv.slot?', 'Render.tpEvents',
--- 'XcriptSlots', 'TpPost'), the child ROW.TP.1 ('inline_g1WalkLoop', PROVED), the W12
--- witness/falsifier pair each new hole needs, and the row glue 'tp_blockSim' which is PROVED from
--- the three SEM/ALG leaves by the evidence's own twelve-line argument. 'tp_blockProgS' is the
--- tenth leaf and is stated, not proved.
+-- 'XcriptSlots', 'TpPost'), the two children ROW.TP.1 ('inline_g1WalkLoop') and ROW.TP.6
+-- ('tp_events_slots') - BOTH PROVED - the W12 witness/falsifier pair each remaining hole needs,
+-- and the row glue 'tp_blockSim' which is PROVED from the three SEM/ALG leaves by the evidence's
+-- own twelve-line argument. 'tp_blockProgS' is the tenth leaf and is stated, not proved.
 --
 -- THE ROWS ARE NOT WIRED IN. 'Midfall/LoweringV3/Rows.lean' still carries its two bare tp
 -- 'sorry's, so this file moves NO root leaf, NO root cone and NO register ROOT row. When the
