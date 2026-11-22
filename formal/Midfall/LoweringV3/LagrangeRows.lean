@@ -1774,3 +1774,152 @@ theorem lag_instance_loop (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.
           exact wpSS_sound (Bridge.Dialect c g) (Bopen c g) (Cnone _)
             (Bopen_sound c g) (Cnone_sound _) hinit _ _ _ hi
 
+
+/-! ## 11. T3.9.c: THE SECOND PASS (shared denominator window) -/
+
+/-- Statement 13 of the inner scope: the second pass that turns each inverse into `L_i(x)`.
+PROVED by kernel reduction. -/
+theorem lag_second_pass_loop_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 13 1 =
+      [GenAst.yfor
+        [GenAst.ylet "pow_of_omega" (GenAst.yop EVM.Op.mload
+          [Blocks.VkLoading.vkSite "OMEGA_INV_TO_L_MPTR" consts])]
+        (GenAst.yop EVM.Op.lt [GenAst.yvar "mptr", GenAst.yvar "mptr_end"])
+        [GenAst.yset "mptr" (GenAst.yop EVM.Op.add [GenAst.yvar "mptr", GenAst.ylit 0x20])]
+        [ GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.yvar "mptr",
+            GenAst.yop EVM.Op.mulmod [GenAst.yvar "l_i_common",
+              GenAst.yop EVM.Op.mulmod
+                [GenAst.yop EVM.Op.mload [GenAst.yvar "mptr"],
+                  GenAst.yvar "pow_of_omega", Blocks.VkLoading.vkSite "r" consts],
+              Blocks.VkLoading.vkSite "r" consts]])
+        , GenAst.yset "pow_of_omega" (GenAst.yop EVM.Op.mulmod
+            [GenAst.yvar "pow_of_omega", GenAst.yvar "omega",
+              Blocks.VkLoading.vkSite "r" consts]) ]] := by
+  kernel_rfl
+
+theorem eval_mulmod_vars_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x y z : String} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod [Expr.var x, Expr.var y, Expr.var z]) (.vals [cv] st')) :
+    ∃ xv yv zv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧ VEnv.get V z = some zv ∧
+      cv = wMulmodAt xv yv zv ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hrest with
+      | argsCons hrest2 hy =>
+          cases hrest2 with
+          | argsCons hnil hz =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hzv, rfl⟩ := eval_var_inv hz
+                  obtain ⟨hyv, rfl⟩ := eval_var_inv hy
+                  obtain ⟨hxv, rfl⟩ := eval_var_inv hx
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  exact ⟨_, _, _, hxv, hyv, hzv, rfl, rfl⟩
+
+theorem eval_mulmod_mload_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p a z : String} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod
+        [Expr.builtin Op.mload [Expr.var p], Expr.var a, Expr.var z]) (.vals [cv] st')) :
+    ∃ mp av zv, VEnv.get V p = some mp ∧ VEnv.get V a = some av ∧ VEnv.get V z = some zv ∧
+      cv = wMulmodAt (loadWord st.memory mp.toNat) av zv ∧
+      st' = touchMemory st mp.toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hmload =>
+      cases hrest with
+      | argsCons hrest2 ha =>
+          cases hrest2 with
+          | argsCons hnil hz =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hzv, rfl⟩ := eval_var_inv hz
+                  obtain ⟨hav, rfl⟩ := eval_var_inv ha
+                  obtain ⟨hmp, hmpget, hmv, htouch⟩ := eval_mload_var_inv hmload
+                  simp only [builtinWithExternal, stepOp, ter, hmv] at hbi
+                  cases hbi
+                  exact ⟨_, _, _, hmpget, hav, hzv, rfl, htouch⟩
+
+theorem eval_mulmod_second_pass_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {mv rv : U256} {st' : EvmState}
+    (hrv : VEnv.get V "r" = some rv)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod
+        [Expr.var "l_i_common",
+          Expr.builtin Op.mulmod
+            [Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "pow_of_omega", Expr.var "r"],
+          Expr.var "r"]) (.vals [mv] st')) :
+    ∃ lc mp pw, VEnv.get V "l_i_common" = some lc ∧ VEnv.get V "mptr" = some mp ∧
+      VEnv.get V "pow_of_omega" = some pw ∧
+      mv = wMulmodAt lc (wMulmodAt (loadWord st.memory mp.toNat) pw rv) rv ∧
+      st' = touchMemory st mp.toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hlc =>
+      cases hrest with
+      | argsCons hrest2 hinner =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hv, rfl⟩ := eval_var_inv hr
+                  rw [hrv] at hv
+                  injection hv with hvr
+                  subst hvr
+                  -- inner mulmod
+                  obtain ⟨aiv, ist1, hinargs, hinbi⟩ := eval_builtin_vals_inv hinner
+                  cases hinargs with
+                  | argsCons hinrest hmload =>
+                      cases hinrest with
+                      | argsCons hinrest2 hpw =>
+                          cases hinrest2 with
+                          | argsCons hinnil hinr =>
+                              cases hinnil with
+                              | argsNil =>
+                                  obtain ⟨hrv2, rfl⟩ := eval_var_inv hinr
+                                  rw [hrv] at hrv2
+                                  injection hrv2 with hrv3
+                                  subst hrv3
+                                  obtain ⟨hpwv, rfl⟩ := eval_var_inv hpw
+                                  obtain ⟨hmp, hmpget, hmv, htouch⟩ := eval_mload_var_inv hmload
+                                  simp only [builtinWithExternal, stepOp, ter, hmv] at hinbi
+                                  cases hinbi
+                                  obtain ⟨hlcget, rfl⟩ := eval_var_inv hlc
+                                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                                  cases hbi
+                                  exact ⟨_, _, _, hlcget, hmpget, hpwv, rfl, htouch⟩
+
+theorem eval_mstore_second_pass_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {rv : U256} {st' : EvmState}
+    (hrv : VEnv.get V "r" = some rv)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mstore
+        [Expr.var "mptr", Expr.builtin Op.mulmod
+          [Expr.var "l_i_common", Expr.builtin Op.mulmod
+            [Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "pow_of_omega", Expr.var "r"],
+            Expr.var "r"]]) (.vals [] st')) :
+    ∃ lc mp pw, VEnv.get V "l_i_common" = some lc ∧ VEnv.get V "mptr" = some mp ∧
+      VEnv.get V "pow_of_omega" = some pw ∧
+      st' = { touchMemory (touchMemory st mp.toNat 32) mp.toNat 32 with
+        memory := storeWord st.memory mp.toNat
+          (wMulmodAt lc (wMulmodAt (loadWord st.memory mp.toNat) pw rv) rv) } := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hmp =>
+      cases hrest with
+      | argsCons hnil hmul =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hmpv, rfl⟩ := eval_var_inv hmp
+              obtain ⟨lc, mp, pw, hmm⟩ := eval_mulmod_second_pass_inv hrv hmul
+              obtain ⟨hlc, hmpv', hpw, hmv, htouch⟩ := hmm
+              -- the mstore address is the evaluated mptr
+              have hmp_eq := Option.some.inj (hmpv.symm.trans hmpv')
+              subst hmp_eq
+              simp only [builtinWithExternal, stepOp, hmv] at hbi
+              cases hbi
+              subst htouch
+              exact ⟨_, _, _, hlc, hmpv', hpw, rfl⟩
