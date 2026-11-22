@@ -71,7 +71,29 @@ theorem vk_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
     `vk.len = 224` and slots 7-10 are past the copy and unpinned by `Inv .start`. The exact
     goal state is recorded in `VkClean.lean` section 7 (PG-VKHEADER): the missing clause is
     `11 ≤ R.pv.vk.constants.length`, or the serialized-payload window equation. `PayloadAgrees`
-    is frozen, so the repair is a signed statement change; no hypothesis was added to the row. -/
+    is frozen, so the repair is a signed statement change; no hypothesis was added to the row.
+
+     **WP VKPROG (this box): the gap is now NAMED and its SUFFICIENCY is PROVED.** The premise is
+     `VkClean.pg_vkheader R := 11 ≤ R.pv.vk.constants.length`, and `VkClean.vk_hdr_word_read` proves
+     that under it, for every header slot `i ≤ numAccLimbBits`,
+
+       loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr i)) = payloadWord R.pv i
+
+     at exactly the state the section-4 walk leaves (`hmem` is `stageInv_vk_of_clean`'s copy equation
+     with D-QVM1's fits applied, `hcode` is `Frame.vkCode`). Since `PayloadAgrees` pins each
+     `payloadWord R.pv i` to the literal `vk_sliceV3` puts in the body, that equation is what makes
+     all six header guards PASS - the only thing `vk_blockSim` did not already have. What remains for
+     the row once the conjunct is signed is mechanical: `StmtsTotal = StmtsContract ∧
+     StmtsContractAll`, so (a) exhibit one run of the 13-statement slice from `StageInv .start` - S1
+     passes by `VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3` / `_CODEHASH_WORD_V3` with `Frame.vkCode`
+     / `vkHash` / `vkNonEmpty`, the six header checks by `vk_hdr_word_read`, the three calldata checks
+     by the `abiHeadOk` clause `StageInv .start` already carries plus `Frame.calldata` - and (b)
+     transfer every run to that one and feed it to `VkClean.vk_clean_walkV3` with `stageInv_vk_of_clean`.
+     Note which hypotheses the guards actually need: every obligation above is discharged from
+     `StageInv .start`, `Frame` and `ValidV3` alone, so on the evidence assembled here `LeanAccepts`
+     and `CompleteSide` do no work at `.vkLoading`. That is an observation about the premises the
+     guards consume, not a completed walk - the walk is the mechanical part left to the next box. D-P71: no hypothesis added to the row, to
+     `ValidV3`, to a bundle or to the root. -/
 theorem vk_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash) (vkAddr : U256) (cd : Bytes)
@@ -245,6 +267,17 @@ theorem prog_rows (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
 #print axioms Midfall.LoweringV3.prog_rows
 #print axioms Midfall.LoweringV3.vk_blockSim
 #assert_axioms Midfall.LoweringV3.vk_blockSim
+  [propext, Classical.choice, Quot.sound] native []
+
+/- **WP VKPROG gate prints for the progress row.** The row is OPEN (PG-VKHEADER): `#check` shows the
+    statement is unchanged, `#print axioms` shows `sorryAx` is still the only thing behind it, and
+    `#cone_sorries` shows it is still a ROOT leaf. The named premise and its proved sufficiency are
+    `VkClean.pg_vkheader` / `VkClean.vk_hdr_word_read`, both cone 0 and standard three. -/
+#check @Midfall.LoweringV3.vk_blockProgS
+#print axioms Midfall.LoweringV3.vk_blockProgS
+#cone_sorries Midfall.LoweringV3.vk_blockProgS
+#print axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
+#assert_axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
   [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3

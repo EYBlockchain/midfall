@@ -1461,4 +1461,305 @@ theorem payloadAgrees_constants_length {R : Render p G₁ G₂ Gₜ} (hR : Valid
 #print axioms Midfall.LoweringV3.VkClean.payloadAgrees_constants_length
 #assert_axioms Midfall.LoweringV3.VkClean.payloadAgrees_constants_length
   [propext, Classical.choice, Quot.sound] native []
+
+
+/-! ## 8. PG-VKHEADER: WHAT THE ONE MISSING CLAUSE BUYS, PROVED (WP VKPROG)
+
+  Section 7 records the gap and proves that 'ValidV3' forces only '7 <= constants.length'. This
+  section proves the OTHER direction, which is what turns the escalation into a decision rather
+  than a guess: the eleven-constant window is not merely what the clause table lacks, it is
+  SUFFICIENT. Under it, for every header slot 'i <= numAccLimbBits' the word the six VK-header
+  cross-checks read out of the copied memory IS 'payloadWord R.pv i' - the word 'PayloadAgrees'
+  pins to the emitted literal. With that equation every guard of the 'vkLoading' slice passes at a
+  clean boundary, so the section-4 walk cannot take its revert arm and 'vk_blockProgS' is that walk
+  plus section 6's reassembly and nothing else.
+
+  THE NEW BRIDGES. 'wordFrom' at an offset is 'wordFrom' at zero of the suffix, so a copy's window
+  arithmetic is a 'drop'; the 32 big-endian bytes of a word read back that word; the word at byte
+  offset '32 * i' of the EMITTER'S OWN 'foldl' of chunks is the 'i'-th word of its word list - so
+  the SERIALIZED payload and the 'constants' LIST are the same object, which is exactly what
+  'PayloadAgrees', a word-level equation over the list, could not say; and
+  'ptrAddr (Ptr.add q i) = ptrAddr q + 32 * i' for a pointer the planner built from a 'Nat' (the
+  'Value.identifier' arm of 'asUsizeNat' maps every offset to 0, so this is a property of the
+  planner's pointer and is a hypothesis of an ARM lemma, never of the row). D-P71: generic in the
+  render; nothing added to 'ValidV3', to a row, to a bundle or to the root. -/
+
+/-- **PG-VKHEADER - THE NAMED MISSING PREMISE OF 'vk_blockProgS'.** Eleven header constants: the
+    eleven scalars of 'vkHeaderTemplateSlotsDefault' (slots 0-10), which is what a real
+    deployment's payload carries and what 'generateVk' writes with 'headerWords :=
+    vk0.constants.length'. It is NOT a theorem of 'ValidV3': 'generated' takes 'R.plan.vk' as an
+    INPUT to 'generateAll' ('Statements.lean:3375'), and 'PayloadAgrees' forces only seven
+    ('payloadAgrees_constants_length', section 7). The repair is one conjunct on the frozen payload
+    clause; 'vk_hdr_word_read' below proves that conjunct SUFFICIENT. -/
+def pg_vkheader (R : Render p G₁ G₂ Gₜ) : Prop :=
+  11 ≤ R.pv.vk.constants.length
+
+/-- Two byte lists whose zero-padded reads agree on a 32-byte window read the same word: the
+    'wordFrom' face of 'Midfall.Yul.Word.loadWord_congr', with the two offsets separate because a
+    copy shifts every read by its own base. -/
+theorem wordFrom_congr (l₁ l₂ : List UInt8) (p₁ p₂ : Nat)
+    (h : ∀ i, i < 32 → byteFrom l₁ (p₁ + i) = byteFrom l₂ (p₂ + i)) :
+    wordFrom l₁ p₁ = wordFrom l₂ p₂ := by
+  unfold wordFrom
+  refine Midfall.Yul.Word.foldl_congr _ _ _ (fun i hi acc =>
+    congrArg (fun x : UInt8 => (acc : U256) <<< 8 ||| BitVec.ofNat 256 x.toNat)
+      (h i (List.mem_range.mp hi))) _
+
+/-- 'wordFrom' at an offset is 'wordFrom' at zero of the suffix. -/
+theorem wordFrom_drop (l : List UInt8) (p : Nat) :
+    wordFrom l p = wordFrom (l.drop p) 0 :=
+  wordFrom_congr l (l.drop p) p 0 (fun i _ => by
+    rw [Midfall.LoweringV3.VkWindow.byteFrom_drop,
+      Midfall.LoweringV3.VkWindow.byteFrom_drop, List.drop_drop, Nat.zero_add])
+
+/-- A 32-byte chunk at the head of a list is what 'wordFrom' reads at offset zero: the bytes past
+    the chunk are never reached. -/
+theorem wordFrom_append_head (a b : List UInt8) (h : a.length = 32) :
+    wordFrom (a ++ b) 0 = wordFrom a 0 :=
+  wordFrom_congr (a ++ b) a 0 0 (fun i hi => by
+    simp only [Nat.zero_add]
+    have hlt : i < a.length := by omega
+    have hne : a.drop i ≠ [] := by
+      intro h2
+      have h3 : (a.drop i).length = a.length - i := List.length_drop
+      rw [h2, List.length_nil] at h3
+      omega
+    rw [Midfall.LoweringV3.VkWindow.byteFrom_drop,
+      Midfall.LoweringV3.VkWindow.byteFrom_drop, List.drop_append,
+      show i - a.length = 0 by omega, List.drop_zero]
+    cases h4 : a.drop i with
+    | nil => exact absurd h4 hne
+    | cons c t => rfl)
+
+/-- The big-endian fold of a 32-byte list is the 'bytesToNatBE' fold of the same bytes. Stated for
+    an abstract list so the kernel never has to reduce a 'drop' through an emitter term. -/
+theorem wordFrom_len32 (l : List UInt8) (h : l.length = 32) :
+    wordFrom l 0 =
+      BitVec.ofNat 256 (l.foldl (fun (acc : Nat) (x : UInt8) => acc * 256 + x.toNat) 0) := by
+  unfold wordFrom
+  have key (o : Option UInt8) : (o.getD 0).toNat = (o.map UInt8.toNat).getD 0 := by
+    cases o <;> rfl
+  have hb : ∀ x : Nat, ((l.drop (0 + x)).head?.map UInt8.toNat).getD 0 < 256 := by
+    intro x
+    cases hx : (l.drop (0 + x)).head? with
+    | none => simp [hx]
+    | some u =>
+        have hu := UInt8.toNat_lt_size u
+        simpa using hu
+  have hpt : ∀ x ∈ List.range 32,
+      (byteFrom l (0 + x)).toNat = ((l.drop (0 + x)).head?.map UInt8.toNat).getD 0 := by
+    intro x _
+    rw [Midfall.LoweringV3.VkWindow.byteFrom_drop, key]
+  have h1 : (List.range 32).foldl
+        (fun (acc : U256) x => acc <<< 8 ||| BitVec.ofNat 256 (byteFrom l (0 + x)).toNat) 0
+      = (List.range 32).foldl
+          (fun (acc : U256) x => acc <<< 8 |||
+            BitVec.ofNat 256 (((l.drop (0 + x)).head?.map UInt8.toNat).getD 0)) 0 :=
+    Midfall.Yul.Word.foldl_congr
+      (fun (acc : U256) (x : Nat) => acc <<< 8 ||| BitVec.ofNat 256 (byteFrom l (0 + x)).toNat)
+      (fun (acc : U256) (x : Nat) =>
+        acc <<< 8 ||| BitVec.ofNat 256 (((l.drop (0 + x)).head?.map UInt8.toNat).getD 0))
+      (List.range 32) (fun x hx acc =>
+        congrArg (fun y : Nat => acc <<< 8 ||| BitVec.ofNat 256 y) (hpt x hx)) 0
+  have h0 : (0 : U256) = BitVec.ofNat 256 0 := rfl
+  have h2 : (List.range 32).foldl
+        (fun (acc : U256) x => acc <<< 8 |||
+          BitVec.ofNat 256 (((l.drop (0 + x)).head?.map UInt8.toNat).getD 0)) 0
+      = BitVec.ofNat 256 ((List.range 32).foldl
+          (fun (acc : Nat) x => acc * 256 + ((l.drop (0 + x)).head?.map UInt8.toNat).getD 0) 0) := by
+    rw [h0, fold_be_eq (fun x => ((l.drop (0 + x)).head?.map UInt8.toNat).getD 0) hb
+      (List.range 32) 0]
+  rw [h1, h2]
+  have htake : (List.range 32).map (fun i => byteFrom l (0 + i)) = l := by
+    have h32 : 0 + 32 ≤ l.length := by omega
+    have h32b : (List.drop 0 l).length ≤ 32 := by rw [List.drop_zero, h]
+    rw [Midfall.LoweringV3.VkWindow.map_byteFrom_take l 0 32 h32,
+      List.take_of_length_le h32b, List.drop_zero]
+  have h3 : (List.range 32).foldl
+        (fun (acc : Nat) x => acc * 256 + ((l.drop (0 + x)).head?.map UInt8.toNat).getD 0) 0
+      = l.foldl (fun (acc : Nat) (x : UInt8) => acc * 256 + x.toNat) 0 := by
+    have h5 : (fun i => ((l.drop (0 + i)).head?.map UInt8.toNat).getD 0)
+        = (fun x => x.toNat) ∘ (fun i => byteFrom l (0 + i)) := by
+      funext i
+      show ((l.drop (0 + i)).head?.map UInt8.toNat).getD 0 = (byteFrom l (0 + i)).toNat
+      rw [Midfall.LoweringV3.VkWindow.byteFrom_drop]
+      exact (key ((l.drop (0 + i)).head?)).symm
+    rw [← List.foldl_map, h5, ← List.map_map, htake, List.foldl_map]
+  rw [h3]
+
+/-- **THE BRIDGE 'PayloadAgrees' COULD NOT CROSS.** The 32 big-endian bytes of a word, read at
+    offset zero, are that word. -/
+theorem wordFrom_wordToBytesBE (w : Word256) :
+    wordFrom (Midfall.wordToBytesBE w).data.toList 0 = w := by
+  have hlen : ((Midfall.wordToBytesBE w).data.toList).length = 32 :=
+    Midfall.LoweringV2.wordToBytesBE_size w
+  rw [wordFrom_len32 _ hlen, ← Midfall.bytesToNatBE_toList,
+    ← Midfall.bytesToWordBE_eq_bytesToNatBE, Midfall.bytesToWordBE_wordToBytesBE]
+
+/-- 'Midfall.Bytes.empty' is a left identity for 'ByteArray.append'. -/
+theorem bytes_empty_append (a : Bytes) : Midfall.Bytes.empty.append a = a := by
+  show ByteArray.empty ++ a = a
+  rw [ByteArray.empty_append]
+
+/-- The emitter's 'foldl' of 32-byte chunks: an accumulator is exactly a prefix of the byte list. -/
+theorem foldlA : ∀ (ws : List Word256) (acc : Bytes),
+    (ws.foldl (fun (a : Bytes) (w : Word256) => a.append (Midfall.wordToBytesBE w)) acc).data.toList
+      = acc.data.toList ++
+        (ws.foldl (fun (a : Bytes) (w : Word256) => a.append (Midfall.wordToBytesBE w))
+          Midfall.Bytes.empty).data.toList := by
+  intro ws
+  induction ws with
+  | nil =>
+      intro acc
+      rw [List.foldl_nil, List.foldl_nil,
+        show (Midfall.Bytes.empty : Bytes).data.toList = [] from rfl, List.append_nil]
+  | cons w ws ih =>
+      intro acc
+      rw [List.foldl_cons, List.foldl_cons, ih (acc.append (Midfall.wordToBytesBE w)),
+        ByteArray.toList_data_append', Midfall.LoweringV3.VkClean.bytes_empty_append,
+        ih (Midfall.wordToBytesBE w), List.append_assoc]
+
+/-- **THE SERIALIZED PAYLOAD IS THE CONSTANT LIST.** The word at byte offset '32 * i' of the
+    payload the emitter wrote is the 'i'-th word of the list it folded. This is the bridge from
+    'PayloadAgrees', which speaks of 'constants.getD i', to the memory the block reads. -/
+theorem wordFrom_foldl_chunks : ∀ (ws : List Word256) (i : Nat), i < ws.length →
+    wordFrom ((ws.foldl (fun (a : Bytes) (w : Word256) =>
+        a.append (Midfall.wordToBytesBE w)) Midfall.Bytes.empty).data.toList) (32 * i)
+      = ws.getD i 0 := by
+  intro ws
+  induction ws with
+  | nil => intro i h; exact absurd h (by simp)
+  | cons w ws ih =>
+      intro i h
+      have hlen : ((Midfall.wordToBytesBE w).data.toList).length = 32 :=
+        Midfall.LoweringV2.wordToBytesBE_size w
+      have hcs : ((w :: ws).foldl (fun (a : Bytes) (x : Word256) =>
+          a.append (Midfall.wordToBytesBE x)) Midfall.Bytes.empty).data.toList
+          = (Midfall.wordToBytesBE w).data.toList
+            ++ ((ws.foldl (fun (a : Bytes) (x : Word256) =>
+                a.append (Midfall.wordToBytesBE x)) Midfall.Bytes.empty).data.toList) := by
+        rw [List.foldl_cons, Midfall.LoweringV3.VkClean.bytes_empty_append, foldlA]
+      cases i with
+      | zero =>
+          rw [hcs, wordFrom_append_head _ _ hlen, wordFrom_wordToBytesBE, List.getD_cons_zero]
+      | succ k =>
+          have hrest : List.drop (32 * (k + 1))
+              (Midfall.wordToBytesBE w).data.toList = [] :=
+            List.drop_eq_nil_of_le (by rw [hlen]; omega)
+          have hdrop : List.drop (32 * (k + 1))
+                ((Midfall.wordToBytesBE w).data.toList ++
+                  ((ws.foldl (fun (a : Bytes) (x : Word256) =>
+                      a.append (Midfall.wordToBytesBE x)) Midfall.Bytes.empty).data.toList))
+              = List.drop (32 * k)
+                ((ws.foldl (fun (a : Bytes) (x : Word256) =>
+                    a.append (Midfall.wordToBytesBE x)) Midfall.Bytes.empty).data.toList) := by
+            rw [List.drop_append, hrest, List.nil_append, hlen,
+              show 32 * (k + 1) - 32 = 32 * k by omega]
+          rw [hcs, wordFrom_drop, hdrop, List.getD_cons_succ, ← wordFrom_drop]
+          exact ih k (by simpa using h)
+
+/-- 'getD' through a map followed by an append: below the mapped list's length the tail is
+    invisible, and the pair list's default is the zero word. -/
+theorem getD_map_append : ∀ (l : List (String × Word256)) (rest : List Word256) (i : Nat),
+    i < l.length → ((l.map (·.2)) ++ rest).getD i 0 = (l.getD i ("", 0)).2
+  | [], _, i, h => absurd h (by simp)
+  | x :: _, _, 0, _ => rfl
+  | _ :: xs, rest, i + 1, h => by
+      simp only [List.map_cons, List.getD_cons_succ]
+      exact getD_map_append xs rest i (by simpa using h)
+
+/-- The header slot 'i' sits '32 * i' bytes above the payload base, for a pointer the planner built
+    from a 'Nat' ('ptrMemory (valueFromNat n)', which is the only shape 'newFromVk' ever stores). -/
+theorem ptrAddr_ptr_add_of_integer (q : Ptr) (i : Nat)
+    (h : ∃ n : Nat, ptrValue q = Value.integer n) :
+    ptrAddr (Ptr.add q i) = ptrAddr q + Midfall.Generator.wordBytes * i := by
+  obtain ⟨n, hn⟩ := h
+  show Value.asUsizeNat (Value.add (ptrValue q) i) =
+    Value.asUsizeNat (ptrValue q) + Midfall.Generator.wordBytes * i
+  rw [hn]
+  have hw : (Midfall.Generator.wordBytes : Int) = 32 := by exact_mod_cast rfl
+  rw [Value.add, hw, Value.asUsizeNat, Value.asUsizeNat]
+  have h1 : (0 : Int) ≤ (n : Int) + (i : Int) * 32 := by
+    have hi : (0 : Int) ≤ (i : Int) * 32 := mul_nonneg (Int.natCast_nonneg i) (by decide)
+    omega
+  have h2 : (0 : Int) ≤ (n : Int) := Int.natCast_nonneg _
+  rw [if_pos h1, if_pos h2]
+  have hw2 : Midfall.Generator.wordBytes = 32 := rfl
+  rw [hw2]
+  push_cast
+  omega
+
+/-- **PG-VKHEADER, THE SUFFICIENCY HALF.** Under the eleven-constant window the copied payload word
+    at header slot 'i' IS the word 'PayloadAgrees' pins - for every slot the vkLoading cross-checks
+    read ('numInstances' = 1, 'k' = 2 and the accumulator quadruple 7, 8, 9, 10), and indeed for
+    every slot at or below 'numAccLimbBits'. This is the equation section 7 names as the row's only
+    missing premise, proved FROM the premise: 'hmem' is the walk's own copy equation with D-QVM1's
+    fits already applied (section 6), 'hcode' is 'Frame.vkCode', and the address is the one
+    'expectedConsts' puts in the table. -/
+theorem vk_hdr_word_read (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hptr : ∃ n : Nat, ptrValue R.pv.memory.vkMptr = Value.integer n)
+    (st stb : EvmState) (vkAddr : U256)
+    (hcode : st.env.extCodeOf vkAddr = R.plan.vk.runtimeBytes.data.toList)
+    (hmem : stb.memory = copyInto st.memory (ptrAddr R.pv.memory.vkMptr) 1 R.pv.vk.len
+      (st.env.extCodeOf vkAddr))
+    (hlen : pg_vkheader R) (i : Nat)
+    (hi : i ≤ vkHeaderTemplateSlotsDefault.numAccLimbBits) :
+    loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr i)) = payloadWord R.pv i := by
+  have hlen' : 11 ≤ R.pv.vk.constants.length := hlen
+  have hslot : vkHeaderTemplateSlotsDefault.numAccLimbBits = 10 := rfl
+  have hi10 : i ≤ 10 := by omega
+  have hw : Midfall.Generator.wordBytes = 32 := rfl
+  have hlenGe : 352 ≤ R.pv.vk.len := by
+    show 352 ≤ R.pv.vk.constants.length * 32 + _
+    omega
+  have ha : ptrAddr (Ptr.add R.pv.memory.vkMptr i)
+      = ptrAddr R.pv.memory.vkMptr + Midfall.Generator.wordBytes * i :=
+    ptrAddr_ptr_add_of_integer R.pv.memory.vkMptr i hptr
+  rw [ha, hw, hmem]
+  have hwin : ptrAddr R.pv.memory.vkMptr ≤ ptrAddr R.pv.memory.vkMptr + 32 * i ∧
+      ptrAddr R.pv.memory.vkMptr + 32 * i + 32 ≤ ptrAddr R.pv.memory.vkMptr + R.pv.vk.len := by
+    omega
+  rw [Midfall.Yul.Word.loadWord_copyInto st.memory (ptrAddr R.pv.memory.vkMptr) 1 R.pv.vk.len
+    (ptrAddr R.pv.memory.vkMptr + 32 * i) (st.env.extCodeOf vkAddr) hwin]
+  rw [Nat.add_sub_cancel_left, hcode,
+    Midfall.LoweringV3.VkWindow.runtimeBytes_toList]
+  have hpt : ∀ j, j < 32 → byteFrom (Nat.toUInt8 vkRuntimePrefix ::
+      R.plan.vk.bytes.data.toList) (1 + 32 * i + j)
+      = byteFrom (R.plan.vk.bytes.data.toList) (32 * i + j) := by
+    intro j hj
+    rw [Midfall.LoweringV3.VkWindow.byteFrom_drop,
+      Midfall.LoweringV3.VkWindow.byteFrom_drop,
+      List.drop_cons (by omega : 0 < 1 + 32 * i + j),
+      show 1 + 32 * i + j - 1 = 32 * i + j by omega]
+  rw [wordFrom_congr _ _ _ _ hpt]
+  have hvk : R.plan.vk = R.pv.vk := rfl
+  rw [hvk]
+  have hlt : i < (R.pv.vk.constants.map (·.2) ++
+      R.pv.vk.fixedComms.flatMap (fun w => [w.xHi, w.xLo, w.yHi, w.yLo]) ++
+      R.pv.vk.permutationComms.flatMap (fun w => [w.xHi, w.xLo, w.yHi, w.yLo])).length := by
+    have h1 : (R.pv.vk.constants.map (·.2)).length = R.pv.vk.constants.length := by
+      rw [List.length_map]
+    simp only [List.length_append, h1]
+    omega
+  have hb : R.pv.vk.bytes.data.toList = ((R.pv.vk.constants.map (·.2) ++
+      R.pv.vk.fixedComms.flatMap (fun w => [w.xHi, w.xLo, w.yHi, w.yLo]) ++
+      R.pv.vk.permutationComms.flatMap (fun w => [w.xHi, w.xLo, w.yHi, w.yLo])).foldl
+      (fun (a : Bytes) (w : Word256) => a.append (Midfall.wordToBytesBE w))
+      Midfall.Bytes.empty).data.toList := rfl
+  have hlt2 : i < R.pv.vk.constants.length := by omega
+  rw [hb, wordFrom_foldl_chunks _ _ hlt]
+  rw [List.append_assoc, getD_map_append R.pv.vk.constants _ i hlt2]
+  rfl
+
+#print axioms Midfall.LoweringV3.VkClean.wordFrom_congr
+#print axioms Midfall.LoweringV3.VkClean.wordFrom_append_head
+#print axioms Midfall.LoweringV3.VkClean.wordFrom_len32
+#print axioms Midfall.LoweringV3.VkClean.wordFrom_wordToBytesBE
+#print axioms Midfall.LoweringV3.VkClean.wordFrom_foldl_chunks
+#print axioms Midfall.LoweringV3.VkClean.ptrAddr_ptr_add_of_integer
+#print axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
+#cone_sorries Midfall.LoweringV3.VkClean.vk_hdr_word_read
+#assert_axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
+  [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV3.VkClean
