@@ -3457,3 +3457,80 @@ large `lIRange` term past the default 200000 heartbeats (PG-LAG-HEARTBEAT class)
 `generalize`/`set`. The next step is to keep the list opaque (a leaf premise
 `hE : lE = (lIRange ...).toList`) or add the lBlind relation as a leaf premise, rather than
 unfolding `lIRange` inside the theorem. Do NOT raise `maxHeartbeats`. -/
+
+/-- **T3.9.g `lBlind`, concrete with opaque leaves.** The hard list identity is
+`lBlind_fold`; the three remaining links are explicit leaf premises over an opaque `lE` and
+value function `Lw`: the lIRange list equation, the entrywise `frWord` identification, and the
+`LagRel` blind-sum equation. No `lIRange` unfolding and no `maxHeartbeats` raise. -/
+theorem lag_agrees_lBlind (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hm : 2 ≤ R.pv.numNegLagranges) (hn : 1 ≤ R.pv.numInstances)
+    (s2 : SnapAlgebra p G₁) (l : SnapLagrange p G₁)
+    (hl : snapshotLagrangeStep (G₁ := G₁) R.vk s2 = .ok l)
+    (bf : Nat) (hbf : R.vk.cs.blindingFactors = .ok bf)
+    (lE : List (Fr p)) (Lw : Nat → U256) (W : LagWords)
+    (hE : lE = (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1))).toList)
+    (hval : ∀ i, i ≤ bf + 1 → frWord (lE[i]!) = Lw i)
+    (hBlindW : W.lBlind = wSum (BitVec.ofNat 256 p : U256)
+      (fun i => Lw (2 + i)) (bf - 1) (Lw 1)) :
+    W.lBlind = frWord l.lagrange.lBlind := by
+  have hp : p < 2 ^ 256 := by
+    rw [hR.env.modulus]
+    norm_num [frModulusConstant]
+  have hneg : R.pv.numNegLagranges = bf + 1 := by
+    have h := hR.env.negLagranges
+    rw [hbf] at h
+    simp [Except.toOption] at h
+    exact h
+  obtain ⟨tri, htri, hltri, _⟩ := snapshotLagrangeStep_ok (G := G₁) R.vk s2 hl
+  obtain ⟨hsize, _, hBlind, _⟩ :=
+    lagrangeTriple_ok (G := G₁) R.vk s2.alg.x s2.alg.xn hbf htri
+  have hlen : lE.length = bf + 2 := by
+    rw [hE]
+    simp only [Array.length_toList]
+    simpa only [gRots] using hsize
+  have hbf1 : 1 ≤ bf := by omega
+  have hBlindE : l.lagrange.lBlind = ((lE.drop 1).take bf).foldl (· + ·) 0 := by
+    dsimp only [gRots] at hE
+    rw [hltri, hBlind, ← hE]
+  rw [hBlindW, hBlindE]
+  rw [lBlind_fold hp (l := lE) (Lw := Lw) (bf := bf) hlen hbf1 hval]
+
+/-- **T3.9.g `lag_agrees`, D-GATE2 exponent, with the exact leaf premises.**
+The `xn`, `lLast` and `l0` projections are proved unconditionally from `hR`/`hW`; `lBlind` is
+proved from the opaque-list leaves `hE`/`hval`/`hBlindW`; the instance conjunct is the named
+leaf `hInstEval` (the snapshot/query linkage documented above). `hn` is the `1 ≤ numInstances`
+premise needed by the `i = m` inverse. No A5/Yul dependency. -/
+theorem lag_agrees (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hm : 2 ≤ R.pv.numNegLagranges) (hn : 1 ≤ R.pv.numInstances)
+    (s2 : SnapAlgebra p G₁) (l : SnapLagrange p G₁)
+    (hl : snapshotLagrangeStep (G₁ := G₁) R.vk s2 = .ok l)
+    (hxn : s2.alg.xn = s2.alg.x ^ (2 ^ R.pv.k))
+    (inst : Array (Fr p)) (W : LagWords)
+    (hinst : s2.alg.instanceEvals.getD 0 #[] = inst)
+    (hW : LagRel (BitVec.ofNat 256 p) (Midfall.Halo2.frWord s2.alg.x)
+      (Midfall.Halo2.frWord R.vk.domain.omega)
+      (Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges))
+      (Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹)) R.pv.k R.pv.numInstances
+      R.pv.numNegLagranges (fun j => Midfall.Halo2.frWord (inst.getD j 0)) W)
+    (bf : Nat) (hbf : R.vk.cs.blindingFactors = .ok bf)
+    (lE : List (Fr p)) (Lw : Nat → U256)
+    (hE : lE = (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1))).toList)
+    (hval : ∀ i, i ≤ bf + 1 → Midfall.Halo2.frWord (lE[i]!) = Lw i)
+    (hBlindW : W.lBlind = wSum (BitVec.ofNat 256 p : U256)
+      (fun i => Lw (2 + i)) (bf - 1) (Lw 1))
+    (hInstEval : ∀ e, l.instanceEval = some e → W.instEval = Midfall.Halo2.frWord e) :
+    W.xn = Midfall.Halo2.frWord s2.alg.xn ∧
+    W.lLast = Midfall.Halo2.frWord l.lagrange.lLast ∧
+    W.lBlind = Midfall.Halo2.frWord l.lagrange.lBlind ∧
+    W.l0 = Midfall.Halo2.frWord l.lagrange.l0 ∧
+    ∀ e, l.instanceEval = some e → W.instEval = Midfall.Halo2.frWord e := by
+  have hp : p < 2 ^ 256 := by
+    rw [hR.env.modulus]
+    norm_num [frModulusConstant]
+  have hx : W.xn = Midfall.Halo2.frWord s2.alg.xn := by
+    rw [hW.1, wPow2_frWord hp, hxn]
+  obtain ⟨hLast, h0⟩ :=
+    lag_agrees_lLast_l0 R hR hm hn s2 l hl hxn inst W hinst hW
+  have hBlind : W.lBlind = Midfall.Halo2.frWord l.lagrange.lBlind :=
+    lag_agrees_lBlind R hR hm hn s2 l hl bf hbf lE Lw W hE hval hBlindW
+  exact ⟨hx, hLast, hBlind, h0, hInstEval⟩
