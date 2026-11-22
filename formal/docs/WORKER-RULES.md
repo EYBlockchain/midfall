@@ -86,6 +86,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
 - data is reserved for BINDERS where YulSemantics.Syntax is reachable; write
   { ev with <<data>> := ... } for field updates.
 - #cone_sorries needs import Midfall.Tools.ConeSorries.
+- **`decide` on `0 < qvmFrModulus` HITS `maxRecDepth`** (SHAPEX, measured), so a table-canonicity fact like `PG_constsCanonical` can NEVER be discharged by `decide` for any table - keep it as a named hypothesis. Likewise `foldRangeIdxM` at the literal `quotientVmLimbs = 7` whnf-unrolls one level, so a fold step function cannot be named by unification there (SHAPEX finding 3).
 - **Lean 4.35.0 has NO `List.get?` and NO `List.join`.** `List.getD`, `getD_cons_zero` and `getD_cons_succ` do exist. **`rw` does NOT rewrite under `do`-`let` binders** - use `simp only` or an explicit `show`. **`Except.ok a >>= f` reduces only by defeq (`show`/`rfl`), not by `simp` or `rw [Except.bind]`.** **A new file in a shared namespace can collide with a sibling and only redden at ROOT build, never when typechecking the file alone** (`Calldata` already owns `except_bind_ok`) - use a per-file sub-namespace.
 
 ## Metric honesty
