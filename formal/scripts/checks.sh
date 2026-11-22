@@ -26,6 +26,24 @@ echo '== frozen statements hash =='
 sha256sum -c Midfall/Statements.sha256
 sha256sum -c Midfall/LoweringV2/Frozen.sha256
 
+echo '== frozen statement closure =='
+# Frozen.sha256 pins the TEXT of the frozen files; what the statements MEAN also depends on every
+# definition they reach outside them (`permissive`, the run relation, the vendored dialect,
+# `decodeCalldata`), none of which was pinned (review J-6). Closure.manifest lists those
+# declarations with a hash of type and body; its sha256 is a line of Frozen.sha256, and here it
+# is recomputed, so a change is a diff that NAMES the definition.
+#
+# The roots are the five frozen statements and the zone is their closure, signed as D-GATE4
+# (2026-11-22). The generator, verifier and Instances trees are NOT zone roots: a declaration
+# there is listed only where a frozen statement reaches it (STATUS.md section 4 item 1).
+if ! moved=$(diff <(bash scripts/gen_closure.sh --print) Midfall/LoweringV2/Closure.manifest); then
+  echo 'the closure of the frozen statements changed (< tree, > manifest):'
+  printf '%s\n' "$moved" | head -20
+  echo 'a deliberate change needs gen_closure.sh, a new Frozen.sha256 line and a sign-off (W2)'
+  exit 1
+fi
+echo "ok: $(grep -c '^DECL ' Midfall/LoweringV2/Closure.manifest) pinned declarations"
+
 echo '== sorry register =='
 # KEYED BY DECLARATION, READ FROM THE ENVIRONMENT (scripts/sorries.sh --env, which runs #sorry_sweep
 # in scripts/Report.lean). The old file:line key reddened on an unrelated edit (2041977 moved
