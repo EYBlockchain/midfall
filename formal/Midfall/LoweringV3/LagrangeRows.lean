@@ -2070,3 +2070,18 @@ theorem storeWord_outside (mem : Nat → UInt8) (p : Nat) (v : U256) (a : Nat)
   rw [ite_eq_right]
   rintro ⟨h1, h2⟩
   omega
+
+/-- The `omegaPows` step, as a rewrite rule. -/
+theorem omegaPows_succ (r om w0 : U256) (i : Nat) :
+    omegaPows r om w0 (i + 1) = wMulmodAt (omegaPows r om w0 i) om r := rfl
+
+/-- Read over write at a disjoint word: the two named helpers the window invariant uses. -/
+theorem loadWord_storeWord_at {mem : Nat → UInt8} {p q : Nat} {v : U256}
+    (h : q + 32 ≤ p ∨ p + 32 ≤ q) :
+    loadWord (storeWord mem p v) q = loadWord mem q :=
+  Midfall.Yul.Word.loadWord_storeWord_disjoint mem p q v h
+
+/-- Read back the word just stored. -/
+theorem loadWord_storeWord_same_at (mem : Nat → UInt8) (p : Nat) (v : U256) :
+    loadWord (storeWord mem p v) p = v :=
+  Midfall.Yul.Word.loadWord_storeWord_same mem p v
