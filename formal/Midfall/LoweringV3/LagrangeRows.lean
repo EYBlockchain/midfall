@@ -3224,6 +3224,18 @@ theorem frWord_foldl_add {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
       rw [ih (a + x), frWord_add hp]
 
 
+/-- An OPAQUE view of the `lIRange` list, so list indexing and folds do not unfold the
+(very large) `lIRange` term during `whnf`. -/
+@[irreducible] def lagList {p : ℕ} [Fact (Nat.Prime p)]
+    (d : EvaluationDomain (Fr p)) (x xn : Fr p) (L : Nat) : List (Fr p) :=
+  (d.lIRange x xn (gRots L)).toList
+
+theorem lagList_eq {p : ℕ} [Fact (Nat.Prime p)]
+    (d : EvaluationDomain (Fr p)) (x xn : Fr p) (L : Nat) :
+    lagList d x xn L = (d.lIRange x xn (gRots L)).toList := by
+  unfold lagList
+  rfl
+
 /-- The two value projections of `lag_agrees` (D-GATE2 exponent): `lLast` and `l0`.
 `hn` is the leaf premise `1 ≤ numInstances` (the `LagRel` inverse clause covers `i < n + m`);
 `hinst` is recorded for the eventual instance conjunct. -/
@@ -3513,9 +3525,9 @@ theorem lag_agrees (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
       (Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹)) R.pv.k R.pv.numInstances
       R.pv.numNegLagranges (fun j => Midfall.Halo2.frWord (inst.getD j 0)) W)
     (bf : Nat) (hbf : R.vk.cs.blindingFactors = .ok bf)
-    (lE : List (Fr p)) (Lw : Nat → U256)
-    (hE : lE = (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1))).toList)
-    (hval : ∀ i, i ≤ bf + 1 → Midfall.Halo2.frWord (lE[i]!) = Lw i)
+    (Lw : Nat → U256)
+    (hval : ∀ i, i ≤ bf + 1 →
+      Midfall.Halo2.frWord ((lagList R.vk.domain s2.alg.x s2.alg.xn (bf + 1))[i]!) = Lw i)
     (hBlindW : W.lBlind = wSum (BitVec.ofNat 256 p : U256)
       (fun i => Lw (2 + i)) (bf - 1) (Lw 1))
     (hInstEval : ∀ e, l.instanceEval = some e → W.instEval = Midfall.Halo2.frWord e) :
@@ -3532,5 +3544,7 @@ theorem lag_agrees (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
   obtain ⟨hLast, h0⟩ :=
     lag_agrees_lLast_l0 R hR hm hn s2 l hl hxn inst W hinst hW
   have hBlind : W.lBlind = Midfall.Halo2.frWord l.lagrange.lBlind :=
-    lag_agrees_lBlind R hR hm hn s2 l hl bf hbf lE Lw W hE hval hBlindW
+    lag_agrees_lBlind R hR hm hn s2 l hl bf hbf
+      (lagList R.vk.domain s2.alg.x s2.alg.xn (bf + 1)) Lw W
+      (lagList_eq R.vk.domain s2.alg.x s2.alg.xn (bf + 1)) hval hBlindW
   exact ⟨hx, hLast, hBlind, h0, hInstEval⟩
