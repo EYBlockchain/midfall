@@ -2834,3 +2834,16 @@ the two lag rows may then use it.
 **Consequence.** The old off-by-one form is not registered and is not cited; no hypothesis is added
 to any row, bundle or the root. The A4/A5 order inversion (A5 `batch_invert_summary` is a
 prerequisite of the lag range row) is recorded in STATUS and is an internal queue reorder.
+
+## D-GATE3 — **Approved: make `finalizedIdentitySegment` target-aware**
+
+> **Status: APPROVED.** Signed 2026-11-22 in the OpenCode session, after the QVM worker
+> PROVED `qvm_compile_correct_identity` false as stated: a selector fold whose low gap byte is
+> `0x0a` (`FOLD_MAIN`) is stripped by one byte, leaving `FOLD_SELECTOR` in the segment. The
+> question and answer: *"Make `finalizedIdentitySegment` target-aware (Recommended)"*.
+
+**Decision.** `finalizedIdentitySegment` takes the identity target and strips `FOLD_SELECTOR` by
+four bytes and `FOLD_MAIN` by one. The target is available at every row call site; the certifier's
+`identitySegment` already walks lengths and is unaffected. The old refutation is retained as the
+W12 falsifier of the pre-repair text; the repaired row is proved against the target-aware
+definition. No hypothesis is added to a row, bundle, `ValidV3` or the root.
