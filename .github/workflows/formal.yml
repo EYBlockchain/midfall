@@ -1,12 +1,28 @@
-# Phase 1 exit criteria for the formal project (plan Section 3).
+# The PLAN-V3 formal gate (DG.7).
+#
+# Runs on every push/PR that touches formal/**, on both `main` and the
+# long-lived `formal/baseline` branch. The runner is `ubuntu-latest` (the
+# 16-core label is not guaranteed to be available to this repository); the
+# Lean build is incremental through lean-action's GitHub cache.
+#
+# `verify.sh --report` is the report-only form: it re-runs ConeReport and the
+# progress report without rebuilding and without `ram_guard.sh`, which is
+# macOS-only. `checks.sh` is the phase-1 gate set (frozen hashes, the closure
+# pin, the sorry register, native_decide confinement, KATs, axiom sweep).
+#
+# The negative control for these gates is local, not a throwaway branch:
+#   python3 formal/scripts/gate_negctl.py all
+# perturbs a tracked KAT/provenance input, requires the gate to redden, and
+# restores the file byte-for-byte.
 name: formal
 
 on:
   pull_request:
     paths: ['formal/**', '.github/workflows/formal.yml']
   push:
-    branches: [main]
+    branches: [main, formal/baseline]
     paths: ['formal/**', '.github/workflows/formal.yml']
+  workflow_dispatch:
 
 jobs:
   build:
@@ -18,8 +34,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: leanprover/lean-action@v1
         with:
+          lake-package-directory: formal
           use-github-cache: true
       - name: lake build
         run: lake build
-      - name: Phase 1 gates (hash, sorry register, native_decide, KATs, axioms)
+      - name: verification report (ConeReport + progress)
+        run: bash scripts/verify.sh --report
+      - name: phase-1 gates (frozen hashes, closure pin, sorry register, native_decide, KATs, axioms)
         run: bash scripts/checks.sh
