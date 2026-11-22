@@ -781,12 +781,13 @@ def queryFromPlan (source : PcsQuerySource) (meta_ : ConstraintSystemMeta) (data
     structural comparison IS pointer comparison and the port is faithful by
     construction - ecPointBeq above is that structural comparison and nothing more.
     This is the same hazard R-7 flagged in the VERIFIER, where CommitmentReference
-    uses std::ptr::eq and the port compares values. The difference, and it is why
-    there is nothing to fix here, is that the pointer here is a PLANNED MEMORY
-    ADDRESS decided by the layout, not a Rust allocation address: two Data fields
-    that alias one slot compare equal here and there for the same reason, and every
-    committed-instance column shares G1_IDENTITY_MPTR exactly as KZ:437-443
-    describes. Gated by ecPointEquality_isPointerEquality_ok.
+    uses std::ptr::eq; D-P61 answered it there with a `CommitSlot`, so the
+    verifier's `kzgCommitBeq` now compares the allocation slot, while here the
+    pointer is a PLANNED memory address rather than a Rust allocation. Both are
+    identity relations; neither is value equality. The aliasing that matters here
+    is that every committed-instance column shares G1_IDENTITY_MPTR (KZ:437-443),
+    which is why hazard 3 has to exist; `ecPointEquality_isPointerEquality_ok`
+    gates the identity relation and the alias.
 
     HAZARD 3, ANSWERED. KZ:444-450: a repeated (commitment, rotation) pair is legal
     - several columns may point at one slot - and the assert_eq fires only when the
@@ -2214,8 +2215,10 @@ def duplicateQuery_bothArms_ok : Bool :=
     the aliasing the doc at KZ:437-443 describes and the reason hazard 3 exists.
 
     This is the same hazard R-7 flagged in the VERIFIER, where CommitmentReference
-    uses std::ptr::eq; the difference, said at constructIntermediateSetsImpl, is that
-    the pointer here is a PLANNED memory address and not a Rust allocation.
+    uses std::ptr::eq; D-P61 answered it there with a `CommitSlot`, so the
+    verifier's `kzgCommitBeq` compares the allocation slot, while the pointer here
+    is a PLANNED memory address rather than a Rust allocation. Both are identity
+    relations; neither is value equality.
 
     PERTURBATION RUN: comparing ecPointKey instead of the pointers reddens row 3 (both
     render as 0x100 under a location-blind key); comparing only the Value reddens rows
