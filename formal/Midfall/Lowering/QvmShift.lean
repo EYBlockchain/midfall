@@ -3453,6 +3453,7 @@ open Midfall.Generator (QVMFault QuotientRefMemory QVMFr qvmFrAdd qvmFrMul qvmFr
 open Midfall.Generator.QuotientBuilder
 open Midfall.Generator.QuotientValidator
 open Midfall.Lowering
+open Midfall.Lowering.QvmShift
 
 def modLinBody (bytes : List Nat) (consts : List Word256) :
     Nat → QVMFr × Nat × QuotientRefMemory →
@@ -4089,4 +4090,306 @@ theorem PG_stepNoRF_validated_shif2_modarith7_width_proved :
 
 #print axioms Midfall.Lowering.QvmArms.PG_stepNoRF_validated_shif2_modarith7_width_proved
 
+
+
+/-! #### MODARITH7 form shift: the five block bodies and the post-header chain
+
+    The body-shift lemmas compose `limbLinearForm_shift`/`limbRowForm_shift`/
+    `limbPairwiseForm_shift` (and the two inline mem/product blocks) with
+    `foldRangeIdxM_shift` at `S = shiftSt3 idx`. `modAfterHeader_shift` then transports the
+    five counted blocks and the cond multiply; the result's first component is unchanged and
+    its relative cursor `c5 - baseIdx` is stable. What remains for the full
+    `modarith7Form_shift` is only the flag-dependent HEADER (`afterCond`/`afterConst`), not
+    the blocks. -/
+
+theorem except_bind_ok_local {ε α : Type} (z : Except ε α) :
+    (z >>= fun y => Except.ok y) = z := by
+  cases z <;> rfl
+
+theorem map_mapErr {α β : Type} (g : QVMFault → QVMFault) (S : α → β) (f : α → β) (f' : α → α)
+    (h : ∀ a, S (f' a) = f a) (x : Except QVMFault α) :
+    Except.map f (mapErr g x) = mapBoth g S (Except.map f' x) := by
+  cases x with
+  | error e => rfl
+  | ok a => exact congrArg Except.ok (h a).symm
+
+theorem modLinBody_shift (bytes : List Nat) (consts : List Word256) (idx : Nat) :
+    ∀ (i : Nat) (s : QVMFr × Nat × QuotientRefMemory),
+      modLinBody bytes consts i (shiftSt3 idx s)
+        = mapBoth (shiftFault idx) (shiftSt3 idx) (modLinBody (bytes.drop idx) consts i s) := by
+  intro i s
+  obtain ⟨acc, cursor, mem⟩ := s
+  unfold modLinBody
+  simp only [shiftSt3]
+  rw [Midfall.Lowering.QvmShift.limbLinearForm_shift bytes consts mem idx cursor]
+  exact map_mapErr (shiftFault idx) (shiftSt3 idx)
+    (fun p : QVMFr × Nat × QuotientRefMemory => (qvmFrAdd acc p.1, idx + cursor + p.2.1, p.2.2))
+    (fun p => (qvmFrAdd acc p.1, cursor + p.2.1, p.2.2))
+    (fun p => congrArg (fun n => (qvmFrAdd acc p.1, n, p.2.2)) (Nat.add_assoc idx cursor p.2.1).symm)
+    (Midfall.Generator.limbLinearForm (bytes.drop idx) consts mem cursor)
+
+theorem modRowBody_shift (bytes : List Nat) (consts : List Word256) (idx : Nat) :
+    ∀ (i : Nat) (s : QVMFr × Nat × QuotientRefMemory),
+      modRowBody bytes consts i (shiftSt3 idx s)
+        = mapBoth (shiftFault idx) (shiftSt3 idx) (modRowBody (bytes.drop idx) consts i s) := by
+  intro i s
+  obtain ⟨acc, cursor, mem⟩ := s
+  unfold modRowBody
+  simp only [shiftSt3]
+  rw [Midfall.Lowering.QvmShift.limbRowForm_shift bytes consts mem idx cursor]
+  exact map_mapErr (shiftFault idx) (shiftSt3 idx)
+    (fun p : QVMFr × Nat × QuotientRefMemory => (qvmFrAdd acc p.1, idx + cursor + p.2.1, p.2.2))
+    (fun p => (qvmFrAdd acc p.1, cursor + p.2.1, p.2.2))
+    (fun p => congrArg (fun n => (qvmFrAdd acc p.1, n, p.2.2)) (Nat.add_assoc idx cursor p.2.1).symm)
+    (Midfall.Generator.limbRowForm (bytes.drop idx) consts mem cursor)
+
+theorem modPwBody_shift (bytes : List Nat) (consts : List Word256) (idx : Nat) :
+    ∀ (i : Nat) (s : QVMFr × Nat × QuotientRefMemory),
+      modPwBody bytes consts i (shiftSt3 idx s)
+        = mapBoth (shiftFault idx) (shiftSt3 idx) (modPwBody (bytes.drop idx) consts i s) := by
+  intro i s
+  obtain ⟨acc, cursor, mem⟩ := s
+  unfold modPwBody
+  simp only [shiftSt3]
+  rw [Midfall.Lowering.QvmShift.limbPairwiseForm_shift bytes consts mem idx cursor]
+  exact map_mapErr (shiftFault idx) (shiftSt3 idx)
+    (fun p : QVMFr × Nat × QuotientRefMemory => (qvmFrAdd acc p.1, idx + cursor + p.2.1, p.2.2))
+    (fun p => (qvmFrAdd acc p.1, cursor + p.2.1, p.2.2))
+    (fun p => congrArg (fun n => (qvmFrAdd acc p.1, n, p.2.2)) (Nat.add_assoc idx cursor p.2.1).symm)
+    (Midfall.Generator.limbPairwiseForm (bytes.drop idx) consts mem cursor)
+
+theorem modMemBody_shift (bytes : List Nat) (consts : List Word256) (idx : Nat) :
+    ∀ (i : Nat) (s : QVMFr × Nat × QuotientRefMemory),
+      modMemBody bytes consts i (shiftSt3 idx s)
+        = mapBoth (shiftFault idx) (shiftSt3 idx) (modMemBody (bytes.drop idx) consts i s) := by
+  intro i s
+  obtain ⟨acc, cursor, mem⟩ := s
+  unfold modMemBody
+  simp only [shiftSt3]
+  rw [Midfall.Lowering.QvmShift.byteAt_shift bytes idx cursor]
+  cases h1 : Midfall.Generator.byteAt (bytes.drop idx) cursor with
+  | error e => simp [mapBoth, mapErr, bind, Except.bind]
+  | ok slot =>
+      simp only [mapBoth, mapErr, bind, Except.bind]
+      rw [show idx + cursor + 1 = idx + (cursor + 1) by omega,
+        Midfall.Lowering.QvmShift.readU16_shift bytes idx (cursor + 1)]
+      cases h2 : Midfall.Generator.readU16 (bytes.drop idx) (cursor + 1) with
+      | error e => simp [mapBoth, mapErr, bind, Except.bind]
+      | ok ptr =>
+          simp only [mapBoth, mapErr, bind, Except.bind]
+          rw [Midfall.Lowering.QvmShift.constAt_shift consts slot idx cursor]
+          cases h3 : Midfall.Generator.constAt consts slot cursor with
+          | error e => simp [mapBoth, mapErr, bind, Except.bind]
+          | ok c => simp only [mapBoth, mapErr, shiftSt3]; rw [Nat.add_assoc]
+
+theorem modProdBody_shift (bytes : List Nat) (consts : List Word256) (idx : Nat) :
+    ∀ (i : Nat) (s : QVMFr × Nat × QuotientRefMemory),
+      modProdBody bytes consts i (shiftSt3 idx s)
+        = mapBoth (shiftFault idx) (shiftSt3 idx) (modProdBody (bytes.drop idx) consts i s) := by
+  intro i s
+  obtain ⟨acc, cursor, mem⟩ := s
+  unfold modProdBody
+  simp only [shiftSt3]
+  rw [Midfall.Lowering.QvmShift.byteAt_shift bytes idx cursor]
+  cases h1 : Midfall.Generator.byteAt (bytes.drop idx) cursor with
+  | error e => simp [mapBoth, mapErr, bind, Except.bind]
+  | ok slot =>
+      simp only [mapBoth, mapErr, bind, Except.bind]
+      rw [show idx + cursor + 1 = idx + (cursor + 1) by omega,
+        Midfall.Lowering.QvmShift.readU16_shift bytes idx (cursor + 1)]
+      cases h2 : Midfall.Generator.readU16 (bytes.drop idx) (cursor + 1) with
+      | error e => simp [mapBoth, mapErr, bind, Except.bind]
+      | ok lhs =>
+          simp only [mapBoth, mapErr, bind, Except.bind]
+          rw [show idx + cursor + 3 = idx + (cursor + 3) by omega,
+            Midfall.Lowering.QvmShift.readU16_shift bytes idx (cursor + 3)]
+          cases h3 : Midfall.Generator.readU16 (bytes.drop idx) (cursor + 3) with
+          | error e => simp [mapBoth, mapErr, bind, Except.bind]
+          | ok rhs =>
+              simp only [mapBoth, mapErr, bind, Except.bind]
+              rw [Midfall.Lowering.QvmShift.constAt_shift consts slot idx cursor]
+              cases h4 : Midfall.Generator.constAt consts slot cursor with
+              | error e => simp [mapBoth, mapErr, bind, Except.bind]
+              | ok c => simp only [mapBoth, mapErr, shiftSt3]; rw [Nat.add_assoc]
+
+theorem fold_modLin_shift (bytes : List Nat) (consts : List Word256) (idx n : Nat)
+    (acc : QVMFr) (cursor : Nat) (mem : QuotientRefMemory) :
+    Midfall.Generator.foldRangeIdxM n (acc, idx + cursor, mem) (modLinBody bytes consts)
+      = mapBoth (shiftFault idx) (shiftSt3 idx)
+          (Midfall.Generator.foldRangeIdxM n (acc, cursor, mem) (modLinBody (bytes.drop idx) consts)) := by
+  rw [show (acc, idx + cursor, mem) = shiftSt3 idx (acc, cursor, mem) by simp [shiftSt3]]
+  exact foldRangeIdxM_shift (shiftFault idx) (shiftSt3 idx) n (acc, cursor, mem) _ _
+    (fun i s => modLinBody_shift bytes consts idx i s)
+
+theorem fold_modRow_shift (bytes : List Nat) (consts : List Word256) (idx n : Nat)
+    (acc : QVMFr) (cursor : Nat) (mem : QuotientRefMemory) :
+    Midfall.Generator.foldRangeIdxM n (acc, idx + cursor, mem) (modRowBody bytes consts)
+      = mapBoth (shiftFault idx) (shiftSt3 idx)
+          (Midfall.Generator.foldRangeIdxM n (acc, cursor, mem) (modRowBody (bytes.drop idx) consts)) := by
+  rw [show (acc, idx + cursor, mem) = shiftSt3 idx (acc, cursor, mem) by simp [shiftSt3]]
+  exact foldRangeIdxM_shift (shiftFault idx) (shiftSt3 idx) n (acc, cursor, mem) _ _
+    (fun i s => modRowBody_shift bytes consts idx i s)
+
+theorem fold_modPw_shift (bytes : List Nat) (consts : List Word256) (idx n : Nat)
+    (acc : QVMFr) (cursor : Nat) (mem : QuotientRefMemory) :
+    Midfall.Generator.foldRangeIdxM n (acc, idx + cursor, mem) (modPwBody bytes consts)
+      = mapBoth (shiftFault idx) (shiftSt3 idx)
+          (Midfall.Generator.foldRangeIdxM n (acc, cursor, mem) (modPwBody (bytes.drop idx) consts)) := by
+  rw [show (acc, idx + cursor, mem) = shiftSt3 idx (acc, cursor, mem) by simp [shiftSt3]]
+  exact foldRangeIdxM_shift (shiftFault idx) (shiftSt3 idx) n (acc, cursor, mem) _ _
+    (fun i s => modPwBody_shift bytes consts idx i s)
+
+theorem fold_modMem_shift (bytes : List Nat) (consts : List Word256) (idx n : Nat)
+    (acc : QVMFr) (cursor : Nat) (mem : QuotientRefMemory) :
+    Midfall.Generator.foldRangeIdxM n (acc, idx + cursor, mem) (modMemBody bytes consts)
+      = mapBoth (shiftFault idx) (shiftSt3 idx)
+          (Midfall.Generator.foldRangeIdxM n (acc, cursor, mem) (modMemBody (bytes.drop idx) consts)) := by
+  rw [show (acc, idx + cursor, mem) = shiftSt3 idx (acc, cursor, mem) by simp [shiftSt3]]
+  exact foldRangeIdxM_shift (shiftFault idx) (shiftSt3 idx) n (acc, cursor, mem) _ _
+    (fun i s => modMemBody_shift bytes consts idx i s)
+
+theorem fold_modProd_shift (bytes : List Nat) (consts : List Word256) (idx n : Nat)
+    (acc : QVMFr) (cursor : Nat) (mem : QuotientRefMemory) :
+    Midfall.Generator.foldRangeIdxM n (acc, idx + cursor, mem) (modProdBody bytes consts)
+      = mapBoth (shiftFault idx) (shiftSt3 idx)
+          (Midfall.Generator.foldRangeIdxM n (acc, cursor, mem) (modProdBody (bytes.drop idx) consts)) := by
+  rw [show (acc, idx + cursor, mem) = shiftSt3 idx (acc, cursor, mem) by simp [shiftSt3]]
+  exact foldRangeIdxM_shift (shiftFault idx) (shiftSt3 idx) n (acc, cursor, mem) _ _
+    (fun i s => modProdBody_shift bytes consts idx i s)
+
+theorem foldRangeIdxM_cursor_ge {β : Type} :
+    ∀ (n : Nat) (f : Nat → QVMFr × Nat × β → Except QVMFault (QVMFr × Nat × β)),
+      (∀ i s r, f i s = .ok r → s.2.1 ≤ r.2.1) →
+      ∀ (a : QVMFr) (c : Nat) (mem : β) (out : QVMFr × Nat × β),
+        Midfall.Generator.foldRangeIdxM n (a, c, mem) f = .ok out → c ≤ out.2.1 := by
+  intro n
+  induction n with
+  | zero =>
+      intro f hf a c mem out h
+      cases h
+      exact Nat.le_refl c
+  | succ k ih =>
+      intro f hf a c mem out h
+      simp only [Midfall.Generator.foldRangeIdxM] at h
+      obtain ⟨x, hx, hrest⟩ := peel_bind h
+      rw [except_bind_ok_local] at hrest
+      have h1 : c ≤ x.2.1 := hf 0 (a, c, mem) x hx
+      have h2 : x.2.1 ≤ out.2.1 :=
+        ih (fun i => f (i + 1)) (fun i s r hr => hf (i + 1) s r hr) x.1 x.2.1 x.2.2 out hrest
+      exact Nat.le_trans h1 h2
+
+theorem modAfterHeader_shift (bytes : List Nat) (consts : List Word256)
+    (baseIdx afterConst : Nat) (acc0 : QVMFr) (cond : Option Nat) (mem : QuotientRefMemory)
+    (idx : Nat) (hbase : baseIdx ≤ afterConst) :
+    modAfterHeader bytes consts (idx + baseIdx) (idx + afterConst) acc0 cond mem
+      = mapErr (shiftFault idx)
+          (modAfterHeader (bytes.drop idx) consts baseIdx afterConst acc0 cond mem) := by
+  unfold modAfterHeader
+  rw [Midfall.Lowering.QvmShift.byteAt_shift bytes idx afterConst]
+  cases h1 : Midfall.Generator.byteAt (bytes.drop idx) afterConst with
+  | error e => simp [mapBoth, mapErr, bind, Except.bind]
+  | ok lc =>
+      simp only [mapBoth, mapErr, bind, Except.bind]
+      rw [show idx + afterConst + 1 = idx + (afterConst + 1) by omega]
+      rw [Midfall.Lowering.QvmShift.byteAt_shift bytes idx (afterConst + 1)]
+      cases h2 : Midfall.Generator.byteAt (bytes.drop idx) (afterConst + 1) with
+      | error e => simp [mapBoth, mapErr, bind, Except.bind]
+      | ok rc =>
+          simp only [mapBoth, mapErr, bind, Except.bind]
+          rw [show idx + afterConst + 2 = idx + (afterConst + 2) by omega]
+          rw [Midfall.Lowering.QvmShift.byteAt_shift bytes idx (afterConst + 2)]
+          cases h3 : Midfall.Generator.byteAt (bytes.drop idx) (afterConst + 2) with
+          | error e => simp [mapBoth, mapErr, bind, Except.bind]
+          | ok pc =>
+              simp only [mapBoth, mapErr, bind, Except.bind]
+              rw [show idx + afterConst + 3 = idx + (afterConst + 3) by omega]
+              rw [Midfall.Lowering.QvmShift.byteAt_shift bytes idx (afterConst + 3)]
+              cases h4 : Midfall.Generator.byteAt (bytes.drop idx) (afterConst + 3) with
+              | error e => simp [mapBoth, mapErr, bind, Except.bind]
+              | ok mc =>
+                  simp only [mapBoth, mapErr, bind, Except.bind]
+                  rw [show idx + afterConst + 4 = idx + (afterConst + 4) by omega]
+                  rw [Midfall.Lowering.QvmShift.byteAt_shift bytes idx (afterConst + 4)]
+                  cases h5 : Midfall.Generator.byteAt (bytes.drop idx) (afterConst + 4) with
+                  | error e => simp [mapBoth, mapErr, bind, Except.bind]
+                  | ok xc =>
+                      simp only [mapBoth, mapErr, bind, Except.bind]
+                      rw [show idx + afterConst + 5 = idx + (afterConst + 5) by omega]
+                      rw [fold_modLin_shift bytes consts idx lc acc0 (afterConst + 5) mem]
+                      cases f1 : Midfall.Generator.foldRangeIdxM lc (acc0, afterConst + 5, mem)
+                          (modLinBody (bytes.drop idx) consts) with
+                      | error e => simp [mapBoth, mapErr, bind, Except.bind]
+                      | ok p1 =>
+                          obtain ⟨a1, c1, m1⟩ := p1
+                          simp only [mapBoth, mapErr, bind, Except.bind, shiftSt3]
+                          rw [fold_modRow_shift bytes consts idx rc a1 c1 m1]
+                          cases f2 : Midfall.Generator.foldRangeIdxM rc (a1, c1, m1)
+                              (modRowBody (bytes.drop idx) consts) with
+                          | error e => simp [mapBoth, mapErr, bind, Except.bind]
+                          | ok p2 =>
+                              obtain ⟨a2, c2, m2⟩ := p2
+                              simp only [mapBoth, mapErr, bind, Except.bind, shiftSt3]
+                              rw [fold_modPw_shift bytes consts idx pc a2 c2 m2]
+                              cases f3 : Midfall.Generator.foldRangeIdxM pc (a2, c2, m2)
+                                  (modPwBody (bytes.drop idx) consts) with
+                              | error e => simp [mapBoth, mapErr, bind, Except.bind]
+                              | ok p3 =>
+                                  obtain ⟨a3, c3, m3⟩ := p3
+                                  simp only [mapBoth, mapErr, bind, Except.bind, shiftSt3]
+                                  rw [fold_modMem_shift bytes consts idx mc a3 c3 m3]
+                                  cases f4 : Midfall.Generator.foldRangeIdxM mc (a3, c3, m3)
+                                      (modMemBody (bytes.drop idx) consts) with
+                                  | error e => simp [mapBoth, mapErr, bind, Except.bind]
+                                  | ok p4 =>
+                                      obtain ⟨a4, c4, m4⟩ := p4
+                                      simp only [mapBoth, mapErr, bind, Except.bind, shiftSt3]
+                                      rw [fold_modProd_shift bytes consts idx xc a4 c4 m4]
+                                      cases f5 : Midfall.Generator.foldRangeIdxM xc (a4, c4, m4)
+                                          (modProdBody (bytes.drop idx) consts) with
+                                      | error e => simp [mapBoth, mapErr, bind, Except.bind]
+                                      | ok p5 =>
+                                          obtain ⟨a5, c5, m5⟩ := p5
+                                          simp only [mapBoth, mapErr, bind, Except.bind, shiftSt3]
+                                          have hc1 : afterConst + 5 ≤ c1 :=
+                                            foldRangeIdxM_cursor_ge lc (modLinBody (bytes.drop idx) consts)
+                                              (fun i s r hr => by
+                                                have := modLinBody_advance (bytes.drop idx) consts i s r hr
+                                                omega)
+                                              acc0 (afterConst+5) mem (a1,c1,m1) f1
+                                          have hc2 : c1 ≤ c2 :=
+                                            foldRangeIdxM_cursor_ge rc (modRowBody (bytes.drop idx) consts)
+                                              (fun i s r hr => by
+                                                have := modRowBody_advance (bytes.drop idx) consts i s r hr
+                                                omega)
+                                              a1 c1 m1 (a2,c2,m2) f2
+                                          have hc3 : c2 ≤ c3 :=
+                                            foldRangeIdxM_cursor_ge pc (modPwBody (bytes.drop idx) consts)
+                                              (fun i s r hr => by
+                                                have := modPwBody_advance (bytes.drop idx) consts i s r hr
+                                                omega)
+                                              a2 c2 m2 (a3,c3,m3) f3
+                                          have hc4 : c3 ≤ c4 :=
+                                            foldRangeIdxM_cursor_ge mc (modMemBody (bytes.drop idx) consts)
+                                              (fun i s r hr => by
+                                                have := modMemBody_advance (bytes.drop idx) consts i s r hr
+                                                omega)
+                                              a3 c3 m3 (a4,c4,m4) f4
+                                          have hc5 : c4 ≤ c5 :=
+                                            foldRangeIdxM_cursor_ge xc (modProdBody (bytes.drop idx) consts)
+                                              (fun i s r hr => by
+                                                have := modProdBody_advance (bytes.drop idx) consts i s r hr
+                                                omega)
+                                              a4 c4 m4 (a5,c5,m5) f5
+                                          have hc5' : baseIdx ≤ c5 :=
+                                            Nat.le_trans hbase (Nat.le_trans (Nat.le_add_right afterConst 5)
+                                              (Nat.le_trans hc1 (Nat.le_trans hc2 (Nat.le_trans hc3 (Nat.le_trans hc4 hc5)))))
+                                          cases cond with
+                                          | none =>
+                                              simp only [mapBoth, mapErr, bind, Except.bind]
+                                              have harith : idx + c5 - (idx + baseIdx) = c5 - baseIdx := by omega
+                                              rw [harith]
+                                          | some ptr =>
+                                              simp only [mapBoth, mapErr, bind, Except.bind]
+                                              have harith : idx + c5 - (idx + baseIdx) = c5 - baseIdx := by omega
+                                              rw [harith]
 end Midfall.Lowering.QvmArms
