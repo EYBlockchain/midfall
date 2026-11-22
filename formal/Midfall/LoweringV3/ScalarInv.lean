@@ -16,12 +16,16 @@
   (`PcsRows.lean`). No fixture, no native_decide, no extra hypothesis.
 -/
 import Midfall.LoweringV3.PcsRows
+import Midfall.LoweringV2.Blocks.TraceReturn
 set_option autoImplicit false
 
 namespace Midfall.LoweringV3.ScalarInv
 
 open Midfall Midfall.Lowering Midfall.Generator Midfall.LoweringV3.PcsRows
+open Midfall.LoweringV2 Midfall.LoweringV2.Blocks.TraceReturn
 open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+
+variable {c : ExternalCalls} {g : ExternalGas}
 
 /-! ## 1. A fold of stores at `p, p+32, …` -/
 
@@ -139,7 +143,143 @@ theorem mxMem_frame (mem : Nat → UInt8) (p : Nat) (x : U256) :
     readBytes (mxMem mem p x) p 192 = (modexpInvFrame x.toNat).data.toList := by
   rw [mxMem_read192, ← modexpInvFrame_data]
 
+/-! ## 3. The `fail` call (the two guard arms and the staticcall guards) -/
+
+/-- **THE `fail` CALL AT AN ARBITRARY VARIABLE SELECTOR.** A run of `fail(sel)` in any scope stack
+    that resolves `fail` to the helper halts with a revert record. This is
+    `TraceReturn.tr_fail_reverts` with `Expr.var "sel"` in place of `trErrExpr R.consts`; only the
+    selector's non-halting is used, never its value. -/
+theorem fail_expr_var {funs funs' : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {r : EResult (Bridge.Dialect c g)}
+    {sel : String} (hlookup : lookupFun funs "fail" = some (failFDecl, funs'))
+    (h : Step (Bridge.Dialect c g) funs V st
+        (Code.expr (Expr.call "fail" [Expr.var sel])) (Res.eres r)) :
+    ∃ st₂, r = .halt st₂ ∧ Reverted st₂ := by
+  cases h with
+  | callOk hargs hlookup' hlen hbody ho =>
+      rw [hlookup] at hlookup'
+      cases hlookup'
+      cases hbody with
+      | block hstmts =>
+          obtain ⟨ho', hrev⟩ := Blocks.TraceReturn.tr_fail_body hstmts
+          cases ho with
+          | inl hn =>
+              exact absurd (hn.symm.trans ho')
+                (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+          | inr hl =>
+              exact absurd (hl.symm.trans ho')
+                (by decide : (Outcome.leave : Outcome) ≠ Outcome.halt)
+  | callHalt hargs hlookup' hlen hbody =>
+      rw [hlookup] at hlookup'
+      cases hlookup'
+      cases hbody with
+      | block hstmts =>
+          exact ⟨_, rfl, (Blocks.TraceReturn.tr_fail_body hstmts).2⟩
+  | callArgsHalt hargs =>
+      exact (Blocks.TraceReturn.trArgs1_halt_inv hargs
+        (fun _ hh => Blocks.TraceReturn.trExprVar_ne_halts hh)).elim
+
+/-- **THE FAIL EFFECT**: every run of the `fail(sel)` statement halts reverted. -/
+theorem fail_call_reverts {funs funs' : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome} {sel : String}
+    (hlookup : lookupFun funs "fail" = some (failFDecl, funs'))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+        (Stmt.exprStmt (Expr.call "fail" [Expr.var sel])) V' st' o) :
+    o = .halt ∧ Reverted st' := by
+  cases h with
+  | exprStmt hex =>
+      obtain ⟨st₂, hr, hrev⟩ := fail_expr_var hlookup hex
+      exact absurd hr (by simp)
+  | exprStmtHalt hex =>
+      obtain ⟨st₂, hr, hrev⟩ := fail_expr_var hlookup hex
+      cases hr
+      exact ⟨rfl, hrev⟩
+
+/-! ## 4. The six-store contract: mstore plumbing -/
+
+/-- The `scalar_inv` frame with the exponent word kept symbolic (`fv - 2`). -/
+def mxMemFr (mem : Nat → UInt8) (p : Nat) (x fv : U256) : Nat → UInt8 :=
+  storeWord (storeWord (storeWord (storeWord (storeWord (storeWord mem p 32)
+    (p + 32) 32) (p + 64) 32) (p + 96) x) (p + 128) (fv - 2)) (p + 160) fv
+
+/-- The address of an `add(var p, lit n)` after evaluation. -/
+theorem toNat_add_ofNat (a : U256) (n : Nat) (h : a.toNat + n < 2 ^ 256) :
+    (a + BitVec.ofNat 256 n).toNat = a.toNat + n := by
+  have hn : n < 2 ^ 256 := by omega
+  rw [BitVec.toNat_add, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hn, Nat.mod_eq_of_lt]
+  omega
+
+/-- `add(var, lit)` never halts. -/
+theorem expr_add_var_lit_ne_halts {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st' : EvmState} (x : String) (n : Nat) :
+    ¬ EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.add [Expr.var x, Expr.lit (Literal.number n)]) (.halt st') := by
+  intro h
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hnil hhead =>
+          cases hnil with
+          | argsCons hnil2 htail =>
+              cases hnil2 with
+              | argsNil =>
+                  simp [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h => exact (trArgs1_halt_inv h (fun _ hh => trExprLit_ne_halts hh)).elim
+      | argsHeadHalt _ h => exact trExprVar_ne_halts h
+
+/-- `sub(var, lit)` never halts. -/
+theorem expr_sub_var_lit_ne_halts {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st' : EvmState} (x : String) (n : Nat) :
+    ¬ EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.sub [Expr.var x, Expr.lit (Literal.number n)]) (.halt st') := by
+  intro h
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hnil hhead =>
+          cases hnil with
+          | argsCons hnil2 htail =>
+              cases hnil2 with
+              | argsNil =>
+                  simp [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h => exact (trArgs1_halt_inv h (fun _ hh => trExprLit_ne_halts hh)).elim
+      | argsHeadHalt _ h => exact trExprVar_ne_halts h
+
+/-- A word store never halts, for any address/value expressions that themselves never halt. -/
+theorem exec_mstore_normal {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome} {addr val : Expr EVM.Op}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.builtin EVM.Op.mstore [addr, val])) V' st' o)
+    (haddr : ∀ (st₁ st₂ : EvmState), EvalExpr (Bridge.Dialect c g) funs V st₁ addr (.halt st₂) → False)
+    (hval : ∀ (st₁ st₂ : EvmState), EvalExpr (Bridge.Dialect c g) funs V st₁ val (.halt st₂) → False) :
+    o = .normal := by
+  cases h with
+  | exprStmt _ => rfl
+  | exprStmtHalt hex =>
+      cases hex with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hnil hhead =>
+              cases hnil with
+              | argsCons hnil2 htail =>
+                  cases hnil2 with
+                  | argsNil =>
+                      simp [Bridge.Dialect, builtinWithExternal, stepOp] at hbi
+      | builtinArgsHalt hargs =>
+          cases hargs with
+          | argsRestHalt h => exact (trArgs1_halt_inv h (fun _ hh => hval _ _ hh)).elim
+          | argsHeadHalt _ h' => exact (haddr _ _ h').elim
+
 #assert_axioms Midfall.LoweringV3.ScalarInv.mxMem_frame
   [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.fail_call_reverts
+  [propext, Quot.sound] native []
 
 end Midfall.LoweringV3.ScalarInv
