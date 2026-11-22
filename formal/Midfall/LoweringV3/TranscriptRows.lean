@@ -539,6 +539,256 @@ theorem transcript_read_ok {T : Type} (h : Midfall.Halo2.Hashable T) (t : Midfal
   rw [hr]
   exact ⟨_, rfl, rfl, rfl⟩
 
+/-- The scalar wire in message order: the `Msg.fr` arm of `msgWire` concatenated. -/
+def wireOf {p : Nat} [Fact (Nat.Prime p)] : List (Fr p) → Bytes
+  | [] => Bytes.empty
+  | q :: qs => frToRepr (p := p) q ++ wireOf qs
+
+/-- The wire prepends the next scalar's repr. -/
+theorem wireOf_cons {p : Nat} [Fact (Nat.Prime p)] (q : Fr p) (qs : List (Fr p)) :
+    wireOf (p := p) (q :: qs) = frToRepr (p := p) q ++ wireOf (p := p) qs := rfl
+
+/-- Reading the whole buffer is the identity. -/
+theorem bytesTake_whole (b : Bytes) : bytesTake b 0 b.size = some b := by
+  unfold bytesTake
+  rw [ite_eq_left (by rw [Nat.zero_add] <;> omega)]
+  rw [Nat.zero_add]
+  have key : b.data.extract 0 (ByteArray.size b) = b.data :=
+    @Array.extract_eq_self_of_le UInt8 (ByteArray.size b) b.data (Nat.le_refl _)
+  rw [key]
+
+/-- `tmSqueezeChallenge` never fails. -/
+theorem tmSqueezeChallenge_run {p : Nat} [Fact (Nat.Prime p)] (t : Midfall.Halo2.Transcript) :
+    ∃ x t', (Midfall.Halo2.tmSqueezeChallenge (p := p)).run t = .ok (x, t') := by
+  refine ⟨(t.squeezeChallenge (p := p)).1, (t.squeezeChallenge (p := p)).2, ?_⟩
+  unfold Midfall.Halo2.tmSqueezeChallenge
+  simp only [StateT.run, StateT.bind, StateT.get, StateT.set, StateT.pure, bind, Except.bind,
+    pure, Except.pure]
+
+/-- The squeeze's run, with the resulting state named. -/
+theorem tmSqueezeChallenge_run_eq {p : Nat} [Fact (Nat.Prime p)]
+    (t : Midfall.Halo2.Transcript) :
+    (Midfall.Halo2.tmSqueezeChallenge (p := p)).run t =
+      .ok ((t.squeezeChallenge (p := p)).1, (t.squeezeChallenge (p := p)).2) := by
+  unfold Midfall.Halo2.tmSqueezeChallenge
+  simp only [StateT.run, StateT.bind, StateT.get, StateT.set, StateT.pure, bind, Except.bind,
+    pure, Except.pure]
+
+/-- `squeeze` only rewrites `state`: the cursor is untouched. -/
+theorem squeeze_pos (t : Midfall.Halo2.Transcript) : t.squeeze.2.pos = t.pos := by
+  unfold Transcript.squeeze
+  rfl
+
+/-- `squeeze` only rewrites `state`: the buffer is untouched. -/
+theorem squeeze_buffer (t : Midfall.Halo2.Transcript) : t.squeeze.2.buffer = t.buffer := by
+  unfold Transcript.squeeze
+  rfl
+
+/-- A squeezed challenge leaves the cursor alone. -/
+theorem squeezeChallenge_pos {p : Nat} [Fact (Nat.Prime p)] (t : Midfall.Halo2.Transcript) :
+    (t.squeezeChallenge (p := p)).2.pos = t.pos := by
+  unfold Transcript.squeezeChallenge
+  exact squeeze_pos t
+
+/-- A squeezed challenge leaves the buffer alone. -/
+theorem squeezeChallenge_buffer {p : Nat} [Fact (Nat.Prime p)] (t : Midfall.Halo2.Transcript) :
+    (t.squeezeChallenge (p := p)).2.buffer = t.buffer := by
+  unfold Transcript.squeezeChallenge
+  exact squeeze_buffer t
+
+/-- The squeeze never fails and moves neither the cursor nor the buffer. -/
+theorem tmSqueezeChallenge_run_spec {p : Nat} [Fact (Nat.Prime p)]
+    (t : Midfall.Halo2.Transcript) :
+    ∃ x t', (Midfall.Halo2.tmSqueezeChallenge (p := p)).run t = .ok (x, t') ∧
+      t'.pos = t.pos ∧ t'.buffer = t.buffer := by
+  refine ⟨(t.squeezeChallenge (p := p)).1, (t.squeezeChallenge (p := p)).2,
+    tmSqueezeChallenge_run_eq t, squeezeChallenge_pos t, squeezeChallenge_buffer t⟩
+
+/-- `tmRead.run` is exactly the underlying transcript read. -/
+theorem tmRead_run_eq {T : Type} (h : Midfall.Halo2.Hashable T) (t : Midfall.Halo2.Transcript) :
+    (Midfall.Halo2.tmRead h).run t = t.read h := by
+  unfold Midfall.Halo2.tmRead
+  simp only [StateT.run, StateT.bind, StateT.get, StateT.lift, StateT.set, StateT.pure, bind,
+    Except.bind, pure, Except.pure]
+  cases t.read h <;> rfl
+
+/-- `tmRead` succeeds from a present, decodable repr. -/
+theorem tmRead_run_ok {T : Type} (h : Midfall.Halo2.Hashable T) (t : Midfall.Halo2.Transcript)
+    (repr : Bytes) (v : T)
+    (hbt : bytesTake t.buffer t.pos h.width = some repr)
+    (hr : h.readRepr? repr = some v) :
+    ∃ t', (Midfall.Halo2.tmRead h).run t = .ok (v, t') ∧ t'.pos = t.pos + h.width ∧
+      t'.buffer = t.buffer := by
+  obtain ⟨t', hread, hpos, hbuf⟩ := transcript_read_ok h t repr v hbt hr
+  exact ⟨t', (tmRead_run_eq h t).trans hread, hpos, hbuf⟩
+
+/-- The Fr hashable's reader is `frOfRepr?` (stated at a variable byte string so the
+    projection peels without reducing a concrete `frToRepr`). -/
+theorem hashableFr_readRepr? {p : Nat} [Fact (Nat.Prime p)] (b : Bytes) :
+    (Midfall.Halo2.hashableFr (p := p)).readRepr? b = frOfRepr? (p := p) b := rfl
+
+/-- The G1 hashable's width is the compressed width. -/
+theorem hashableG1_width {G₁ : Type} (g1 : G1Codec G₁) :
+    (Midfall.Halo2.hashableG1 g1).width = g1CompressedWidth := rfl
+
+/-- The Fr hashable's width is 32. -/
+theorem hashableFr_width {p : Nat} [Fact (Nat.Prime p)] :
+    (Midfall.Halo2.hashableFr (p := p)).width = 32 := rfl
+
+/-- The G1 hashable's reader is the codec's `ofCompressed?`. -/
+theorem hashableG1_readRepr? {G₁ : Type} (g1 : G1Codec G₁) (b : Bytes) :
+    (Midfall.Halo2.hashableG1 g1).readRepr? b = g1.ofCompressed? b := rfl
+
+/-- One G1 read from the exact wire tail. -/
+theorem tmRead_g1_run {G₁ : Type} [Group G₁] (g1 : G1Codec G₁)
+    (t : Midfall.Halo2.Transcript) (pref rest : Bytes) (Q : G₁)
+    (hbuf : t.buffer = pref ++ g1.toCompressed Q ++ rest) (hpos : t.pos = pref.size)
+    (henc : ∀ Q, g1.ofCompressed? (g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (g1.toCompressed Q).size = g1CompressedWidth) :
+    ∃ t', (Midfall.Halo2.tmRead (hashableG1 g1)).run t = .ok (Q, t') ∧
+      t'.pos = pref.size + g1CompressedWidth ∧ t'.buffer = t.buffer := by
+  have hbt : bytesTake t.buffer t.pos g1CompressedWidth = some (g1.toCompressed Q) := by
+    rw [hbuf, hpos, ← Nat.add_zero (ByteArray.size pref), ByteArray.append_assoc]
+    rw [bytesTake_append_right pref (g1.toCompressed Q ++ rest) 0 g1CompressedWidth (by
+      rw [ByteArray.size_append, hwidth]; omega)]
+    rw [bytesTake_append_left (g1.toCompressed Q) rest 0 g1CompressedWidth (by rw [hwidth]; omega)]
+    rw [← hwidth, bytesTake_whole]
+  obtain ⟨t', hrun, hpos', hbuf'⟩ :=
+    tmRead_run_ok (hashableG1 g1) t (g1.toCompressed Q) Q hbt
+      (by rw [hashableG1_readRepr?]; exact henc Q)
+  exact ⟨t', hrun, by rw [hpos', hashableG1_width, hpos], hbuf'⟩
+
+/-- The scalar wire's length: 32 bytes per scalar. -/
+theorem wireOf_size {p : Nat} [Fact (Nat.Prime p)] (qs : List (Fr p)) :
+    (wireOf (p := p) qs).size = 32 * qs.length := by
+  induction qs with
+  | nil => rfl
+  | cons q qs ih =>
+      rw [wireOf_cons, ByteArray.size_append, frToRepr_size, ih, List.length_cons]
+      omega
+
+/-- The scalar read run: a list of indices of the same length as `qs` reads `wireOf qs`
+    from the cursor forward, leaving the buffer alone. -/
+theorem tmRead_list_run {p : Nat} [Fact (Nat.Prime p)] :
+    ∀ (idx : List Nat) (t : Midfall.Halo2.Transcript) (pref : Bytes) (qs : List (Fr p))
+      (rest : Bytes), idx.length = qs.length →
+      t.buffer = pref ++ wireOf (p := p) qs ++ rest →
+      t.pos = pref.size → p ≤ 2 ^ 256 →
+      ∃ t', (idx.mapM (fun _ => Midfall.Halo2.tmRead (Midfall.Halo2.hashableFr (p := p)))).run t
+          = .ok (qs, t') ∧ t'.pos = pref.size + 32 * qs.length ∧ t'.buffer = t.buffer := by
+  intro idx
+  induction idx with
+  | nil =>
+      intro t pref qs rest hlen hbuf hpos hp
+      have hqs : qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen.symm)
+      subst hqs
+      refine ⟨t, ?_, ?_, rfl⟩
+      · rfl
+      · simp [hpos]
+  | cons i idx ih =>
+      intro t pref qs rest hlen hbuf hpos hp
+      obtain ⟨q, qs', hqs⟩ := List.exists_cons_of_length_pos (by rw [← hlen]; simp)
+      subst hqs
+      have hsize : (frToRepr (p := p) q).size = 32 := frToRepr_size q
+      have hbuf' : t.buffer = pref ++ ((frToRepr (p := p) q) ++ (wireOf (p := p) qs' ++ rest)) := by
+        rw [hbuf, wireOf_cons]
+        simp only [ByteArray.append_assoc]
+      have hbt : bytesTake t.buffer t.pos 32 = some (frToRepr (p := p) q) := by
+        rw [hbuf', hpos, ← Nat.add_zero (ByteArray.size pref)]
+        rw [bytesTake_append_right pref ((frToRepr (p := p) q) ++
+          (wireOf (p := p) qs' ++ rest)) 0 32 (by
+            rw [ByteArray.size_append, hsize]; omega)]
+        rw [bytesTake_append_left (frToRepr (p := p) q)
+          (wireOf (p := p) qs' ++ rest) 0 32 (by rw [hsize])]
+        rw [← hsize, bytesTake_whole]
+      obtain ⟨t1, hrun1, hpos1, hbuf1⟩ :=
+        tmRead_run_ok (Midfall.Halo2.hashableFr (p := p)) t (frToRepr (p := p) q) q hbt
+          (by rw [hashableFr_readRepr?]; exact frOfRepr_frToRepr hp q)
+      have hbuf1' : t1.buffer =
+          (pref ++ frToRepr (p := p) q) ++ wireOf (p := p) qs' ++ rest := by
+        rw [hbuf1, hbuf']
+        simp only [ByteArray.append_assoc]
+      have hpos1' : t1.pos = (pref ++ frToRepr (p := p) q).size := by
+        rw [hpos1, hpos, hashableFr_width, ByteArray.size_append, hsize]
+      obtain ⟨t2, hrun2, hpos2, hbuf2⟩ :=
+        ih t1 (pref ++ frToRepr (p := p) q) qs' rest (by simpa using hlen) hbuf1' hpos1' hp
+      refine ⟨t2, ?_, ?_, hbuf2.trans hbuf1⟩
+      · simp only [List.mapM_cons, StateT.run_bind, StateT.run_pure]
+        rw [hrun1]
+        simp only [Except.bind, Except.pure, bind, pure]
+        rw [hrun2]
+      · rw [hpos2, ByteArray.size_append, hsize]
+        simp only [List.length_cons]
+        omega
+
+/-- `assertEmpty` succeeds exactly when the cursor is at the buffer's end. -/
+theorem assertEmpty_run_ok (t : Midfall.Halo2.Transcript) (h : t.pos = t.buffer.size) :
+    t.assertEmpty = .ok () := by
+  unfold Transcript.assertEmpty
+  rw [← h]
+  simp
+
+/-- **THE PCS READ RUN (SIM.10 obligation 2).** From the exact wire tail — the fCom
+    compression, the q-eval scalars, then the pi compression — `pcsReads.run` succeeds,
+    returns those values, and leaves the cursor at the buffer's end. -/
+theorem pcsReads_run_ok {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features) (nSets : Nat)
+    (t : Midfall.Halo2.Transcript) (pref : Bytes) (fCom pi : G₁) (qs : List (Fr p))
+    (hlen : qs.length = nSets)
+    (hbuf : t.buffer = pref ++ g1.toCompressed fCom ++
+      wireOf (p := p) qs ++ g1.toCompressed pi)
+    (hpos : t.pos = pref.size)
+    (henc : ∀ Q, g1.ofCompressed? (g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (g1.toCompressed Q).size = g1CompressedWidth)
+    (hp : p ≤ 2 ^ 256) :
+    ∃ r t', (pcsReads g1 fc feat nSets).run t = .ok (r, t') ∧ r.fCom = fCom ∧ r.pi = pi ∧
+      r.qEvalsOnX3 = qs ∧ t'.pos = t.buffer.size ∧ t'.buffer = t.buffer := by
+  unfold pcsReads
+  simp only [StateT.run_bind, StateT.run_pure]
+  -- x1
+  obtain ⟨x1, t1, h1, hp1, hb1⟩ := tmSqueezeChallenge_run_spec (p := p) t
+  rw [h1]
+  simp only [Except.bind, Except.pure, bind, pure]
+  -- x2
+  obtain ⟨x2, t2, h2, hp2, hb2⟩ := tmSqueezeChallenge_run_spec (p := p) t1
+  rw [h2]
+  simp only [Except.bind, Except.pure, bind, pure]
+  -- fCom
+  obtain ⟨t3, h3, hp3, hb3⟩ :=
+    tmRead_g1_run g1 t2 pref (wireOf (p := p) qs ++ g1.toCompressed pi) fCom
+      (by rw [hb2, hb1, hbuf, ByteArray.append_assoc])
+      (by rw [hp2, hp1]; exact hpos) henc hwidth
+  rw [h3]
+  simp only [Except.bind, Except.pure, bind, pure]
+  -- x3raw
+  obtain ⟨x3raw, t4, h4, hp4, hb4⟩ := tmSqueezeChallenge_run_spec (p := p) t3
+  rw [h4]
+  simp only [Except.bind, Except.pure, bind, pure]
+  -- q evals
+  obtain ⟨t5, h5, hp5, hb5⟩ :=
+    tmRead_list_run (p := p) (List.range nSets) t4 (pref ++ g1.toCompressed fCom) qs
+      (g1.toCompressed pi) (by simp [hlen])
+      (by rw [hb4, hb3, hb2, hb1, hbuf])
+      (by rw [hp4, hp3, ByteArray.size_append, hwidth fCom]) hp
+  rw [h5]
+  simp only [Except.bind, Except.pure, bind, pure]
+  -- x4
+  obtain ⟨x4, t6, h6, hp6, hb6⟩ := tmSqueezeChallenge_run_spec (p := p) t5
+  rw [h6]
+  simp only [Except.bind, Except.pure, bind, pure]
+  -- pi
+  obtain ⟨t7, h7, hp7, hb7⟩ :=
+    tmRead_g1_run g1 t6 ((pref ++ g1.toCompressed fCom) ++ wireOf (p := p) qs)
+      Bytes.empty pi
+      (by rw [hb6, hb5, hb4, hb3, hb2, hb1, hbuf]; exact ByteArray.append_empty.symm)
+      (by simp only [hp6, hp5, ByteArray.size_append, wireOf_size]) henc hwidth
+  rw [h7]
+  simp only [Except.bind, Except.pure, bind, pure]
+  refine ⟨_, t7, rfl, rfl, rfl, rfl, ?_, ?_⟩
+  · rw [hp7, hbuf]
+    simp only [ByteArray.size_append, hwidth fCom, hwidth pi, wireOf_size, hlen]
+  · rw [hb7, hb6, hb5, hb4, hb3, hb2, hb1]
+
 /-! ## 4. ROW.TP.6'S BRIDGE — THE MODEL'S PARSER FACTS AND THE PLAN'S LAYOUT -/
 
 /-- `metaDataForVk` rewrites only `numEvals`, `numDummyEvals` and `numPointSets`: the seven fields
