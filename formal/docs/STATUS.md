@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `4c920bd` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
+**As of:** `79f2de3` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
 EXIT=0, KAT 1648/119, `axiom_sweep: ok`, closure fingerprint 4823 declarations / 526 external
 leaves / `bd27cd298a04fc1a`. The later A3/QVM commits are quick-gate green. Current report:
 root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
@@ -94,13 +94,14 @@ gate last ran at `d0bf226`.
 - **C0/widening glue** (`t/C0`): `rejectsW_of_sims`, `completeAnyGasW_of_progs`,
   `totalW_of_stages` through `blockSimW_iff_blockSim`.
 - **C1/F2** (`t/C1N`): IVC fixture export with the SRS, then the widened clause table.
-- **D1/end-to-end** (`t/D1`): both directions of `EndToEndV3` proved, and the message side of
-  `readScheduleAgrees` is now closed by `decodeRust_slots_eq_logWidths`. The only remaining premise
-  is `prepare_logSlots`: the static width sequence of `Verifier.prepare`,
-  `replicate prefixG1Count g1 ++ replicate numEvals fr ++ [g1] ++ replicate numPointSets fr ++ [g1]`,
-  tied to `(RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots`; it needs a
-  `PresWidthSeq` invariant over `prepare` plus `a.qEvalSets.size = R.plan.meta_.numPointSets`.
-  `runBody_mono` (ST.13) is the other shared leaf.
+- **D1/end-to-end** (`t/D1`): both `EndToEndV3` directions and
+  `decodeRust_slots_eq_logWidths` are green. `prepare_logSlots` now has four explicit sub-facts:
+  the `parseTrace`/`readAlgebra`/`multiPrepare` width sequences (`PresWidthSeq`), and the
+  KZG-partition bridge
+  `Halo2.constructIntermediateSets ... .pointSets.size = Generator.intermediateSets ... .pointSets.length`.
+  The latter has no query-list/commitment/partition correspondence in the tree; the port-fidelity
+  lane is checking it against Rust. `runBody_mono` (ST.13) is the other shared leaf; its direct
+  induction needs a transport/bisimulation because `FunEnv`/`VEnv` are not defeq across dialects.
 - **D2/certified generator** (`t/D2`): CERT.0 statement port/rebase, CERT.1 suspects, CERT.3
   constants, CERT.8 `generate` on the real F1 key.
 
