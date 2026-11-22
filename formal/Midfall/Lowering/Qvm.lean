@@ -5251,8 +5251,14 @@ theorem seg_stride_transfer_of_extend (hext : PG_segleg_opLenExtend)
     (pow5, MODARITH7, the limb family, the limb-decomposition residue split, the fused
     product/add peepholes, the accumulator-leaf cases and the generic stack path) together
     with the shape decoders' denotation tie. The interpreter-side LIN7 half is PROVED in
-    `QvmEmit.limbLinearForm_eq_denoteLin`; the builder half is `QvmEmit.PG_termFold_structure`,
-    and the other three shape decoders have no tie at all yet. -/
+    `QvmEmit.limbLinearForm_eq_denoteLin`; the builder half is `QvmEmit.PG_termFold_structure`
+    (now also PROVED), and the other three shape decoders have no tie at all yet.
+
+    **THIS FACT IS FALSE for the current `finalizedIdentitySegment`**, and so is the row:
+    `qvm_compile_correct_identity_is_false` below exhibits a selector-fold witness whose gap
+    low byte is `qOpFoldMain`, which the helper strips as a one-byte fold. The fact is kept as
+    the reduction's named hypothesis (it is the right shape once the statement is repaired),
+    but it cannot be discharged against the current helper. -/
 def PG_identity_emitterValue : Prop :=
   ∀ (r : QuotientShapeRecognizers) (_hr : RecognizersSound r)
     (s₀ s₁ : QuotientProgramBuilder) (e : QuotientExpr) (t : QuotientTarget) (gap : Option Nat)
@@ -5319,6 +5325,146 @@ theorem qvm_compile_correct_identity_of_parts
   exact ⟨v, mem'', hseg', hval⟩
 
 #print axioms Midfall.Lowering.qvm_compile_correct_identity_of_parts
+
+
+/-! ### IDREFUTE: `qvm_compile_correct_identity` IS FALSE AS STATED
+
+    The row quantifies `t : QuotientTarget` and `gap : Option Nat` freely, but
+    `finalizedIdentitySegment` (VmBuilder.lean:1480) identifies the trailing fold by its LAST
+    BYTE FIRST: `if bytes.getD (n-1) 0 == qOpFoldMain then take (n-1)`, and only then tests
+    `bytes.getD (n-4) == qOpFoldSelector`. A selector fold is the four bytes
+    `[FOLD_SELECTOR, idx, gap/256, gap%256]` (foldIdentity, VmBuilder.lean:909-926), so when
+    `gap % 256 = qOpFoldMain = 0x0a` the last-byte test fires and strips ONE byte instead of
+    four. The resulting `seg` still contains `FOLD_SELECTOR`, and `evalQuotientIdentity`
+    refuses it with `QVMFault.streamOpcodeInIdentity`.
+
+    THE WITNESS BELOW SATISFIES EVERY HYPOTHESIS: `identityExpr noShapeRecognizers` on
+    `QuotientExpr.const 1` at `QuotientTarget.selector 0` with `gap = some 10` emits
+    `[9, 0, 11, 0, 0, 10]` (PUSH_CONST_U8 0, then FOLD_SELECTOR 0 0 10), the constant 1 is
+    canonical, compaction copies the six bytes (no affine-add op is present), and
+    `finalizedIdentitySegment` returns `[9, 0, 11, 0, 0]`. The interpreter then errors at the
+    FOLD_SELECTOR byte, so the existential conclusion is false for every valuation.
+
+    THIS IS A STATEMENT DEFECT, NOT A PROOF GAP, and it is the same failure mode as the
+    D-QVM2/SEGLEG findings: the model helper's arm order is load-bearing and was assumed.
+    The repair is a statement decision (human): either pass the identity's target to
+    `finalizedIdentitySegment` and strip by the target (unambiguous), or constrain the
+    selector gap so its low byte cannot equal FOLD_MAIN, or change the fold encoding. No
+    repair is applied here - the row's statement and hash are untouched. The proof is on
+    [propext, Classical.choice, Quot.sound]; no sorry, no native_decide. -/
+
+/-- The six bytes the witness emits: `PUSH_CONST_U8 0` then `FOLD_SELECTOR 0 0 10`. -/
+def identityRefutationBytes : List Nat := [9, 0, 11, 0, 0, 10]
+
+/-- The builder `identityExpr` returns at the witness. -/
+def identityRefutationS1 : QuotientProgramBuilder :=
+  { bytes := identityRefutationBytes
+    consts := [1]
+    constSlots := [(1, 0)]
+    vars := []
+    stackDepth := 0
+    maxStack := 1
+    limbVmOps := true }
+
+theorem identityRefutation_emits :
+    identityExpr noShapeRecognizers builderDefault (QuotientExpr.const 1)
+      (QuotientTarget.selector 0) (some 10) = .ok identityRefutationS1 := by
+  simp only [identityExpr, emitExprTop, emitFuel, emitExpr, tryEmitPow5,
+    tryEmitModarith7Shape, tryEmitLimbShape, tryEmitLimbDecomposition, noShapeRecognizers,
+    emitConst, constSlot, constSlotOf, pushByte, appendBytes, pushStackAcct, foldIdentity,
+    popStackAcct, emitU24, emitU16, QuotientExpr.nodeCount,
+    identityRefutationS1, identityRefutationBytes]
+  rfl
+
+theorem identityRefutation_compacts :
+    compactQuotientRuns
+        (identityRefutationS1.bytes.drop builderDefault.bytes.length) =
+      (Except.ok identityRefutationBytes : M (List Nat)) := by
+  show compactQuotientRuns [9, 0, 11, 0, 0, 10] = .ok [9, 0, 11, 0, 0, 10]
+  unfold compactQuotientRuns
+  rw [Midfall.Generator.QuotientBuilder.compactGo.eq_def]
+  simp (config := { decide := true }) only [List.length, List.getD,
+    Nat.reduceBEq, Nat.reduceLT, reduceIte]
+  rw [show QuotientBuilder.quotientOpLen [9, 0, 11, 0, 0, 10] 0 = .ok 2 from rfl]
+  simp only [bind, Except.bind, byteSlice, List.drop, List.take, List.nil_append]
+  rw [Midfall.Generator.QuotientBuilder.compactGo.eq_def]
+  simp (config := { decide := true }) only [List.length, List.getD,
+    Nat.reduceBEq, Nat.reduceLT, reduceIte]
+  rw [show QuotientBuilder.quotientOpLen [9, 0, 11, 0, 0, 10] 2 = .ok 4 from rfl]
+  simp only [bind, Except.bind, byteSlice, List.drop, List.take, List.nil_append]
+  rw [Midfall.Generator.QuotientBuilder.compactGo.eq_def]
+  simp (config := { decide := true }) only [List.length, List.getD,
+    Nat.reduceBEq, Nat.reduceLT, reduceIte]
+  rfl
+
+theorem identityRefutation_seg :
+    finalizedIdentitySegment identityRefutationBytes = some [9, 0, 11, 0, 0] := by rfl
+
+theorem identityRefutation_eval (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentity [9, 0, 11, 0, 0] [1] mem
+      = .error (QVMFault.streamOpcodeInIdentity 11 2) := by
+  simp only [Midfall.Generator.evalQuotientIdentity, Midfall.Generator.evalQuotientIdentityLoop,
+    Midfall.Generator.evalQuotientIdentityLoop.go, Midfall.Generator.evalQuotientIdentityStep,
+    Midfall.Generator.constAt, Midfall.Generator.fqFromU256, List.getD, List.length,
+    Nat.reduceAdd, Nat.reduceLT, reduceIte, bind, Except.bind]
+  rfl
+
+theorem identityRefutation_hconsts :
+    ∀ c ∈ identityRefutationS1.consts, c.toNat < qvmFrModulus := by
+  intro c hc
+  simp [identityRefutationS1] at hc
+  subst hc
+  decide
+
+theorem identityRefutation_conclusion_fails (ρ : Valuation) :
+    ¬ ∃ v mem', Midfall.Generator.evalQuotientIdentity [9, 0, 11, 0, 0] [1]
+      (memOfρ ρ (leafKeys (QuotientExpr.const 1))) = .ok (v, mem') := by
+  intro h
+  obtain ⟨v, mem', hv⟩ := h
+  rw [identityRefutation_eval] at hv
+  cases hv
+
+/-- **THE ROW IS FALSE.** Every hypothesis of `qvm_compile_correct_identity` is satisfied at
+    this selector-fold witness, and its existential conclusion is false for every valuation.
+    This theorem does not modify the row; it records the counterexample the row needs to be
+    restated against. -/
+theorem qvm_compile_correct_identity_is_false :
+    ∃ (s1 : QuotientProgramBuilder) (e : QuotientExpr) (t : QuotientTarget) (gap : Option Nat)
+      (cseg seg : List Nat),
+      identityExpr noShapeRecognizers builderDefault e t gap = .ok s1 ∧
+      RecognizersSound noShapeRecognizers ∧
+      exprBounded e ∧
+      (∀ c ∈ s1.consts, c.toNat < qvmFrModulus) ∧
+      compactQuotientRuns (s1.bytes.drop builderDefault.bytes.length) = .ok cseg ∧
+      finalizedIdentitySegment cseg = some seg ∧
+      ∀ ρ, ¬ ∃ v mem', Midfall.Generator.evalQuotientIdentity seg s1.consts
+        (memOfρ ρ (leafKeys e)) = .ok (v, mem') := by
+  refine ⟨identityRefutationS1, QuotientExpr.const 1, QuotientTarget.selector 0, some 10,
+    identityRefutationBytes, [9, 0, 11, 0, 0], identityRefutation_emits,
+    noShapeRecognizers_sound, ?_,
+    identityRefutation_hconsts, identityRefutation_compacts, identityRefutation_seg, ?_⟩
+  · simp [exprBounded]
+  · intro ρ
+    exact identityRefutation_conclusion_fails ρ
+
+#print axioms Midfall.Lowering.qvm_compile_correct_identity_is_false
+
+
+/-- **`PG_identity_emitterValue` IS FALSE TOO**, for the same witness: the body
+    `finalizedIdentitySegment` returns still contains `FOLD_SELECTOR`, so the interpreter
+    errors and no `v` exists. This is the exact reason the first of the three IDVALUE facts
+    cannot be discharged against the current helper; the fact's shape is right for a repaired
+    statement, but its conclusion is refuted here. -/
+theorem PG_identity_emitterValue_is_false : ¬ PG_identity_emitterValue := by
+  intro h
+  have hbad := h noShapeRecognizers noShapeRecognizers_sound builderDefault
+    identityRefutationS1 (QuotientExpr.const 1) (QuotientTarget.selector 0) (some 10)
+    [9, 0, 11, 0, 0] identityRefutation_emits (by simp [exprBounded])
+    identityRefutation_hconsts identityRefutation_seg (fun _ _ => 0)
+  obtain ⟨v, mem', hv, _⟩ := hbad
+  exact identityRefutation_conclusion_fails (fun _ _ => 0) ⟨v, mem', hv⟩
+
+#print axioms Midfall.Lowering.PG_identity_emitterValue_is_false
 
 
 end Midfall.Lowering
