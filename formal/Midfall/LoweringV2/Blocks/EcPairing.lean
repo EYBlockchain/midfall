@@ -425,10 +425,11 @@ theorem wordFrom_pairingOutputWord (b : Bool) :
     a successful `permissive (callsOf product)` response at 0x0f, whose 32-byte return word is 1,
     forces `product input = true`. -/
 theorem product_of_honest_staticcall (product : PairingProduct)
-    (req : YulSemantics.EVM.CallRequest) (st4 : EvmState) (resp : EVM.CallResponse)
-    (input : Bytes) (htarget : req.target = pairingAddress)
-    (hsucc : resp.success = true)
+    {req : YulSemantics.EVM.CallRequest} {st4 : EvmState} (resp : EVM.CallResponse)
+    (input : Bytes)
     (hcall : (permissive (callsOf product)).Call req st4 resp)
+    (htarget : req.target = pairingAddress)
+    (hsucc : resp.success = true)
     (hinput : ByteArray.mk req.input.toArray = input)
     (hword : wordFrom resp.returndata 0 = 1) :
     product input = true := by
