@@ -38,8 +38,11 @@ and the `snapshotOf_prepareMsgs` retirement.
   helpers and the D-GATE2-corrected `lag_agrees` prose. The b-body guard-TRUE proof is parked on
   `t/A4-bwip` (not merged): fuel 13 is needed and the joint `simp` exceeds 200k heartbeats, so the
   semantic `allRuns_loop` route is next. A5/`batch_invert_summary` is a prerequisite of the row.
-- **A5** (`midfall-e`, `t/A5`): `batch_invert_summary` (HLP.1.b), `bi_forward_loop`, and the
-  missing `bi_backward_loop` (HLP.1.c) in `BatchInvert.lean`, importing `LagrangeRows`.
+- **A5** (`16fdfd7`): `BatchInvert.lean` vocabulary, both loop forms, forward-product algebra and
+  the read-over-window lemmas are merged (zero sorries). The worker found `bi_forward_loop` FALSE
+  as stated — the evidence pre omits the emitter statement-9 canonicality guard; the corrected
+  pre is recorded and is being proved (an arm lemma, not a row hypothesis). `batch_invert_summary`
+  needs the arbitrary-prime modexp byte-parse; both are in flight.
 - **A6 transcriptParser** (`midfall-f`, `t/A6`) and **A9 PCS** (`midfall-i`, `t/A9`): the next two
   block-row components, each in a new `*Rows.lean`; A9 first reports whether the queue's A8
   dependency is real or file-disjoint.
