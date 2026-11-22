@@ -2007,3 +2007,66 @@ theorem eval_mstore_second_pass_halt_false {funs : FunEnv (Bridge.Dialect c g)}
       split at hbi <;> simp at hbi
   | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
 
+
+/-- The second-pass body block, inverted: it ends normally and leaves the updated environment and
+the store over the mload word. -/
+theorem exec_second_pass_body_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V Vb : VEnv (Bridge.Dialect c g)} {st stb : EvmState} {rv : U256} {o : Outcome}
+    (hrv : VEnv.get V "r" = some rv)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.block
+        [ Stmt.exprStmt (Expr.builtin Op.mstore
+            [Expr.var "mptr", Expr.builtin Op.mulmod
+              [Expr.var "l_i_common", Expr.builtin Op.mulmod
+                [Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "pow_of_omega", Expr.var "r"],
+                Expr.var "r"]]),
+          Stmt.assign ["pow_of_omega"] (Expr.builtin Op.mulmod
+            [Expr.var "pow_of_omega", Expr.var "omega", Expr.var "r"])])
+      Vb stb o) :
+    o = .normal ∧ ∃ lc mp pw om,
+      VEnv.get V "l_i_common" = some lc ∧ VEnv.get V "mptr" = some mp ∧
+      VEnv.get V "pow_of_omega" = some pw ∧ VEnv.get V "omega" = some om ∧
+      Vb = VEnv.set V "pow_of_omega" (wMulmodAt pw om rv) ∧
+      stb = { touchMemory (touchMemory st mp.toNat 32) mp.toNat 32 with
+        memory := storeWord st.memory mp.toNat
+          (wMulmodAt lc (wMulmodAt (loadWord st.memory mp.toNat) pw rv) rv) } := by
+  cases h with
+  | block hb =>
+      cases hb with
+      | seqCons h1 hrest =>
+          cases hrest with
+          | seqCons h2 hnil =>
+              cases hnil with
+              | seqNil =>
+                  obtain ⟨rfl, st1, hm, hst1⟩ := exec_exprStmt_inv h1
+                  obtain ⟨lc, mp, pw, hlc, hmp, hpw, hstm⟩ :=
+                    eval_mstore_second_pass_inv hrv hm
+                  obtain ⟨v2, he2, hV2⟩ := exec_assign_inv h2
+                  obtain ⟨pwm, om, rvm, hpwm, hom, hrvm, hv2, hst2⟩ :=
+                    eval_mulmod_vars_inv he2
+                  have hpw_eq : pwm = pw := Option.some.inj (hpwm.symm.trans hpw)
+                  have hrv_eq : rvm = rv := Option.some.inj (hrvm.symm.trans hrv)
+                  have hpw_eq' : pw = pwm := hpw_eq.symm
+                  have hrv_eq' : rv = rvm := hrv_eq.symm
+                  subst hpw_eq'
+                  subst hrv_eq'
+                  subst hv2
+                  refine ⟨rfl, lc, mp, pw, om, hlc, hmp, hpw, hom, ?_, ?_⟩
+                  · rw [hV2, restore_set_same (D := Bridge.Dialect c g)]
+                  · rw [hst2, hst1, hstm]
+          | seqStop h2 hne =>
+              cases h2 with
+              | assignVal _ _ => cases hne rfl
+              | assignHalt he => exact (eval_mulmod_vars_halt_false he).elim
+      | seqStop h1 hne =>
+          cases h1 with
+          | exprStmt he => cases hne rfl
+          | exprStmtHalt he => exact (eval_mstore_second_pass_halt_false he).elim
+
+/-- A store leaves every byte outside its 32-byte window where it was. -/
+theorem storeWord_outside (mem : Nat → UInt8) (p : Nat) (v : U256) (a : Nat)
+    (h : a < p ∨ p + 32 ≤ a) : storeWord mem p v a = mem a := by
+  simp only [storeWord]
+  rw [ite_eq_right]
+  rintro ⟨h1, h2⟩
+  omega
