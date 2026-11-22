@@ -37,6 +37,7 @@
 -- verbatim modulo the two names above. 'lag_sq_loop' applies
 -- 'Midfall.Yul.LoopRule.allRuns_for_cons_wp' (GEN.3), which is the rule T3.9.a is the first use of.
 import Midfall.LoweringV3.QuotientRows
+import Midfall.LoweringV3.LagrangeAlg
 import Midfall.LoweringV2.Blocks.VkLoading
 import Midfall.Yul.LoopRule
 import Midfall.Yul.Word
