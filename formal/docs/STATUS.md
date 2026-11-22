@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `7dbecf3` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
+**As of:** `8d22be0` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
 EXIT=0, KAT 1648/119, `axiom_sweep: ok`, closure fingerprint 4823 declarations / 526 external
 leaves / `bd27cd298a04fc1a`. The later A3/QVM commits are quick-gate green. Current report:
 root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
@@ -22,6 +22,9 @@ root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
     KAT ...................... 1648/119 (full gate at d0bf226; quick since)
     axiom roots .............. standard three + sorryAx, native []
 
+**Pending green branch increments:** A4 `79907b1` (`lag_agrees_lLast_l0`), A5 `5a0e874`
+(output-word round trip), A9 `e405fb8` (`eval_add_var_lit`), D1 `73c8e3a`
+(`gap_readScheduleAgrees`). They merge as soon as the full gate finishes.
 **Merged since the last full gate:** D1's `EndToEnd.lean` (both directions; one remaining
 `readScheduleAgrees_of_validV3` projection), A4's `LagrangeAlg` + `lag_agrees_xn` (D-GATE2
 exponent), A5's staticcall segment form, A9's scalar-inv store plumbing; QVMHDR `modarith7Form_shift`/`step_shift_modarith7` and the
