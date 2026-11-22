@@ -573,6 +573,97 @@ theorem end_to_end_of_readSchedule (R : Render p G₁ G₂ Gₜ) (product : Pair
     exact end_to_end_backward R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
       inst π hn hside hrhs
 
+theorem logDispatch_slot (E : VerifierEnv p G₁ G₂ Gₜ) (rec : Nat × Bytes)
+    (m : Msg (Fr p) G₁)
+    (hw : rec.1 = 32 ∨ rec.1 = g1CompressedWidth)
+    (h : logDispatch E rec = some m) :
+    Msg.slot m =
+      if rec.1 = g1CompressedWidth then WireSlot.g1 else WireSlot.fr := by
+  have htwo : logDispatch E rec =
+      (if rec.1 == (hashableG1 E.g1).width then (E.g1.ofCompressed? rec.2).map Msg.g1
+        else (frOfRepr? (p := p) rec.2).map Msg.fr) := by
+    unfold logDispatch
+    rw [hashableG1_width, hashableFr_width]
+    exact widthDispatch_exhaustive (fun b => (E.g1.ofCompressed? b).map Msg.g1)
+      (fun b => (frOfRepr? (p := p) b).map Msg.fr) rec hw
+  rw [htwo, hashableG1_width] at h
+  by_cases hg : (rec.1 == g1CompressedWidth) = true
+  · rw [if_pos hg] at h
+    cases hq : E.g1.ofCompressed? rec.2 with
+    | none => rw [hq] at h; cases h
+    | some Q =>
+        rw [hq, Option.map_some] at h
+        have hm : Msg.g1 Q = m := Option.some.inj h
+        subst hm
+        have hrec : rec.1 = g1CompressedWidth := of_decide_eq_true hg
+        simp [Msg.slot, hrec]
+  · rw [if_neg hg] at h
+    cases hq : frOfRepr? (p := p) rec.2 with
+    | none => rw [hq] at h; cases h
+    | some s =>
+        rw [hq, Option.map_some] at h
+        have hm : Msg.fr s = m := Option.some.inj h
+        subst hm
+        have hne : ¬ rec.1 = g1CompressedWidth := by
+          intro hrec
+          exact hg (by rw [hrec]; exact beq_self_eq_true _)
+        have hrec32 : rec.1 = 32 := by
+          rcases hw with h32 | h48
+          · exact h32
+          · exact absurd h48 hne
+        simp only [Msg.slot, hne, if_neg]
+        rfl
+
+theorem list_mapM_slot (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (l : List (Nat × Bytes)) (ms : List (Msg (Fr p) G₁)),
+      (∀ rec ∈ l, rec.1 = 32 ∨ rec.1 = g1CompressedWidth) →
+      l.mapM (logDispatch E) = some ms →
+      ms.map Msg.slot =
+        l.map (fun r =>
+          if r.1 = g1CompressedWidth then WireSlot.g1 else WireSlot.fr) := by
+  intro l
+  induction l with
+  | nil =>
+      intro ms _ h
+      cases h
+      rfl
+  | cons a as ih =>
+      intro ms hw h
+      rw [List.mapM_cons] at h
+      change Option.bind (logDispatch E a)
+        (fun b => Option.bind (List.mapM (logDispatch E) as)
+          (fun bs => some (b :: bs))) = some ms at h
+      rw [Option.bind_eq_some_iff] at h
+      obtain ⟨m, hm, hrest⟩ := h
+      change Option.bind (List.mapM (logDispatch E) as)
+        (fun bs => some (m :: bs)) = some ms at hrest
+      rw [Option.bind_eq_some_iff] at hrest
+      obtain ⟨msTail, hms, hsome⟩ := hrest
+      have hmsEq : m :: msTail = ms := Option.some.inj hsome
+      have hw' : ∀ rec ∈ as, rec.1 = 32 ∨ rec.1 = g1CompressedWidth :=
+        fun rec hrec => hw rec (List.mem_cons_of_mem a hrec)
+      have hslots := ih msTail hw' hms
+      rw [← hmsEq]
+      simp only [List.map_cons]
+      rw [logDispatch_slot E a m (hw a List.mem_cons_self) hm, hslots]
+
+theorem decodeRust_slots_eq_logWidths (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (π : Bytes)
+    {ms : List (Msg (Fr p) G₁)}
+    (hdec : decodeRust (Gₜ := Gₜ) E F vk inst π = some ms) :
+    ∃ t : Transcript,
+      ms.map Msg.slot =
+        t.log.toList.map (fun r =>
+          if r.1 = g1CompressedWidth then WireSlot.g1 else WireSlot.fr) := by
+  obtain ⟨d, t, hrun, hpos, hmap⟩ := decodeRust_some E F vk inst π ms hdec
+  have hw : ∀ rec ∈ t.log.toList, rec.1 = 32 ∨ rec.1 = g1CompressedWidth := by
+    have hpres : PresWidths (prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]) :=
+      presWidths_prepare (p := p) E F vk [[1]] [[inst.toList]]
+    exact hpres (Transcript.initFromBytes π) t d
+      (Transcript.LogWidths.initFromBytes π) hrun
+  exact ⟨t, list_mapM_slot E t.log.toList ms hw hmap⟩
+
+
 /-- **THE NAMED D1 BLOCKER.** `ValidV3` pins the plan to the generator
     (`generated`), and `SupportedV2.layout` pins only the MEMORY map. Neither pins
     the verifier's read order: `decodeRust` is a run of `Verifier.prepare`, while
@@ -585,7 +676,9 @@ def gap_readScheduleAgrees : String :=
     "generateAll, so plan.proofLayout is from ProtocolPlan.fromConstraintSystem on " ++
     "R.vk.cs; but no theorem relates the WIDTH SEQUENCE of Verifier.prepare (hence " ++
     "decodeRust) to that protocol plan. SupportedV2.layout is the memory-map check " ++
-    "only. Smallest true bridge: prepare_logSlots — for every successful " ++
+    "only. PROVED REDUCTION: decodeRust_slots_eq_logWidths below shows " ++
+    "ms.map Msg.slot IS t.log.toList.map width, so only the static width list " ++
+    "remains. Smallest true bridge: prepare_logSlots — for every successful " ++
     "(prepare ...).run, the log widths are replicate prefixG1Count g1 ++ " ++
     "replicate numEvals fr ++ [g1] ++ replicate numPointSets fr ++ [g1]. " ++
     "With that, decodeRust = some ms gives ms.map Msg.slot = plan.slots and " ++
