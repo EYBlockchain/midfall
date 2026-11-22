@@ -2790,3 +2790,30 @@ output predicate the fold arms actually produce. The agent states it against the
 **Consequences.** The old row's sorry and its register row are deleted in the same commit that adds
 the replacement (W13); the ROWFALSE refutations stay as the W12 falsifiers of the retired text.
 `q_blockSim`'s named-leaf list is re-pointed to the replacement.
+
+## D-GATE1 — **Approved: close PG-VKHEADER, gasFree and the snapshot replay row (three frozen/class decisions)**
+
+> **Status: APPROVED.** Signed 2026-11-22 in the OpenCode session on `/Users/julian/midfall`,
+> after the A3/GASFREE workers left exact goal states. The three questions and answers:
+> 1. PG-VKHEADER — *"Add `11 ≤ constants.length` (Recommended)"*.
+> 2. `gasFree_of_valid` — *"Add a frozen `programOk` GasFree clause (Recommended)"*.
+> 3. `snapshotOf_prepareMsgs` — *"Accept replay evidence and retire the row (Recommended)"*.
+
+**Decisions.**
+1. `PayloadAgrees` (frozen `LoweringV2/Statements.lean`) gains one conjunct:
+   `11 ≤ R.pv.vk.constants.length`. It is the minimal clause that makes the vkLoading S3–S8
+   memory-window reads follow from the payload pins; the A3 worker's `copyInto`/`vkLen` boundary
+   lemmas are the witness of necessity. This is a frozen edit: update `Frozen.sha256`, the
+   closure/fingerprint pins, and every construction of `PayloadAgrees` in the same change.
+2. `LoweringV3.programOk` gains one conjunct `GasFree (R.prog 0 0)` (the `GasFree` predicate moves
+   to a module both `Statements` and `Totality` can import). `gasFree_of_valid` becomes its
+   projection; `runBody_gas_oblivious` is already proved. This is a class edit, not a new
+   hypothesis on a row or the root.
+3. `snapshotOf_prepareMsgs` is RETIRED on the D6 KAT/reference replay evidence: delete the hole
+   and its consumer, or replace the consumer by the proved replay fact; no axiom and no new
+   hypothesis. `SORRY.md` and the closure pin move with it.
+
+**Conditions.** W13/W15 apply: the frozen/class edits land with their re-hashes and a fresh
+register; a row is not stated with a new hypothesis to avoid the edit. If a consumer cannot be
+retired without weakening the root, STOP and report the exact consumer instead of inventing a
+replacement.
