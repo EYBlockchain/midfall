@@ -722,7 +722,43 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
    (∀ i, a + 32*i + 32 < e → (loadWord st.memory (a+32*i)).toNat < rw.toNat) ∧
    ∃ P, P 0 = loadWord st.memory a ∧ …)`, and the `i = 0` clause has no derivation from the pre.
 
-  **(2) `batch_invert_summary` NEEDS AN ARBITRARY-PRIME MODEXP LEMMA THE TREE DOES NOT HAVE.**
+  **(2) `batch_invert_summary` STILL NEEDS THE ARBITRARY-PRIME MODEXP BRIDGE (and the backward
+  loop: `BatchInvertPost`'s `ret ≠ 0` arm is exactly the backward loop's post, so the order is
+  `bi_backward_loop` first, then the staticcall/modexp, then the summary).**
+  The remaining byte work can be done ENTIRELY AT THE MEMORY LEVEL, without generalising the
+  `blsR`-specific abstract `modexpInvFrame`: the helper stores six 32-byte words at
+  `p, p+32, …, p+160` (`modexpFrameStores`, GenAst.lean:408-417), so if
+    (i) `readBytes (storeWord mem p v) p 32 = (bytesNatBE v.toNat 32).data.toList`
+        (the store/read bridge; `byteAt_eq_toUInt8` is the only byte arithmetic: the emitted byte
+        at `p+i` is `Nat.toUInt8 ((v.toNat / 256^(31-i)) % 256)` while `bytesNatBE` writes the
+        reversed digit list), and
+    (ii) `bytesToNatBE (ByteArray.mk (readBytes mem q 32).toArray) = (loadWord mem q).toNat`
+        (the 32-byte fold is the same big-endian fold; `bytesToNatBE` is a `Nat` fold and
+        `loadWord` a `U256` fold, so the only lemma is
+        `(l.foldl (fun acc b => (acc <<< 8) ||| b) 0).toNat = l.foldl (fun acc b => acc*256 + b) 0`
+        for `l.length ≤ 32`, by induction with the accumulator bound `acc < 256^(32 - l.length)`),
+  then `modexpSizes input = (32,32,32)`, `modexpParse?` gives the three stored operand words, and
+  `modexpOutput` is `bytesNatBE (modPow base (rw-2) rw) 32`; `modPow_inv` at `p := rw.toNat`
+  (`Assumptions/Eip2537.lean:319`, general in `p`) finishes. The old plan - re-proving the private
+  `modexpInvFrame_slices` for an arbitrary modulus - is NOT needed and should not be attempted.
+
+  **PLAN FOR `bi_backward_loop` (HLP.1.c), the next leaf.** With `k = (e-a)/32` and
+  `hae : a + 96 ≤ e` (so `3 ≤ k`), the loop is statement 29 and starts after the `sub(gp_mptr, 32)`:
+  pre `mptr = ofNat (a + 32*(k-1))`, `second_mptr = ofNat (a+32)`,
+  `gp_mptr = ofNat (s + 32*(k-3))`, `all_inv = some invAll`,
+  `hinv : wMulmodAt invAll (fwdProd st.memory a rw (k-1)) rw = 1`, every batch word and every
+  `fwdProd` canonical/non-zero, and the forward scratch `loadWord st.memory (s+32*i) = fwdProd (i+1)`.
+  Invariant after `j` iterations: `all_inv` is the inverse of `fwdProd (k-1-j)`,
+  `mptr = ofNat (a + 32*(k-1-j))`, words `k-j … k-1` hold inverses, words `< k-j` are untouched,
+  memory outside `[a,e)` and the scratch window is unchanged. The iteration stores
+  `w_{k-1-j}⁻¹ = wMulmodAt all_inv (fwdProd (k-2-j)) rw`; the one missing arithmetic lemma is
+  associativity of `wMulmodAt` on canonical words,
+  `wMulmodAt (wMulmodAt a b r) c r = wMulmodAt a (wMulmodAt b c r) r` for `a,b,c < r`, which is
+  `Nat.mul_assoc` through `Nat.mul_mod`. The post is exactly `BatchInvertPost`'s `ret ≠ 0` arm for
+  `i ≥ 2`; the tail (statements 30-33) supplies `i = 0,1`.
+
+  **(2, original note) `batch_invert_summary` NEEDS AN ARBITRARY-PRIME MODEXP LEMMA THE TREE DOES
+  NOT HAVE.**
   The summary (`GeneratorRows.lean:317-330`) is generic in `rw : U256` with `hrw : Nat.Prime rw.toNat`
   and only `BatchInvertPost` as post. Its `ret ≠ 0` arm must identify the staticcall's honest
   32-byte output with `(loadWord st.memory (a+32i))⁻¹`. The tree's byte-parse + Fermat proof is
