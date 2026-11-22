@@ -180,6 +180,7 @@ import Midfall.LoweringV2.Statements
 import Midfall.LoweringV2.Consts
 import Midfall.LoweringV2.HonestExec
 import Midfall.LoweringV2.Blocks
+import Midfall.LoweringV2.Blocks.EcPairing
 import Midfall.Instances.R72GateProbe
 import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.LoweringV2.Blocks.TraceReturn
