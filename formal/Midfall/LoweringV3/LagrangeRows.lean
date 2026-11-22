@@ -37,6 +37,7 @@
 -- verbatim modulo the two names above. 'lag_sq_loop' applies
 -- 'Midfall.Yul.LoopRule.allRuns_for_cons_wp' (GEN.3), which is the rule T3.9.a is the first use of.
 import Midfall.LoweringV3.QuotientRows
+import Midfall.LoweringV3.LagrangeAlg
 import Midfall.LoweringV2.Blocks.VkLoading
 import Midfall.Yul.LoopRule
 import Midfall.Yul.Word
@@ -53,6 +54,7 @@ open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
 open Midfall.LoweringV2 Midfall.Lowering.GenAst
 open Midfall.LoweringV3.QuotientRows
 open Midfall.Yul.Wp Midfall.Yul.LoopRule Midfall.Yul.WpBridge
+open Midfall.LoweringV3.LagrangeAlg
 
 variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [Group G₁] [Group G₂] [Group Gₜ]
@@ -554,6 +556,123 @@ theorem lag_denoms_loop_form (consts : Inline.Consts) (k n m : Nat) :
 `mstore`/`mload` compute. -/
 theorem ofNat_toNat {n : Nat} (h : n < 2 ^ 256) : (BitVec.ofNat 256 n).toNat = n := by
   rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt h]
+
+/-! ## 6b. THE FIELD-WORD BRIDGE FOR T3.9.g -/
+
+theorem ofNat_p_ne_zero {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) :
+    (BitVec.ofNat 256 p : U256) ≠ 0 := by
+  intro h0
+  have h := congrArg BitVec.toNat h0
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp] at h
+  exact (Fact.out : Nat.Prime p).ne_zero h
+
+theorem wAddmodAt_toNat {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : U256) :
+    (wAddmodAt a b (BitVec.ofNat 256 p : U256)).toNat = (a.toNat + b.toNat) % p := by
+  rw [wAddmodAt, if_neg (ofNat_p_ne_zero hp), BitVec.toNat_ofNat,
+    BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp]
+  have hlt : (a.toNat + b.toNat) % p < 2 ^ 256 :=
+    Nat.lt_of_lt_of_le (Nat.mod_lt _ (Fact.out : Nat.Prime p).pos) (Nat.le_of_lt hp)
+  rw [Nat.mod_eq_of_lt hlt]
+
+theorem wMulmodAt_toNat {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : U256) :
+    (wMulmodAt a b (BitVec.ofNat 256 p : U256)).toNat = (a.toNat * b.toNat) % p := by
+  rw [wMulmodAt, if_neg (ofNat_p_ne_zero hp), BitVec.toNat_ofNat,
+    BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp]
+  have hlt : (a.toNat * b.toNat) % p < 2 ^ 256 :=
+    Nat.lt_of_lt_of_le (Nat.mod_lt _ (Fact.out : Nat.Prime p).pos) (Nat.le_of_lt hp)
+  rw [Nat.mod_eq_of_lt hlt]
+
+theorem frWord_add {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : Fr p) :
+    Midfall.Halo2.frWord (a + b) =
+      wAddmodAt (Midfall.Halo2.frWord a) (Midfall.Halo2.frWord b)
+        (BitVec.ofNat 256 p : U256) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Midfall.Halo2.frWord_toNat hp, wAddmodAt_toNat hp, ZMod.val_add,
+    Midfall.Halo2.frWord_toNat hp, Midfall.Halo2.frWord_toNat hp]
+
+theorem frWord_mul {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : Fr p) :
+    Midfall.Halo2.frWord (a * b) =
+      wMulmodAt (Midfall.Halo2.frWord a) (Midfall.Halo2.frWord b)
+        (BitVec.ofNat 256 p : U256) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Midfall.Halo2.frWord_toNat hp, wMulmodAt_toNat hp, ZMod.val_mul,
+    Midfall.Halo2.frWord_toNat hp, Midfall.Halo2.frWord_toNat hp]
+
+theorem frWord_sub {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : Fr p) :
+    Midfall.Halo2.frWord (a - b) =
+      wAddmodAt (Midfall.Halo2.frWord a) ((BitVec.ofNat 256 p : U256) - Midfall.Halo2.frWord b)
+        (BitVec.ofNat 256 p : U256) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Midfall.Halo2.frWord_toNat hp, wAddmodAt_toNat hp]
+  have hb : (Midfall.Halo2.frWord b).toNat < p := Midfall.Halo2.frWord_toNat_lt hp b
+  have hsub : ((BitVec.ofNat 256 p : U256) - Midfall.Halo2.frWord b).toNat =
+      p - (Midfall.Halo2.frWord b).toNat := by
+    rw [BitVec.toNat_sub, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp]
+    omega
+  rw [hsub, Midfall.Halo2.frWord_toNat hp]
+  rw [sub_eq_add_neg, ZMod.val_add, ZMod.neg_val]
+  split
+  · rename_i hb0
+    have hbz : (Midfall.Halo2.frWord b).toNat = 0 := by
+      rw [Midfall.Halo2.frWord_toNat hp b, hb0]
+      exact ZMod.val_zero
+    rw [hbz, Nat.sub_zero, Nat.add_zero, Nat.add_mod_right]
+  · rw [Midfall.Halo2.frWord_toNat hp]
+
+/-! ## 6c. THE RUNNING POWERS AND THE SQUARING LOOP, AT FIELD LEVEL -/
+
+theorem wPow2_frWord {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    (x : Fr p) (k : Nat) :
+    wPow2 (BitVec.ofNat 256 p : U256) k (Midfall.Halo2.frWord x) =
+      Midfall.Halo2.frWord (x ^ (2 ^ k)) := by
+  induction k generalizing x with
+  | zero => simp [wPow2]
+  | succ k ih =>
+      rw [wPow2, ← frWord_mul hp, ih (x * x)]
+      congr 1
+      rw [mul_pow, ← pow_add]
+      congr 1
+      rw [pow_succ]
+      ring
+
+theorem omegaPows_frWord {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    (om w0 : Fr p) (i : Nat) :
+    omegaPows (BitVec.ofNat 256 p : U256) (Midfall.Halo2.frWord om)
+        (Midfall.Halo2.frWord w0) i =
+      Midfall.Halo2.frWord (w0 * om ^ i) := by
+  induction i with
+  | zero => simp [omegaPows]
+  | succ i ih =>
+      rw [omegaPows, ih, frWord_mul hp]
+      rw [show w0 * om ^ (i + 1) = (w0 * om ^ i) * om by rw [pow_succ]; ring]
+      rw [frWord_mul hp, frWord_mul hp]
+
+theorem frWord_one {p : ℕ} [Fact (Nat.Prime p)] :
+    Midfall.Halo2.frWord (1 : Fr p) = (1 : U256) := by
+  rw [Midfall.Halo2.frWord, ZMod.val_one]
+  rfl
+
+/-- A canonical word is the `frWord` of its own `toNat`. -/
+theorem frWord_ofNat_toNat {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    {w : U256} (hw : w.toNat < p) :
+    Midfall.Halo2.frWord ((w.toNat : Fr p)) = w := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Midfall.Halo2.frWord_toNat hp, ZMod.val_natCast, Nat.mod_eq_of_lt hw]
+
+/-- The `LagRel` value `L i`, as a field element. -/
+theorem lagWord_eq_frWord {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    (xnW nInvW invW omW : U256) (xnF nInvF invF omF : Fr p)
+    (hxn : xnW = Midfall.Halo2.frWord xnF) (hn : nInvW = Midfall.Halo2.frWord nInvF)
+    (hi : invW = Midfall.Halo2.frWord invF) (ho : omW = Midfall.Halo2.frWord omF) :
+    wMulmodAt (wMulmodAt (wAddmodAt xnW ((BitVec.ofNat 256 p : U256) - 1)
+        (BitVec.ofNat 256 p : U256)) nInvW (BitVec.ofNat 256 p : U256))
+      (wMulmodAt invW omW (BitVec.ofNat 256 p : U256)) (BitVec.ofNat 256 p : U256) =
+    Midfall.Halo2.frWord ((xnF - 1) * nInvF * invF * omF) := by
+  rw [hxn, hn, hi, ho]
+  rw [show (1 : U256) = Midfall.Halo2.frWord (1 : Fr p) from (frWord_one (p := p)).symm]
+  rw [← frWord_sub hp xnF 1]
+  rw [show (xnF - 1) * nInvF * invF * omF = ((xnF - 1) * nInvF) * (invF * omF) by ring]
+  rw [frWord_mul hp, frWord_mul hp, frWord_mul hp]
 
 /-! ## 7. INVERSION HELPERS FOR THE SEMANTIC LOOP PROOFS (T3.9.b/d) -/
 
@@ -2984,3 +3103,75 @@ theorem lag_denoms_loop (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Co
       | forInitHalt hi =>
           exact wpSS_sound (Bridge.Dialect c g) (Bopen c g) (Cnone _)
             (Bopen_sound c g) (Cnone_sound _) hinit _ _ _ hi
+
+/-! ## 11. T3.9.g: THE ALG LEAF, FIRST CONJUNCT -/
+
+/-- The `xn` projection of `lag_agrees`, with the D-GATE2-corrected `omegaInvToL` exponent
+(`numNegLagranges`, not `numNegLagranges - 1`). -/
+theorem lag_agrees_xn (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (s2 : SnapAlgebra p G₁) (hxn : s2.alg.xn = s2.alg.x ^ (2 ^ R.pv.k))
+    (W : LagWords)
+    (hW : LagRel (BitVec.ofNat 256 p) (Midfall.Halo2.frWord s2.alg.x)
+      (Midfall.Halo2.frWord R.vk.domain.omega)
+      (Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges))
+      (Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹)) R.pv.k R.pv.numInstances
+      R.pv.numNegLagranges (fun j => Midfall.Halo2.frWord (0 : Fr p)) W) :
+    W.xn = Midfall.Halo2.frWord s2.alg.xn := by
+  have hp : p < 2 ^ 256 := by
+    rw [hR.env.modulus]
+    norm_num [Midfall.Generator.frModulusConstant]
+  rw [hW.1, wPow2_frWord hp, hxn]
+
+/-! **T3.9.g STATUS (exact residual).** The render-free algebra is landed:
+`powVartime_eq_pow`, the entrywise `batchInvert` spec and `lIRange_toList_of_ne_zero`
+(`LagrangeAlg.lean`), the `frWord` ring bridge, `wPow2_frWord`, `omegaPows_frWord`,
+`rotateOmega_{neg,mul_neg}_range`, `lagWord_eq_frWord`, and `lag_agrees_xn` above.
+
+The remaining assembly is the three value projections (`lLast`, `lBlind`, `l0`) plus the
+instance conjunct, and it needs one premise the evidence statement omits: the `inst` array
+used by `hW` must be the row `instanceEvalOf` reads. Without a link such as
+`s2.alg.instanceEvals.getD 0 #[] = inst`, the last conjunct is FALSE (take `inst := 0` and a
+`snapshotLagrangeStep` whose selected `instanceEval` is nonzero). This is a missing LEAF
+premise (like `hl`/`hxn`), not a row hypothesis; the next lane must add it and document it.
+-/
+
+/-! ## 12. T3.9.g: CANONICAL WORDS, INVERSES AND THE ROTATION INDEX -/
+
+theorem frWord_inj {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) :
+    Function.Injective (Midfall.Halo2.frWord (p := p)) := by
+  intro a b h
+  apply ZMod.val_injective p
+  have := congrArg BitVec.toNat h
+  rwa [Midfall.Halo2.frWord_toNat hp, Midfall.Halo2.frWord_toNat hp] at this
+
+theorem wMulmodAt_zero_right (a r : U256) : wMulmodAt a 0 r = 0 := by
+  simp [wMulmodAt]
+
+theorem wMulmodAt_zero_left (a r : U256) : wMulmodAt 0 a r = 0 := by
+  simp [wMulmodAt]
+
+theorem wMulmodAt_eq_one_field {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    {iw dw : U256} {iF dF : Fr p}
+    (hi : iw = Midfall.Halo2.frWord iF) (hd : dw = Midfall.Halo2.frWord dF)
+    (h : wMulmodAt iw dw (BitVec.ofNat 256 p : U256) = 1) : iF * dF = 1 := by
+  apply frWord_inj hp
+  rw [frWord_mul hp, ← hi, ← hd, h, frWord_one]
+
+/-- The rotations `lagrangeTriple` uses, indexed by `L = numNegLagranges`. -/
+def gRots (L : Nat) : List Int :=
+  List.map (fun i => -((L : Nat) : Int) + (i : Int))
+    (List.flatMap (fun a => pure ((a : Nat) : Int)) (List.range (L + 1)))
+
+theorem gRots_length (L : Nat) : (gRots L).length = L + 1 := by
+  simp [gRots, List.length_map, List.length_range]
+
+theorem gRots_get? (L i : Nat) :
+    (gRots L)[i]? = if i ≤ L then some (-((L : Nat) : Int) + (i : Int)) else none := by
+  by_cases hi : i ≤ L
+  · rw [if_pos hi]
+    unfold gRots
+    rw [flatMap_pure, List.map_map, List.getElem?_map, List.getElem?_range (by omega)]
+    rfl
+  · rw [if_neg hi]
+    rw [List.getElem?_eq_none_iff, gRots_length]
+    omega
