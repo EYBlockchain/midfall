@@ -1,9 +1,9 @@
 # STATUS - midfall
 
-**As of:** `e7f3107` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
+**As of:** `6bc3521` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
 EXIT=0, KAT 1648/119, `axiom_sweep: ok`, closure fingerprint 4823 declarations / 526 external
 leaves / `bd27cd298a04fc1a`. The later A3/QVM commits are quick-gate green. Current report:
-root **11 / sound 5**, register **75 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
+root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
 
 ## 1. Verified - PROGRESS
 
@@ -18,10 +18,15 @@ root **11 / sound 5**, register **75 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
                                `f1GeneratedRender` has `generated` PROVED; full inhabitant in flight
     root lowering_correctW ... C0 in flight (three CompositionW glue holes)
     root generator_correct ... D2 in flight (certified statement port)
-    register ................. 75 rows / 11 ROOT; 0 REFUTED, 1 VACUOUS
+    register ................. 73 rows / 11 ROOT; 0 REFUTED, 1 VACUOUS
     KAT ...................... 1648/119 (full gate at d0bf226; quick since)
     axiom roots .............. standard three + sorryAx, native []
 
+**Merged since the last full gate:** QVMHDR `modarith7Form_shift`/`step_shift_modarith7` and the
+PAIRWISE fold transport; B1's DG.3 closure pin (`bd27cd298a04fc1a`) + DG.7 CI; C1's F2 IVC bundle;
+B5's artifact gate (VK exact, verifier except `BUILD_ID`); A11's `fp_pairing_algebra`,
+`fp_stmt_steps`, `fpG2Slots_of_valid` (register 75 -> 73); A5's modexp memory bridge; A9's
+`ScalarInv` six-store frame.
 **This session (since `e7f3107`):** A3 complete (`vk_blockSim`/`vk_blockProgS`), A4's four
 lagrange loops (a/b/c/d/e) proved, A5's `bi_forward_loop` **and `bi_backward_loop`** proved, A9's
 both PCS truncation arms and the 32-byte store/read bridge proved, A6's `tp_events_slots` and
@@ -78,7 +83,9 @@ gate last ran at `d0bf226`.
 - **C0/widening glue** (`t/C0`): `rejectsW_of_sims`, `completeAnyGasW_of_progs`,
   `totalW_of_stages` through `blockSimW_iff_blockSim`.
 - **C1/F2** (`t/C1N`): IVC fixture export with the SRS, then the widened clause table.
-- **D1/end-to-end** (`t/D1`): `end_to_end : EndToEndV3 ...` from `lowering_correct`.
+- **D1/end-to-end** (`t/D1`): both directions of `EndToEndV3` proved in `EndToEnd.lean`; the one
+  missing premise is `readScheduleAgrees_of_validV3` (`decodeRust` message slots vs the generator's
+  repacked layout). This is the current D1 leaf.
 - **D2/certified generator** (`t/D2`): CERT.0 statement port/rebase, CERT.1 suspects, CERT.3
   constants, CERT.8 `generate` on the real F1 key.
 
