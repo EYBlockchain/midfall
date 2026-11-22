@@ -802,6 +802,267 @@ theorem fit2_iff_bound {R : Render p G₁ G₂ Gₜ} :
     ((BitVec.ofNat 256 R.pv.vk.len).toNat = R.pv.vk.len) ↔ R.pv.vk.len < 2 ^ 256 :=
   ofNat_toNat_iff_lt _
 
+
+/-! ## 11. THE QVM WINDOWS: IS THE SPILL SLOT DISJOINT FROM THE CONST TABLE? (DISJNT)
+
+  SPILL recorded ('QuotientSpill.lean' §6) that 'PG_spillArmTriple' is not dischargeable as published
+  because nothing keeps the spill slot at 'q_sp' disjoint from the const word the arm reads next, and
+  named the reason: 'quotientProgramFits' ('Statements.lean:3225') bounds every region BELOW
+  '2 ^ 256' and says NOTHING about disjointness - 'the same gap MemoryPairs section 1 found for the vk
+  windows'. THIS CARD REPEATS THE §1/§8 VERDICT FOR THE QVM PAIRS, AND IT IS THE SAME VERDICT: the gap
+  is real FOR THE FIT CLAUSE and closed BY THE CONSTRUCTION.
+
+  THREE FINDINGS.
+
+  (1) THE FIT CLAUSE REALLY DOES NOT ORDER THE WINDOWS. 'fitsB_does_not_order_windows' exhibits a
+      program that satisfies all seven clauses of 'quotientProgramFits' - COMPUTED, 'decide' - whose
+      const window sits ON TOP of its stack window. So no reassembly of 'programFits' can ever give
+      the disjunction, and a card that tried would be proving false.
+
+  (2) BUT 'generated' DOES ORDER THEM, AND FOR EVERY RENDER, UNCONDITIONALLY. The const table is not
+      a free-floating pointer: 'quotientTemplateProgram' ('PlanNew.lean:596,602') sets
+      'constMptr := pn (vkMptr.add constOff)' - i.e. INSIDE the VK payload window, at the offset the
+      payload itself declares - and 'stackMptr := memory.quotientStackMptr'. And the arena chain of
+      'VerifierMemoryLayout.new' allocates 'quotient_stack' AFTER 'vk_payload' with nothing able to
+      reorder them: 'vk_payload' at 'vkStart' ('LayoutMemory.lean:191'), 'challenge_slots'
+      'allocAfter' it, the theta block 'allocAfter' that, 'decoded_evals' inside theta,
+      'decompressed_commitments' 'allocAfter' those, 'selector_accumulators' 'allocAfter' those, and
+      the quotient state and stack from ONE scratch allocator rooted above all of them
+      (':287-293'). 'new_quotientStackMptr_eq' is that chain as a 'rfl' equation - the same trick as
+      §4's 'new_g1IdentityMptr', and it costs nothing because a structure field is a thunk - and
+      'new_quotientStack_after_vk' reads the ordering off it: 'ptrAddr vkMptr + vk.len ≤
+      quotientStackMptr', for EVERY meta, payload, base pointer and configuration, no hypothesis.
+
+  (3) THE CONST WINDOW ENDS INSIDE THE PAYLOAD WINDOW, so the two facts compose.
+      'vkCarriesBuild' ('PlanNew.lean:680') is the ONE gate that sees the payload's quotient sections,
+      and 'constSection_in_payload' reads off it that 'quotientConstOffsetWords +
+      quotientConstWords ≤ constants.length' - the reservation cannot start inside the comms tail.
+      With the generator's own 'build.consts.length ≤ vk.quotientConstWords' ('PlanNew.lean:587') and
+      'guards.constMax = build.consts.length - 1' ('LoweringPlan.lean:379'), the const window
+      '[constMptr, constMptr + 32 * (constMax + 1))' ends at or before 'vkMptr + 32 *
+      constants.length ≤ vkMptr + vk.len', hence BEFORE 'stackMptr'. That is
+      'qvmWindows_disjoint_of_construction': the FIRST disjunct of the ordering, for every render the
+      generator can produce.
+
+  ONE NON-DECISION, NAMED AND NOT ADDED. The argument needs '1 ≤ vk.quotientConstWords'. It is not a
+  clause of anything and it is not a theorem of 'generated': a payload that reserves ZERO const words
+  forces 'build.consts = []' through 'vkCarriesBuild' and then leaves 'quotientConstOffsetWords'
+  completely unconstrained, so the (empty) const window could be declared anywhere, including on the
+  stack. That is a degenerate payload - no const table at all - not a second instance of the VKFIT
+  class-width gap: unlike 'fit1'/'fit2' there is no unbounded quantity here to bound, only an offset
+  that stops being pinned once its section is empty. 'PG_qvmWindowsOrdered' below is the Prop; it is
+  NOT added to 'ValidV3', to a row, to a bundle or to the root (RULES), and the arm-level
+  'PG_spillSlotDisjoint' ('QuotientSpill.lean:1321') is the same inequality at the 'BitVec' face - the
+  step from here to there is the arm's own 'b ≤ constMax' PRE plus the no-wrap half of the fit clause,
+  which is SPILL's to take because it owns the arms.
+
+  WHAT REMAINS BETWEEN §11 AND A ROW. 'qvmWindows_disjoint_of_construction' is stated from the six
+  equations the constructor supplies, exactly as §7 was stated from the layout equation before §8
+  proved it. The inversion is longer here than it was for 'vkPins': 'generated' gives
+  'R.plan = newFromVk ... = .ok plan' (§8, already proved) and 'R.model = generateVerifierFromPlan
+  ... R.plan = .ok R.model' (§9, already proved), and between them sit 'plan.quotient = some q'
+  ('PlanNew.lean:759'), 'q.program' (':754'), 'LoweringPlan.quotientRendering' and
+  'intoTemplateParts' ('Artifacts.lean:488,536'). It is bind inversion, not a missing axiom.
+-/
+
+/-- One arena step: `x` ends before the aligned window that starts `y` bytes past it. -/
+theorem le_up_add (x y : Nat) : x ≤ alignUp (x + y) wordBytes :=
+  Nat.le_trans (Nat.le_add_right x y) (alignUp_le (x + y) wordBytes wordBytes_pos)
+
+/-- The same step where one window is preceded by TWO lengths inside the alignment. -/
+theorem le_up_add2 (x y z : Nat) : x ≤ alignUp (x + y + z) wordBytes :=
+  Nat.le_trans
+    (Nat.le_trans (Nat.le_add_right x y) (Nat.le_add_right (x + y) z))
+    (alignUp_le (x + y + z) wordBytes wordBytes_pos)
+
+/-- The six-step chain of §11(2) stated on the raw `alignUp` nest, so the projection is whnf'd ONCE. -/
+theorem raw_le (a b c d e f g : Nat) :
+    a ≤ alignUp
+        (alignUp
+          (alignUp
+            (alignUp
+              (alignUp (alignUp a wordBytes + b) wordBytes + c + d)
+              wordBytes + e)
+            wordBytes + f)
+          wordBytes + g)
+        wordBytes := by
+  refine Nat.le_trans ?_ (le_up_add _ _)
+  refine Nat.le_trans ?_ (le_up_add _ _)
+  refine Nat.le_trans ?_ (le_up_add _ _)
+  refine Nat.le_trans ?_ (le_up_add2 _ _ _)
+  refine Nat.le_trans ?_ (le_up_add _ _)
+  exact alignUp_le _ _ wordBytes_pos
+
+/-- **THE ARENA CHAIN AS AN EQUATION.** `quotient_stack` is six allocations above the payload:
+     challenge slots, the theta block, the decoded evals, the commitment run, the selector
+     accumulators, the quotient state. `rfl`, because a structure field is a thunk and the other
+     twenty-three of the thirty allocations are never evaluated (§(2) of the header). -/
+theorem new_quotientStackMptr_eq (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey)
+    (vkMptr : Ptr) (config : VerifierMemoryLayoutConfig) :
+    (VerifierMemoryLayout.new meta_ vk vkMptr config).quotientStackMptr =
+      alignUp
+        (alignUp
+          (alignUp
+            (alignUp
+              (alignUp (alignUp (ptrAddr vkMptr + vk.len) wordBytes
+                + meta_.challengeIndices.length * wordBytes)
+                wordBytes + ThetaWindowLayout.compatibility.reversedEvalsWord * wordBytes
+                  + meta_.numEvals * wordBytes)
+              wordBytes + commitmentG1Count meta_ * g1Bytes)
+            wordBytes + meta_.numSimpleSelectors * wordBytes)
+          wordBytes + config.quotientStateWords * wordBytes)
+        wordBytes := rfl
+
+/-- **THE STACK WINDOW IS ABOVE THE PAYLOAD WINDOW, FOR EVERY CONSTRUCTOR ARGUMENT.** No render, no
+     `generated`, no hypothesis: the emitted code's operand stack can never overlap the VK payload
+     the const table and the program live in. -/
+theorem new_quotientStack_after_vk (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey)
+    (vkMptr : Ptr) (config : VerifierMemoryLayoutConfig) :
+    ptrAddr vkMptr + vk.len ≤
+      (VerifierMemoryLayout.new meta_ vk vkMptr config).quotientStackMptr := by
+  rw [new_quotientStackMptr_eq]
+  exact raw_le (ptrAddr vkMptr + vk.len) (meta_.challengeIndices.length * wordBytes)
+    (ThetaWindowLayout.compatibility.reversedEvalsWord * wordBytes)
+    (meta_.numEvals * wordBytes) (commitmentG1Count meta_ * g1Bytes)
+    (meta_.numSimpleSelectors * wordBytes) (config.quotientStateWords * wordBytes)
+
+/-- `Ptr.add` on a pointer the planner built from a `Nat` is `wordBytes` times the word count
+     (`Value.add`, ENC:652-664) read back through `pn`. -/
+theorem pn_add_valueFromNat (n q : Nat) :
+    pn ((ptrMemory (valueFromNat n)).add q) = n + q * wordBytes := by
+  show Value.asUsizeNat ((ptrMemory (valueFromNat n)).add q).value = n + q * wordBytes
+  show Value.asUsizeNat (Value.add (valueFromNat n) q) = n + q * wordBytes
+  show Value.asUsizeNat (Value.integer ((n : Int) + (q : Int) * (wordBytes : Int))) =
+    n + q * wordBytes
+  simp only [Value.asUsizeNat]
+  split <;> omega
+
+/-- **THE CONST RESERVATION LIES INSIDE THE PAYLOAD WORDS.** `vkCarriesBuild` compares
+     `(words.drop qc).take quotientConstWords` with a list whose length is exactly
+     `quotientConstWords` (the zero fill of `PlanNew.lean:686`, available because
+     `build.consts.length ≤ quotientConstWords` was checked at `:587`), so the take must be full
+     and the reservation cannot run past the payload. -/
+theorem constSection_in_payload (vk : Halo2VerifyingKey) (build : QuotientProgramBuild)
+    (qc qp : Nat) (hco : vk.quotientConstOffsetWords = some qc)
+    (hpo : vk.quotientProgramOffsetWords = some qp)
+    (hfit : build.consts.length ≤ vk.quotientConstWords)
+    (hne : 1 ≤ vk.quotientConstWords)
+    (hcar : vkCarriesBuild vk build = true) :
+    qc + vk.quotientConstWords ≤ vk.constants.length := by
+  have h1 : vkCarriesBuild vk build = true := hcar
+  rw [vkCarriesBuild, hco, hpo] at h1
+  dsimp only at h1
+  rw [Bool.and_eq_true] at h1
+  have hc := Iff.mp beq_iff_eq h1.1
+  have := congrArg List.length hc
+  simp only [List.length_drop, List.length_take, List.length_append, List.length_replicate,
+    List.length_map] at this
+  have hsub : build.consts.length + (vk.quotientConstWords - build.consts.length)
+      = vk.quotientConstWords := by omega
+  rw [hsub] at this
+  by_cases h : vk.quotientConstWords ≤ vk.constants.length - qc
+  · omega
+  · have h2 : min vk.quotientConstWords (vk.constants.length - qc)
+        = vk.constants.length - qc := Nat.min_eq_right (Nat.le_of_not_le h)
+    omega
+
+/-- **THE ORDERING, FROM THE CONSTRUCTION.** The six equations are what `quotientTemplateProgram`
+     and `memoryLayoutFor` supply for the render's own program (§(3) of the header and 'PlanNew.lean
+     :596, :602, :592'); 'qvmWindows_disjoint_of_valid' is this lemma with those equations discharged
+     through `generated`, and the discharge is bind inversion, not a new axiom. -/
+theorem qvmWindows_disjoint_of_construction {memory : VerifierMemoryLayout}
+    {meta_ : ConstraintSystemMeta} {vk : Halo2VerifyingKey} {vkMptr : Ptr}
+    {config : VerifierMemoryLayoutConfig} {build : QuotientProgramBuild}
+    {program : QuotientProgram} (vkBase qcOff qp : Nat)
+    (hvk : vkMptr = ptrMemory (valueFromNat vkBase))
+    (hmem : memory = VerifierMemoryLayout.new meta_ vk vkMptr config)
+    (hfit : build.consts.length ≤ vk.quotientConstWords)
+    (hne : 1 ≤ vk.quotientConstWords)
+    (hco : vk.quotientConstOffsetWords = some qcOff)
+    (hpo : vk.quotientProgramOffsetWords = some qp)
+    (hcar : vkCarriesBuild vk build = true)
+    (hcm : program.constMptr = pn (vkMptr.add qcOff))
+    (hsm : program.stackMptr = memory.quotientStackMptr)
+    (hcmx : program.guards.constMax = build.consts.length - 1) :
+    program.constMptr + 32 * (program.guards.constMax + 1) ≤ program.stackMptr := by
+  have hlen : ptrAddr vkMptr + vk.len ≤ memory.quotientStackMptr := by
+    rw [hmem]; exact new_quotientStack_after_vk meta_ vk vkMptr config
+  have hsec := constSection_in_payload vk build qcOff qp hco hpo hfit hne hcar
+  have hw : wordBytes = 32 := rfl
+  have hcm' : program.constMptr = vkBase + qcOff * 32 := by
+    rw [hcm, hvk, pn_add_valueFromNat, hw]
+  have hbase : ptrAddr vkMptr = vkBase := by rw [hvk]; exact ptrAddr_valueFromNat vkBase
+  have h32 : 32 * (program.guards.constMax + 1) ≤ 32 * vk.quotientConstWords := by
+    rw [hcmx]
+    refine Nat.mul_le_mul_left 32 ?_
+    rcases Nat.eq_zero_or_pos (build.consts.length) with hz | hz
+    · rw [hz]; omega
+    · omega
+  have hlen' : 32 * vk.constants.length ≤ vk.len := by
+    show 32 * vk.constants.length ≤
+      vk.constants.length * 32 + (vk.fixedComms.length + vk.permutationComms.length) * 128
+    omega
+  have hkey : vkBase + qcOff * 32 + 32 * (program.guards.constMax + 1)
+      ≤ ptrAddr vkMptr + vk.len := by
+    omega
+  rw [hsm, hcm']
+  exact Nat.le_trans hkey hlen
+
+/-- **THE RENDER FACE, FROM 'generated' ALONE - NO NEW HYPOTHESIS.** The two windows that CONTAIN
+     the QVM's const table and its operand stack are ordered for every `ValidV3` render, by §8's
+     already-proved layout equation and §11's arena chain. This is the first disjointness theorem of
+     `ValidV3` itself that the spill gap needed: what is left is not a missing axiom but the bind
+     inversion that names the program's own two pointers inside these windows. -/
+theorem payload_below_quotientStack_of_generated {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) :
+    ptrAddr R.pv.memory.vkMptr + R.pv.vk.len ≤ R.pv.memory.quotientStackMptr := by
+  obtain ⟨meta_, vkMptr, config, he⟩ := plan_memory_eq_new h
+  rw [he, new_vkMptr]
+  exact new_quotientStack_after_vk meta_ R.pv.vk vkMptr config
+
+/-- The same at a whole `ValidV3`: the clause that was already there, read as an ordering. -/
+theorem payload_below_quotientStack_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    ptrAddr R.pv.memory.vkMptr + R.pv.vk.len ≤ R.pv.memory.quotientStackMptr :=
+  payload_below_quotientStack_of_generated hR.generated
+
+/-- **THE PROP, NAMED - NOT ADDED ANYWHERE.** The ordering as the arms would want it. It is a theorem
+     of the construction (§11(2)-(3)); what it is NOT is a theorem of `quotientProgramFits`. -/
+def PG_qvmWindowsOrdered (program : QuotientProgram) : Prop :=
+  program.constMptr + 32 * (program.guards.constMax + 1) ≤ program.stackMptr
+
+/-- **FINDING (1), COMPUTED.** A program that satisfies every clause of `quotientProgramFits` and
+     whose const window sits ON TOP of its stack window: the const table occupies `[0x100, 0x180)`
+     and the stack base is `0x120`, so the spill at `q_sp = 0x120` overwrites const word 1. The
+     seven fit clauses are discharged by `decide`; the ordering is refuted by `decide`. -/
+def fitsFalsifier : QuotientProgram :=
+  { len := 16, opUsage := quotientVmOpcodeUsageDefault, memUsage := quotientVmMemUsageDefault,
+    constMptr := 0x100, evalNumerMptr := 0x200, traceIdMptr := 0x220,
+    selectorPowerMptr := 0x240, selectorMaxPower := 0, selectorTailUpdates := [],
+    stackMptr := 0x120, programMptr := 0x300,
+    guards := { constMax := 3, numSelectorBuckets := 1, stackLast := 0x1ff } }
+
+theorem fitsFalsifier_fits : quotientProgramFits fitsFalsifier := by
+  simp only [quotientProgramFits]
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide, by decide⟩
+
+theorem fitsFalsifier_not_ordered : ¬ PG_qvmWindowsOrdered fitsFalsifier := by
+  show ¬ (fitsFalsifier.constMptr + 32 * (fitsFalsifier.guards.constMax + 1) ≤
+    fitsFalsifier.stackMptr)
+  decide
+
+/-- The same at the arm's own 'BitVec' face: const word 1 and the spill slot at `q_sp` overlap, so
+     'PG_spillSlotDisjoint' is FALSE of this fit-satisfying program. Computed. -/
+theorem fitsFalsifier_spillOverlaps :
+    ¬ ((BitVec.ofNat 256 0x100 + ((BitVec.ofNat 256 1) <<< 5)).toNat + 32 ≤
+          (BitVec.ofNat 256 0x120).toNat ∨
+        (BitVec.ofNat 256 0x120).toNat + 32 ≤ (BitVec.ofNat 256 0x100 + ((BitVec.ofNat 256 1) <<< 5)).toNat) := by
+  decide
+
+theorem fitsFalsifier_not_construction :
+    ¬ (fitsFalsifier.constMptr + 32 * (fitsFalsifier.guards.constMax + 1) ≤
+        fitsFalsifier.stackMptr) := by
+  decide
+
 end Midfall.LoweringV3.MemoryPairs
 
 /-! ## 8. AXIOMS AND CONE -/
@@ -849,3 +1110,13 @@ end Midfall.LoweringV3.MemoryPairs
 #assert_axioms Midfall.LoweringV3.MemoryPairs.fit1_of_valid [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.MemoryPairs.fit2_of_valid [propext, Classical.choice, Quot.sound] native []
 
+
+#print axioms Midfall.LoweringV3.MemoryPairs.new_quotientStack_after_vk
+#print axioms Midfall.LoweringV3.MemoryPairs.constSection_in_payload
+#print axioms Midfall.LoweringV3.MemoryPairs.qvmWindows_disjoint_of_construction
+#print axioms Midfall.LoweringV3.MemoryPairs.fitsFalsifier_fits
+#assert_axioms Midfall.LoweringV3.MemoryPairs.qvmWindows_disjoint_of_construction [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.MemoryPairs.fitsFalsifier_not_ordered [propext, Classical.choice, Quot.sound] native []
+#print axioms Midfall.LoweringV3.MemoryPairs.payload_below_quotientStack_of_generated
+#print axioms Midfall.LoweringV3.MemoryPairs.payload_below_quotientStack_of_valid
+#assert_axioms Midfall.LoweringV3.MemoryPairs.payload_below_quotientStack_of_valid [propext, Classical.choice, Quot.sound] native []
