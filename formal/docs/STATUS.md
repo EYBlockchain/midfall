@@ -45,29 +45,27 @@ conjunct; the headline signature is unchanged.
 
 ## 2. In flight / QVM
 
-- **QVM agent (ROW.Q.3, `qinterpRefines_qvmLoop`).** The row is **FALSE as stated**, not merely
-  unprovable. `t/BOXd`'s two PROVED refutations are now on `formal/baseline` via ROWFALSE (`0955bac`): (i) `qBadSegment` at base
-  `2^256 - 1` wraps `q_pc`/`q_end`, the loop exits normally, the reference errors
-  (`qinterpRefines_qvmLoop_row_is_false`); (ii) at an ordinary window the `neg` arm runs with
-  `q_has_top = 0` while the reference returns `stackUnderflow`
-  (`..._row_is_false_at_a_valid_label`). QLOOP's third axis is table disagreement: only 1 of 31
-  arms composes unconditionally (the list head); the other 30 need `selectSwitch` to reject every
-  preceding label, so full table agreement is required. The count of arms genuinely tied to the
-  reference is still **0** (`armcount`'s 23 is a name intersection only).
-- **What the row needs next, in order:** (1) D-QVM1's window fit (landed); (2) full template-table
-  agreement (`tcq` = the emitted table, one structure equality); (3) a segment-level stack/operand
-  validity hypothesis, the row counterpart of `qvm_validated_noBoundsFault` (the validator rejects
-  `[NEG]` at depth 0, so the emitted loop and the reference agree only on validated segments).
-  **D-QVM2, signed 2026-11-21, authorizes the fixed-segment restatement** (design.md): the old
-  universal row is retired under W13, and the QVM agent states the replacement over a fixed
-  `QSegment` with the fit, table agreement, validation, and the prologue's start stack. The fold
-  output predicate is the agent's statement to design. The alternative - fixing the `neg`/`pow5`
-  emitter arms - is a generated-contract change (Rust + Lean artifacts) and is not authorized.
-- **`qvm_validated_noBoundsFault`** also has SEGLEG's exact cursor-alignment hypothesis
-  (`PG_segleg_shiftAligned` + `PG_segleg_readsAligned`, and `segleg_repaired_suffices` proves it
-  sufficient). The remaining SEGLEG obstacle is the MODARITH7 arm of
-  `PG_segleg_opLenShift`: a normalisation problem on a `do` block, measured not guessed.
+- **ROW.Q.3 IS RETIRED, NOT OPEN (D-QVM2 signed; executed at `ddcb9cb`).** The universal row
+  `qinterpRefines_qvmLoop` was PROVED FALSE by ROWFALSE (`0955bac`) on two independent grounds - a
+  wrapping window and a default-table `neg` arm that runs while the reference underflows - and D-QVM2
+  authorised restating it over a FIXED validated segment with the caller supplying table agreement and
+  segment validation. **The replacement `QInterpRefinesSegment` is now landed, the refuted row's sorry
+  and its register row were deleted in the same commit per W13, the retired text is retained as a
+  sorry-free def with a type-level proof it is the refuted one, and ROWFALSE's refutations are kept as
+  the W12 falsifiers.** G1 (window no-wrap) is DERIVED from `ValidV3` by D-QVM1's
+  `windowFit_of_programWindow` (`qdvm2_G1_of_valid`), so it is a theorem, not an assumption;
+  `QSegmentStackSafe` is built from the validator's OWN decode + stack-effect walk with end depth 1,
+  so certificate and reference agree by construction. **`qinterpSegment_of_committed` proves the
+  committed contract implies the replacement - a relaxation, not an extension.** **OPEN FINDING ABOUT
+  THE SIGNED DECISION ITSELF: D-QVM2 asks the replacement to state the fold arms against the
+  reference's `evalQuotientIdentity` value, which is IMPOSSIBLE - the reference refuses all five stream
+  opcodes inside an identity (`qdvm2_foldSegment_refused`) and `evalNumerMptr` does not exist in the
+  read-only reference. `qinterpFoldTop` is stated for the record; the clause needs a human amendment.**
 
+- **QVM composition status.** QLOOP landed the first reduction of `selectSwitch` on the emitter's own
+  31-entry list at a symbolic table, and QFIX landed the first REFERENCE-TIED arm fact
+  (`qfix_reference_pushConst`) - so the count of arms tied to the reference is 1, not 0. 25 of 31 arms
+  have emitted-side triples (`armcount.py`).
 ## 3. Next READY
 
 - **B1** gates (4 h Sonnet) - READY.
@@ -81,9 +79,11 @@ conjunct; the headline signature is unchanged.
 
 ## 4. Waiting on human
 
-1. **QVM row repair, remaining axes.** Authorize (a) full template-table agreement and (b) a
-   segment validation/stack hypothesis on `qinterpRefines_qvmLoop`; or authorize a generator fix
-   for the `neg`/`pow5` arms. Without one, A8 cannot start and `q_blockSim` cannot use the row.
+1. **D-QVM2 contains one unsatisfiable clause.** It asks the replacement to state the fold arms
+   against the reference evalQuotientIdentity value, but the reference REFUSES all five stream
+   opcodes inside an identity (qdvm2_foldSegment_refused) and evalNumerMptr does not exist in
+   the read-only reference. **Amend D-QVM2 to drop that clause or point it at qinterpFoldTop.**
+   The rest of D-QVM2 is executed at ddcb9cb; A8 can proceed against the replacement.
 2. **`snapshotOf_prepareMsgs`** - accept the replay gate as the evidence and retire the row, or
    port `prepare`'s schedule onto the phase records. Blocks 1 ROOT row of both roots.
 3. **REF.5 Do step 2 / gate pairing** - still blocks B2 completeness and B3.

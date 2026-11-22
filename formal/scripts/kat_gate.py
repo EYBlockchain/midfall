@@ -318,7 +318,7 @@ EVAL = re.compile(
 # qinterpF1_hypotheses_inhabited_ok (the F1 witness's two hypotheses exhibited JOINTLY at the deployment,
 # check_hypothesis_bundles' rule); qinterpWindowIsThePrograms_ok (the window the contract quantifies over is
 # the program's own). No gate was deleted, edited or re-spelled. The sorry register moved 69 -> 70 by the
-# card's one named hole (Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop, owned by ROW.Q), the
+# card's one named hole (RETIRED by D-QVM2; replacement is QInterpRefinesSegment), the
 # headline cone stayed at 10 leaves / 1 REFUTED / 0 VACUOUS, and the object fingerprint re-printed at
 # 14,109 tokens / 0x3149ae4f...bef176. The delta is +4/+1.
 # WID.1 moved EXPECTED_KAT_TOTAL 1569 -> 1574 and EXPECTED_KAT_FILES 115 -> 116 deliberately: FIVE NEW

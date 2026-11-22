@@ -190,13 +190,11 @@ owner() {
     # refuted Midfall.Lowering.identityCorrespondence_of_bridge was DELETED here and replaced by the
     # PROVED identityCorrespondence_of_bridge_fixed in the same commit (card step 1, W13).
     Midfall.LoweringV3.QuotientRows.q_blockSim)
-      echo 'V3 ROW.Q - the quotientLin simulation row for every render, route B: leaves are ROW.Q.1 (qlin_split_loop, this file), ROW.Q.3 (QuotientInterp.qinterpRefines_qvmLoop, T3.10), ROW.Q.4 (the frame valuation) and the builder rows Qvm.lean:631/:698/:713/:768/:995; ROW.Q.5 is NOT stated because the six generated line families have no AST twin (OBJ.15 splices them through YulParse, PG-Q-OBJECT)' ;;
+      echo 'V3 ROW.Q - the quotientLin simulation row for every render, route B (ROW.Q.3 RETIRED by D-QVM2; replacement QInterpRefinesSegment): leaves are ROW.Q.1 (qlin_split_loop, this file), ROW.Q.3 RETIRED by D-QVM2 (replacement QuotientInterp.QInterpRefinesSegment), ROW.Q.4 (the frame valuation) and the builder rows Qvm.lean:631/:698/:713/:768/:995; ROW.Q.5 is NOT stated because the six generated line families have no AST twin (OBJ.15 splices them through YulParse, PG-Q-OBJECT)' ;;
     Midfall.LoweringV3.QuotientRows.q_blockProgS)
       echo 'V3 ROW.Q - the quotientLin progress row for every render: same leaves plus existence through the numerator (qvm_validated_noBoundsFault, Qvm.lean:768) and CompleteSide for the challenge values the scope reads' ;;
     Midfall.LoweringV3.QuotientRows.qlin_split_loop)
       echo 'V3 ROW.Q.1 - the split loop of the linearization scope (GeneratorRows.lean:875, ported verbatim): the squaring walk computing (x^(2^k-1), x^(2^k)); base case PROVED as qlin_split_loop_witness_base_case, pre-clause falsifier PROVED as qlin_split_loop_falsifier_pre_pins_x_pow_2i' ;;
-    Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop)
-      echo 'V3 ROW.Q - T3.10 landed the contract (Midfall/Lowering/QuotientInterp.lean: QInterpRefines, ported from the evidence file GeneratorRows.lean:896 and adapted to D-P72 memory windows); this is route B one-off lemma: the emitted interpreter loop refines evalQuotientIdentity on one identity segment' ;;
 
     # ---- WID.1: the widening STATEMENTS, landed in Midfall/LoweringV3/Widening.lean and
     # Midfall/LoweringV3/WideningStages.lean (D-P72 clause 1: the class is widened for EVERY render,

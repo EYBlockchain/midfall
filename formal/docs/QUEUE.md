@@ -39,7 +39,7 @@ Tracks: **A** the headline rows (critical path) · **B** reference, artifact, no
 | **A5** | helper summaries proved and consumed by a row | HLP.1, HLP.1.a–c | A4 | 8 h · strongest | |
 | **A6** | transcriptParser INTEGRATED | SIM.9, SIM.10, SIM.11, ROW.TP, ROW.TP.1–9 | A2, A3, A5 | 8 h · strongest | |
 | **A7** | quotient 1/2: every named leaf of `q_blockSim` but the interpreter arms, incl. a proved bridge from the structured twins (OBJ.14/15, QEMIT) to `R.slice` | ROW.Q.1, ROW.Q.4, ROW.Q.5 family 4 (family 5 proved in `cd736ff`, QEMIT3) | A4 | 8 h · strongest | |
-| **A8** | quotientLin INTEGRATED | ROW.Q.3 (`qinterpRefines_qvmLoop`, eight arms), ROW.Q.6–9 | A7 | 8 h · strongest | |
+| **A8** | quotientLin INTEGRATED | ROW.Q.3 RETIRED by D-QVM2 -> `QInterpRefinesSegment` (landed ddcb9cb), ROW.Q.6–9 | A7 | 8 h · strongest | |
 | **A9** | PCS 1/2: decode-exists proved; the PCS skeleton with its children | SIM.12, ROW.PCS, ROW.PCS.2, ROW.PCS.9 | A2, A8, B2 | 8 h · strongest | |
 | **A10** | pcs INTEGRATED | the ROW.PCS children A9 lists | A9 | 8 h · strongest | |
 | **A11** | finalPairing and traceReturn INTEGRATED; the old composition retired | ROW.FP, SIM.7 | A5, A10, B1, B2 | 8 h · strongest | |
