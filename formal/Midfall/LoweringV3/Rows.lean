@@ -71,7 +71,10 @@ theorem vk_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
 
     at exactly the copy state the section-4 walk leaves (`hmem` is `stageInv_vk_of_clean`'s copy
     equation with D-QVM1's fits applied, `hcode` is `Frame.vkCode`); `MemoryPairs.vkMptr_shape_of_generated`
-    supplies the `Nat`-built pointer shape the address equation needs. The two progress pins at
+    supplies the `Nat`-built pointer shape the address equation needs. The six header table lookups
+    are `VkClean.vkHeaderLookupsV3` (the model's header table is the template's:
+    `MemoryPairs.vkHeader_default_of_generated`), and `VkClean.vk_hdr_read_values` packages the six
+    words S3-S8 read as the literals `vk_sliceV3` compares them to. The two progress pins at
     `ValidV3` are `VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3` / `_CODEHASH_WORD_V3`.
 
     WHAT REMAINS (mechanical, not a premise gap): `StmtsTotal = StmtsContract ∧ StmtsContractAll`.

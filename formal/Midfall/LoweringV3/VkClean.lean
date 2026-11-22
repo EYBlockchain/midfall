@@ -1765,6 +1765,100 @@ theorem vk_hdr_word_read (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
   rw [List.append_assoc, getD_map_append R.pv.vk.constants _ i hlt2]
   rfl
 
+/-- The plan view's accumulator literals are all zero on the no-accumulator class `ValidV3`
+    carries (`SupportedV2.noAcc`). -/
+theorem pv_acc_words_zero {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    R.pv.expectedHasAccumulatorWord = 0 ∧ R.pv.expectedAccOffset = 0 ∧
+      R.pv.expectedNumAccLimbs = 0 ∧ R.pv.expectedNumAccLimbBits = 0 := by
+  have hpv : R.pv = planViewOf R.plan R.model none := by
+    show planViewOf R.plan R.model R.cfg.accumulator = _
+    rw [hR.supported.noAcc]
+  rw [hpv]
+  exact ⟨rfl, rfl, rfl, rfl⟩
+
+/-- The six VkLoading header offsets, at the model's own header table. The `h` argument is
+    `vkHeader_default_of_generated`; it is what makes the `expectedConsts` offsets the template's
+    slots the payload pins use. -/
+theorem expectedConsts_lookup_hdr_numInstances (pv : PlanView) (m : Model)
+    (h : m.vkHeader = vkHeaderTemplateSlotsDefault) :
+    (Midfall.LoweringV2.expectedConsts pv m).lookup "NUM_INSTANCES_MPTR" =
+      some (Midfall.LoweringV2.cAddr (Ptr.add pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numInstances)) := by
+  cases h1 : m.expectedVkCodehash <;> cases h2 : m.quotientExternal <;>
+  cases h3 : m.expectedQuotientCodehash <;> cases h4 : m.expectedHasAccumulator <;>
+    simp [Midfall.LoweringV2.expectedConsts, h, h1, h2, h3, h4, List.lookup]
+
+theorem expectedConsts_lookup_hdr_k (pv : PlanView) (m : Model)
+    (h : m.vkHeader = vkHeaderTemplateSlotsDefault) :
+    (Midfall.LoweringV2.expectedConsts pv m).lookup "K_MPTR" =
+      some (Midfall.LoweringV2.cAddr (Ptr.add pv.memory.vkMptr vkHeaderTemplateSlotsDefault.k)) := by
+  cases h1 : m.expectedVkCodehash <;> cases h2 : m.quotientExternal <;>
+  cases h3 : m.expectedQuotientCodehash <;> cases h4 : m.expectedHasAccumulator <;>
+    simp [Midfall.LoweringV2.expectedConsts, h, h1, h2, h3, h4, List.lookup]
+
+theorem expectedConsts_lookup_hdr_hasAccumulator (pv : PlanView) (m : Model)
+    (h : m.vkHeader = vkHeaderTemplateSlotsDefault) :
+    (Midfall.LoweringV2.expectedConsts pv m).lookup "HAS_ACCUMULATOR_MPTR" =
+      some (Midfall.LoweringV2.cAddr (Ptr.add pv.memory.vkMptr vkHeaderTemplateSlotsDefault.hasAccumulator)) := by
+  cases h1 : m.expectedVkCodehash <;> cases h2 : m.quotientExternal <;>
+  cases h3 : m.expectedQuotientCodehash <;> cases h4 : m.expectedHasAccumulator <;>
+    simp [Midfall.LoweringV2.expectedConsts, h, h1, h2, h3, h4, List.lookup]
+
+theorem expectedConsts_lookup_hdr_accOffset (pv : PlanView) (m : Model)
+    (h : m.vkHeader = vkHeaderTemplateSlotsDefault) :
+    (Midfall.LoweringV2.expectedConsts pv m).lookup "ACC_OFFSET_MPTR" =
+      some (Midfall.LoweringV2.cAddr (Ptr.add pv.memory.vkMptr vkHeaderTemplateSlotsDefault.accOffset)) := by
+  cases h1 : m.expectedVkCodehash <;> cases h2 : m.quotientExternal <;>
+  cases h3 : m.expectedQuotientCodehash <;> cases h4 : m.expectedHasAccumulator <;>
+    simp [Midfall.LoweringV2.expectedConsts, h, h1, h2, h3, h4, List.lookup]
+
+theorem expectedConsts_lookup_hdr_numAccLimbs (pv : PlanView) (m : Model)
+    (h : m.vkHeader = vkHeaderTemplateSlotsDefault) :
+    (Midfall.LoweringV2.expectedConsts pv m).lookup "NUM_ACC_LIMBS_MPTR" =
+      some (Midfall.LoweringV2.cAddr (Ptr.add pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numAccLimbs)) := by
+  cases h1 : m.expectedVkCodehash <;> cases h2 : m.quotientExternal <;>
+  cases h3 : m.expectedQuotientCodehash <;> cases h4 : m.expectedHasAccumulator <;>
+    simp [Midfall.LoweringV2.expectedConsts, h, h1, h2, h3, h4, List.lookup]
+
+theorem expectedConsts_lookup_hdr_numAccLimbBits (pv : PlanView) (m : Model)
+    (h : m.vkHeader = vkHeaderTemplateSlotsDefault) :
+    (Midfall.LoweringV2.expectedConsts pv m).lookup "NUM_ACC_LIMB_BITS_MPTR" =
+      some (Midfall.LoweringV2.cAddr (Ptr.add pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numAccLimbBits)) := by
+  cases h1 : m.expectedVkCodehash <;> cases h2 : m.quotientExternal <;>
+  cases h3 : m.expectedQuotientCodehash <;> cases h4 : m.expectedHasAccumulator <;>
+    simp [Midfall.LoweringV2.expectedConsts, h, h1, h2, h3, h4, List.lookup]
+
+/-- **THE SIX HEADER TABLE LOOKUPS AT `ValidV3`.** Slots 1, 2, 7, 8, 9, 10 of the emitter's own
+    `vkHeaderTemplateSlotsDefault`, at the render's constant table. The model's header table is the
+    template's (`MemoryPairs.vkHeader_default_of_generated`), so these are the offsets the S3-S8
+    `mload`s read. -/
+theorem vkHeaderLookupsV3 {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    R.consts.lookup "NUM_INSTANCES_MPTR" =
+        some (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numInstances)) ∧
+      R.consts.lookup "K_MPTR" =
+        some (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.k)) ∧
+      R.consts.lookup "HAS_ACCUMULATOR_MPTR" =
+        some (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.hasAccumulator)) ∧
+      R.consts.lookup "ACC_OFFSET_MPTR" =
+        some (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.accOffset)) ∧
+      R.consts.lookup "NUM_ACC_LIMBS_MPTR" =
+        some (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numAccLimbs)) ∧
+      R.consts.lookup "NUM_ACC_LIMB_BITS_MPTR" =
+        some (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numAccLimbBits)) := by
+  have hh := Midfall.LoweringV3.MemoryPairs.vkHeader_default_of_generated hR.generated
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR _ _
+      (expectedConsts_lookup_hdr_numInstances R.pv R.model hh)
+  · exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR _ _
+      (expectedConsts_lookup_hdr_k R.pv R.model hh)
+  · exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR _ _
+      (expectedConsts_lookup_hdr_hasAccumulator R.pv R.model hh)
+  · exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR _ _
+      (expectedConsts_lookup_hdr_accOffset R.pv R.model hh)
+  · exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR _ _
+      (expectedConsts_lookup_hdr_numAccLimbs R.pv R.model hh)
+  · exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR _ _
+      (expectedConsts_lookup_hdr_numAccLimbBits R.pv R.model hh)
+
 /-- **THE HEADER WORD, WITH NO ARM HYPOTHESIS.** D-GATE1's `PayloadAgrees.constantsLength` supplies
     the eleven-constant window and `MemoryPairs.vkMptr_shape_of_generated` supplies the `Nat`-built
     pointer shape; this is `vk_hdr_word_read` with both discharged, ready for the `vkLoading` walk. -/
@@ -1777,6 +1871,65 @@ theorem vk_hdr_word_read_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr i)) = payloadWord R.pv i :=
   vk_hdr_word_read R hR (Midfall.LoweringV3.MemoryPairs.vkMptr_shape_of_generated hR.generated)
     st stb vkAddr hcode hmem (pg_vkheader_of_valid hR) i hi
+
+/-- **THE SIX WORDS S3-S8 READ, AS THE LITERALS `vk_sliceV3` COMPARES THEM TO.** This is the
+    value half of the progress walk: each `loadWord` at the emitter's header slot is the plan's
+    number, so the `eq` of each cross-check is 1 and `success` cannot leave 1. -/
+theorem vk_hdr_read_values (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (st stb : EvmState) (vkAddr : U256)
+    (hcode : st.env.extCodeOf vkAddr = R.plan.vk.runtimeBytes.data.toList)
+    (hmem : stb.memory = copyInto st.memory (ptrAddr R.pv.memory.vkMptr) 1 R.pv.vk.len
+      (st.env.extCodeOf vkAddr)) :
+    loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr
+        vkHeaderTemplateSlotsDefault.numInstances)) = BitVec.ofNat 256 R.cfg.numInstances ∧
+      loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr
+        vkHeaderTemplateSlotsDefault.k)) = BitVec.ofNat 256 R.vk.domain.k ∧
+      loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr
+        vkHeaderTemplateSlotsDefault.hasAccumulator)) = 0 ∧
+      loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr
+        vkHeaderTemplateSlotsDefault.accOffset)) = 0 ∧
+      loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr
+        vkHeaderTemplateSlotsDefault.numAccLimbs)) = 0 ∧
+      loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr
+        vkHeaderTemplateSlotsDefault.numAccLimbBits)) = 0 := by
+  have h1 := vk_hdr_word_read_of_valid R hR st stb vkAddr hcode hmem
+    vkHeaderTemplateSlotsDefault.numInstances (by decide)
+  have h2 := vk_hdr_word_read_of_valid R hR st stb vkAddr hcode hmem
+    vkHeaderTemplateSlotsDefault.k (by decide)
+  have h7 := vk_hdr_word_read_of_valid R hR st stb vkAddr hcode hmem
+    vkHeaderTemplateSlotsDefault.hasAccumulator (by decide)
+  have h8 := vk_hdr_word_read_of_valid R hR st stb vkAddr hcode hmem
+    vkHeaderTemplateSlotsDefault.accOffset (by decide)
+  have h9 := vk_hdr_word_read_of_valid R hR st stb vkAddr hcode hmem
+    vkHeaderTemplateSlotsDefault.numAccLimbs (by decide)
+  have h10 := vk_hdr_word_read_of_valid R hR st stb vkAddr hcode hmem
+    vkHeaderTemplateSlotsDefault.numAccLimbBits (by decide)
+  have hacc := hR.payload.accWords
+  rw [show accWordsOfEncoding R.cfg.accumulator = (0, 0, 0, 0) from by
+    rw [hR.supported.noAcc]; rfl] at hacc
+  have hz7 : payloadWord R.pv vkHeaderTemplateSlotsDefault.hasAccumulator = 0 := by
+    apply BitVec.eq_of_toNat_eq
+    have h := congrArg Prod.fst hacc
+    simpa using h
+  have hz8 : payloadWord R.pv vkHeaderTemplateSlotsDefault.accOffset = 0 := by
+    apply BitVec.eq_of_toNat_eq
+    have h := congrArg (fun p => p.2.1) hacc
+    simpa using h
+  have hz9 : payloadWord R.pv vkHeaderTemplateSlotsDefault.numAccLimbs = 0 := by
+    apply BitVec.eq_of_toNat_eq
+    have h := congrArg (fun p => p.2.2.1) hacc
+    simpa using h
+  have hz10 : payloadWord R.pv vkHeaderTemplateSlotsDefault.numAccLimbBits = 0 := by
+    apply BitVec.eq_of_toNat_eq
+    have h := congrArg (fun p => p.2.2.2) hacc
+    simpa using h
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [h1]; exact hR.payload.numInstances
+  · rw [h2, hR.payload.k, hR.env.domainN.2]
+  · rw [h7, hz7]
+  · rw [h8, hz8]
+  · rw [h9, hz9]
+  · rw [h10, hz10]
 
 #print axioms Midfall.LoweringV3.VkClean.wordFrom_congr
 #print axioms Midfall.LoweringV3.VkClean.wordFrom_append_head

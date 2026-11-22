@@ -738,6 +738,29 @@ theorem generated_model_facts {R : Render p G₁ G₂ Gₜ}
     rw [hsep] at hc
     exact ⟨_, hc.symm⟩
 
+/-- **THE MODEL'S HEADER SLOT TABLE IS THE TEMPLATE'S.** `expectedConsts` indexes the header
+    offsets through `m.vkHeader`, while `PayloadAgrees` speaks of `vkHeaderTemplateSlotsDefault`;
+    `generateVerifierFromPlan` sets `vkHeader := vkHeaderTemplateSlotsDefault` (ART:286), so the
+    same seven-bind peel that gives `generated_model_facts` gives this equation. It is what lets the
+    six VkLoading header cross-checks use the payload pins at the offsets the emitter wrote. -/
+theorem vkHeader_default_of_generated {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) :
+    R.model.vkHeader = vkHeaderTemplateSlotsDefault := by
+  have hg := gvfp_of_generated h
+  simp only [generateVerifierFromPlan, Bind.bind, Except.bind] at hg
+  split at hg
+  . cases hg
+  . cases hg
+  . obtain ⟨_a1, _, h1⟩ := (match_ok_iff _ _).mp hg
+    obtain ⟨_a2, _, h2⟩ := (match_ok_iff _ _).mp h1
+    obtain ⟨_a3, _, h3⟩ := (match_ok_iff _ _).mp h2
+    obtain ⟨_a4, _, h4⟩ := (match_ok_iff _ _).mp h3
+    obtain ⟨_a5, _, h5⟩ := (match_ok_iff _ _).mp h4
+    obtain ⟨_a6, _, h6⟩ := (match_ok_iff _ _).mp h5
+    obtain ⟨_a7, _, h7⟩ := (match_ok_iff _ _).mp h6
+    have hrec := Except.ok.inj h7
+    exact (congrArg (fun x => x.vkHeader) hrec).symm
+
 /-- The two row premises, at the render. -/
 theorem vkPins_numInst_of_generated {R : Render p G₁ G₂ Gₜ}
     (h : Midfall.LoweringV3.GeneratedBy R)
