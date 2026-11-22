@@ -40,6 +40,19 @@ the base case of SIM.10 obligation 2; the remaining `pcsReads`/`assertEmpty` wor
 `qsWire` induction over the q-eval tail and the cursor arithmetic, for which the buffer-tail
 hypothesis is the one stated in the SIM.10 section below.
 
+## The next SIM.10 lemma, stated exactly (not yet closed)
+
+`pcsReads_run_ok`: for `t : Transcript`, `qs : List (Fr p)`, `fCom pi : G₁`, with
+`qs.length = nSets`, `t.pos = pref.size` and
+`t.buffer = pref ++ g1.toCompressed fCom ++ (qs.map frToRepr).flatten ++ g1.toCompressed pi`,
+`henc : ∀ Q, g1.ofCompressed? (g1.toCompressed Q) = some Q`, `hp : p ≤ 2^256`,
+`∃ r t', (pcsReads g1 fc feat nSets).run t = .ok (r, t') ∧ r.fCom = fCom ∧ r.pi = pi ∧
+r.qEvalsOnX3 = qs ∧ t'.pos = t.buffer.size`.
+The proof needs (a) `tmRead_run_ok`/`tmSqueezeChallenge_run` from `transcript_read_ok`,
+(b) the `List.mapM` induction over the q-eval wire (`bytesTake_append_right` +
+`frOfRepr_frToRepr hp`), and (c) `take`-append cursor arithmetic. Its base case
+`transcript_read_ok` is landed; the mapM induction is the next block.
+
 ## ROW.TP.3's call resolution
 
 `commonG1_lookup` (line 523) is PROVED by `rfl`: `R.scope` resolves
