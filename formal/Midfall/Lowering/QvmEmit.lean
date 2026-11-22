@@ -40,6 +40,7 @@
 -- through QVMFr and 'qvmFrModulus'.
 
 import Midfall.Lowering.Qvm
+import Midfall.Lowering.QvmShift
 
 namespace Midfall.Lowering.QvmEmit
 
@@ -1781,5 +1782,131 @@ theorem emitLimbRow_bytes (s : QuotientProgramBuilder) (lhs : Nat)
     have hcons : s'.consts = a1.consts := by rw [hs']; rfl
     obtain ⟨rest, hrest⟩ := hconsts i t sl hi ht hs
     exact ⟨rest, by rw [hcons]; exact hrest⟩
+
+
+/-! #### PAIRWISE decoder tie: the compiled-shape inner and outer folds -/
+
+def pwDenStep (ρ : Valuation) (a b : Nat) (coeffs : List Word256) (i j : Nat)
+    (acc : QVMFr) : Except QVMFault QVMFr := do
+  let c ← fqFromU256 (coeffs.getD (i + j) 0)
+  pure (qvmFrAdd acc (qvmFrMul (qvmFrMul (ρ 0 ((a + qvmWordBytes * i) % 2 ^ 32))
+    (ρ 0 ((b + qvmWordBytes * j) % 2 ^ 32))) c))
+
+abbrev pwInnerBody (bytes : List Nat) (consts : List Word256) (idx i b : Nat) (lhs : QVMFr)
+    (j : Nat) (state : QVMFr × QuotientRefMemory) :
+    Except QVMFault (QVMFr × QuotientRefMemory) :=
+  match Midfall.Generator.indexOrPanic bytes (idx + 4 + i + j) with
+  | .error e => .error e
+  | .ok slot =>
+    match Midfall.Generator.constAt consts slot (idx + 4) with
+    | .error e => .error e
+    | .ok c =>
+      .ok (qvmFrAdd state.1
+            (qvmFrMul (qvmFrMul lhs (state.2.literal (b + j * qvmWordBytes)).1) c),
+           (state.2.literal (b + j * qvmWordBytes)).2)
+
+def pwOuterBody (bytes : List Nat) (consts : List Word256) (idx a b : Nat) :
+    Nat → QVMFr × QuotientRefMemory → Except QVMFault (QVMFr × QuotientRefMemory) :=
+  fun i state =>
+    Midfall.Generator.foldRangeIdxM quotientVmLimbs
+      (state.1, (state.2.literal (a + i * qvmWordBytes)).2)
+      (fun j state_1 =>
+        match Midfall.Generator.indexOrPanic bytes (idx + 4 + i + j) with
+        | .error e => .error e
+        | .ok v =>
+          match Midfall.Generator.constAt consts v (idx + 4) with
+          | .error e => .error e
+          | .ok v =>
+            .ok (qvmFrAdd state_1.1
+                  (qvmFrMul (qvmFrMul (state.2.literal (a + i * qvmWordBytes)).1
+                                      (state_1.2.literal (b + j * qvmWordBytes)).1) v),
+                 (state_1.2.literal (b + j * qvmWordBytes)).2))
+
+theorem pwInnerBody_eq (bytes : List Nat) (consts : List Word256) (mem : QuotientRefMemory)
+    (ρ : Valuation) (a b : Nat) (coeffs : List Word256) (slots : List Nat) (idx i : Nat)
+    (hi : i < quotientVmLimbs)
+    (hbyte : ∀ k, k < quotientVmPairwiseCoeffs →
+      Midfall.Generator.byteAt bytes (idx + 4 + k) = .ok (slots.getD k 0))
+    (hconst : ∀ k, k < quotientVmPairwiseCoeffs →
+      Midfall.Generator.constAt consts (slots.getD k 0) (idx + 4) =
+        fqFromU256 (coeffs.getD k 0))
+    (hmemR : ∀ j, j < quotientVmLimbs →
+      mem.literal (b + qvmWordBytes * j) = (ρ 0 ((b + qvmWordBytes * j) % 2 ^ 32), mem))
+    (lhsValue : QVMFr) (hlhs : lhsValue = ρ 0 ((a + qvmWordBytes * i) % 2 ^ 32))
+    (j : Nat) (hj : j < quotientVmLimbs) (acc : QVMFr) :
+    pwInnerBody bytes consts idx i b lhsValue j (acc, mem)
+      = (pwDenStep ρ a b coeffs i j acc).map (fun a' => (a', mem)) := by
+  have hk : i + j < quotientVmPairwiseCoeffs := by
+    have h7 : quotientVmLimbs = 7 := rfl
+    have h13 : quotientVmPairwiseCoeffs = 13 := rfl
+    omega
+  have hb : Midfall.Generator.indexOrPanic bytes (idx + 4 + i + j) =
+      .ok (slots.getD (i + j) 0) := by
+    apply (QvmShift.indexOrPanic_iff_byteAt (bytes := bytes)
+      (p := idx + 4 + i + j) (b := slots.getD (i + j) 0)).mpr
+    have := hbyte (i + j) hk
+    have harith : idx + 4 + (i + j) = idx + 4 + i + j := by omega
+    rwa [harith] at this
+  have hc := hconst (i + j) hk
+  have hm := hmemR j hj
+  unfold pwInnerBody pwDenStep
+  rw [show b + j * qvmWordBytes = b + qvmWordBytes * j by rw [Nat.mul_comm]]
+  simp only [hb, hc, hm, hlhs, bind, Except.bind, Except.map, pure, Except.pure]
+  cases hcf : fqFromU256 (coeffs.getD (i + j) 0) <;> rfl
+
+theorem pwInnerFold_eq (bytes : List Nat) (consts : List Word256) (mem : QuotientRefMemory)
+    (ρ : Valuation) (a b : Nat) (coeffs : List Word256) (slots : List Nat) (idx i : Nat)
+    (hi : i < quotientVmLimbs)
+    (hbyte : ∀ k, k < quotientVmPairwiseCoeffs →
+      Midfall.Generator.byteAt bytes (idx + 4 + k) = .ok (slots.getD k 0))
+    (hconst : ∀ k, k < quotientVmPairwiseCoeffs →
+      Midfall.Generator.constAt consts (slots.getD k 0) (idx + 4) =
+        fqFromU256 (coeffs.getD k 0))
+    (hmemR : ∀ j, j < quotientVmLimbs →
+      mem.literal (b + qvmWordBytes * j) = (ρ 0 ((b + qvmWordBytes * j) % 2 ^ 32), mem))
+    (lhsValue : QVMFr) (hlhs : lhsValue = ρ 0 ((a + qvmWordBytes * i) % 2 ^ 32))
+    (acc : QVMFr) :
+    Midfall.Generator.foldRangeIdxM quotientVmLimbs (acc, mem)
+        (pwInnerBody bytes consts idx i b lhsValue)
+      = ((List.range quotientVmLimbs).foldlM
+          (fun acc j => pwDenStep ρ a b coeffs i j acc) acc).map (fun a' => (a', mem)) := by
+  rw [foldRangeIdxM_range]
+  refine foldlM_state_eq (List.range quotientVmLimbs) _ _ mem acc ?_
+  intro j hj acc'
+  have hj7 : j < quotientVmLimbs := List.mem_range.mp hj
+  exact pwInnerBody_eq bytes consts mem ρ a b coeffs slots idx i hi hbyte hconst hmemR
+    lhsValue hlhs j hj7 acc'
+
+theorem pwOuterFold_eq (bytes : List Nat) (consts : List Word256) (mem : QuotientRefMemory)
+    (ρ : Valuation) (a b : Nat) (coeffs : List Word256) (slots : List Nat) (idx : Nat)
+    (hbyte : ∀ k, k < quotientVmPairwiseCoeffs →
+      Midfall.Generator.byteAt bytes (idx + 4 + k) = .ok (slots.getD k 0))
+    (hconst : ∀ k, k < quotientVmPairwiseCoeffs →
+      Midfall.Generator.constAt consts (slots.getD k 0) (idx + 4) =
+        fqFromU256 (coeffs.getD k 0))
+    (hmemL : ∀ i, i < quotientVmLimbs →
+      mem.literal (a + qvmWordBytes * i) = (ρ 0 ((a + qvmWordBytes * i) % 2 ^ 32), mem))
+    (hmemR : ∀ j, j < quotientVmLimbs →
+      mem.literal (b + qvmWordBytes * j) = (ρ 0 ((b + qvmWordBytes * j) % 2 ^ 32), mem))
+    (acc : QVMFr) :
+    Midfall.Generator.foldRangeIdxM quotientVmLimbs (acc, mem)
+        (pwOuterBody bytes consts idx a b)
+      = ((List.range quotientVmLimbs).foldlM (fun acc i =>
+          (List.range quotientVmLimbs).foldlM
+            (fun acc j => pwDenStep ρ a b coeffs i j acc) acc) acc).map
+        (fun a' => (a', mem)) := by
+  rw [foldRangeIdxM_range]
+  refine foldlM_state_eq (List.range quotientVmLimbs) _ _ mem acc ?_
+  intro i hi acc'
+  have hi7 : i < quotientVmLimbs := List.mem_range.mp hi
+  have hm := hmemL i hi7
+  -- the outer step reads lhs; after the hit its inner init is (acc', mem)
+  unfold pwOuterBody
+  simp only [Prod.fst, Prod.snd]
+  rw [show a + i * qvmWordBytes = a + qvmWordBytes * i by rw [Nat.mul_comm]]
+  rw [hm]
+  have hinner := pwInnerFold_eq bytes consts mem ρ a b coeffs slots idx i hi7 hbyte hconst
+    hmemR (ρ 0 ((a + qvmWordBytes * i) % 2 ^ 32)) rfl acc'
+  exact hinner
 
 end Midfall.Lowering.QvmEmit
