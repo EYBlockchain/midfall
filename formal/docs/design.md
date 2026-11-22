@@ -2847,3 +2847,45 @@ four bytes and `FOLD_MAIN` by one. The target is available at every row call sit
 `identitySegment` already walks lengths and is unaffected. The old refutation is retained as the
 W12 falsifier of the pre-repair text; the repaired row is proved against the target-aware
 definition. No hypothesis is added to a row, bundle, `ValidV3` or the root.
+
+## D-GATE4 — **Approved: sign the DG.3 pinned zone at the measured closure**
+
+> **Status: APPROVED.** Signed 2026-11-22 in the OpenCode session on the user's instruction
+> *"please resolve any blockers with recommended choices"*. The held DG.3 item is signed at the
+> current measured closure, not the card's stale 972-declaration estimate.
+
+**Decision.** The pinned zone is the closure of the three frozen statement files
+(`LoweringV2/Program.lean`, `Shared.lean`, `Statements.lean`), fingerprinted at the tip as
+**4823 declarations / 526 external leaves / `bd27cd298a04fc1a`**. `scripts/gen_closure.sh` writes
+`Midfall/LoweringV2/Closure.manifest`; the manifest hash (or the printed fingerprint line) joins
+`Frozen.sha256`; `checks.sh` fails with a diff line naming the changed definition when a pinned
+body moves. Generator/verifier/Instances zones are NOT pinned before the statement freeze. The
+card's `972 DECL` and its accept line are stale; the measured closure is the pin.
+
+**DG.7 / CI.** The workflow targets `formal/**` on `formal/baseline` (and `main`/PRs), uses
+`ubuntu-latest` (the 16-core label is not guaranteed), `leanprover/lean-action` with the GitHub
+cache, `lake build`, then `verify.sh --report` and `checks.sh`. The negative control is the local
+`scripts/gate_negctl.py` perturbation, not a throwaway branch on `origin`; no branch is deleted.
+
+**B5/C1 unblocked.** A Rust toolchain is present at
+`$HOME/.rustup/toolchains/1.98.1-aarch64-apple-darwin/bin` (not on PATH by default). The repo's
+`scripts/ensure_srs_assets.sh` is the canonical asset fetch; the assets live in
+`proofs/solidity-verifier/.srs` (ignored by git). B5 re-exports against those assets; C1 uses the
+same SRS for the IVC fixture. No human re-export authorization remains outstanding.
+
+**OBJ.17.** The target is named **fixture F1**, never "the deployment" (D-P60); F2 is the IVC
+fixture. This is a docs-only sign-off under D-P60.
+
+## D-QVM3 — **Approved: a local heartbeat exception for the MODARITH7 header only**
+
+> **Status: APPROVED.** Signed 2026-11-22 in the OpenCode session, after two bounded passes
+> established that `modarith7Form_shift`'s remaining obstruction is the compiled
+> `have __do_jp` join-point shape of the flag-dependent header, not a missing fact.
+
+**Decision.** The `modarith7Form_shift` header declaration may use one local
+`set_option maxHeartbeats 1000000 in` (or `maxRecDepth 10000`) around that declaration only. No
+global option, no statement change, no `sorry`/`native_decide`, and no edit to the read-only
+`VmReference.lean`. The exception is recorded in the lemma docstring and here. The post-header
+chain (`modAfterHeader_shift`, the five body shifts, the fold shifts) is already landed and is not
+re-proved. If the local exception still does not close the header, the worker reports the exact
+`change`/`rfl` goal state and the smallest read-only refactor; it does not perform the refactor.
