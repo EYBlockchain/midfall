@@ -10,7 +10,10 @@
 -- statements (:442 'lag_slice', :455 'lagInner_length', :461 'lag_sq_loop_form'), then the loops
 -- that need NO fixture, NO table value and NO row wiring:
 --   * T3.9.a 'lag_sq_loop'     - k squarings, the first use of GEN.3's loop rule;
---   * T3.9.b 'lag_denoms_loop' - the shared denominator window;
+--   * T3.9.b 'lag_denoms_loop' - the shared denominator window and its guard-FALSE branch are
+--     proved here (denomVal/writeWords/loadWord_writeWords_lt/writeWords_outside and the form
+--     lemma); the loop THEOREM is deliberately NOT in this green file while its guard-TRUE body is
+--     open (PG-LAG-HEARTBEAT). The attempt lives on branch 't/A4-bwip', not here;
 --   * T3.9.d 'lag_lblind_loop' - the blind sum (the cheapest independent leaf).
 -- The remaining children (T3.9.c/e/g/h) and the row glue are NOT in this file. Nothing here is
 -- wired into Rows.lean, so no root/register/cones move; 'Rows.lean' is untouched.
@@ -550,150 +553,6 @@ theorem lag_denoms_loop_form (consts : Inline.Consts) (k n m : Nat) :
 theorem ofNat_toNat {n : Nat} (h : n < 2 ^ 256) : (BitVec.ofNat 256 n).toNat = n := by
   rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt h]
 
-/-- **LOOP 2** (statement 7, GenAst.lean:880-887): the denominators `x - ω_i`. Bound = `n + m`.
-LEAF T3.9.b. VERBATIM from the evidence (:483-499), with the two renames of port change (a).
-The invariant is the SHARED-WINDOW template: `mptr = D + 32 j`, the running power is
-`omegaPows rw om w0 j`, memory is the first `j` stores (`writeWords`, read back by
-`loadWord_writeWords_lt`), and outside the window memory is untouched (`writeWords_outside`). -/
-theorem lag_denoms_loop {c : ExternalCalls} {g : ExternalGas}
-    (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
-    (hr : consts.lookup "r" = none) (k n m aL : Nat)
-    (hL : consts.lookup "OMEGA_INV_TO_L_MPTR" = some aL) (hLb : aL < 2 ^ 256)
-    (D : Nat) (hD : D + 32 * (n + m) < 2 ^ 256) :
-    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 7 1)
-      (fun V _ => VEnv.get V "mptr" = some (BitVec.ofNat 256 D) ∧
-        VEnv.get V "mptr_end" = some (BitVec.ofNat 256 (D + 32 * (n + m))) ∧
-        (VEnv.get V "x").isSome ∧ (VEnv.get V "omega").isSome ∧ (VEnv.get V "r").isSome)
-      (fun V st V' st' o => o = .normal ∧
-        ∃ x om rw, VEnv.get V "x" = some x ∧ VEnv.get V "omega" = some om ∧
-          VEnv.get V "r" = some rw ∧
-          V' = VEnv.set V "mptr" (BitVec.ofNat 256 (D + 32 * (n + m))) ∧
-          (∀ i, i < n + m → loadWord st'.memory (D + 32 * i) =
-            wAddmodAt x (rw - omegaPows rw om (loadWord st.memory aL) i) rw) ∧
-          MemSameOutside st st' D (32 * (n + m)) ∧ st'.env = st.env ∧
-          st'.halted = st.halted) := by
-  rw [lag_denoms_loop_form]
-  simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
-    GenAst.yexpr, Blocks.VkLoading.vkSite, hr, hL]
-  intro V st hpre
-  obtain ⟨hmp, hme, hxsome, homsome, hrsome⟩ := hpre
-  obtain ⟨x, hx⟩ := QuotientRows.isSome_elim hxsome
-  obtain ⟨om, hom⟩ := QuotientRows.isSome_elim homsome
-  obtain ⟨rw, hrw⟩ := QuotientRows.isSome_elim hrsome
-  let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
-    fun V' st' o => o = .normal ∧
-      ∃ x om rw, VEnv.get V "x" = some x ∧ VEnv.get V "omega" = some om ∧
-        VEnv.get V "r" = some rw ∧
-        V' = VEnv.set V "mptr" (BitVec.ofNat 256 (D + 32 * (n + m))) ∧
-        (∀ i, i < n + m → loadWord st'.memory (D + 32 * i) =
-          wAddmodAt x (rw - omegaPows rw om (loadWord st.memory aL) i) rw) ∧
-        MemSameOutside st st' D (32 * (n + m)) ∧ st'.env = st.env ∧
-        st'.halted = st.halted
-  let P : Nat → U256 := denomVal rw x (omegaPows rw om (loadWord st.memory aL))
-  change Midfall.Yul.WpTac.AllRuns funs V st
-    [Stmt.forLoop
-      [Stmt.letDecl ["pow_of_omega"] (some (Expr.builtin Op.mload
-        [Expr.lit (Literal.number aL)]))]
-      (Expr.builtin Op.lt [Expr.var "mptr", Expr.var "mptr_end"])
-      [Stmt.assign ["mptr"] (Expr.builtin Op.add [Expr.var "mptr", Expr.lit (Literal.number 32)])]
-      [ Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var "mptr",
-          Expr.builtin Op.addmod [Expr.var "x",
-            Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"], Expr.var "r"]])
-      , Stmt.assign ["pow_of_omega"] (Expr.builtin Op.mulmod
-          [Expr.var "pow_of_omega", Expr.var "omega", Expr.var "r"]) ]] Q
-  let Inv : VEnv (Bridge.Dialect c g) → EvmState → Prop :=
-    fun V' st' => ∃ j, j ≤ n + m ∧
-      V' = ("pow_of_omega", omegaPows rw om (loadWord st.memory aL) j) ::
-        VEnv.set V "mptr" (BitVec.ofNat 256 (D + 32 * j)) ∧
-      VEnv.get V' "mptr" = some (BitVec.ofNat 256 (D + 32 * j)) ∧
-      VEnv.get V' "mptr_end" = some (BitVec.ofNat 256 (D + 32 * (n + m))) ∧
-      VEnv.get V' "pow_of_omega" = some (omegaPows rw om (loadWord st.memory aL) j) ∧
-      VEnv.get V' "x" = some x ∧ VEnv.get V' "omega" = some om ∧
-      VEnv.get V' "r" = some rw ∧
-      ∃ aw, st' = { st with activeWords := aw, memory := writeWords st.memory D P j }
-  have hmain : Midfall.Yul.WpTac.AllRuns funs V st
-      [Stmt.forLoop
-        [Stmt.letDecl ["pow_of_omega"] (some (Expr.builtin Op.mload
-          [Expr.lit (Literal.number aL)]))]
-        (Expr.builtin Op.lt [Expr.var "mptr", Expr.var "mptr_end"])
-        [Stmt.assign ["mptr"] (Expr.builtin Op.add [Expr.var "mptr", Expr.lit (Literal.number 32)])]
-        [ Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var "mptr",
-            Expr.builtin Op.addmod [Expr.var "x",
-              Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"], Expr.var "r"]])
-        , Stmt.assign ["pow_of_omega"] (Expr.builtin Op.mulmod
-            [Expr.var "pow_of_omega", Expr.var "omega", Expr.var "r"]) ]] Q := by
-    refine allRuns_for_cons_wp (Bridge.Dialect c g) (Bopen c g) (Cnone _)
-      (Bopen_sound c g) (Cnone_sound _) (n := 12) Inv ?hinit ?hstep
-    · -- init: 'pow_of_omega := mload(aL)' establishes the invariant at j = 0
-      refine ⟨rfl, ⟨?_⟩⟩
-      show Inv (["pow_of_omega"].zip
-          [loadWord st.memory (BitVec.ofNat 256 aL).toNat] ++ V)
-        (touchMemory st (BitVec.ofNat 256 aL).toNat 32)
-      rw [ofNat_toNat hLb]
-      have hzip : (["pow_of_omega"].zip [loadWord st.memory aL]) ++ V =
-          (("pow_of_omega", loadWord st.memory aL) :: V) := rfl
-      rw [hzip]
-      refine ⟨0, Nat.zero_le _, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-      · -- the environment: the initial mptr binding is already D
-        change ("pow_of_omega", loadWord st.memory aL) :: V =
-          ("pow_of_omega", omegaPows rw om (loadWord st.memory aL) 0) ::
-            VEnv.set V "mptr" (BitVec.ofNat 256 D)
-        rw [venv_set_eq_self hmp]
-        rfl
-      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
-          (y := "mptr") (v := loadWord st.memory aL) (by decide)]
-        exact hmp
-      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
-          (y := "mptr_end") (v := loadWord st.memory aL) (by decide)]
-        exact hme
-      · rfl
-      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
-          (y := "x") (v := loadWord st.memory aL) (by decide)]
-        exact hx
-      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
-          (y := "omega") (v := loadWord st.memory aL) (by decide)]
-        exact hom
-      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "pow_of_omega")
-          (y := "r") (v := loadWord st.memory aL) (by decide)]
-        exact hrw
-      · exact ⟨_, rfl⟩
-    · -- one iteration
-      intro Vi sti hInv
-      simp only [Inv] at hInv
-      obtain ⟨j, hj, hV, hmpj, hmej, hpowj, hxj, homj, hrj, aw, hst⟩ := hInv
-      subst hV
-      subst hst
-      unfold wpIter
-      simp only [wpE, wpA, hmpj, hmej]
-      refine ⟨?_, ?_⟩
-      · -- guard false: j = n + m, the window is complete
-        intro hguard
-        have h0 : b2w ((BitVec.ofNat 256 (D + 32 * j)).ult
-            (BitVec.ofNat 256 (D + 32 * (n + m)))) = (0 : U256) := hguard
-        have hjk : j = n + m := by
-          have hle : D + 32 * (n + m) ≤ D + 32 * j :=
-            LoopRule.lt_guard_false (by omega) hD h0
-          omega
-        refine ⟨?allRuns⟩
-        intro V' st' o hrun
-        cases hrun with
-        | seqNil =>
-            subst hjk
-            refine ⟨rfl, x, om, rw, hx, hom, hrw, ?_, ?_, ?_, rfl, rfl⟩
-            · rw [restore_cons_set (D := Bridge.Dialect c g) (V := V) (y := "pow_of_omega")
-                (x := "mptr")]
-            · intro i hi
-              exact loadWord_writeWords_lt st.memory D P hi
-            · intro a ha
-              exact writeWords_outside st.memory D P (j := n + m) (a := a) ha
-      · -- guard true: j < n + m, one store
-        -- OPEN (PG-HEARTBEAT): unfolding this TWO-STATEMENT body together with its post at the
-        -- fuel the nested addmod/sub needs (13) exceeds 200000 heartbeats; 12 is one short at the
-        -- deepest `pow_of_omega` read. The next step is the semantic `allRuns_loop` route of the
-        -- card (inversions landed above), not a heartbeat raise.
-        sorry
-  intro V' st' o hrun
-  exact hmain V' st' o hrun
 /-! ## 7. INVERSION HELPERS FOR THE SEMANTIC LOOP PROOFS (T3.9.b/d) -/
 
 theorem eval_var_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
@@ -992,8 +851,9 @@ theorem lag_lblind_loop {c : ExternalCalls} {g : ExternalGas}
   which is `False`); at 13 the `simp only [wpS, wpSS, wpE, wpA, Bopen, stepOp, bin, ter, …]`
   unfolding of the body TOGETHER WITH the post exceeds the default 200000 heartbeats. The fix is
   the card's semantic `allRuns_loop` route (the inversion helpers of section 7 are landed for it),
-  not `maxHeartbeats`. `lag_denoms_loop`'s guard-FALSE branch, the whole `l_blind` loop (T3.9.d)
-  and all of T3.9.a are PROVED; only this one branch is open.
+  not `maxHeartbeats`. The window theory and the guard-FALSE branch are PROVED in this file; the
+  `lag_denoms_loop` THEOREM is not restated here while the branch is open, so this file is green and
+  adds no register row. The whole `l_blind` loop (T3.9.d) and all of T3.9.a are PROVED.
 
   **PG-LAG-AGREES (T3.9.g, D-GATE2 correction).** The corrected statement is the evidence's
   `lag_agrees` (:595-607) with `hW`'s last-but-two argument changed from

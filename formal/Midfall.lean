@@ -200,6 +200,7 @@ import Midfall.LoweringV3.QuotientFrame
 import Midfall.LoweringV3.QuotientArms
 import Midfall.LoweringV3.QuotientFoldTie
 import Midfall.LoweringV3.Rows
+import Midfall.LoweringV3.LagrangeRows
 import Midfall.LoweringV3.VkRow
 import Midfall.LoweringV3.MemoryPairs
 import Midfall.LoweringV3.VkWindow
