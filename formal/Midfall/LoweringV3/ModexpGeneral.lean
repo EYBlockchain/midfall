@@ -255,6 +255,441 @@ theorem loadWord_copyReturn_bytesNatBE (mem : Nat → UInt8) (p : Nat) (v : Nat)
   rw [show p - p = 0 by omega]
   exact wordFrom_bytesNatBE v hv
 
+
+/-! ## The staticcall walk's statement inversions (21-28) -/
+
+open Midfall.LoweringV2.Blocks.VkLoading
+
+theorem eval_args_litvar_no_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    (l : List (Expr EVM.Op))
+    (hl : ∀ e ∈ l, (∃ n, e = Expr.lit (Literal.number n)) ∨ (∃ x, e = Expr.var x))
+    {st' : EvmState} (h : EvalArgs (Bridge.Dialect c g) funs V st l (.halt st')) : False := by
+  induction l generalizing st' with
+  | nil => cases h
+  | cons e rest ih =>
+      cases h with
+      | argsRestHalt h' =>
+          exact ih (fun e' he' => hl e' (List.mem_cons_of_mem _ he')) h'
+      | argsHeadHalt hrest hhead =>
+          rcases hl e (by simp) with ⟨n, rfl⟩ | ⟨x, rfl⟩ <;> cases hhead
+
+theorem eval_staticcall_args {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {gas : Nat} {vp : U256} (hgp : VEnv.get V "gp_mptr" = some vp)
+    {vs : List U256} {st' : EvmState}
+    (h : EvalArgs (Bridge.Dialect c g) funs V st
+      [Expr.lit (Literal.number gas), Expr.lit (Literal.number 5), Expr.var "gp_mptr",
+       Expr.lit (Literal.number 192), Expr.var "gp_mptr", Expr.lit (Literal.number 32)]
+      (.vals vs st')) :
+    vs = [BitVec.ofNat 256 gas, BitVec.ofNat 256 5, vp, BitVec.ofNat 256 192, vp,
+      BitVec.ofNat 256 32] ∧ st' = st := by
+  cases h with
+  | argsCons hrest hgas =>
+      cases hgas with | lit =>
+      cases hrest with
+      | argsCons hrest h5 =>
+          cases h5 with | lit =>
+          cases hrest with
+          | argsCons hrest hgp1 =>
+              cases hgp1 with
+              | var hget =>
+                  rw [hgp] at hget
+                  injection hget with hvp
+                  subst hvp
+                  cases hrest with
+                  | argsCons hrest h192 =>
+                      cases h192 with | lit =>
+                      cases hrest with
+                      | argsCons hrest hgp2 =>
+                          cases hgp2 with
+                          | var hget2 =>
+                              rw [hgp] at hget2
+                              injection hget2 with hvp2
+                              subst hvp2
+                              cases hrest with
+                              | argsCons hrest h32 =>
+                                  cases h32 with | lit =>
+                                  cases hrest with
+                                  | argsNil => exact ⟨rfl, rfl⟩
+
+theorem exec_assign_staticcall_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome} {gas : Nat} {vp : U256}
+    (hgp : VEnv.get V "gp_mptr" = some vp)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign ["ret"] (Expr.builtin EVM.Op.staticcall
+        [Expr.lit (Literal.number gas), Expr.lit (Literal.number 5), Expr.var "gp_mptr",
+         Expr.lit (Literal.number 192), Expr.var "gp_mptr", Expr.lit (Literal.number 32)]))
+      V' st' o) :
+    ∃ resp, o = .normal ∧ c.Call
+      { kind := .staticcall, gas := BitVec.ofNat 256 gas, target := BitVec.ofNat 256 5,
+        value := 0, input := readBytes st.memory vp.toNat 192 } st resp ∧
+      V' = VEnv.set V "ret" resp.flag ∧
+      st' = finishCall .staticcall st resp vp.toNat 192 vp.toNat 32 := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv he
+      obtain ⟨hvs, hst⟩ := eval_staticcall_args hgp hargs
+      subst hvs
+      subst hst
+      simp only [builtinWithExternal] at hbi
+      obtain ⟨resp, hcall, heq⟩ := hbi
+      cases heq
+      refine ⟨resp, rfl, hcall, ?_, ?_⟩
+      · simp [VEnv.setMany]
+      · norm_num
+  | assignHalt he =>
+      cases he with
+      | builtinHalt hargs hbi =>
+          obtain ⟨hvs, -⟩ := eval_staticcall_args hgp hargs
+          subst hvs
+          simp only [builtinWithExternal] at hbi
+          obtain ⟨resp, hcall, heq⟩ := hbi
+          cases heq
+      | builtinArgsHalt hargs =>
+          exact (eval_args_litvar_no_halt _ (by
+            intro e he
+            simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+            rcases he with rfl | rfl | rfl | rfl | rfl | rfl
+            · exact Or.inl ⟨gas, rfl⟩
+            · exact Or.inl ⟨5, rfl⟩
+            · exact Or.inr ⟨"gp_mptr", rfl⟩
+            · exact Or.inl ⟨192, rfl⟩
+            · exact Or.inr ⟨"gp_mptr", rfl⟩
+            · exact Or.inl ⟨32, rfl⟩) hargs).elim
+
+
+theorem eval_returndatasize_no_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.returndatasize []) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_nullary (op := .returndatasize)
+    (by
+      intro st r hr
+      simp only [builtinWithExternal, stepOp, rd0] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩) h
+
+theorem eval_eq32_no_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.eq [Expr.builtin EVM.Op.returndatasize [],
+        Expr.lit (Literal.number 32)]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := .eq)
+    (by
+      intro a b st r hr
+      simp only [builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => eval_returndatasize_no_halt hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh)
+    h
+
+theorem eval_ret_and_eq32_no_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.and [Expr.var "ret", Expr.builtin EVM.Op.eq
+        [Expr.builtin EVM.Op.returndatasize [], Expr.lit (Literal.number 32)]])
+      (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := .and)
+    (by
+      intro a b st r hr
+      simp only [builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => eval_eq32_no_halt hh)
+    h
+
+theorem eval_ret_and_eq32_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    {vals : List U256} {rv : U256}
+    (hrv : VEnv.get V "ret" = some rv)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.and [Expr.var "ret", Expr.builtin EVM.Op.eq
+        [Expr.builtin EVM.Op.returndatasize [], Expr.lit (Literal.number 32)]])
+      (.vals vals st')) :
+    st' = st ∧
+      vals = [rv &&& b2w (BitVec.ofNat 256 st.returndata.length = BitVec.ofNat 256 32)] := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      obtain ⟨hget, rfl⟩ := eval_var_inv hhead
+      rw [hrv] at hget
+      injection hget with hveq
+      subst hveq
+      cases hrest with
+      | argsCons hnil heq =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨argvals2, st2, hargs2, hbi2⟩ := eval_builtin_vals_inv heq
+              cases hargs2 with
+              | argsCons hrest2 hrd =>
+                  cases hrest2 with
+                  | argsCons hnil hlit =>
+                      cases hnil with
+                      | argsNil =>
+                          obtain ⟨hv32, rfl⟩ := eval_lit_inv hlit
+                          subst hv32
+                          obtain ⟨argvals0, st0, hargs0, hbi0⟩ := eval_builtin_vals_inv hrd
+                          cases hargs0 with
+                          | argsNil =>
+                              simp only [builtinWithExternal, stepOp, rd0] at hbi0
+                              cases hbi0
+                              simp only [builtinWithExternal, stepOp, bin] at hbi2
+                              cases hbi2
+                              simp only [builtinWithExternal, stepOp, bin] at hbi
+                              cases hbi
+                              exact ⟨rfl, rfl⟩
+
+theorem ret_and_eq32_stmt {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.assign ["ret"] (Expr.builtin EVM.Op.and [Expr.var "ret",
+        Expr.builtin EVM.Op.eq [Expr.builtin EVM.Op.returndatasize [],
+          Expr.lit (Literal.number 32)]]))
+      (fun V st => ∃ rv, VEnv.get V "ret" = some rv ∧
+        (rv = 0 ∨ (rv = 1 ∧ st.returndata.length = 32)))
+      (fun _ st V' st' o => o = .normal ∧
+        ∃ rv, VEnv.get V' "ret" = some rv ∧ st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨rv, hrv, hcases⟩ := hpre
+  cases hrun with
+  | assignVal he hlen =>
+      obtain ⟨hst, hvals⟩ := eval_ret_and_eq32_inv hrv he
+      subst hst
+      have hcv' : rv &&& b2w (BitVec.ofNat 256 st'.returndata.length = BitVec.ofNat 256 32) = rv := by
+        rcases hcases with rfl | ⟨rfl, hlen32⟩
+        · exact BitVec.zero_and
+        · have hlen' : BitVec.ofNat 256 st'.returndata.length = BitVec.ofNat 256 32 := by
+            rw [hlen32]
+          rw [hlen']
+          show (1 : U256) &&& b2w (decide (BitVec.ofNat 256 32 = BitVec.ofNat 256 32)) = 1
+          decide
+      refine ⟨rfl, rv, ?_, rfl⟩
+      rw [hvals]
+      change VEnv.get (VEnv.setMany V ["ret"] [rv &&& b2w (BitVec.ofNat 256 st'.returndata.length =
+        BitVec.ofNat 256 32)]) "ret" = some rv
+      rw [show VEnv.setMany V ["ret"] [rv &&& b2w (BitVec.ofNat 256 st'.returndata.length =
+          BitVec.ofNat 256 32)] =
+        VEnv.set V "ret" (rv &&& b2w (BitVec.ofNat 256 st'.returndata.length =
+          BitVec.ofNat 256 32)) from rfl]
+      rw [hcv']
+      exact Midfall.LoweringV3.PcsRows.venv_get_set_same (D := Bridge.Dialect c g) hrv
+  | assignHalt he =>
+      exact (eval_ret_and_eq32_no_halt he).elim
+
+
+theorem eval_iszero_ret_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    {vals : List U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.iszero [Expr.var "ret"]) (.vals vals st')) :
+    ∃ rv, VEnv.get V "ret" = some rv ∧ st' = st ∧ vals = [b2w (rv = 0)] := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil hvar =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨hrv, rfl⟩ := eval_var_inv hvar
+          simp only [builtinWithExternal, stepOp, un] at hbi
+          cases hbi
+          exact ⟨_, hrv, rfl, rfl⟩
+
+theorem eval_iszero_ret_no_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.iszero [Expr.var "ret"]) (.halt st')) : False :=
+  vk_nh_unary (op := .iszero)
+    (by
+      intro a st r hr
+      simp only [builtinWithExternal, stepOp, un] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => vkVar_ne_halts hh) h
+
+theorem exec_assign_iszero_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome} {rv : U256}
+    (hrv : VEnv.get V "ret" = some rv)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign ["precompile_failed"] (Expr.builtin EVM.Op.iszero [Expr.var "ret"]))
+      V' st' o) :
+    o = .normal ∧ V' = VEnv.set V "precompile_failed" (b2w (rv = 0)) ∧ st' = st := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨cv, hcv, hst, hvals⟩ := eval_iszero_ret_inv he
+      rw [hrv] at hcv
+      injection hcv with hcveq
+      subst hcveq
+      subst hst
+      refine ⟨rfl, ?_, rfl⟩
+      rw [hvals]
+      simp only [VEnv.setMany]
+      rfl
+  | assignHalt he => exact (eval_iszero_ret_no_halt he).elim
+
+theorem exec_guard_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome} {rv : U256}
+    (hrv : VEnv.get V "ret" = some rv)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin EVM.Op.iszero [Expr.var "ret"]) [Stmt.leave]) V' st' o) :
+    (rv = 1 → o = .normal ∧ V' = V ∧ st' = st) ∧
+      (rv = 0 → o = .leave ∧ V' = V ∧ st' = st) := by
+  constructor
+  · intro hr1
+    subst hr1
+    cases h with
+    | ifTrue hc hnz hbody =>
+        obtain ⟨rv, hrv', hst, hcv⟩ := eval_iszero_ret_inv hc
+        rw [hrv] at hrv'
+        injection hrv' with hveq
+        subst hveq
+        subst hst
+        injection hcv with hcv'; subst hcv'
+        exact absurd rfl hnz
+    | ifFalse hc hz =>
+        obtain ⟨rv, hrv', hst, hcv⟩ := eval_iszero_ret_inv hc
+        rw [hrv] at hrv'
+        injection hrv' with hveq
+        subst hveq
+        subst hst
+        injection hcv with hcv'; subst hcv'
+        exact ⟨rfl, rfl, rfl⟩
+    | ifHalt hc => exact (eval_iszero_ret_no_halt hc).elim
+  · intro hr0
+    subst hr0
+    cases h with
+    | ifTrue hc hnz hbody =>
+        obtain ⟨rv, hrv', hst, hcv⟩ := eval_iszero_ret_inv hc
+        rw [hrv] at hrv'
+        injection hrv' with hveq
+        subst hveq
+        subst hst
+        injection hcv with hcv'; subst hcv'
+        cases hbody with
+        | block hb =>
+            cases hb with
+            | seqCons hleave hrest => cases hleave
+            | seqStop hleave hne =>
+                cases hleave
+                refine ⟨rfl, ?_, rfl⟩
+                simp [restore]
+    | ifFalse hc hz =>
+        obtain ⟨rv, hrv', hst, hcv⟩ := eval_iszero_ret_inv hc
+        rw [hrv] at hrv'
+        injection hrv' with hveq
+        subst hveq
+        subst hst
+        injection hcv with hcv'; subst hcv'
+        exact absurd hz (by decide : ¬ (b2w ((0 : U256) = 0) = (0 : U256)))
+    | ifHalt hc => exact (eval_iszero_ret_no_halt hc).elim
+
+
+theorem eval_sub_var_lit_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {y : String} {k : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.sub [Expr.var y, Expr.lit (Literal.number k)]) (.vals [cv] st')) :
+    ∃ a, VEnv.get V y = some a ∧ cv = a - BitVec.ofNat 256 k ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil hlit =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hk, rfl⟩ := eval_lit_inv hlit
+              obtain ⟨ha, rfl⟩ := eval_var_inv hhead
+              simp only [builtinWithExternal, stepOp, bin, hk] at hbi
+              cases hbi
+              exact ⟨_, ha, rfl, rfl⟩
+
+theorem eval_sub_var_lit_no_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {y : String} {k : Nat} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.sub [Expr.var y, Expr.lit (Literal.number k)]) (.halt st')) : False :=
+  vk_nh_binary (op := .sub)
+    (by
+      intro a b st r hr
+      simp only [builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => vkVar_ne_halts hh)
+    (fun _ _ hh => vkLit_ne_halts hh) h
+
+theorem exec_let_mload_var_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome} {x : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.builtin EVM.Op.mload [Expr.var "gp_mptr"]))) V' st' o) :
+    ∃ p v, VEnv.get V "gp_mptr" = some p ∧ v = loadWord st.memory p.toNat ∧
+      o = .normal ∧ V' = (x, v) :: V ∧ st' = touchMemory st p.toNat 32 := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨p, hget, hv, hrfl⟩ := eval_mload_var_inv he
+      subst hrfl
+      refine ⟨p, v, hget, hv, rfl, ?_, rfl⟩
+      rfl
+  | letHalt he => exact (eval_mload_var_halt_false he).elim
+
+theorem exec_let_var_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome} {x y : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.var y))) V' st' o) :
+    ∃ v, VEnv.get V y = some v ∧ o = .normal ∧ V' = (x, v) :: V ∧ st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨hv, rfl⟩ := eval_var_inv he
+      exact ⟨v, hv, rfl, rfl, rfl⟩
+  | letHalt he => exact (vkVar_ne_halts he).elim
+
+theorem exec_let_add_var_lit_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome} {x y : String} {k : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.builtin EVM.Op.add
+        [Expr.var y, Expr.lit (Literal.number k)]))) V' st' o) :
+    ∃ v, VEnv.get V y = some v ∧ o = .normal ∧
+      V' = (x, v + BitVec.ofNat 256 k) :: V ∧ st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨a, ha, hv, rfl⟩ := eval_add_var_lit_inv he
+      exact ⟨a, ha, rfl, congrArg (fun z => (x, z) :: V) hv ▸ rfl, rfl⟩
+  | letHalt he =>
+      exact (vk_nh_binary (op := .add)
+        (by
+          intro a b st r hr
+          simp only [builtinWithExternal, stepOp, bin] at hr
+          cases hr
+          exact ⟨_, _, rfl⟩)
+        (fun _ _ hh => vkVar_ne_halts hh)
+        (fun _ _ hh => vkLit_ne_halts hh) he).elim
+
+theorem exec_assign_sub_var_lit_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome} {x : String} {k : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign [x] (Expr.builtin EVM.Op.sub
+        [Expr.var x, Expr.lit (Literal.number k)])) V' st' o) :
+    ∃ v, VEnv.get V x = some v ∧ o = .normal ∧
+      V' = VEnv.set V x (v - BitVec.ofNat 256 k) ∧ st' = st := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨a, ha, hv, rfl⟩ := eval_sub_var_lit_inv he
+      subst hv
+      exact ⟨a, ha, rfl, rfl, rfl⟩
+  | assignHalt he => exact (eval_sub_var_lit_no_halt he).elim
+
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -301,6 +736,24 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms callsOf_modexp_returndata [propext, Classical.choice, Quot.sound]
 #assert_axioms modexpValidInput_of_output_some [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_staticcall_segment_form [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_args_litvar_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_staticcall_args [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_assign_staticcall_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_returndatasize_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_eq32_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_ret_and_eq32_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_ret_and_eq32_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms ret_and_eq32_stmt [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_iszero_ret_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_iszero_ret_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_assign_iszero_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_sub_var_lit_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_sub_var_lit_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_let_mload_var_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_let_var_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_let_add_var_lit_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_assign_sub_var_lit_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms readBytes_getD [propext, Classical.choice, Quot.sound]
 #assert_axioms wordFrom_bytesNatBE [propext, Classical.choice, Quot.sound]
 #assert_axioms loadWord_copyReturn_bytesNatBE [propext, Classical.choice, Quot.sound]
