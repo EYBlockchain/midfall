@@ -347,3 +347,990 @@ def PG_identity_segment : Prop :=
       (Midfall.Generator.evalQuotientIdentity seg s₁.consts (memOfρ ρ (leafKeys e))).isOk
 
 end Midfall.Lowering.QvmEmit
+
+
+/-! ### 4. `PG_identity_preFold` DISCHARGED: the emitter is append-only and ends in its fold
+
+    The identity row's reduction (`Qvm.lean` IDVALUE) needs the emitted body to be the bytes
+    `finalizedIdentitySegment` can strip: `identityExpr` must append to `s₀.bytes` and its last
+    instruction must be `foldIdentity`. This section proves both.
+
+    THE METHOD. Every byte-writing primitive (`op0`, `pushByte`, `emitU16/24/32`) appends a suffix;
+    `constSlot` and `popStackAcct` change the table/depth but not the bytes; the non-recursive
+    emitters (`emitConst`, `emitMemLiteral`, `emitAccLeaf`, `emitProductAdd`, `termFold`,
+    `emitLimbShape`, `emitModarith7Shape`, `tryEmitLimbShape`, `tryEmitModarith7Shape`,
+    `foldIdentity`) are chained with `AppendTo_trans`. For the seven mutually recursive emitters the
+    proof is a STRONG INDUCTION ON FUEL (`Nat.strong_induction_on`), not `emitExpr.induct`: every
+    recursive call is at the predecessor fuel, so one induction hypothesis (`EmitAppend r m`) covers
+    all seven functions and the 24-case induction principle is not needed.
+
+    The final two lemmas record the exact trailing instruction: `foldIdentity` appends
+    `[FOLD_MAIN]` or `[FOLD_SELECTOR, b1, b2, b3]`, and `finalizedIdentitySegment` returns `some`
+    on either suffix. `PG_identity_preFold` follows by dropping the input prefix.
+
+    NO hypothesis was added to a row, to `ValidV3`, a bundle or the root. No sorry, no
+    `native_decide`, no maxHeartbeats/maxRecDepth change. Statements are generic in the emitter,
+    recognizer bundle, expression, target, gap and builder. -/
+
+namespace Midfall.Lowering.QvmEmit
+
+open Midfall
+open Midfall.Generator
+open Midfall.Generator.QuotientBuilder
+
+def AppendTo (s s' : QuotientProgramBuilder) : Prop := ∃ t, s'.bytes = s.bytes ++ t
+
+theorem AppendTo_trans {a b c : QuotientProgramBuilder} (h1 : AppendTo a b) (h2 : AppendTo b c) :
+    AppendTo a c := by
+  obtain ⟨t1, ht1⟩ := h1
+  obtain ⟨t2, ht2⟩ := h2
+  exact ⟨t1 ++ t2, by rw [ht2, ht1, List.append_assoc]⟩
+
+theorem AppendTo_refl (a : QuotientProgramBuilder) : AppendTo a a := ⟨[], by simp⟩
+
+theorem appendBytes_append (s : QuotientProgramBuilder) (bs : List Nat) :
+    AppendTo s (appendBytes s bs) := ⟨bs, rfl⟩
+
+theorem emitU16_append (s : QuotientProgramBuilder) (v : Nat) (s' : QuotientProgramBuilder)
+    (h : emitU16 s v = .ok s') : AppendTo s s' := by
+  unfold emitU16 at h
+  split at h
+  · cases h
+  · cases h
+    exact ⟨_, rfl⟩
+
+theorem emitU24_append (s : QuotientProgramBuilder) (v : Nat) (s' : QuotientProgramBuilder)
+    (h : emitU24 s v = .ok s') : AppendTo s s' := by
+  unfold emitU24 at h
+  split at h
+  · cases h
+  · cases h
+    exact ⟨_, rfl⟩
+
+theorem emitU32_append (s : QuotientProgramBuilder) (v : Nat) (s' : QuotientProgramBuilder)
+    (h : emitU32 s v = .ok s') : AppendTo s s' := by
+  unfold emitU32 at h
+  cases h
+  exact ⟨_, rfl⟩
+
+theorem pushByte_append (s : QuotientProgramBuilder) (b : Nat) : AppendTo s (pushByte s b) :=
+  ⟨[b], rfl⟩
+
+theorem op0_append (s : QuotientProgramBuilder) (op : Nat) : AppendTo s (op0 s op) :=
+  ⟨[op], rfl⟩
+
+theorem pushStackAcct_append (s : QuotientProgramBuilder) : AppendTo s (pushStackAcct s) := by
+  refine ⟨[], ?_⟩
+  simp [pushStackAcct]
+
+theorem popStackAcct_bytes (s : QuotientProgramBuilder) (s' : QuotientProgramBuilder)
+    (h : popStackAcct s = .ok s') : s'.bytes = s.bytes := by
+  unfold popStackAcct at h
+  split at h
+  · cases h
+  · cases h
+    rfl
+
+theorem popStackAcct_append (s : QuotientProgramBuilder) (s' : QuotientProgramBuilder)
+    (h : popStackAcct s = .ok s') : AppendTo s s' := by
+  unfold popStackAcct at h
+  split at h
+  · cases h
+  · cases h
+    refine ⟨[], ?_⟩
+    simp
+
+theorem opBinary_append (s : QuotientProgramBuilder) (op : Nat) (s' : QuotientProgramBuilder)
+    (h : opBinary s op = .ok s') : AppendTo s s' := by
+  unfold opBinary at h
+  have h1 := popStackAcct_append (op0 s op) s' h
+  obtain ⟨t, ht⟩ := h1
+  refine ⟨[op] ++ t, ?_⟩
+  rw [ht]
+  simp [op0, List.append_assoc]
+
+theorem constSlot_bytes (s : QuotientProgramBuilder) (v : Word256)
+    (s' : QuotientProgramBuilder) (slot : Nat) (h : constSlot s v = .ok (s', slot)) :
+    s'.bytes = s.bytes := by
+  unfold constSlot at h
+  cases hcs : constSlotOf s v with
+  | some sl =>
+      rw [hcs] at h
+      obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+      rfl
+  | none =>
+      rw [hcs] at h
+      simp only [bind, Except.bind] at h
+      by_cases hs : s.consts.length > 0xffff
+      · rw [if_pos hs] at h
+        cases h
+      · rw [if_neg hs] at h
+        obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+        rfl
+
+theorem constSlot_append (s : QuotientProgramBuilder) (v : Word256)
+    (s' : QuotientProgramBuilder) (slot : Nat) (h : constSlot s v = .ok (s', slot)) :
+    AppendTo s s' := ⟨[], by rw [constSlot_bytes s v s' slot h]; simp⟩
+
+theorem emitConst_append (s : QuotientProgramBuilder) (v : Word256) (s' : QuotientProgramBuilder)
+    (h : emitConst s v = .ok s') : AppendTo s s' := by
+  unfold emitConst at h
+  obtain ⟨a, h1, h2⟩ := peel_bind h
+  rcases a with ⟨s1, slot⟩
+  have hb := constSlot_bytes s v s1 slot h1
+  by_cases hle : slot ≤ 255
+  · simp only [hle, decide_eq_true_eq] at h2
+    cases h2
+    exact ⟨[qOpPushConstU8, slot], by simp [pushByte, appendBytes, hb]⟩
+  · simp only [hle, decide_eq_false_iff_not] at h2
+    exact AppendTo_trans
+      (AppendTo_trans ⟨[], by simp [hb]⟩ (pushByte_append s1 qOpPushConst))
+      (emitU16_append (pushByte s1 qOpPushConst) slot s' h2)
+
+theorem emitMemLiteral_append (s : QuotientProgramBuilder) (ptr : Nat)
+    (s' : QuotientProgramBuilder) (h : emitMemLiteral s ptr = .ok s') : AppendTo s s' := by
+  unfold emitMemLiteral at h
+  split at h
+  · exact AppendTo_trans (pushByte_append s qOpPushMemU16)
+      (emitU16_append (pushByte s qOpPushMemU16) ptr s' h)
+  · exact AppendTo_trans (pushByte_append s qOpPushMemLiteral)
+      (emitU32_append (pushByte s qOpPushMemLiteral) ptr s' h)
+
+def termStep (s : QuotientProgramBuilder) (cp : Word256 × Nat) (site : String) :
+    M QuotientProgramBuilder := do
+  let (coeff, ptr) := cp
+  let (s, slot) ← constSlot s coeff
+  if slot > 255 then panicAt site
+  else do
+    let s ← emitU16 (pushByte s slot) ptr
+    .ok s
+
+theorem termStep_append (s : QuotientProgramBuilder) (cp : Word256 × Nat) (site : String)
+    (s' : QuotientProgramBuilder) (h : termStep s cp site = .ok s') : AppendTo s s' := by
+  unfold termStep at h
+  obtain ⟨coeff, ptr⟩ := cp
+  obtain ⟨a, h1, h2⟩ := peel_bind h
+  rcases a with ⟨s1, slot⟩
+  dsimp only at h2
+  have hb := constSlot_bytes s coeff s1 slot h1
+  by_cases hslot : slot > 255
+  · rw [if_pos hslot] at h2; cases h2
+  · rw [if_neg hslot] at h2
+    cases h3 : emitU16 (pushByte s1 slot) ptr with
+    | error e => rw [h3] at h2; cases h2
+    | ok s2 =>
+        rw [h3] at h2
+        have hs : s2 = s' := Except.ok.inj h2
+        subst hs
+        exact AppendTo_trans (AppendTo_trans ⟨[], by simp [hb]⟩ (pushByte_append s1 slot))
+          (emitU16_append (pushByte s1 slot) ptr s2 h3)
+
+theorem termFold_append (s : QuotientProgramBuilder) (terms : List (Word256 × Nat)) (site : String)
+    (s' : QuotientProgramBuilder) (h : termFold s terms site = .ok s') : AppendTo s s' := by
+  unfold termFold at h
+  induction terms generalizing s with
+  | nil => simp at h; cases h; exact ⟨[], by simp⟩
+  | cons cp rest ih =>
+      simp only [foldLeftM] at h
+      obtain ⟨a, h1, h2⟩ := peel_bind h
+      have h1' : termStep s cp site = .ok a := h1
+      exact AppendTo_trans (termStep_append s cp site a h1') (ih a h2)
+
+theorem emitProductAdd_append (s : QuotientProgramBuilder) (p : QuotientProductAdd)
+    (s' : QuotientProgramBuilder) (h : emitProductAdd s p = .ok s') : AppendTo s s' := by
+  cases p with
+  | memMemConstU8 lhs rhs scalar =>
+      unfold emitProductAdd at h
+      obtain ⟨a, h1, h2⟩ := peel_bind h
+      rcases a with ⟨s1, slot⟩
+      dsimp only at h2
+      have hb := constSlot_bytes s scalar s1 slot h1
+      by_cases hslot : slot > 255
+      · rw [if_pos hslot] at h2; cases h2
+      · rw [if_neg hslot] at h2
+        simp only [bind, Except.bind] at h2
+        obtain ⟨s2, h3, h4⟩ := peel_bind h2
+        obtain ⟨s3, h5, h6⟩ := peel_bind h4
+        cases h6
+        exact AppendTo_trans (AppendTo_trans ⟨[], by simp [hb]⟩
+          (AppendTo_trans (pushByte_append s1 qOpAddMulMemMemConstU8)
+            (AppendTo_trans (emitU16_append (pushByte s1 qOpAddMulMemMemConstU8) lhs s2 h3)
+              (emitU16_append s2 rhs s3 h5)))) (pushByte_append s3 slot)
+  | constU8Mem scalar ptr =>
+      unfold emitProductAdd at h
+      obtain ⟨a, h1, h2⟩ := peel_bind h
+      rcases a with ⟨s1, slot⟩
+      dsimp only at h2
+      have hb := constSlot_bytes s scalar s1 slot h1
+      by_cases hslot : slot > 255
+      · rw [if_pos hslot] at h2; cases h2
+      · rw [if_neg hslot] at h2
+        simp only [bind, Except.bind] at h2
+        obtain ⟨s2, h3, h4⟩ := peel_bind h2
+        cases h4
+        exact AppendTo_trans (AppendTo_trans ⟨[], by simp [hb]⟩
+          (AppendTo_trans (pushByte_append s1 qOpAddMulConstU8MemU16)
+            (emitU16_append (pushByte s1 qOpAddMulConstU8MemU16) ptr s2 h3)))
+          (pushByte_append s2 slot)
+  | memMem lhs rhs =>
+      unfold emitProductAdd at h
+      obtain ⟨s2, h3, h4⟩ := peel_bind h
+      exact AppendTo_trans (AppendTo_trans (pushByte_append s qOpAddMulMemMem)
+        (emitU16_append (pushByte s qOpAddMulMemMem) lhs s2 h3))
+        (emitU16_append s2 rhs s' h4)
+
+
+
+theorem emitAccLeaf_append (s : QuotientProgramBuilder) (leaf : QuotientLeaf) (constU8Op constOp memU16Op : Nat)
+    (p : Bool × QuotientProgramBuilder)
+    (h : emitAccLeaf s leaf constU8Op constOp memU16Op = .ok p) : AppendTo s p.2 := by
+  cases leaf with
+  | const value =>
+      unfold emitAccLeaf at h
+      obtain ⟨a, h1, h2⟩ := peel_bind h
+      rcases a with ⟨s1, slot⟩
+      dsimp only at h2
+      have hb := constSlot_bytes s value s1 slot h1
+      by_cases hslot : slot ≤ 255
+      · rw [if_pos hslot] at h2
+        cases h2
+        exact ⟨[constU8Op, slot], by simp [pushByte, appendBytes, hb]⟩
+      · rw [if_neg hslot] at h2
+        cases h3 : emitU16 (pushByte s1 constOp) slot with
+        | error e => rw [h3] at h2; cases h2
+        | ok s2 =>
+            rw [h3] at h2
+            cases h2
+            exact AppendTo_trans (AppendTo_trans ⟨[], by simp [hb]⟩ (pushByte_append s1 constOp))
+              (emitU16_append (pushByte s1 constOp) slot s2 h3)
+  | mem m =>
+      cases m with
+      | literal ptr =>
+          unfold emitAccLeaf at h
+          dsimp only at h
+          by_cases hp : ptr ≤ 0xffff
+          · rw [if_pos hp] at h
+            cases h3 : emitU16 (pushByte s memU16Op) ptr with
+            | error e => rw [h3] at h; cases h
+            | ok s2 =>
+                rw [h3] at h
+                cases h
+                exact AppendTo_trans (pushByte_append s memU16Op)
+                  (emitU16_append (pushByte s memU16Op) ptr s2 h3)
+          · rw [if_neg hp] at h
+            cases h
+            exact ⟨[], by simp⟩
+      | token t =>
+          unfold emitAccLeaf at h
+          dsimp only at h
+          cases h
+          exact ⟨[], by simp⟩
+      | tokenOffset t o =>
+          unfold emitAccLeaf at h
+          dsimp only at h
+          cases h
+          exact ⟨[], by simp⟩
+
+
+
+theorem foldLeftM_append {β : Type} (f : QuotientProgramBuilder → β → M QuotientProgramBuilder)
+    (hstep : ∀ s x a, f s x = .ok a → AppendTo s a) :
+    ∀ (xs : List β) (init out : QuotientProgramBuilder),
+      foldLeftM f init xs = .ok out → AppendTo init out := by
+  intro xs
+  induction xs with
+  | nil => intro init out h; simp [foldLeftM] at h; cases h; exact ⟨[], by simp⟩
+  | cons x rest ih =>
+      intro init out h
+      simp only [foldLeftM] at h
+      obtain ⟨a, h1, h2⟩ := peel_bind h
+      exact AppendTo_trans (hstep init x a h1) (ih a out h2)
+
+def pwCoeffStep (s : QuotientProgramBuilder) (coeff : Word256) : M QuotientProgramBuilder := do
+  let (s, slot) ← constSlot s coeff
+  if slot > 255 then panicAt siteBilin7PairwiseSlot
+  else .ok (pushByte s slot)
+
+theorem emitLimbShape_append (s : QuotientProgramBuilder) (shape : QuotientLimbShape)
+    (s' : QuotientProgramBuilder) (h : emitLimbShape s shape = .ok s') : AppendTo s s' := by
+  unfold emitLimbShape at h
+  obtain ⟨a, h1, h2⟩ := peel_bind h
+  cases h2
+  cases shape with
+  | lin7 terms =>
+      exact AppendTo_trans (AppendTo_trans (pushByte_append s qOpLin7)
+          (termFold_append (pushByte s qOpLin7) terms siteLin7Slot a h1)) (pushStackAcct_append a)
+  | bilin7Row lhs terms =>
+      obtain ⟨a1, h3, h4⟩ := peel_bind h1
+      exact AppendTo_trans (AppendTo_trans (pushByte_append s qOpBilin7Row)
+          (emitU16_append (pushByte s qOpBilin7Row) lhs a1 h3))
+        (AppendTo_trans (termFold_append a1 terms siteBilin7RowSlot a h4) (pushStackAcct_append a))
+  | bilin7Pairwise lhs rhs coeffs =>
+      obtain ⟨a1, h3, h4⟩ := peel_bind h1
+      obtain ⟨a2, h5, h6⟩ := peel_bind h4
+      have hcoeff : AppendTo a2 a := by
+        refine foldLeftM_append _ ?_ coeffs a2 a h6
+        intro s0 coeff a0 h0
+        unfold pwCoeffStep at h0
+        obtain ⟨b, hb1, hb2⟩ := peel_bind h0
+        rcases b with ⟨s1, slot⟩
+        dsimp only at hb2
+        have hbytes := constSlot_bytes s0 coeff s1 slot hb1
+        by_cases hslot : slot > 255
+        · rw [if_pos hslot] at hb2; cases hb2
+        · rw [if_neg hslot] at hb2
+          cases hb2
+          exact ⟨[slot], by simp [pushByte, appendBytes, hbytes]⟩
+      exact AppendTo_trans (AppendTo_trans (pushByte_append s qOpBilin7Pairwise)
+          (emitU16_append (pushByte s qOpBilin7Pairwise) lhs a1 h3))
+        (AppendTo_trans (emitU16_append a1 rhs a2 h5)
+          (AppendTo_trans hcoeff (pushStackAcct_append a)))
+
+
+
+def modRowStep (s : QuotientProgramBuilder) (row : Nat × List (Word256 × Nat)) :
+    M QuotientProgramBuilder := do
+  let (lhs, terms) := row
+  let s ← emitU16 s lhs
+  termFold s terms siteModarith7RowSlot
+
+theorem modRowStep_append (s : QuotientProgramBuilder) (row : Nat × List (Word256 × Nat))
+    (s' : QuotientProgramBuilder) (h : modRowStep s row = .ok s') : AppendTo s s' := by
+  unfold modRowStep at h
+  obtain ⟨lhs, terms⟩ := row
+  obtain ⟨a, h1, h2⟩ := peel_bind h
+  exact AppendTo_trans (emitU16_append s lhs a h1) (termFold_append a terms siteModarith7RowSlot s' h2)
+
+def modPwInnerStep (s : QuotientProgramBuilder) (coeff : Word256) : M QuotientProgramBuilder := do
+  let (s, slot) ← constSlot s coeff
+  if slot > 255 then panicAt siteModarith7PairwiseSlot
+  else .ok (pushByte s slot)
+
+theorem modPwInnerStep_append (s : QuotientProgramBuilder) (coeff : Word256)
+    (s' : QuotientProgramBuilder) (h : modPwInnerStep s coeff = .ok s') : AppendTo s s' := by
+  unfold modPwInnerStep at h
+  obtain ⟨a, h1, h2⟩ := peel_bind h
+  rcases a with ⟨s1, slot⟩
+  dsimp only at h2
+  have hb := constSlot_bytes s coeff s1 slot h1
+  by_cases hslot : slot > 255
+  · rw [if_pos hslot] at h2; cases h2
+  · rw [if_neg hslot] at h2; cases h2
+    exact ⟨[slot], by simp [pushByte, appendBytes, hb]⟩
+
+def modPwStep (s : QuotientProgramBuilder) (pw : Nat × Nat × List Word256) :
+    M QuotientProgramBuilder := do
+  let (lhs, rhs, coeffs) := pw
+  let s ← emitU16 s lhs
+  let s ← emitU16 s rhs
+  foldLeftM modPwInnerStep s coeffs
+
+theorem modPwStep_append (s : QuotientProgramBuilder) (pw : Nat × Nat × List Word256)
+    (s' : QuotientProgramBuilder) (h : modPwStep s pw = .ok s') : AppendTo s s' := by
+  unfold modPwStep at h
+  obtain ⟨lhs, rhs, coeffs⟩ := pw
+  obtain ⟨a1, h1, h2⟩ := peel_bind h
+  obtain ⟨a2, h3, h4⟩ := peel_bind h2
+  exact AppendTo_trans (emitU16_append s lhs a1 h1)
+    (AppendTo_trans (emitU16_append a1 rhs a2 h3)
+      (foldLeftM_append modPwInnerStep
+        (fun s0 c a0 h0 => modPwInnerStep_append s0 c a0 h0) coeffs a2 s' h4))
+
+def modProdStep (s : QuotientProgramBuilder) (tp : Word256 × Nat × Nat) :
+    M QuotientProgramBuilder := do
+  let (coeff, lhs, rhs) := tp
+  let (s, slot) ← constSlot s coeff
+  if slot > 255 then panicAt siteModarith7ProductSlot
+  else do
+    let s ← emitU16 (pushByte s slot) lhs
+    emitU16 s rhs
+
+theorem modProdStep_append (s : QuotientProgramBuilder) (tp : Word256 × Nat × Nat)
+    (s' : QuotientProgramBuilder) (h : modProdStep s tp = .ok s') : AppendTo s s' := by
+  unfold modProdStep at h
+  obtain ⟨coeff, lhs, rhs⟩ := tp
+  obtain ⟨a, h1, h2⟩ := peel_bind h
+  rcases a with ⟨s1, slot⟩
+  dsimp only at h2
+  have hb := constSlot_bytes s coeff s1 slot h1
+  by_cases hslot : slot > 255
+  · rw [if_pos hslot] at h2; cases h2
+  · rw [if_neg hslot] at h2
+    simp only [bind, Except.bind] at h2
+    obtain ⟨a1, h3, h4⟩ := peel_bind h2
+    exact AppendTo_trans (AppendTo_trans ⟨[], by simp [hb]⟩ (pushByte_append s1 slot))
+      (AppendTo_trans (emitU16_append (pushByte s1 slot) lhs a1 h3)
+        (emitU16_append a1 rhs s' h4))
+
+
+
+theorem foldlPushByte_append (counts : List Nat) :
+    ∀ s : QuotientProgramBuilder, AppendTo s (counts.foldl pushByte s) := by
+  induction counts with
+  | nil => intro s; exact ⟨[], by simp⟩
+  | cons c rest ih =>
+      intro s
+      show AppendTo s (rest.foldl pushByte (pushByte s c))
+      exact AppendTo_trans (pushByte_append s c) (ih (pushByte s c))
+
+theorem emitModarith7Shape_append (s : QuotientProgramBuilder) (shape : QuotientModarith7Shape)
+    (s' : QuotientProgramBuilder) (h : emitModarith7Shape s shape = .ok s') : AppendTo s s' := by
+  unfold emitModarith7Shape at h
+  by_cases hbig : (shape.lin.length > 255 || shape.rows.length > 255 ||
+      shape.pairwise.length > 255 || shape.memTerms.length > 255 ||
+      shape.productTerms.length > 255) = true
+  · rw [if_pos hbig] at h
+    cases h
+  · rw [if_neg hbig] at h
+    dsimp only at h
+    -- The two opcode/flag bytes are the first writes.
+    set s0 : QuotientProgramBuilder :=
+      pushByte (pushByte s qOpModarith7)
+        ((if shape.cond.isSome = true then qModarith7FlagCond else 0) |||
+          if (BitVec.toNat shape.constant != 0) = true then qModarith7FlagConst else 0) with hs0
+    have hhead : AppendTo s s0 := by
+      rw [hs0]
+      exact AppendTo_trans (pushByte_append s qOpModarith7)
+        (pushByte_append (pushByte s qOpModarith7) _)
+    -- cond pointer
+    obtain ⟨s1, hcondM, h⟩ := peel_bind h
+    have hcond : AppendTo s0 s1 := by
+      cases hc : shape.cond with
+      | none => rw [hc] at hcondM; cases hcondM; exact ⟨[], by simp⟩
+      | some cond => rw [hc] at hcondM; exact emitU16_append s0 cond s1 hcondM
+    -- optional const slot
+    set constM : M QuotientProgramBuilder :=
+      if (BitVec.toNat shape.constant != 0) = true then do
+        let (s, slot) ← constSlot s1 shape.constant
+        if slot > 255 then panicAt siteModarith7ConstSlot
+        else .ok (pushByte s slot)
+      else .ok s1 with hconstM_def
+    obtain ⟨s2, hconstM, h⟩ := peel_bind h
+    have hconst : AppendTo s1 s2 := by
+      rw [hconstM_def] at hconstM
+      by_cases hc : (BitVec.toNat shape.constant != 0) = true
+      · rw [if_pos hc] at hconstM
+        obtain ⟨a, h1, h2⟩ := peel_bind hconstM
+        rcases a with ⟨sa, slot⟩
+        dsimp only at h2
+        have hb := constSlot_bytes s1 shape.constant sa slot h1
+        by_cases hslot : slot > 255
+        · rw [if_pos hslot] at h2; cases h2
+        · rw [if_neg hslot] at h2; cases h2
+          exact ⟨[slot], by simp [pushByte, appendBytes, hb]⟩
+      · rw [if_neg hc] at hconstM
+        cases hconstM
+        exact ⟨[], by simp⟩
+    -- the five count bytes
+    set s3 : QuotientProgramBuilder :=
+      [shape.lin.length, shape.rows.length, shape.pairwise.length, shape.memTerms.length,
+        shape.productTerms.length].foldl pushByte s2 with hs3
+    have hcounts : AppendTo s2 s3 := by
+      rw [hs3]
+      exact foldlPushByte_append _ s2
+    -- five blocks
+    obtain ⟨s4, hlin, h⟩ := peel_bind h
+    have hlinA : AppendTo s3 s4 := by
+      refine foldLeftM_append (fun acc terms => termFold acc terms siteModarith7LinSlot) ?_ shape.lin s3 s4 hlin
+      intro s0' terms a0 h0
+      exact termFold_append s0' terms siteModarith7LinSlot a0 h0
+    obtain ⟨s5, hrows, h⟩ := peel_bind h
+    have hrowsA : AppendTo s4 s5 := by
+      have h' : foldLeftM modRowStep s4 shape.rows = .ok s5 := hrows
+      exact foldLeftM_append modRowStep (fun s0' r a0 h0 => modRowStep_append s0' r a0 h0) shape.rows s4 s5 h'
+    obtain ⟨s6, hpw, h⟩ := peel_bind h
+    have hpwA : AppendTo s5 s6 := by
+      have h' : foldLeftM modPwStep s5 shape.pairwise = .ok s6 := hpw
+      exact foldLeftM_append modPwStep (fun s0' r a0 h0 => modPwStep_append s0' r a0 h0) shape.pairwise s5 s6 h'
+    obtain ⟨s7, hmem, h⟩ := peel_bind h
+    have hmemA : AppendTo s6 s7 := termFold_append s6 shape.memTerms siteModarith7MemSlot s7 hmem
+    obtain ⟨s8, hprod, h⟩ := peel_bind h
+    have hprodA : AppendTo s7 s8 := by
+      have h' : foldLeftM modProdStep s7 shape.productTerms = .ok s8 := hprod
+      exact foldLeftM_append modProdStep (fun s0' r a0 h0 => modProdStep_append s0' r a0 h0) shape.productTerms s7 s8 h'
+    have hfinal : s' = pushStackAcct s8 := by
+      exact (Except.ok.inj h).symm
+    rw [hfinal]
+    exact AppendTo_trans hhead (AppendTo_trans hcond (AppendTo_trans hconst
+      (AppendTo_trans hcounts (AppendTo_trans hlinA (AppendTo_trans hrowsA
+        (AppendTo_trans hpwA (AppendTo_trans hmemA (AppendTo_trans hprodA
+          (pushStackAcct_append s8)))))))))
+
+
+
+theorem tryEmitLimbShape_append (r : QuotientShapeRecognizers) (s : QuotientProgramBuilder)
+    (expr : QuotientExpr) (p : Bool × QuotientProgramBuilder)
+    (h : tryEmitLimbShape r s expr = .ok p) : AppendTo s p.2 := by
+  unfold tryEmitLimbShape at h
+  by_cases hb : (!s.limbVmOps) = true
+  · rw [if_pos hb] at h; cases h; exact ⟨[], by simp⟩
+  · rw [if_neg hb] at h
+    cases hs : r.limbShape expr with
+    | none => rw [hs] at h; cases h; exact ⟨[], by simp⟩
+    | some shape =>
+        rw [hs] at h
+        dsimp only at h
+        by_cases hc : (!limbShapeHasU8ConstSlots s shape) = true
+        · rw [if_pos hc] at h; cases h; exact ⟨[], by simp⟩
+        · rw [if_neg hc] at h
+          obtain ⟨s1, h1, h2⟩ := peel_bind h
+          cases h2
+          exact emitLimbShape_append s shape s1 h1
+
+theorem tryEmitModarith7Shape_append (r : QuotientShapeRecognizers) (s : QuotientProgramBuilder)
+    (expr : QuotientExpr) (p : Bool × QuotientProgramBuilder)
+    (h : tryEmitModarith7Shape r s expr = .ok p) : AppendTo s p.2 := by
+  unfold tryEmitModarith7Shape at h
+  by_cases hb : (!s.limbVmOps) = true
+  · rw [if_pos hb] at h; cases h; exact ⟨[], by simp⟩
+  · rw [if_neg hb] at h
+    cases hs : r.modarith7Shape expr with
+    | none => rw [hs] at h; cases h; exact ⟨[], by simp⟩
+    | some shape =>
+        rw [hs] at h
+        dsimp only at h
+        by_cases hc : (!modarith7ShapeHasU8ConstSlots s shape) = true
+        · rw [if_pos hc] at h; cases h; exact ⟨[], by simp⟩
+        · rw [if_neg hc] at h
+          obtain ⟨s1, h1, h2⟩ := peel_bind h
+          cases h2
+          exact emitModarith7Shape_append s shape s1 h1
+
+theorem foldIdentity_append (s : QuotientProgramBuilder) (target : QuotientTarget)
+    (gap : Option Nat) (s' : QuotientProgramBuilder)
+    (h : foldIdentity s target gap = .ok s') : AppendTo s s' := by
+  unfold foldIdentity at h
+  cases target with
+  | main =>
+      dsimp only at h
+      exact AppendTo_trans (op0_append s qOpFoldMain)
+        (popStackAcct_append (op0 s qOpFoldMain) s' h)
+  | selector idx =>
+      dsimp only at h
+      cases hg : gap with
+      | none => rw [hg] at h; cases h
+      | some g =>
+          rw [hg] at h
+          dsimp only at h
+          simp only [bind, Except.bind] at h
+          by_cases hi : idx > 255
+          · rw [if_pos hi] at h; cases h
+          · rw [if_neg hi] at h
+            by_cases hgap : g > 0xffff
+            · rw [if_pos hgap] at h; cases h
+            · rw [if_neg hgap] at h
+              obtain ⟨a1, h1, h2⟩ := peel_bind h
+              exact AppendTo_trans (AppendTo_trans (pushByte_append s qOpFoldSelector)
+                (emitU24_append (pushByte s qOpFoldSelector) ((idx * 65536) ||| g) a1 h1))
+                (popStackAcct_append a1 s' h2)
+
+
+
+structure EmitAppend (r : QuotientShapeRecognizers) (n : Nat) : Prop where
+  expr : ∀ (s : QuotientProgramBuilder) (e : QuotientExpr) (s' : QuotientProgramBuilder),
+    emitExpr r n s e = .ok s' → AppendTo s s'
+  binary : ∀ (s : QuotientProgramBuilder) (lhs rhs : QuotientExpr)
+    (stackOp constU8Op constOp memU16Op : Nat) (s' : QuotientProgramBuilder),
+    emitBinaryExpr r n s lhs rhs stackOp constU8Op constOp memU16Op = .ok s' → AppendTo s s'
+  addProduct : ∀ (s : QuotientProgramBuilder) (base product : QuotientExpr)
+    (p : Bool × QuotientProgramBuilder),
+    tryEmitAddProduct r n s base product = .ok p → AppendTo s p.2
+  limbDecomp : ∀ (s : QuotientProgramBuilder) (expr : QuotientExpr)
+    (p : Bool × QuotientProgramBuilder),
+    tryEmitLimbDecomposition r n s expr = .ok p → AppendTo s p.2
+  affine : ∀ (s : QuotientProgramBuilder) (terms : List QuotientExpr)
+    (s' : QuotientProgramBuilder),
+    emitAffineTerms r n s terms = .ok s' → AppendTo s s'
+  affineRest : ∀ (s : QuotientProgramBuilder) (terms : List QuotientExpr)
+    (s' : QuotientProgramBuilder),
+    emitAffineTermsRest r n s terms = .ok s' → AppendTo s s'
+  pow5 : ∀ (s : QuotientProgramBuilder) (e : QuotientExpr) (p : Bool × QuotientProgramBuilder),
+    tryEmitPow5 r n s e = .ok p → AppendTo s p.2
+
+theorem emitAppend_all (r : QuotientShapeRecognizers) : ∀ n, EmitAppend r n := by
+  intro n
+  induction n using Nat.strong_induction_on with
+  | _ n ih =>
+  cases n with
+  | zero =>
+      constructor
+      · intro s e s' h; simp [emitExpr] at h; cases h
+      · intro s lhs rhs a b c d s' h; simp [emitBinaryExpr] at h; cases h
+      · intro s base product p h; simp [tryEmitAddProduct] at h; cases h
+      · intro s expr p h; simp [tryEmitLimbDecomposition] at h; cases h
+      · intro s terms s' h; simp [emitAffineTerms] at h; cases h
+      · intro s terms s' h; simp [emitAffineTermsRest] at h; cases h
+      · intro s e p h; simp [tryEmitPow5] at h; cases h
+  | succ m =>
+      have IH := ih m (by omega)
+      constructor
+      · intro s e s' h
+        simp only [emitExpr] at h
+        obtain ⟨p1, h1, h2⟩ := peel_bind h
+        have hp1 := IH.pow5 s e p1 h1
+        cases hp1b : p1.1 with
+        | true =>
+            rw [hp1b] at h2
+            cases h2
+            exact hp1
+        | false =>
+            rw [hp1b] at h2
+            obtain ⟨p2, h3, h4⟩ := peel_bind h2
+            have hp2 := tryEmitModarith7Shape_append r p1.2 e p2 h3
+            have h12 : AppendTo s p2.2 := AppendTo_trans hp1 hp2
+            cases hp2b : p2.1 with
+            | true =>
+                rw [hp2b] at h4
+                cases h4
+                exact h12
+            | false =>
+                rw [hp2b] at h4
+                obtain ⟨p3, h5, h6⟩ := peel_bind h4
+                have hp3 := tryEmitLimbShape_append r p2.2 e p3 h5
+                have h123 : AppendTo s p3.2 := AppendTo_trans h12 hp3
+                cases hp3b : p3.1 with
+                | true =>
+                    rw [hp3b] at h6
+                    cases h6
+                    exact h123
+                | false =>
+                    rw [hp3b] at h6
+                    obtain ⟨p4, h7, h8⟩ := peel_bind h6
+                    have hp4 := IH.limbDecomp p3.2 e p4 h7
+                    have h1234 : AppendTo s p4.2 := AppendTo_trans h123 hp4
+                    cases hp4b : p4.1 with
+                    | true =>
+                        rw [hp4b] at h8
+                        cases h8
+                        exact h1234
+                    | false =>
+                        rw [hp4b] at h8
+                        cases e with
+                        | const value =>
+                            obtain ⟨s1, h9, h10⟩ := peel_bind h8
+                            have hc := emitConst_append p4.2 value s1 h9
+                            have h11 : s' = pushStackAcct s1 := (Except.ok.inj h10).symm
+                            rw [h11]
+                            exact AppendTo_trans (AppendTo_trans h1234 hc) (pushStackAcct_append s1)
+                        | mem m =>
+                            cases m with
+                            | literal ptr =>
+                                obtain ⟨s1, h9, h10⟩ := peel_bind h8
+                                have hc := emitMemLiteral_append p4.2 ptr s1 h9
+                                have h11 : s' = pushStackAcct s1 := (Except.ok.inj h10).symm
+                                rw [h11]
+                                exact AppendTo_trans (AppendTo_trans h1234 hc) (pushStackAcct_append s1)
+                            | token t =>
+                                cases h8
+                                exact AppendTo_trans h1234 ⟨[qOpPushMemToken, t],
+                                  by simp [pushByte, appendBytes, pushStackAcct]⟩
+                            | tokenOffset t o =>
+                                obtain ⟨s1, h9, h10⟩ := peel_bind h8
+                                cases h10
+                                exact AppendTo_trans h1234 (AppendTo_trans
+                                  (AppendTo_trans (pushByte_append p4.2 qOpPushMemTokenOffset)
+                                    (pushByte_append (pushByte p4.2 qOpPushMemTokenOffset) t))
+                                  (AppendTo_trans (emitU32_append
+                                    (pushByte (pushByte p4.2 qOpPushMemTokenOffset) t) o s1 h9)
+                                    (pushStackAcct_append s1)))
+                        | add lhs rhs =>
+                            obtain ⟨p5, h9, h10⟩ := peel_bind h8
+                            have hp5 := IH.addProduct p4.2 lhs rhs p5 h9
+                            have h5c : AppendTo s p5.2 := AppendTo_trans h1234 hp5
+                            cases hp5b : p5.1 with
+                            | true =>
+                                rw [hp5b] at h10; cases h10; exact h5c
+                            | false =>
+                                rw [hp5b] at h10
+                                obtain ⟨p6, h11, h12⟩ := peel_bind h10
+                                have hp6 := IH.addProduct p5.2 rhs lhs p6 h11
+                                have h6c : AppendTo s p6.2 := AppendTo_trans h5c hp6
+                                cases hp6b : p6.1 with
+                                | true =>
+                                    rw [hp6b] at h12; cases h12; exact h6c
+                                | false =>
+                                    rw [hp6b] at h12
+                                    exact AppendTo_trans h6c
+                                      (IH.binary p6.2 lhs rhs qOpAdd qOpAddConstU8 qOpAddConst
+                                        qOpAddMemU16 s' h12)
+                        | mul lhs rhs =>
+                            exact AppendTo_trans h1234
+                              (IH.binary p4.2 lhs rhs qOpMul qOpMulConstU8 qOpMulConst qOpMulMemU16 s' h8)
+                        | neg inner =>
+                            obtain ⟨s1, h9, h10⟩ := peel_bind h8
+                            cases h10
+                            exact AppendTo_trans h1234 (AppendTo_trans (IH.expr p4.2 inner s1 h9)
+                              (op0_append s1 qOpNeg))
+      · intro s lhs rhs stackOp constU8Op constOp memU16Op s' h
+        simp only [emitBinaryExpr] at h
+        cases hr : quotientLeaf rhs with
+        | some leaf =>
+            rw [hr] at h
+            dsimp only at h
+            obtain ⟨s1, h1, h2⟩ := peel_bind h
+            have hp1 := IH.expr s lhs s1 h1
+            obtain ⟨res, h3, h4⟩ := peel_bind h2
+            rcases res with ⟨hit, s2⟩
+            cases hit with
+            | true =>
+                dsimp only at h4
+                have hs : s2 = s' := Except.ok.inj h4
+                subst hs
+                exact AppendTo_trans hp1 (emitAccLeaf_append s1 leaf constU8Op constOp memU16Op
+                  (true, s2) h3)
+            | false =>
+                dsimp only at h4
+                obtain ⟨s3, h5, h6⟩ := peel_bind h4
+                exact AppendTo_trans hp1 (AppendTo_trans
+                  (emitAccLeaf_append s1 leaf constU8Op constOp memU16Op (false, s2) h3)
+                  (AppendTo_trans (IH.expr s2 rhs s3 h5) (opBinary_append s3 stackOp s' h6)))
+        | none =>
+            rw [hr] at h
+            dsimp only at h
+            cases hl : quotientLeaf lhs with
+            | some leaf =>
+                rw [hl] at h
+                dsimp only at h
+                obtain ⟨s1, h1, h2⟩ := peel_bind h
+                have hp1 := IH.expr s rhs s1 h1
+                obtain ⟨res, h3, h4⟩ := peel_bind h2
+                rcases res with ⟨hit, s2⟩
+                cases hit with
+                | true =>
+                    dsimp only at h4
+                    have hs : s2 = s' := Except.ok.inj h4
+                    subst hs
+                    exact AppendTo_trans hp1 (emitAccLeaf_append s1 leaf constU8Op constOp memU16Op
+                      (true, s2) h3)
+                | false =>
+                    dsimp only at h4
+                    obtain ⟨s3, h5, h6⟩ := peel_bind h4
+                    exact AppendTo_trans hp1 (AppendTo_trans
+                      (emitAccLeaf_append s1 leaf constU8Op constOp memU16Op (false, s2) h3)
+                      (AppendTo_trans (IH.expr s2 lhs s3 h5) (opBinary_append s3 stackOp s' h6)))
+            | none =>
+                rw [hl] at h
+                dsimp only at h
+                obtain ⟨s1, h1, h2⟩ := peel_bind h
+                obtain ⟨s2, h3, h4⟩ := peel_bind h2
+                exact AppendTo_trans (IH.expr s lhs s1 h1) (AppendTo_trans (IH.expr s1 rhs s2 h3)
+                  (opBinary_append s2 stackOp s' h4))
+      · intro s base product p h
+        simp only [tryEmitAddProduct] at h
+        cases hc : collectProductLeaves product with
+        | none => rw [hc] at h; cases h; exact ⟨[], by simp⟩
+        | some leaves =>
+            rw [hc] at h
+            dsimp only at h
+            cases hm : productAddMacro s leaves with
+            | none => rw [hm] at h; cases h; exact ⟨[], by simp⟩
+            | some fused =>
+                rw [hm] at h
+                dsimp only at h
+                obtain ⟨s1, h1, h2⟩ := peel_bind h
+                have hp1 := IH.expr s base s1 h1
+                cases hf : productAddFitsU8Slot s1 fused with
+                | true =>
+                    rw [hf] at h2
+                    obtain ⟨s2, h3, h4⟩ := peel_bind h2
+                    cases h4
+                    exact AppendTo_trans hp1 (emitProductAdd_append s1 fused s2 h3)
+                | false =>
+                    rw [hf] at h2
+                    obtain ⟨s2, h3, h4⟩ := peel_bind h2
+                    cases hb : opBinary s2 qOpAdd with
+                    | error e => rw [hb] at h4; cases h4
+                    | ok s3 =>
+                        rw [hb] at h4
+                        cases h4
+                        exact AppendTo_trans hp1 (AppendTo_trans (IH.expr s1 product s2 h3)
+                          (opBinary_append s2 qOpAdd s3 hb))
+      · intro s expr p h
+        simp only [tryEmitLimbDecomposition] at h
+        by_cases hv : (!s.limbVmOps) = true
+        · rw [if_pos hv] at h; cases h; exact ⟨[], by simp⟩
+        · rw [if_neg hv] at h
+          cases hs : r.limbSubshape expr with
+          | none => rw [hs] at h; cases h; exact ⟨[], by simp⟩
+          | some t =>
+              obtain ⟨shape, residue, matched⟩ := t
+              rw [hs] at h
+              dsimp only at h
+              by_cases hc : (!limbShapeHasU8ConstSlots s shape) = true
+              · rw [if_pos hc] at h; cases h; exact ⟨[], by simp⟩
+              · rw [if_neg hc] at h
+                obtain ⟨s1, h1, h2⟩ := peel_bind h
+                have hp1 := IH.expr s residue s1 h1
+                by_cases hc2 : (limbShapeHasU8ConstSlots s1 shape) = true
+                · rw [if_pos hc2] at h2
+                  obtain ⟨s2, h3, h4⟩ := peel_bind h2
+                  obtain ⟨s3, h5, h6⟩ := peel_bind h4
+                  cases h6
+                  exact AppendTo_trans hp1 (AppendTo_trans (emitLimbShape_append s1 shape s2 h3)
+                    (opBinary_append s2 qOpAdd s3 h5))
+                · rw [if_neg hc2] at h2
+                  obtain ⟨s2, h3, h4⟩ := peel_bind h2
+                  obtain ⟨s3, h5, h6⟩ := peel_bind h4
+                  cases h6
+                  exact AppendTo_trans hp1 (AppendTo_trans (IH.affine s1 matched s2 h3)
+                    (opBinary_append s2 qOpAdd s3 h5))
+      · intro s terms s' h
+        unfold emitAffineTerms at h
+        cases terms with
+        | nil => cases h; exact ⟨[], by simp⟩
+        | cons term rest =>
+            obtain ⟨s1, h1, h2⟩ := peel_bind h
+            exact AppendTo_trans (IH.expr s term s1 h1) (IH.affineRest s1 rest s' h2)
+      · intro s terms s' h
+        unfold emitAffineTermsRest at h
+        cases terms with
+        | nil => cases h; exact ⟨[], by simp⟩
+        | cons term rest =>
+            obtain ⟨s1, h1, h2⟩ := peel_bind h
+            obtain ⟨s2, h3, h4⟩ := peel_bind h2
+            exact AppendTo_trans (IH.expr s term s1 h1) (AppendTo_trans
+              (opBinary_append s1 qOpAdd s2 h3) (IH.affineRest s2 rest s' h4))
+      · intro s e p h
+        simp only [tryEmitPow5] at h
+        cases hp : r.pow5Base e with
+        | none => rw [hp] at h; cases h; exact ⟨[], by simp⟩
+        | some base =>
+            rw [hp] at h
+            obtain ⟨s1, h1, h2⟩ := peel_bind h
+            cases h2
+            exact AppendTo_trans (IH.expr s base s1 h1) (pushByte_append s1 qOpPow5)
+
+
+
+theorem emitU24_bytes (s : QuotientProgramBuilder) (v : Nat) (s' : QuotientProgramBuilder)
+    (h : emitU24 s v = .ok s') : ∃ a b c, s'.bytes = s.bytes ++ [a, b, c] := by
+  unfold emitU24 at h
+  split at h
+  · cases h
+  · cases h
+    exact ⟨_, _, _, rfl⟩
+
+theorem foldIdentity_suffix (s : QuotientProgramBuilder) (t : QuotientTarget)
+    (gap : Option Nat) (s' : QuotientProgramBuilder) (h : foldIdentity s t gap = .ok s') :
+    (t = .main ∧ s'.bytes = s.bytes ++ [qOpFoldMain]) ∨
+    (∃ (idx : Nat) (g b1 b2 b3 : Nat), t = .selector idx ∧ gap = some g ∧
+      s'.bytes = s.bytes ++ [qOpFoldSelector, b1, b2, b3]) := by
+  unfold foldIdentity at h
+  cases t with
+  | main =>
+      dsimp only at h
+      have hb : s'.bytes = (op0 s qOpFoldMain).bytes :=
+        popStackAcct_bytes (op0 s qOpFoldMain) s' h
+      left
+      refine ⟨rfl, ?_⟩
+      rw [hb]
+      simp [op0]
+  | selector idx =>
+      dsimp only at h
+      cases hg : gap with
+      | none => rw [hg] at h; cases h
+      | some g =>
+          rw [hg] at h
+          dsimp only at h
+          simp only [bind, Except.bind] at h
+          by_cases hi : idx > 255
+          · rw [if_pos hi] at h; cases h
+          · rw [if_neg hi] at h
+            by_cases hgap : g > 0xffff
+            · rw [if_pos hgap] at h; cases h
+            · rw [if_neg hgap] at h
+              obtain ⟨a1, h1, h2⟩ := peel_bind h
+              obtain ⟨b1, b2, b3, hb⟩ := emitU24_bytes (pushByte s qOpFoldSelector)
+                ((idx * 65536) ||| g) a1 h1
+              have h2' : s'.bytes = a1.bytes := popStackAcct_bytes a1 s' h2
+              right
+              refine ⟨idx, g, b1, b2, b3, rfl, rfl, ?_⟩
+              rw [h2', hb]
+              simp [pushByte, appendBytes, List.append_assoc]
+
+theorem finalizedIdentitySegment_some_of_append_main (a : List Nat) :
+    ∃ body, finalizedIdentitySegment (a ++ [qOpFoldMain]) = some body := by
+  unfold finalizedIdentitySegment
+  have hne : (a ++ [qOpFoldMain]).length ≠ 0 := by simp
+  rw [if_neg (by simpa using hne)]
+  have hlast : ((a ++ [qOpFoldMain]).getD ((a ++ [qOpFoldMain]).length - 1) 0 == qOpFoldMain) = true := by
+    simp [List.length_append]
+  rw [if_pos hlast]
+  exact ⟨a, by simp⟩
+
+theorem finalizedIdentitySegment_some_of_append_selector (a : List Nat) (b1 b2 b3 : Nat) :
+    ∃ body, finalizedIdentitySegment (a ++ [qOpFoldSelector, b1, b2, b3]) = some body := by
+  unfold finalizedIdentitySegment
+  have hne : (a ++ [qOpFoldSelector, b1, b2, b3]).length ≠ 0 := by simp
+  rw [if_neg (by simpa using hne)]
+  by_cases hlast : ((a ++ [qOpFoldSelector, b1, b2, b3]).getD
+      ((a ++ [qOpFoldSelector, b1, b2, b3]).length - 1) 0 == qOpFoldMain) = true
+  · rw [if_pos hlast]
+    exact ⟨_, rfl⟩
+  · rw [if_neg hlast]
+    have hsel : (decide (4 ≤ (a ++ [qOpFoldSelector, b1, b2, b3]).length) &&
+        ((a ++ [qOpFoldSelector, b1, b2, b3]).getD
+          ((a ++ [qOpFoldSelector, b1, b2, b3]).length - 4) 0 == qOpFoldSelector)) = true := by
+      simp [List.length_append]
+    rw [if_pos hsel]
+    exact ⟨_, rfl⟩
+
+theorem emitExprTop_append (r : QuotientShapeRecognizers) (s : QuotientProgramBuilder)
+    (e : QuotientExpr) (s' : QuotientProgramBuilder) (h : emitExprTop r s e = .ok s') :
+    AppendTo s s' :=
+  (emitAppend_all r (emitFuel e)).expr s e s' h
+
+theorem identityExpr_suffix (r : QuotientShapeRecognizers) (s : QuotientProgramBuilder)
+    (e : QuotientExpr) (t : QuotientTarget) (gap : Option Nat) (s' : QuotientProgramBuilder)
+    (h : identityExpr r s e t gap = .ok s') :
+    ∃ (extra pre : List Nat), s'.bytes = s.bytes ++ extra ∧
+      (extra = pre ++ [qOpFoldMain] ∨
+        ∃ b1 b2 b3, extra = pre ++ [qOpFoldSelector, b1, b2, b3]) := by
+  unfold identityExpr at h
+  dsimp only at h
+  obtain ⟨s1, h1, h2⟩ := peel_bind h
+  obtain ⟨s2, h3, h4⟩ := peel_bind h2
+  have ha := emitExprTop_append r { s with vars := [], stackDepth := 0 } e s1 h1
+  obtain ⟨e1, he1⟩ := ha
+  have he1' : s1.bytes = s.bytes ++ e1 := by simpa using he1
+  rcases foldIdentity_suffix s1 t gap s2 h3 with hsuf | hsuf
+  · obtain ⟨ht, hb⟩ := hsuf
+    subst ht
+    have hs2 : s2.bytes = s1.bytes ++ [qOpFoldMain] := hb
+    have hs' : s' = s2 := by
+      by_cases hd : s2.stackDepth != 0
+      · simp [hd] at h4; cases h4
+      · simp [hd] at h4
+        exact h4.symm
+    subst hs'
+    refine ⟨e1 ++ [qOpFoldMain], e1, ?_, Or.inl rfl⟩
+    rw [hs2, he1']
+    simp [List.append_assoc]
+  · obtain ⟨idx, g, b1, b2, b3, ht, hg, hb⟩ := hsuf
+    subst ht
+    have hs2 : s2.bytes = s1.bytes ++ [qOpFoldSelector, b1, b2, b3] := hb
+    have hs' : s' = s2 := by
+      by_cases hd : s2.stackDepth != 0
+      · simp [hd] at h4; cases h4
+      · simp [hd] at h4
+        exact h4.symm
+    subst hs'
+    refine ⟨e1 ++ [qOpFoldSelector, b1, b2, b3], e1, ?_,
+      Or.inr ⟨b1, b2, b3, rfl⟩⟩
+    rw [hs2, he1']
+    simp [List.append_assoc]
+
+theorem PG_identity_preFold_proof : Midfall.Lowering.PG_identity_preFold := by
+  intro r s0 s1 e t gap h
+  obtain ⟨extra, pre, hextra, hsuf⟩ := identityExpr_suffix r s0 e t gap s1 h
+  have hdrop : s1.bytes.drop s0.bytes.length = extra := by
+    rw [hextra]
+    simp
+  rw [hdrop]
+  rcases hsuf with hsuf | hsuf
+  · obtain ⟨rfl⟩ := hsuf
+    exact finalizedIdentitySegment_some_of_append_main pre
+  · obtain ⟨b1, b2, b3, rfl⟩ := hsuf
+    exact finalizedIdentitySegment_some_of_append_selector pre b1 b2 b3
+
+end Midfall.Lowering.QvmEmit
