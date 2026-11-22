@@ -2916,3 +2916,26 @@ filled payload AND whose `vk` carries the real decoded fixed/permutation commitm
 pairing-generator tie (`bls12_381Pairing.g₁ = g1zGen`, `g₂ = g2foldExp 1`) and the `s·G₂` decode
 from `params.json` supplied by B3. Until those land, B4 keeps the existing refutations and lands
 only green partial clauses; it does not claim `ValidV3 f1GeneratedRender`.
+
+## D-B5 — **Approved: the artifact gate pins the VK exactly and the verifier except the BUILD_ID input**
+
+> **Status: APPROVED.** Signed 2026-11-22 after the B5 Rust exporter ran against the real SRS and
+> the tracked F1 dump.
+
+**Measured.** `Halo2VerifyingKey.sol` is **byte-identical** to the tracked artifact (26,018 bytes,
+`sha256 e4a7d45cd2526ad3efa38cc19cfa7b88d505e060f1feac0db48082fb61f0ce55`). `Halo2Verifier.sol` is
+175,918 bytes / 3,024 lines and differs at exactly one line (275), the `BUILD_ID` constant:
+rendered `0xf8b2df9a…60ee8` with the exporter's `features="default,truncated-challenges"` and
+`srs_fingerprint=0x5b73bb10…395129`, against the tracked `0xf352d267…4285fd`. The tracked fixture
+carries no `build.json`, so the original SRS/feature inputs cannot be recovered.
+
+**Decision.** Do NOT invent the original inputs. The artifact gate is:
+1. VK contract: exact byte/sha256 equality (proved by the run above and pinned in the gate);
+2. verifier contract: exact byte count, line count, and exactly ONE differing line, whose both sides
+   contain `BUILD_ID` (the existing `generateAll_textIsTheArtifactButForBuildId_ok` shape, now with
+   the printed hashes/provenance);
+3. the exporter's `features`, `srs_fingerprint`, `srs_sha256`, and the tracked/rendered BUILD_IDs are
+   recorded in the gate output and `build.json`. A future re-export with the true SRS/features can
+   strengthen this to whole-file equality; until then the build stamp is an INPUT, not a proof line.
+This is not a weakening of `ValidV3` or any row; it is a precise statement of what the artifact
+reproduces. T3.3's slice literals remain a separate gate.
