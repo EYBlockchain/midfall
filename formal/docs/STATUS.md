@@ -53,6 +53,14 @@ and the `snapshotOf_prepareMsgs` retirement.
    absent; the exporter is shared with B5/OBJ.11.
 5. **QVM** — the fixed-segment proof is the agent's lane; no human item unless the fold output
    predicate needs a ruling.
+6. **PG-LAGAGREE / T3.9.g — `lag_agrees` is FALSE as written (off by one).** Its `hW` uses
+   `omegaInv ^ (numNegLagranges - 1)`; `PayloadAgrees.omegaInvToL`, `Protocol.lean:675` and
+   `Vk.lean:777-780` all give `omegaInv ^ numNegLagranges`. The rest of the conclusion is
+   consistent at the corrected exponent. A4's lag rows cannot close until this statement is
+   restated (one exponent, or a general `w0` parameter); do not edit `LagRel` silently.
+7. **A4/A5 order inversion.** `batch_invert_summary` (HLP.1.b/c) is a prerequisite of the lagrange
+   row, not a successor; the queue lists A5 after A4. The A4 loop tranche is render-free and can
+   proceed now (in flight on `t/A4`); the row integration needs A5 first.
 
 **Signed and landed this session:** D-QVM1 (address fit), D-QVM2 (fixed-segment restatement),
 D-GATE1 (PG-VKHEADER `constantsLength`, programOk `GasFree`, snapshot retirement).
