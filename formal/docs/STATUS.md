@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `b6e6d42` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
+**As of:** `72e5534` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
 EXIT=0, KAT 1648/119, `axiom_sweep: ok`, closure fingerprint 4823 declarations / 526 external
 leaves / `bd27cd298a04fc1a`. The later A3/QVM commits are quick-gate green. Current report:
 root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
@@ -22,6 +22,12 @@ root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
     KAT ...................... 1648/119 (full gate at d0bf226; quick since)
     axiom roots .............. standard three + sorryAx, native []
 
+**Port audit (F1–F10):** the audit lane's `PORT-AUDIT.md` reports F1 (the two KZG point-set
+constructions are independent ports; the rotation-collision case is the exact missing bridge),
+F2 (raw-meta `numPointSets = 0`; known V3 repair), F3 (`scatterIndexed` faults where Rust uses
+defaults), F4–F7 (stale prose, being fixed), F8 (params/SRS provenance pin), F9–F10 (not
+mismatches). **D-GATE6** adds the rotation-distinctness clause to the supported profile;
+**D-GATE7** adds the VK advice/challenge phase-length interface. Both are signed.
 **D-GATE5 (signed):** D1's `kzgPartitionBridge_false_at_x0` proves the unconditional KZG
 partition count false at challenge `x = 0` (generator 2 sets vs Halo2 1). `ChallengesGood` gains
 `xNonzero : S.alg.x ≠ 0`, exactly parallel to `xNotRoot`; `CompleteSide` already quantifies over it.
