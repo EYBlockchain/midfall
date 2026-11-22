@@ -1031,6 +1031,303 @@ theorem bwdGp_succ (s k j : Nat) : bwdGp s k (j + 1) = bwdGp s k j - 32 := by
   rw [BitVec.sub_sub]
   conv_rhs => rw [show (32 : U256) = BitVec.ofNat 256 32 from rfl, ← BitVec.ofNat_add]
 
+/-! ## 4e. THE BACKWARD LOOP (HLP.1.c), PROVED
+
+  Statement 29 with the §5 invariant. The statement takes `k` explicitly with `e - a = 32*k`
+  (the caller supplies it from `(e-a) % 32 = 0`), which keeps the `bwdEnv_get_*` lemmas on the
+  explicit `k` and avoids the `(e-a)/32` rewrite. The running inverse `all_inv` is
+  `bwdAll … j`, the stored word is `bwdInvVal … (k-1-i)`, and the state is the `bwdMem` store
+  chain. The tail (statements 30-33) and the summary are not in this file. -/
+
+theorem get_cons_self_inv (V : VEnv (Bridge.Dialect c g)) (v : U256) :
+    VEnv.get (("inv", v) :: V) "inv" = some v := rfl
+
+theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (rw : U256) (a e s k : Nat) (hae : a + 96 ≤ e) (hal : (e - a) % 32 = 0)
+    (hk : e - a = 32 * k) (he : e < 2 ^ 256) (hs : s + (e - a) < 2 ^ 256)
+    (hdisj : e ≤ s ∨ s + (e - a) ≤ a)
+    (invAll : U256) (hrw : Nat.Prime rw.toNat) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts GenAst.emitBatchInvertAt) 29 1)
+      (fun V st =>
+        VEnv.get V "mptr" = some (bwdMptr a k 0) ∧
+        VEnv.get V "gp_mptr" = some (bwdGp s k 0) ∧
+        VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+        VEnv.get V "all_inv" = some invAll ∧ VEnv.get V "r" = some rw ∧
+        (VEnv.get V "ret").isSome ∧
+        (∀ i, i ≤ k - 2 → loadWord st.memory (s + 32 * i) = fwdProd st.memory a rw (i + 1)) ∧
+        (∀ i, i < k → (loadWord st.memory (a + 32 * i)).toNat < rw.toNat) ∧
+        wMulmodAt invAll (fwdProd st.memory a rw (k - 1)) rw = 1)
+      (fun _ st V' st' o => o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+        VEnv.get V' "mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+        (∃ ai, VEnv.get V' "all_inv" = some ai ∧
+          wMulmodAt ai (fwdProd st.memory a rw 1) rw = 1) ∧
+        (∀ i, 2 ≤ i → i < k → loadWord st'.memory (a + 32 * i) =
+          bwdInvVal st.memory a k rw invAll (k - 1 - i)) ∧
+        (∀ i, i < 2 → loadWord st'.memory (a + 32 * i) = loadWord st.memory (a + 32 * i)) ∧
+        (∀ x, (x < a ∨ a + 32 * k ≤ x) → (x < s ∨ s + 32 * k ≤ x) →
+          st'.memory x = st.memory x) ∧
+        (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat)) := by
+  rw [bi_backward_loop_form]
+  simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
+    GenAst.yexpr]
+  intro V st hpre
+  obtain ⟨hmptr, hgpm, hsecond, hinv0, hr, hret, hscratch, hcanon, hinvAll⟩ := hpre
+  have he' : e = a + 32 * k := by omega
+  have hsubea : e - a = 32 * k := by omega
+  have hk3 : 3 ≤ k := by omega
+  have hk1 : 1 ≤ k := by omega
+  have hk2 : 2 ≤ k := by omega
+  have hek : a + 32 * k < 2 ^ 256 := by omega
+  have hsk : s + 32 * k < 2 ^ 256 := by omega
+  have hdisj' : a + 32 * k ≤ s ∨ s + 32 * k ≤ a := by
+    simpa [he', hsubea] using hdisj
+  let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
+    fun V' st' o => o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+      VEnv.get V' "mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+      (∃ ai, VEnv.get V' "all_inv" = some ai ∧
+        wMulmodAt ai (fwdProd st.memory a rw 1) rw = 1) ∧
+      (∀ i, 2 ≤ i → i < k → loadWord st'.memory (a + 32 * i) =
+        bwdInvVal st.memory a k rw invAll (k - 1 - i)) ∧
+      (∀ i, i < 2 → loadWord st'.memory (a + 32 * i) = loadWord st.memory (a + 32 * i)) ∧
+      (∀ x, (x < a ∨ a + 32 * k ≤ x) → (x < s ∨ s + 32 * k ≤ x) → st'.memory x = st.memory x) ∧
+      (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat)
+  change Midfall.Yul.WpTac.AllRuns funs V st
+    [Stmt.forLoop []
+      (Expr.builtin Op.lt [Expr.var "second_mptr", Expr.var "mptr"])
+      []
+      [ Stmt.letDecl ["inv"] (some (Expr.builtin Op.mulmod
+          [Expr.var "all_inv", Expr.builtin Op.mload [Expr.var "gp_mptr"], Expr.var "r"]))
+      , Stmt.assign ["all_inv"] (Expr.builtin Op.mulmod
+          [Expr.var "all_inv", Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "r"])
+      , Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var "mptr", Expr.var "inv"])
+      , Stmt.assign ["mptr"] (Expr.builtin Op.sub
+          [Expr.var "mptr", Expr.lit (Literal.number 0x20)])
+      , Stmt.assign ["gp_mptr"] (Expr.builtin Op.sub
+          [Expr.var "gp_mptr", Expr.lit (Literal.number 0x20)]) ]] Q
+  let Inv : VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+    fun V' st' => ∃ j, j ≤ k - 2 ∧ V' = bwdEnv st.memory a s k rw invAll V j ∧
+      ∃ aw, st' = { st with
+        memory := bwdMem st.memory a k (bwdInvVal st.memory a k rw invAll) j, activeWords := aw }
+  have hmain : Midfall.Yul.WpTac.AllRuns funs V st
+      [Stmt.forLoop []
+        (Expr.builtin Op.lt [Expr.var "second_mptr", Expr.var "mptr"])
+        []
+        [ Stmt.letDecl ["inv"] (some (Expr.builtin Op.mulmod
+            [Expr.var "all_inv", Expr.builtin Op.mload [Expr.var "gp_mptr"], Expr.var "r"]))
+        , Stmt.assign ["all_inv"] (Expr.builtin Op.mulmod
+            [Expr.var "all_inv", Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "r"])
+        , Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var "mptr", Expr.var "inv"])
+        , Stmt.assign ["mptr"] (Expr.builtin Op.sub
+            [Expr.var "mptr", Expr.lit (Literal.number 0x20)])
+        , Stmt.assign ["gp_mptr"] (Expr.builtin Op.sub
+            [Expr.var "gp_mptr", Expr.lit (Literal.number 0x20)]) ]] Q := by
+    refine allRuns_for_cons_wp (Bridge.Dialect c g) (Bopen c g) (Cnone _)
+      (Bopen_sound c g) (Cnone_sound _) (n := 40) Inv ?hinit ?hstep
+    · refine ⟨0, by omega, ?_, ?_⟩
+      · simp [bwdEnv]
+      · exact ⟨st.activeWords, by simp [bwdMem]⟩
+    · intro Vi sti hInv
+      obtain ⟨j, hj, hV, aw, hst⟩ := hInv
+      subst hV
+      subst hst
+      have hrw0 : rw ≠ 0 := by
+        intro h
+        exact hrw.ne_zero (by rw [h]; rfl)
+      have hmptr0 : VEnv.get V "mptr" = some (BitVec.ofNat 256 (a + 32 * (k - 1))) := by
+        simpa [bwdMptr] using hmptr
+      have hgpm0 : VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 (s + 32 * (k - 3))) := by
+        simpa [bwdGp] using hgpm
+      have hmptrj := bwdEnv_get_mptr st.memory a s k rw invAll V hmptr0 j
+      have hgpmj := bwdEnv_get_gp_mptr st.memory a s k rw invAll V hgpm0 j
+      have hallj := bwdEnv_get_all_inv st.memory a s k rw invAll V hinv0 j
+      have hsecondj := bwdEnv_get_second_mptr st.memory a s k rw invAll V
+        (BitVec.ofNat 256 (a + 32)) hsecond j
+      have hrj := bwdEnv_get_r st.memory a s k rw invAll V hr j
+      have hbwdMptrj : (bwdMptr a k j).toNat = a + 32 * (k - 1 - j) := by
+        rw [bwdMptr_eq a k j hek (by omega)]
+        exact ofNat_toNat (by omega)
+      have hloadmptr : loadWord (bwdMem st.memory a k (bwdInvVal st.memory a k rw invAll) j)
+          (bwdMptr a k j).toNat = loadWord st.memory (a + 32 * (k - 1 - j)) := by
+        rw [hbwdMptrj]
+        exact loadWord_bwdMem_untouched st.memory a k (bwdInvVal st.memory a k rw invAll)
+          j (k - 1 - j) hk1 (by omega) (by omega)
+      unfold wpIter
+      simp only [wpE, wpA, Bopen, stepOp, bin, ter, un, hmptrj, hgpmj, hallj, hsecondj, hrj]
+      refine ⟨?guardFalse, ?guardTrue⟩
+      · -- exit: j = k-2
+        intro hguard
+        have h0 : b2w ((BitVec.ofNat 256 (a + 32)).ult (bwdMptr a k j)) = (0 : U256) := hguard
+        rw [bwdMptr_eq a k j hek (by omega)] at h0
+        have hge : a + 32 * (k - 1 - j) ≤ a + 32 :=
+          LoopRule.lt_guard_false (by omega) (by omega) h0
+        have hjk : j = k - 2 := by omega
+        subst hjk
+        clear hbwdMptrj hloadmptr
+        refine ⟨?allRuns⟩
+        intro V' st' o hrun
+        cases hrun with
+        | seqNil =>
+        have hl := bwdEnv_length st.memory a s k rw invAll V (k - 2)
+        have hres : restore V (bwdEnv st.memory a s k rw invAll V (k - 2)) =
+            bwdEnv st.memory a s k rw invAll V (k - 2) := by
+          simp [restore, hl]
+        rw [hres]
+        dsimp only [Q]
+        refine ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        · -- mptr
+          clear hs hsk hdisj' hgpm0 hdisj hgpm
+          rw [bwdEnv_get_mptr st.memory a s k rw invAll V hmptr0 (k - 2)]
+          rw [bwdMptr_eq a k (k - 2) hek (by omega)]
+          congr 1
+          have hk21 : k - 1 - (k - 2) = 1 := by
+            rw [Nat.sub_sub]
+            omega
+          rw [hk21, Nat.mul_one]
+        · -- all_inv inverse
+          refine ⟨bwdAll st.memory a k rw invAll (k - 2),
+            bwdEnv_get_all_inv st.memory a s k rw invAll V hinv0 (k - 2), ?_⟩
+          have h := bwdAll_inv st.memory a k rw invAll hrw0 hk2 hinvAll (k - 2) (by omega)
+          simpa [show k - 1 - (k - 2) = 1 by omega] using h
+        · -- inverted words
+          intro i hi2 hik
+          rw [loadWord_bwdMem_written st.memory a k (bwdInvVal st.memory a k rw invAll)
+            (k - 2) i hk1 (by omega) (by omega) hik]
+        · -- untouched words
+          intro i hi2
+          rw [loadWord_bwdMem_untouched st.memory a k (bwdInvVal st.memory a k rw invAll)
+            (k - 2) i hk1 (by omega) (by omega)]
+        · -- outside
+          intro x hx hx2
+          rw [bwdMem_outside st.memory a k (bwdInvVal st.memory a k rw invAll) (k - 2) x hk1
+            (by omega) hx]
+        · -- canonical outputs
+          intro i hik
+          by_cases hi2 : i < 2
+          · rw [loadWord_bwdMem_untouched st.memory a k (bwdInvVal st.memory a k rw invAll)
+              (k - 2) i hk1 (by omega) (by omega)]
+            exact hcanon i hik
+          · rw [loadWord_bwdMem_written st.memory a k (bwdInvVal st.memory a k rw invAll)
+              (k - 2) i hk1 (by omega) (by omega) hik]
+            exact wMulmodAt_toNat_lt hrw0
+      · -- iteration: j < k-2
+        intro hguard
+        have h0 : b2w ((BitVec.ofNat 256 (a + 32)).ult (bwdMptr a k j)) ≠ (0 : U256) := hguard
+        rw [bwdMptr_eq a k j hek (by omega)] at h0
+        have hlt : j < k - 2 := by
+          have := LoopRule.lt_guard_true (i := a + 32) (n := a + 32 * (k - 1 - j))
+            (by omega) (by omega) h0
+          omega
+        have hj3 : j ≤ k - 3 := by omega
+        have hbwdGpj : (bwdGp s k j).toNat = s + 32 * (k - 3 - j) := by
+          rw [bwdGp_eq s k j hsk hj3]
+          exact ofNat_toNat (by omega)
+        have hloadgp : loadWord (bwdMem st.memory a k (bwdInvVal st.memory a k rw invAll) j)
+            (bwdGp s k j).toNat = fwdProd st.memory a rw (k - 2 - j) := by
+          rw [hbwdGpj]
+          have hmem : loadWord (bwdMem st.memory a k (bwdInvVal st.memory a k rw invAll) j)
+              (s + 32 * (k - 3 - j)) = loadWord st.memory (s + 32 * (k - 3 - j)) := by
+            refine Midfall.Yul.Word.loadWord_congr _ _ _ (fun i hi => ?_)
+            exact bwdMem_scratch st.memory a k s (bwdInvVal st.memory a k rw invAll) j
+              (s + 32 * (k - 3 - j) + i) hk1 (by omega) hdisj' (by omega) (by omega)
+          rw [hmem]
+          simpa [show k - 3 - j + 1 = k - 2 - j by omega]
+            using hscratch (k - 3 - j) (by omega)
+        have hbwdAll_succ : wMulmodAt (bwdAll st.memory a k rw invAll j)
+            (loadWord st.memory (a + 32 * (k - 1 - j))) rw =
+            bwdAll st.memory a k rw invAll (j + 1) := rfl
+        simp only [wpS, wpSS, wpE, wpA, Bopen, stepOp, bin, ter, un,
+          hmptrj, hgpmj, hallj, hsecondj, hrj, hloadgp, hloadmptr,
+          hbwdAll_succ, bwdInvVal,
+          ofNat_toNat (by omega : a + 32 * (k - 1 - j) < 2 ^ 256)]
+        simp only [List.zip_cons_cons, List.zip_nil_left, List.cons_append, List.nil_append,
+          List.length_cons, List.length_nil,
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv") (y := "r") (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv") (y := "mptr") (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv") (y := "all_inv") (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv") (y := "gp_mptr") (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv") (y := "second_mptr") (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv") (y := "ret") (by decide),
+          hrj, hmptrj, hallj, hgpmj, hsecondj, get_cons_self_inv]
+        simp [VEnv.set, VEnv.setMany, touchMemory, hloadmptr, hloadgp]
+        let newAll : U256 := if rw = 0#256 then 0#256 else
+          BitVec.ofNat 256 (BitVec.toNat (bwdAll st.memory a k rw invAll j) *
+            BitVec.toNat (loadWord st.memory (a + 32 * (k - 1 - j))) % BitVec.toNat rw)
+        have hnew : (if rw = 0#256 then 0#256 else
+            BitVec.ofNat 256 (BitVec.toNat (bwdAll st.memory a k rw invAll j) *
+              BitVec.toNat (loadWord st.memory (a + 32 * (k - 1 - j))) % BitVec.toNat rw)) =
+            newAll := rfl
+        rw [hnew]
+        rw [get_cons_self_inv]
+        simp only [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv") (y := "mptr") (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv") (y := "gp_mptr") (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv") (y := "all_inv") (by decide)]
+        have hget1 : VEnv.get ((bwdEnv st.memory a s k rw invAll V j).set "all_inv" newAll)
+            "mptr" = some (bwdMptr a k j) := by
+          rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "mptr") (by decide)]
+          exact hmptrj
+        have hget2 : VEnv.get (((bwdEnv st.memory a s k rw invAll V j).set "all_inv" newAll).set
+            "mptr" (bwdMptr a k j - 32)) "mptr" = some (bwdMptr a k j - 32) :=
+          venv_get_set_same (D := Bridge.Dialect c g) hget1
+        have hget3 : VEnv.get (((bwdEnv st.memory a s k rw invAll V j).set "all_inv" newAll).set
+            "mptr" (bwdMptr a k j - litValue (Literal.number 32))) "gp_mptr" =
+            some (bwdGp s k j) := by
+          rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "gp_mptr") (by decide),
+            venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "gp_mptr") (by decide)]
+          exact hgpmj
+        refine ⟨?_⟩
+        refine ⟨?_⟩
+        rw [hget1]
+        dsimp only
+        refine ⟨?_⟩
+        rw [hget3]
+        dsimp only
+        refine ⟨?_⟩
+        simp only [Inv]
+        refine ⟨j + 1, by omega, ?_, ?_⟩
+        · -- environment
+          have hAA : ∀ (A : VEnv (Bridge.Dialect c g)), restore A A = A := by
+            intro A
+            simp [restore]
+          rw [hAA]
+          have hl : ((((bwdEnv st.memory a s k rw invAll V j).set "all_inv" newAll).set
+                "mptr" (bwdMptr a k j - litValue (Literal.number 32))).set "gp_mptr"
+                (bwdGp s k j - litValue (Literal.number 32))).length =
+              (bwdEnv st.memory a s k rw invAll V j).length := by
+            simp [venv_set_length (D := Bridge.Dialect c g)]
+          rw [show restore (bwdEnv st.memory a s k rw invAll V j)
+                (("inv", (if rw = 0#256 then 0#256 else BitVec.ofNat 256
+                    (BitVec.toNat (bwdAll st.memory a k rw invAll j) *
+                      BitVec.toNat (fwdProd st.memory a rw (k - 2 - j)) %
+                        BitVec.toNat rw))) ::
+                  (((bwdEnv st.memory a s k rw invAll V j).set "all_inv" newAll).set
+                      "mptr" (bwdMptr a k j - litValue (Literal.number 32))).set "gp_mptr"
+                      (bwdGp s k j - litValue (Literal.number 32))) =
+                (((bwdEnv st.memory a s k rw invAll V j).set "all_inv" newAll).set
+                    "mptr" (bwdMptr a k j - litValue (Literal.number 32))).set "gp_mptr"
+                    (bwdGp s k j - litValue (Literal.number 32)) from
+              restore_cons_length (D := Bridge.Dialect c g) (V := bwdEnv st.memory a s k rw invAll V j)
+                (W := (((bwdEnv st.memory a s k rw invAll V j).set "all_inv" newAll).set
+                    "mptr" (bwdMptr a k j - 32)).set "gp_mptr" (bwdGp s k j - 32)) (y := "inv") hl]
+          have hnewAll : newAll = bwdAll st.memory a k rw invAll (j + 1) := by
+            show wMulmodAt (bwdAll st.memory a k rw invAll j)
+              (loadWord st.memory (a + 32 * (k - 1 - j))) rw = bwdAll st.memory a k rw invAll (j + 1)
+            exact hbwdAll_succ
+          rw [hnewAll, show litValue (Literal.number 32) = (32 : U256) from rfl,
+            ← bwdMptr_succ, ← bwdGp_succ]
+          rfl
+        · -- state
+          refine ⟨BitVec.ofNat 256 (activeWordsAfter (activeWordsAfter
+            (activeWordsAfter (BitVec.toNat aw) (BitVec.toNat (bwdGp s k j)) 32 % 2 ^ 256)
+            (BitVec.toNat (bwdMptr a k j)) 32 % 2 ^ 256) (BitVec.toNat (bwdMptr a k j)) 32), ?_⟩
+          simp only [bwdMem, bwdInvVal]
+          rw [show BitVec.toNat (bwdMptr a k j) = a + 32 * (k - 1 - j) from hbwdMptrj]
+          rw [show a + 32 * (k - (j + 1)) = a + 32 * (k - 1 - j) by omega]
+          rfl
+  intro V' st' o hrun
+  exact hmain V' st' o hrun
+
+
 /-! ## 5. PREMISE GAP PG-BATCHINVERT (exact statements; no hypothesis added to a row)
 
   **(1) CLOSED at §4b: `bi_forward_loop` IS PROVED, with the statement-9 canonicality pre.**
@@ -1076,32 +1373,10 @@ theorem bwdGp_succ (s k j : Nat) : bwdGp s k (j + 1) = bwdGp s k j - 32 := by
   (`Assumptions/Eip2537.lean:319`, general in `p`) finishes. The old plan - re-proving the private
   `modexpInvFrame_slices` for an arbitrary modulus - is NOT needed and should not be attempted.
 
-  **STATE OF `bi_backward_loop` (HLP.1.c), measured this pass.** The theorem is stated in a
-  scratch at the exact §5 shape (with `k` explicit and a hypothesis `e-a = 32*k`, avoiding the
-  `(e-a)/32` rewrite that caused the previous `Application type mismatch`es). The **exit branch**
-  (`j = k-2`) is PROVED against the `bwdMem`/`bwdEnv` lemmas. The **iteration branch** reduces the
-  two mloads (`hloadgp` via `loadWord_congr`+`bwdMem_scratch`, `hloadmptr` via
-  `loadWord_bwdMem_untouched`) and the body `simp only [wpS, wpSS, wpE, wpA, …]` leaves exactly
-  `Stop (Stop (Stop (Inv (restore …) (storeWord …))))`; the exact remaining goal is the three
-  `VEnv.get` matches on `((bwdEnv j).set "all_inv" …).set "mptr" (v-32)` (`mptr`, `mptr` again,
-  `gp_mptr`) followed by `Inv (bwdEnv j+1) (storeWord (bwdMem j) (toNat (bwdMptr j)) (bwdInvVal j))`.
-  The three matches need `venv_get_set_ne`/`venv_get_set_same` with `hmptrj`/`hgpmj`; the `Inv`
-  needs `restore_cons_length` + the env equation, and `bwdMptr (j+1) = bwdMptr j - 32` /
-  `bwdGp (j+1) = bwdGp j - 32` (now `bwdMptr_succ`/`bwdGp_succ`) for the state. No mathematical or
-  arithmetic obstruction remains; it is the `Stop`/`SetMany`/`restore` bookkeeping.
-  **Measured detail:** after the two `simp`s the `set "all_inv"` value is the UNFOLDED `wMulmodAt`
-  (`if rw = 0#256 then 0#256 else …`), not the name `wMulmodAt`/`bwdAll (j+1)`. The three `hget`
-  lemmas must be stated with a `let newAll : U256 := if rw = 0 then 0 else …` (the exact unfolded
-  body) and the goal's `if` rewritten to `newAll` first; a plain `rw [hget1]` does not match, and
-  `rw [show (if … 0 …) = newAll from rfl]` fails on the `0` vs `0#256` spelling in this pass.
-  Stating `newAll` with `0#256`/`rw = 0#256` IS the fix for the `newAll` rewrite (measured: the
-  goal's `if` becomes `newAll` and the three `hget`s match). The next concrete blocker is the
-  `("inv", …)` binding: after the final `simp [VEnv.set, VEnv.setMany, touchMemory, hloadmptr,
-  hloadgp]` the outer match is `VEnv.get (("inv", <the fwdProd if>) :: (bwdEnv j).set "all_inv"
-  newAll) "inv"`, and neither `simp only [get_cons_self_inv]` nor `rw [get_cons_self_inv]` rewrites
-  it in this pass (the pair is the `List.zip` result printed as a cons, but the rewrite did not
-  fire). The fix is to reduce that binding with `show`/`rfl` on the exact cons, or to add
-  `VEnv.get`/`List.find?` back to the final `simp` and state the `hget`s unfolded.
+  **`bi_backward_loop` (HLP.1.c) IS PROVED at §4e** (standard three axioms, no `sorryAx`). The
+  statement takes `k` explicitly with `e - a = 32*k`; the invariant is `all_inv = bwdAll … j`,
+  the stored word `bwdInvVal … (k-1-i)`, the state the `bwdMem` chain. The remaining summary work
+  is the staticcall/modexp step and the tail (statements 30-33).
 
   **PLAN FOR `bi_backward_loop` (HLP.1.c), the next leaf.** With `k = (e-a)/32` and
   `hae : a + 96 ≤ e` (so `3 ≤ k`), the loop is statement 29 and starts after the `sub(gp_mptr, 32)`:
@@ -1215,6 +1490,7 @@ theorem bwdGp_succ (s k j : Nat) : bwdGp s k (j + 1) = bwdGp s k j - 32 := by
 #assert_axioms bwdGp_eq [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdMptr_succ [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdGp_succ [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_backward_loop [propext, Classical.choice, Quot.sound]
 
 
 
