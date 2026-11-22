@@ -592,3 +592,21 @@ theorem demoSegment_isOk : (Midfall.Generator.evalQuotientIdentity demoSegment d
 #cone_sorries Midfall.Lowering.QvmSegment.demoSegment_runs
 
 end Midfall.Lowering.QvmSegment
+
+/-! ### 8. Where the six axes were taken next (pointer appended by card SEGPROVE; nothing above changes)
+
+**POINTER, NOT A PROOF STEP.** The six axes of section 5 have since been discharged for REAL EMITTED
+segments - the bytes 'identityExpr' writes, not a hand-typed list - in
+'Midfall/Lowering/QvmSegmentReal.lean'. Two findings there bear on this file's header claim that 'the six
+axes still need the EMITTER to say which instruction it wrote at which cursor':
+
+  (a) the hand-built 'demoSegment' above is NOT what the emitter produces for the expression it was meant
+      to model: the accumulator peephole fires, so 'add (const 5) (const 11)' lowers to FOUR bytes
+      (PUSH_CONST_U8 then ADD_CONST_U8), not five. 'walkInvariant_of_axes' is now instantiated by
+      segments the emitter actually wrote, including two whose bytes 'compactQuotientRuns' rewrote.
+
+  (b) 'identityExpr' is a well-founded recursion the kernel will not unfold, so 'decide' and 'rfl' on 'the
+      emitter wrote these bytes' fail at ANY program size - the emitter-agreement facts have to be VM
+      gates, the convention of 'VmBuilder.lean:1751-1773'. That is also why 'builder_segments_total'
+      cannot be closed by exhibiting one concrete build; the new file reduces it instead to a single
+      named Prop, 'PG_planSegmentWalk', and proves that Prop implies the row's exact conclusion. -/

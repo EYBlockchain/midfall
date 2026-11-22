@@ -123,6 +123,7 @@ import Midfall.Lowering.QvmNoBounds
 import Midfall.Lowering.QvmFoldLin
 import Midfall.Lowering.QvmEmit
 import Midfall.Lowering.QvmSegment
+import Midfall.Lowering.QvmSegmentReal
 import Midfall.Lowering.QvmFold
 import Midfall.Lowering.Partials
 import Midfall.Lowering.RunEmitted
