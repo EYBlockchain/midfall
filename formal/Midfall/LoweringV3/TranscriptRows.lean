@@ -344,4 +344,198 @@ theorem tp_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (
     BlockProgS R Partial.transcriptParser H vkAddr product cd := by
   sorry
 
+/-! ## 5. W12 - THE WITNESSES AND FALSIFIERS -/
+
+/-- **W12 WITNESS FOR `tp_events_slots` - THE FILTERED SCHEDULE IS NONEMPTY AT EVERY LAYOUT.** The
+    final `g1 "PI_MPTR"` event is in the schedule at every layout and every count, and `TEv.slot?`
+    maps it to a slot, so the left side of ROW.TP.6 is a nonempty list and the equality is not the
+    empty-list tautology. PROVED. -/
+theorem tp_events_slots_witness_nonempty (L : ProofCalldataLayout) :
+    (tpEvents 0 [] 0 0 0 0 false L).filterMap TEv.slot? ≠ [] := by
+  intro h
+  have hmem : TEv.g1 "PI_MPTR" ∈ tpEvents 0 [] 0 0 0 0 false L := by
+    simp [tpEvents]
+  have hb : WireSlot.g1 ∈ (tpEvents 0 [] 0 0 0 0 false L).filterMap TEv.slot? :=
+    List.mem_filterMap.mpr ⟨TEv.g1 "PI_MPTR", hmem, rfl⟩
+  rw [h] at hb
+  exact List.not_mem_nil hb
+
+/-- **W12 FALSIFIER FOR `tp_events_slots` - THE FILTERMAP IS NOT THE IDENTITY.** `TEv.slot?` drops
+    the three `word` events and all squeezes, so the equality is a relation between a schedule and
+    a slot list and not `List.map some`. A reading that skipped the filter would be refuted by the
+    first event of the schedule. PROVED. -/
+theorem tp_events_slots_falsifier_not_every_event_reads_a_slot :
+    ¬ (∀ e : TEv, (TEv.slot? e).isSome = true) := by
+  intro h
+  exact Bool.false_ne_true (h TEv.word)
+
+/-- **W12 FALSIFIER FOR `g1walk_loop_sem` - THE POST DEMANDS THE WALK'S BYTES.** The empty block
+    ends normally from `V = []` and leaves the (initial, zeroed) memory alone, while the walk's
+    post says the walk window holds `cdSlice cd 0 128`. At `cd = ByteArray.empty` the right side
+    is empty and the left is 128 bytes, so the post fails; the walk post is not satisfied by
+    fall-through and the leaf is not vacuous. PROVED by SIZE (the `ByteArray` equality itself is
+    opaque). The walk's own side condition `hwalk` is assumed, so this is a falsifier under the
+    leaf's own hypotheses. -/
+theorem g1walk_loop_sem_falsifier_empty_block (R : Render p G₁ G₂ Gₜ)
+    {c : ExternalCalls} {g : ExternalGas} (walk : String)
+    (hwalk : walk ≠ "proof_cptr" ∧ walk ≠ "buf_len" ∧ walk ≠ "end") :
+    ¬ StmtsContractAll (D := Bridge.Dialect c g) (funs := R.scope c g) ([] : Block EVM.Op)
+      (fun _ _ => True)
+      (fun V st V' st' o => (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+        (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+          V' = VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (0 + 128 * 1)))
+            walk (BitVec.ofNat 256 (1 + 128 * 1))) "proof_cptr"
+              (BitVec.ofNat 256 (0 + 128 * 1)) ∧
+          bytesAt st' 1 (128 * 1) = cdSlice ByteArray.empty 0 (128 * 1) ∧
+          bytesAt st' 0 (128 * 1) = cdSlice ByteArray.empty 0 (128 * 1) ∧
+          (∀ i, i < 1 → g1WordsOk ByteArray.empty (0 + 128 * i) = true) ∧
+          (∀ x, (x < 1 ∨ 1 + 128 * 1 ≤ x) → (x < 0 ∨ 0 + 128 * 1 ≤ x) →
+            st'.memory x = st.memory x))) := by
+  intro Hc
+  have hrun : ExecStmts (Bridge.Dialect c g) (R.scope c g) ([] : VEnv (Bridge.Dialect c g))
+      EvmState.init [] [] EvmState.init .normal := Step.seqNil
+  have hpost := Hc [] EvmState.init trivial [] EvmState.init .normal hrun
+  rcases hpost with ⟨h1, _⟩ | ⟨_, _, _, _, hbytes, _⟩
+  · exact absurd h1 (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+  · have hsz1 : (bytesAt EvmState.init 1 128).size = 128 := by
+      simp [bytesAt, readBytes, EvmState.init, ByteArray.size]
+    have hsz2 : (cdSlice ByteArray.empty 0 128).size = 0 := by
+      simp [cdSlice, ByteArray.size]
+    have hne : bytesAt EvmState.init 1 128 ≠ cdSlice ByteArray.empty 0 128 := by
+      intro h
+      have hc := congrArg ByteArray.size h
+      rw [hsz1, hsz2] at hc
+      exact absurd hc (by decide)
+    exact hne hbytes
+
+/-- **W12 FALSIFIER FOR `tp_computes` - THE EMPTY BLOCK'S NORMAL EXIT IS NOT `TpPost`.**
+    `TpPost` carries `success = 1`; the empty block from `V = []` ends normally with
+    `VEnv.get [] "success" = none`. So the post is not `True` and the pre is load-bearing.
+    PROVED. -/
+theorem tp_computes_falsifier_empty_block (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    (cd : Bytes) {c : ExternalCalls} {g : ExternalGas} :
+    ¬ StmtsContractAll (D := Bridge.Dialect c g) (funs := R.scope c g) ([] : Block EVM.Op)
+      (fun _ _ => True)
+      (fun _ _ V' st' o => (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+        (o = .normal ∧ TpPost R H vkAddr cd V' st')) := by
+  intro Hc
+  have hrun : ExecStmts (Bridge.Dialect c g) (R.scope c g)
+      ([] : VEnv (Bridge.Dialect c g)) EvmState.init [] [] EvmState.init .normal := Step.seqNil
+  have hpost := Hc [] EvmState.init trivial [] EvmState.init .normal hrun
+  rcases hpost with ⟨h1, _⟩ | ⟨_, hpost⟩
+  · exact absurd h1 (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+  · have hsucc := hpost.2.1
+    simp [VEnv.get] at hsucc
+
+/-- **W12 FALSIFIER FOR `tp_agrees` - `StageInv .transcript` DEMANDS `success = 1`.** At
+    `V = []` the conclusion is false whatever the premise, so the implication's conclusion is
+    not `True`. PROVED. -/
+theorem tp_agrees_falsifier_no_success (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    (cd : Bytes) {c : ExternalCalls} {g : ExternalGas} :
+    ¬ StageInv R H vkAddr cd Checkpoint.transcript
+      ([] : VEnv (Bridge.Dialect c g)) EvmState.init := by
+  intro h
+  have hsucc := h.2.1
+  simp [VEnv.get] at hsucc
+
+/-- **W12 FALSIFIER FOR `tp_poison` - THE EMPTY BLOCK DOES NOT REVERT.** "Every run reverts" is
+    false of fall-through, so the leaf is about the parser's own 44 statements. PROVED. -/
+theorem tp_poison_falsifier_empty_block (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    (cd : Bytes) (c : ExternalCalls) (g : ExternalGas) :
+    ¬ StmtsContractAll (D := Bridge.Dialect c g) (funs := R.scope c g) ([] : Block EVM.Op)
+      (fun _ _ => True)
+      (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
+  intro Hc
+  have hrun : ExecStmts (Bridge.Dialect c g) (R.scope c g)
+      ([] : VEnv (Bridge.Dialect c g)) EvmState.init [] [] EvmState.init .normal := Step.seqNil
+  have hpost := Hc [] EvmState.init trivial [] EvmState.init .normal hrun
+  exact absurd hpost.1 (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+
+/-- **W12 FALSIFIER FOR `tp_blockSim` - A `ret` IS NOT ONE OF THE ROW'S ARMS.** A block that
+    RETURNS is a halt, it is not a revert, it is not `exitSimAt` at a non-terminal partial (which
+    demands `.normal`), and it is not the poisoned arm. So the row refuses a program that stops
+    early with a success payload - the v1 defect class at the row. PROVED. -/
+theorem tp_blockSim_falsifier_return_is_not_the_post
+    (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} (H : Hash) (vkAddr : U256)
+    (cd : Bytes) :
+    ¬ StmtsContractAll (D := Bridge.Dialect c g) (funs := R.scope c g)
+        [yexpr (yop Op.ret [ylit 0, ylit 0])] (fun _ _ => True)
+        (fun _ _ V' st' o => (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+          exitSimAt R H vkAddr cd (fun k V st => StageInv R H vkAddr cd k V st)
+            Partial.transcriptParser V' st' o ∨
+          (Partial.transcriptParser ≠ Partial.traceReturn ∧ o = .normal ∧
+            Poisoned R H vkAddr cd V' st')) := by
+  intro Hc
+  have hargs : Step (Bridge.Dialect c g) (R.scope c g) ([] : VEnv (Bridge.Dialect c g))
+      EvmState.init (.args [ylit 0, ylit 0]) (.eres (.vals [0, 0] EvmState.init)) := by
+    exact Step.argsCons (Step.argsCons Step.argsNil Step.lit) Step.lit
+  have hbi : (Bridge.Dialect c g).Builtin Op.ret [0, 0] EvmState.init
+      (.halt { EvmState.init with halted := some (.ret, []) }) := by
+    show stepOp Op.ret [0, 0] EvmState.init = some _
+    rfl
+  have hrun : ExecStmts (Bridge.Dialect c g) (R.scope c g) [] EvmState.init
+      [yexpr (yop Op.ret [ylit 0, ylit 0])] [] Midfall.Lowering.QuotientInterp.retState
+        .halt :=
+    Step.seqStop (D := Bridge.Dialect c g) (rest := [])
+      (Step.exprStmtHalt (D := Bridge.Dialect c g) (e := yop Op.ret [ylit 0, ylit 0])
+        (st1 := Midfall.Lowering.QuotientInterp.retState)
+        (Step.builtinHalt (D := Bridge.Dialect c g) (args := [ylit 0, ylit 0]) (argvals := [0, 0])
+          (st1 := EvmState.init) (st2 := Midfall.Lowering.QuotientInterp.retState) hargs hbi))
+      (by decide)
+  have hpost := Hc [] EvmState.init trivial [] Midfall.Lowering.QuotientInterp.retState
+    .halt hrun
+  rcases hpost with hrev | hsim | hpo
+  · exact Midfall.Lowering.QuotientInterp.retState_not_Reverted hrev.2
+  · exact absurd hsim.1 (by decide : ¬ ((Outcome.halt : Outcome) = Outcome.normal))
+  · exact absurd hpo.2.1 (by decide : ¬ ((Outcome.halt : Outcome) = Outcome.normal))
+
+/-- **W12 FALSIFIER FOR `tp_blockProgS` - TOTALITY IS NOT THE REVERT ARM.** A block that only
+    reverts has no normal run, so it fails the progress contract while satisfying the simulation
+    one. PROVED. -/
+theorem tp_blockProgS_falsifier_reverting_block_is_not_total
+    (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (H : Hash) (vkAddr : U256) (cd : Bytes) :
+    ¬ StmtsTotal (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (funs := ([] : FunEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))))
+        [yexpr (yop Op.revert [ylit 0, ylit 0])] (fun _ _ => True)
+        (fun _ _ V' st' o => exitProgAt R H vkAddr cd
+          (fun _ _ _ => True) Partial.transcriptParser V' st' o) := by
+  intro Ht
+  obtain ⟨hex, _⟩ := Ht
+  obtain ⟨V', st', o, hrun, hpost⟩ := hex [] EvmState.init trivial
+  have key : Midfall.Yul.WpTac.AllRuns [] ([] : VEnv (Bridge.Dialect (callsOf product)
+      (ExternalGas.ofFun fun _ => 0))) EvmState.init [yexpr (yop Op.revert [ylit 0, ylit 0])]
+      (fun _ st' o => o = .halt) := by
+    refine Midfall.Yul.WpTac.allRuns_of_wp 20 ?_
+    wp_run
+    all_goals (first | exact ⟨rfl, rfl⟩ | rfl)
+  have ho := key V' st' o hrun
+  rw [ho] at hpost
+  exact absurd hpost.1 (by decide : ¬ ((Outcome.halt : Outcome) = Outcome.normal))
+
+/-! ## 6. THE ACCEPTANCE PRINTS -/
+
+/-! The rows quantify over the render and name no fixture: `R : Render p G₁ G₂ Gₜ` is a binder of
+    every statement, the only partial named is `Partial.transcriptParser`, and the schedule, the
+    layout and the table are binders. `poseidonRender` does not appear in this file. -/
+#check @Midfall.LoweringV3.TranscriptRows.tp_blockSim
+#check @Midfall.LoweringV3.TranscriptRows.tp_blockProgS
+#check @Midfall.LoweringV3.TranscriptRows.tp_computes
+#check @Midfall.LoweringV3.TranscriptRows.tp_agrees
+#check @Midfall.LoweringV3.TranscriptRows.tp_poison
+#check @Midfall.LoweringV3.TranscriptRows.inline_g1WalkLoop
+
+#cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockSim
+#cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockProgS
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.shadowed_append_right [propext] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.shadowed_append_self [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_events_slots_witness_nonempty [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_events_slots_falsifier_not_every_event_reads_a_slot [propext] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1walk_loop_sem_falsifier_empty_block [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_computes_falsifier_empty_block [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_falsifier_no_success [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_poison_falsifier_empty_block [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_blockSim_falsifier_return_is_not_the_post [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_blockProgS_falsifier_reverting_block_is_not_total [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV3.TranscriptRows
