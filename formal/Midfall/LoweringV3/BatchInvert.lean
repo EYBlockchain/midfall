@@ -1087,8 +1087,14 @@ theorem bwdGp_succ (s k j : Nat) : bwdGp s k (j + 1) = bwdGp s k j - 32 := by
   `gp_mptr`) followed by `Inv (bwdEnv j+1) (storeWord (bwdMem j) (toNat (bwdMptr j)) (bwdInvVal j))`.
   The three matches need `venv_get_set_ne`/`venv_get_set_same` with `hmptrj`/`hgpmj`; the `Inv`
   needs `restore_cons_length` + the env equation, and `bwdMptr (j+1) = bwdMptr j - 32` /
-  `bwdGp (j+1) = bwdGp j - 32` (`BitVec.sub_sub` + `BitVec.ofNat_add`) for the state. No
-  mathematical or arithmetic obstruction remains; it is the `Stop`/`SetMany`/`restore` bookkeeping.
+  `bwdGp (j+1) = bwdGp j - 32` (now `bwdMptr_succ`/`bwdGp_succ`) for the state. No mathematical or
+  arithmetic obstruction remains; it is the `Stop`/`SetMany`/`restore` bookkeeping.
+  **Measured detail:** after the two `simp`s the `set "all_inv"` value is the UNFOLDED `wMulmodAt`
+  (`if rw = 0#256 then 0#256 else …`), not the name `wMulmodAt`/`bwdAll (j+1)`. The three `hget`
+  lemmas must be stated with a `let newAll : U256 := if rw = 0 then 0 else …` (the exact unfolded
+  body) and the goal's `if` rewritten to `newAll` first; a plain `rw [hget1]` does not match, and
+  `rw [show (if … 0 …) = newAll from rfl]` fails on the `0` vs `0#256` spelling in this pass.
+  Stating `newAll` with `0#256`/`rw = 0#256` is the next concrete step.
 
   **PLAN FOR `bi_backward_loop` (HLP.1.c), the next leaf.** With `k = (e-a)/32` and
   `hae : a + 96 ≤ e` (so `3 ≤ k`), the loop is statement 29 and starts after the `sub(gp_mptr, 32)`:
