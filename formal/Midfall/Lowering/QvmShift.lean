@@ -3932,4 +3932,149 @@ theorem evalQuotientIdentityStep_consumed_agrees_26
 #print axioms Midfall.Lowering.QvmArms.consumed_agrees_modarith7
 #print axioms Midfall.Lowering.QvmArms.evalQuotientIdentityStep_consumed_agrees_26
 
+
+
+/-! #### The MODARITH7 arm at a general cursor -/
+
+/-- At a cursor whose opcode byte is `qOpModarith7`, the validator's general walker
+    dispatches to the dynamic MODARITH7 length decoder. -/
+theorem quotientOpLen_modarith7_at (bytes : List Nat) (idx : Nat) (rest : List Nat)
+    (hdrop : bytes.drop idx = qOpModarith7 :: rest) :
+    Midfall.Generator.QuotientValidator.quotientOpLen bytes idx =
+      Midfall.Generator.QuotientValidator.quotientModarith7OpLen bytes idx := by
+  have hb : Midfall.Generator.QuotientValidator.byteAtPanic bytes idx 3009 = .ok qOpModarith7 := by
+    unfold Midfall.Generator.QuotientValidator.byteAtPanic
+    rw [hdrop]
+  unfold Midfall.Generator.QuotientValidator.quotientOpLen
+  rw [hb]
+  simp only [bind, Except.bind]
+  simp (config := { decide := true }) only [reduceIte]
+
+/-- **THE MODARITH7 WIDTH AGREEMENT AT A GENERAL CURSOR.** The index-0 form is
+    `consumed_agrees_modarith7`; this is the same fact at any cursor, which is the shape
+    a loop induction and `qvm_validated_noBoundsFault` consume. It needs no step
+    congruence: the arm body is unfolded directly at the cursor, and the validator's
+    stride is transported from the suffix by `seg_opLen_shift_ok`. -/
+theorem consumed_agrees_at_modarith7 (bytes : List Nat) (idx : Nat) (rest : List Nat)
+    (hdrop : bytes.drop idx = qOpModarith7 :: rest)
+    (consts : List Word256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpModarith7 stack mem
+      = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen (qOpModarith7 :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+  simp (config := { decide := true }) only [reduceIte] at hstep
+  obtain ⟨v, hform, hres⟩ := peel_bind hstep
+  rcases v with ⟨vv, vl, vm⟩
+  have hstep' : step = { stack := vv :: stack, consumed := 1 + vl, hConsumed := by omega, mem := vm } :=
+    (Except.ok.inj hres).symm
+  rw [hstep']
+  show 1 + vl = len
+  have hval := modarith7Form_opLen bytes consts mem idx vv vl vm hform
+  have hlen1 : Midfall.Generator.QuotientValidator.quotientOpLen (bytes.drop idx) 0 = .ok len := by
+    rwa [← hdrop] at hlen
+  have hlen2 : Midfall.Generator.QuotientValidator.quotientOpLen bytes (idx + 0) = .ok len :=
+    Midfall.Lowering.seg_opLen_shift_ok bytes idx 0 len hlen1
+  rw [Nat.add_zero] at hlen2
+  rw [quotientOpLen_modarith7_at bytes idx rest hdrop, hval] at hlen2
+  exact Except.ok.inj hlen2
+
+#print axioms Midfall.Lowering.QvmArms.consumed_agrees_at_modarith7
+
+
+/-- **THE P-QVMARMS TABLE AT A GENERAL CURSOR, all 26 identity arms.** The cursor form of
+    `evalQuotientIdentityStep_consumed_agrees_26`: at any cursor whose next opcode is an
+    identity arm, a successful step and a successful validator walk agree on the width.
+    This is the statement a loop induction over a whole segment consumes. -/
+theorem evalQuotientIdentityStep_consumed_agrees_at_26
+    (bytes : List Nat) (idx : Nat) (op : Nat) (rest : List Nat)
+    (hdrop : bytes.drop idx = op :: rest) (hop : identityArm26 op)
+    (consts : List Midfall.Word256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep bytes consts idx op stack mem = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen (op :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  rcases hop with
+    (h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h)
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.evalQuotientIdentityStep_consumed_agrees_at_22 _
+      (by tauto) bytes idx rest hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.consumed_agrees_at_runAddMulMemMemConstU8 bytes idx rest
+      hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.consumed_agrees_at_runAddMulConstU8MemU16 bytes idx rest
+      hdrop consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.consumed_agrees_at_affineSum bytes idx rest hdrop consts
+      stack mem step len hstep hlen
+  · subst h
+    exact consumed_agrees_at_modarith7 bytes idx rest hdrop consts stack mem step len hstep hlen
+
+#print axioms Midfall.Lowering.QvmArms.evalQuotientIdentityStep_consumed_agrees_at_26
+
 end Midfall.Lowering.QvmArms
