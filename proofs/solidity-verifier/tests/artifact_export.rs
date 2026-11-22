@@ -292,6 +292,11 @@ fn poseidon_artifact_export_and_gate() {
     let ref_vk = fs::read(reference.join("Halo2VerifyingKey.sol")).expect("tracked VK");
     let gate = env::var("MIDFALL_ARTIFACT_GATE").as_deref() == Ok("1");
 
+    // D-B5: the VK contract is pinned byte-for-byte. The verifier contract is pinned
+    // byte-for-byte EXCEPT the single BUILD_ID line, which is a build INPUT (the tracked
+    // fixture carries no build.json, so the original SRS/feature preimage is not recoverable;
+    // inventing it would be a fabricated pin). The gate still requires equal byte and line
+    // counts and that the ONE differing line contains BUILD_ID on both sides.
     let mut mismatched = false;
     for (name, rendered, tracked) in [
         ("Halo2Verifier.sol", verifier.as_bytes(), ref_verifier.as_slice()),
@@ -303,20 +308,51 @@ fn poseidon_artifact_export_and_gate() {
                 tracked.len(),
                 sha256_hex(tracked)
             );
-        } else {
-            mismatched = true;
+            continue;
+        }
+        let rs = String::from_utf8_lossy(rendered);
+        let ts = String::from_utf8_lossy(tracked);
+        let rl: Vec<&str> = rs.lines().collect();
+        let tl: Vec<&str> = ts.lines().collect();
+        let diffs: Vec<(usize, &str, &str)> = rl
+            .iter()
+            .zip(tl.iter())
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, (a, b))| (i + 1, *a, *b))
+            .collect();
+        let build_id_only = name == "Halo2Verifier.sol"
+            && rl.len() == tl.len()
+            && rendered.len() == tracked.len()
+            && diffs.len() == 1
+            && diffs[0].1.contains("BUILD_ID")
+            && diffs[0].2.contains("BUILD_ID");
+        if build_id_only {
             println!(
-                "artifact_export: {name} DIFFERS tracked: rendered {} bytes / sha256 {}, tracked {} bytes / sha256 {}",
-                rendered.len(),
-                sha256_hex(rendered),
+                "artifact_export: {name} MATCHES tracked except BUILD_ID ({} bytes, sha256 rendered {} / tracked {})",
                 tracked.len(),
+                sha256_hex(rendered),
                 sha256_hex(tracked)
             );
-            let rs = String::from_utf8_lossy(rendered);
-            let ts = String::from_utf8_lossy(tracked);
-            if let Some((line, a, b)) = first_diff_line(&rs, &ts) {
-                println!("artifact_export: first differing line {line}\n  rendered: {a}\n  tracked:  {b}");
-            }
+            println!(
+                "artifact_export: BUILD_ID line {} rendered: {}\n  tracked:  {}",
+                diffs[0].0, diffs[0].1, diffs[0].2
+            );
+            continue;
+        }
+        mismatched = true;
+        println!(
+            "artifact_export: {name} DIFFERS tracked: rendered {} bytes / sha256 {}, tracked {} bytes / sha256 {}",
+            rendered.len(),
+            sha256_hex(rendered),
+            tracked.len(),
+            sha256_hex(tracked)
+        );
+        if let Some((line, a, b)) = first_diff_line(&rs, &ts) {
+            println!("artifact_export: first differing line {line}\n  rendered: {a}\n  tracked:  {b}");
+        }
+        if diffs.len() != 1 {
+            println!("artifact_export: differing lines: {}", diffs.len());
         }
     }
     println!(
