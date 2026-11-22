@@ -1,13 +1,13 @@
 # A6 / ROW.TP — worker report (transcriptParser, t/A6)
 
 **Branch** `t/A6`, **base** `formal/baseline` @ `cc5b5ad`, **worktree** `/Users/julian/midfall-f`.
-**HEAD** is `d2823ca` + this docs commit (see `git log -1`); the Lean work is the three commits
-before it (`a3f7a06`, `e0bc81f`, `b9d1568`). No push. `formal/baseline` and `/Users/julian/midfall`
+**HEAD** is this commit: `git log -1` in `/Users/julian/midfall-f`; the Lean work is `a3f7a06`,
+`e0bc81f`, `b9d1568` and `d2823ca`. No push. `formal/baseline` and `/Users/julian/midfall`
 untouched.
 
 ## What landed
 
-New module `formal/Midfall/LoweringV3/TranscriptRows.lean` (800 lines, final), imported from
+New module `formal/Midfall/LoweringV3/TranscriptRows.lean` (801 lines, final), imported from
 `formal/Midfall.lean` (line 203; `check_orphans.py`: `ok: all 224 modules are reachable`).
 
 PROVED:
