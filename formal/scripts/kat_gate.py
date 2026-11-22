@@ -421,8 +421,11 @@ EVAL = re.compile(
 # ONE expects false, the card's negative control: f2_f1CtxAccumulatorHelpers_noBoundary_ok is the
 # F1-context AccumulatorHelpers boundary test, which is false on the IVC artifact (that render occurs in
 # F2 but not at an include boundary). No gate was deleted, edited or re-spelled; the delta is +8/+1.
+# CERT.0 (D2) adds Midfall/Instances/CertMeasure.lean: ONE unannotated `#eval report` (a
+# measurement, not a gate), so the FILE count moves 119 -> 120 and the annotated TOTAL does not
+# move. The orchestrator reconciles this pin at merge.
 EXPECTED_KAT_TOTAL = 1648
-EXPECTED_KAT_FILES = 119
+EXPECTED_KAT_FILES = 120
 
 # Only these shapes count as #eval output.
 #
