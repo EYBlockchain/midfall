@@ -14,6 +14,8 @@
 
 #![allow(dead_code)]
 
+pub mod conformance_json;
+
 use std::{fs, path::PathBuf};
 
 use halo2_solidity_verifier::RenderedArtifacts;

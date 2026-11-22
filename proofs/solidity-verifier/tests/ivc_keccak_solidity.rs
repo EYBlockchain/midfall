@@ -94,6 +94,7 @@ use midnight_zk_stdlib::{
     MidnightVK, Relation, ZkStdLib, ZkStdLibArch,
 };
 use rand::rngs::OsRng;
+use serde_json::json;
 
 type S = BlstrsEmulation;
 type F = <S as SelfEmulation>::F;
@@ -2324,4 +2325,313 @@ fn format_u64(n: u64) -> String {
 /// `quotient_trace_enabled` in the e2e test).
 fn trace_render_enabled() -> bool {
     halo2_solidity_verifier::SOLIDITY_TRACE_ENABLED || cfg!(feature = "rust-verifier-trace")
+}
+
+// ---------------------------------------------------------------------------
+// WID.3: the decider-key conformance bundle (no proof)
+// ---------------------------------------------------------------------------
+
+/// A canonical byte string for an SRS, exactly as the F1 exporter does it:
+/// `ParamsKZG::write_custom` in `SerdeFormat::Processed`, so the hash pins the
+/// whole SRS and not only its two G2 points.
+fn conformance_srs_bytes(srs: &ParamsKZG<E>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    srs.write_custom(&mut buf, midnight_proofs::utils::SerdeFormat::Processed)
+        .expect("serialize the SRS for its manifest digest");
+    buf
+}
+
+fn conformance_sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes))
+}
+
+/// The decider's public-input shape, without a proof: `TreeDeciderInstance`'s
+/// `format_instance` reads only the two leaf states and the collapsed
+/// accumulator, so the all-zero/identity instance fixes both the length and the
+/// accumulator offset.
+fn decider_instance_shape() -> (usize, usize) {
+    let zero = State { cnt: F::ZERO, val: F::ZERO };
+    let msm = || Msm::<S>::from_terms(&[C::identity()], &[F::ONE]);
+    let inst = TreeDeciderInstance {
+        leaf_states: [zero; TREE_LEAVES],
+        final_acc: Accumulator::<S>::new(msm(), msm()),
+    };
+    let pi = IvcTreeDeciderCircuit::format_instance(&inst)
+        .expect("the zero decider instance must format");
+    let offset = TREE_LEAVES * Chain::format_public_input(&zero).len();
+    (pi.len(), offset)
+}
+
+fn first_differing_line(ours: &str, tracked: &str) -> String {
+    let a: Vec<&str> = ours.lines().collect();
+    let b: Vec<&str> = tracked.lines().collect();
+    for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+        if x != y {
+            return format!(
+                "first differing line {}:\n  exported: {x}\n  tracked:  {y}",
+                i + 1
+            );
+        }
+    }
+    format!(
+        "line counts differ: exported {} lines, tracked {} lines",
+        a.len(),
+        b.len()
+    )
+}
+
+/// WID.3. Build the IVC (k = 19) and decider (k = 20) keys from the production
+/// Midnight SRS, render the decider verifier in accumulator + external-pinned
+/// mode, and write `formal/fixtures/conformance/ivc/`.
+///
+/// Gated by `HALO2_SOLIDITY_RUN_IVC_BENCH` exactly like the e2e test, and by the
+/// same features (`evm,truncated-challenges,in-circuit-fewer-point-sets`). No
+/// proof is produced: key generation and rendering need none.
+///
+/// The rendered `.sol` files are compared with the tracked artifact
+/// (`target/ivc-keccak-solidity-dump/`) before anything is written; a difference
+/// is a loud failure carrying the first differing line, per WID.3's stop
+/// condition, and the bundle is not written.
+#[test]
+fn export_ivc_decider_conformance_bundle() {
+    const IVC_K: u32 = 19;
+    const DECIDER_K: u32 = 20;
+    const SOLC_OPTIMIZE_RUNS: u32 = 1;
+
+    if !env_flag_enabled(RUN_IVC_BENCH_ENV) {
+        println!("[ivc-conformance-export] set {RUN_IVC_BENCH_ENV}=1 to export the decider bundle");
+        return;
+    }
+    if !pinned_solc_available() {
+        println!("[ivc-conformance-export] pinned solc not available; skipping");
+        return;
+    }
+    if !has_required_srs_assets(&[IVC_K, DECIDER_K]) {
+        println!("[ivc-conformance-export] required SRS assets missing; skipping");
+        return;
+    }
+
+    let started = Instant::now();
+    let decider_degree = cs_degree(IvcTreeDeciderCircuit::arch());
+    let ivc_srs = load_srs(SrsSource::Midnight, IVC_K, IvcCircuit::<Chain>::cs_degree());
+    let decider_srs = load_srs(SrsSource::Midnight, DECIDER_K, decider_degree);
+
+    // IVC key only: `ivc::setup` would also build a prover key, which no export
+    // needs.
+    let (ivc_cs, ivc_domain) = ivc_constraint_system(IvcCircuit::<Chain>::arch(), IVC_K);
+    let ivc_relation = IvcCircuit::<Chain>::new(ivc_domain.clone(), ivc_cs.clone(), ());
+    let t0 = Instant::now();
+    let ivc_vk = midnight_zk_stdlib::setup_vk(&ivc_srs, &ivc_relation);
+    println!(
+        "[ivc-conformance-export] IVC key (k = {IVC_K}) in {:.2?}",
+        t0.elapsed()
+    );
+
+    let decider_ctx = TreeDeciderContext {
+        ivc_cs,
+        ivc_domain,
+        ivc_vk,
+        ivc_params_verifier: ivc_srs.verifier_params(),
+    };
+    let decider_relation = IvcTreeDeciderCircuit::new(decider_ctx);
+    let t0 = Instant::now();
+    let decider_vk = midnight_zk_stdlib::setup_vk(&decider_srs, &decider_relation);
+    println!(
+        "[ivc-conformance-export] decider key (k = {DECIDER_K}) in {:.2?}",
+        t0.elapsed()
+    );
+
+    let (num_instances, final_acc_offset) = decider_instance_shape();
+    assert_eq!(
+        (num_instances, final_acc_offset),
+        (16, 4),
+        "the decider instance shape moved; the WID.2 context and the generator options depend on it"
+    );
+    let generator = SolidityGenerator::new(
+        &decider_srs,
+        decider_vk.vk(),
+        GeneratorConfig::new(num_instances, 1).with_accumulator(AccumulatorEncoding::new(
+            final_acc_offset,
+            7,
+            56,
+        )),
+    );
+
+    let t0 = Instant::now();
+    let quotient_evaluator_solidity = generator
+        .render_quotient_evaluator(RenderDiagnostics::default())
+        .expect("render_quotient_evaluator should succeed");
+    let quotient_creation_code =
+        compile_solidity_with_runs(&quotient_evaluator_solidity, SOLC_OPTIMIZE_RUNS);
+    let mut pin_evm = Evm::default();
+    let quotient_pin_address = pin_evm.create(quotient_creation_code);
+    let quotient_runtime_size = pin_evm.code_size(quotient_pin_address);
+    let quotient_codehash = pin_evm.code_hash(quotient_pin_address);
+    let artifacts = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            quotient: RenderQuotient::ExternalPinned {
+                runtime_len: quotient_runtime_size,
+                codehash: quotient_codehash,
+            },
+            diagnostics: RenderDiagnostics::default(),
+            ..RenderOptions::default()
+        })
+        .expect("pinned quotient render should succeed");
+    common::check_quotient_listing("ivc-decider", &artifacts);
+    let verifier_solidity = artifacts.verifier;
+    let vk_solidity = artifacts.verifying_key.expect("separate render includes VK");
+    let pinned_quotient_solidity = artifacts
+        .quotient_evaluator
+        .expect("pinned render includes quotient evaluator");
+    assert_eq!(
+        quotient_evaluator_solidity, pinned_quotient_solidity,
+        "pinning the quotient evaluator must not change the evaluator source"
+    );
+    println!(
+        "[ivc-conformance-export] render in {:.2?}: verifier {} B, vk {} B, evaluator {} B, runtime {} B, codehash 0x{quotient_codehash:064x}",
+        t0.elapsed(),
+        verifier_solidity.len(),
+        vk_solidity.len(),
+        quotient_evaluator_solidity.len(),
+        quotient_runtime_size
+    );
+
+    // WID.3 acceptance: the render is byte-identical to the tracked artifact.
+    // Reported before writing, so a stale tracked file cannot be papered over.
+    let tracked_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("ivc-keccak-solidity-dump");
+    for (name, ours) in [
+        ("Halo2Verifier.sol", verifier_solidity.as_str()),
+        ("Halo2VerifyingKey.sol", vk_solidity.as_str()),
+        ("Halo2QuotientEvaluator.sol", quotient_evaluator_solidity.as_str()),
+    ] {
+        let tracked = std::fs::read_to_string(tracked_dir.join(name))
+            .unwrap_or_else(|err| panic!("tracked {name} is unreadable: {err}"));
+        assert_eq!(
+            ours,
+            tracked,
+            "WID.3 stop condition: {name} differs from the tracked artifact. {}",
+            first_differing_line(ours, &tracked)
+        );
+    }
+
+    let vk_json = common::conformance_json::verifying_key_json(
+        decider_vk.vk(),
+        num_instances,
+        1,
+    );
+    let cs_json = common::conformance_json::constraint_system_json(
+        decider_vk.vk().cs(),
+        "proofs/solidity-verifier/tests/ivc_keccak_solidity.rs (WID.3 decider export)",
+    );
+    let params_json = json!({
+        "schema": 1,
+        "schema_extension": 2,
+        "curve": "BLS12-381",
+        "format": "compressed",
+        "k": DECIDER_K,
+        "ivc_k": IVC_K,
+        "g1_compressed_hex": common::conformance_json::point_hex(&C::generator()),
+        "g2_compressed_hex": common::conformance_json::g2_hex(&decider_srs.g2()),
+        "s_g2_compressed_hex": common::conformance_json::g2_hex(&decider_srs.s_g2()),
+        "n_g2_compressed_hex": common::conformance_json::g2_hex(&(-decider_srs.g2())),
+        "ivc_g2_compressed_hex": common::conformance_json::g2_hex(&ivc_srs.g2()),
+        "ivc_s_g2_compressed_hex": common::conformance_json::g2_hex(&ivc_srs.s_g2()),
+        "max_k": midnight_proofs::poly::commitment::Params::max_k(&decider_srs),
+        "ivc_max_k": midnight_proofs::poly::commitment::Params::max_k(&ivc_srs),
+        "srs_kind": "midnight-production",
+        "trapdoor_s_be_hex": null,
+        "trapdoor_note": "unknown: the Midnight ceremony SRS has no exported trapdoor; WID.4 owns the seeded test-SRS bundle",
+        "srs_sha256": conformance_sha256_hex(&conformance_srs_bytes(&decider_srs)),
+        "ivc_srs_sha256": conformance_sha256_hex(&conformance_srs_bytes(&ivc_srs)),
+        "num_instances": num_instances,
+        "final_acc_offset": final_acc_offset,
+        "accumulator": {
+            "kind": "pointAndScalar",
+            "offset": final_acc_offset,
+            "num_limbs": 7,
+            "limb_bits": 56,
+            "payload_words": 12,
+            "fixed_scalar_tail": [],
+        },
+        "external_quotient": {
+            "authorized": true,
+            "runtime_len": quotient_runtime_size,
+            "codehash_word": format!("0x{quotient_codehash:064x}"),
+        },
+    });
+
+    let out_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../formal/fixtures/conformance/ivc");
+    std::fs::create_dir_all(&out_dir).expect("create the decider bundle directory");
+    let write_json = |name: &str, v: &serde_json::Value| {
+        std::fs::write(out_dir.join(name), serde_json::to_string_pretty(v).unwrap())
+            .unwrap_or_else(|err| panic!("write {name}: {err}"));
+    };
+    write_json("vk.json", &vk_json);
+    write_json("cs.json", &cs_json);
+    write_json("params.json", &params_json);
+    std::fs::write(out_dir.join("Halo2Verifier.sol"), &verifier_solidity).unwrap();
+    std::fs::write(out_dir.join("Halo2VerifyingKey.sol"), &vk_solidity).unwrap();
+    std::fs::write(out_dir.join("Halo2QuotientEvaluator.sol"), &quotient_evaluator_solidity)
+        .unwrap();
+
+    let files = [
+        "vk.json",
+        "cs.json",
+        "params.json",
+        "Halo2Verifier.sol",
+        "Halo2VerifyingKey.sol",
+        "Halo2QuotientEvaluator.sol",
+    ];
+    let hashes: Vec<(String, String, usize)> = files
+        .iter()
+        .map(|name| {
+            let bytes = std::fs::read(out_dir.join(name)).expect("read back a written bundle file");
+            (name.to_string(), conformance_sha256_hex(&bytes), bytes.len())
+        })
+        .collect();
+
+    let build_json = json!({
+        "schema": 1,
+        "fixture": "ivc-decider",
+        "exporter": "proofs/solidity-verifier/tests/ivc_keccak_solidity.rs::export_ivc_decider_conformance_bundle",
+        "command": "HALO2_SOLIDITY_RUN_IVC_BENCH=1 SRS_DIR=<srs> SOLC=<solc-0.8.30> cargo test --release -p halo2_solidity_verifier --features evm,truncated-challenges,in-circuit-fewer-point-sets --test ivc_keccak_solidity export_ivc_decider_conformance_bundle -- --nocapture",
+        "features": ["evm", "truncated-challenges", "in-circuit-fewer-point-sets"],
+        "srs_kind": "midnight-production",
+        "srs_dir": srs_dir(),
+        "ivc_k": IVC_K,
+        "decider_k": DECIDER_K,
+        "cs_degree": decider_vk.vk().cs().degree(),
+        "num_instances": num_instances,
+        "final_acc_offset": final_acc_offset,
+        "quotient_runtime_len": quotient_runtime_size,
+        "quotient_codehash": format!("0x{quotient_codehash:064x}"),
+        "solc": solc_version().ok(),
+        "wall_clock_seconds": started.elapsed().as_secs_f64(),
+        "files": hashes.iter().map(|(name, sha, len)| json!({
+            "name": name, "sha256": sha, "bytes": len
+        })).collect::<Vec<_>>(),
+    });
+    write_json("build.json", &build_json);
+
+    let manifest = hashes
+        .iter()
+        .map(|(name, sha, _)| format!("{sha}  {name}\n"))
+        .collect::<String>()
+        + &format!(
+            "{}  build.json\n",
+            conformance_sha256_hex(
+                serde_json::to_string_pretty(&build_json).unwrap().as_bytes()
+            )
+        );
+    std::fs::write(out_dir.join("manifest.sha256"), manifest).expect("write manifest.sha256");
+
+    println!(
+        "[ivc-conformance-export] wrote {} in {:.2?}",
+        out_dir.display(),
+        started.elapsed()
+    );
 }
