@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `6bc3521` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
+**As of:** `7dbecf3` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
 EXIT=0, KAT 1648/119, `axiom_sweep: ok`, closure fingerprint 4823 declarations / 526 external
 leaves / `bd27cd298a04fc1a`. The later A3/QVM commits are quick-gate green. Current report:
 root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
@@ -22,7 +22,9 @@ root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
     KAT ...................... 1648/119 (full gate at d0bf226; quick since)
     axiom roots .............. standard three + sorryAx, native []
 
-**Merged since the last full gate:** QVMHDR `modarith7Form_shift`/`step_shift_modarith7` and the
+**Merged since the last full gate:** D1's `EndToEnd.lean` (both directions; one remaining
+`readScheduleAgrees_of_validV3` projection), A4's `LagrangeAlg` + `lag_agrees_xn` (D-GATE2
+exponent), A5's staticcall segment form, A9's scalar-inv store plumbing; QVMHDR `modarith7Form_shift`/`step_shift_modarith7` and the
 PAIRWISE fold transport; B1's DG.3 closure pin (`bd27cd298a04fc1a`) + DG.7 CI; C1's F2 IVC bundle;
 B5's artifact gate (VK exact, verifier except `BUILD_ID`); A11's `fp_pairing_algebra`,
 `fp_stmt_steps`, `fpG2Slots_of_valid` (register 75 -> 73); A5's modexp memory bridge; A9's
@@ -50,21 +52,23 @@ gate last ran at `d0bf226`.
   at `7225a47`), QVMGREEN (compaction), B1 (DG.3/DG.7 finish), B5 (artifact gate/T3.3), A12
   (per-block liveness), C0 (W glue; re-carded per its finding), D2 (certified generator), B4
   (F1 inhabitant), B3 (codec laws), C1 (F2), B6 (`Done`).
-- **B5 evidence (measured):** the VK artifact is byte-identical; the verifier differs only at the
+- **B5 (MERGED):** `artifact_gate.sh` and the Rust exporter are in `formal/baseline`; the measured
+  VK artifact is byte-identical and the verifier differs only at `BUILD_ID`. Evidence: the VK artifact is byte-identical; the verifier differs only at the
   `BUILD_ID` line. D-B5 pins the VK exactly and the verifier except that named input.
-- **C1/F2 (exported):** the IVC decider bundle is committed at `514781f` — `Halo2Verifier.sol`
+- **C1/F2 (MERGED):** the IVC decider bundle is committed at `514781f` — `Halo2Verifier.sol`
   150,888 B (`c9347fde…`), `Halo2VerifyingKey.sol` 78,333 B (`f7585874…`), evaluator 97,477 B
   (`4086ef35…`), k=19/20, midnight SRS, solc 0.8.30, 279 s. The Lean F2 importer/clause table is
   the remaining C1 work.
-- **B1/pinned zone (green on branch):** `t/B1N` `a37c74f` adds `gen_closure.sh`,
-  `Closure.manifest` (4823 DECL / 526 leaves / `bd27cd298a04fc1a`) and the `checks.sh` gate; merge
-  pending.
+- **B1/pinned zone (MERGED):** `gen_closure.sh`, `Closure.manifest` (4823 DECL / 526 leaves /
+  `bd27cd298a04fc1a`) and the `checks.sh` gate are in `formal/baseline`; the manifest re-checks green
+  after the new V3 modules.
 - **QVMHDR (green on branch):** `modarith7Form_shift` + `step_shift_modarith7` proved at `7225a47`
   (D-QVM3's exception was not needed); `go_drop_ok`/`runBlocks` remain.
 - **A9 (green on branch):** `bytesToNatBE_readBytes_32`/`fold_byte_lt` at `43da46c`; the six-store
   frame and `scalar_inv` summary remain.
-- **A4/lagrange** (`t/A4`): T3.9.a/b/c/d/e PROVED; paused; `lag_agrees` at D-GATE2's corrected
-  exponent and T3.9.h remain.
+- **A4/lagrange** (`t/A4`): `lag_agrees_xn` and `LagrangeAlg` merged; the exact residual is the
+  `lLast`/`l0`/`lBlind`/instance projections plus the documented `hinst` leaf premise; T3.9.h and
+  the lag rows then follow.
 - **QVMHDR / QVMGREEN**: the MODARITH7 header is PROVED (`7225a47`); both paused, the existing
   QVM agent keeps the `q_blockSim`/`q_blockProgS` lane.
 - **A12/totality** (`t/A12`): per-block liveness from the proved vk/tr progress rows; the root
