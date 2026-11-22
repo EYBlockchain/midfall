@@ -4077,4 +4077,16 @@ theorem evalQuotientIdentityStep_consumed_agrees_at_26
 
 #print axioms Midfall.Lowering.QvmArms.evalQuotientIdentityStep_consumed_agrees_at_26
 
+
+/-- **PG_SHIF2 (iii) DISCHARGED.** The MODARITH7 width agreement at a general cursor,
+    `consumed_agrees_at_modarith7`, proves the family-2 remainder QvmShift section 10 named as
+    `PG_stepNoRF_validated_shif2_modarith7_width`. That Prop is not deleted (it is a named
+    obligation other cards cite); this theorem is its proof. -/
+theorem PG_stepNoRF_validated_shif2_modarith7_width_proved :
+    Midfall.Lowering.QvmShift.PG_stepNoRF_validated_shif2_modarith7_width :=
+  fun bytes idx rest hdrop consts stack mem step len hstep hlen =>
+    consumed_agrees_at_modarith7 bytes idx rest hdrop consts stack mem step len hstep hlen
+
+#print axioms Midfall.Lowering.QvmArms.PG_stepNoRF_validated_shif2_modarith7_width_proved
+
 end Midfall.Lowering.QvmArms
