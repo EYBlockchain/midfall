@@ -1009,6 +1009,270 @@ theorem tmRead_msgs_run {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
       · rw [hpos2, ByteArray.size_append, List.map_cons, List.sum_cons]
         omega
 
+/-- `tmReadN.run` is the underlying `Transcript.readN`. -/
+theorem tmReadN_run_eq {T : Type} (h : Midfall.Halo2.Hashable T) (n : Nat)
+    (t : Midfall.Halo2.Transcript) :
+    (Midfall.Halo2.tmReadN h n).run t = t.readN h n := by
+  unfold Midfall.Halo2.tmReadN
+  simp only [StateT.run, StateT.bind, StateT.get, StateT.set, StateT.lift, StateT.pure,
+    Bind.bind, Pure.pure, Except.bind, Except.map, Except.pure]
+  cases hr : t.readN h n with
+  | error e => simp only [hr]
+  | ok p => cases p with | mk vs t2 => simp only [hr]
+
+/-- `readN` of a list of G1 points from the exact wired tail. -/
+theorem readN_g1_wire {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (n : Nat) (acc : Array G₁) (t : Midfall.Halo2.Transcript) (pref : Bytes)
+      (qs : List G₁) (rest : Bytes),
+      qs.length = n →
+      t.buffer = pref ++ wireMsgs E (qs.map Msg.g1) ++ rest → t.pos = pref.size →
+      p ≤ 2 ^ 256 →
+      (∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q) →
+      (∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth) →
+      ∃ (arr : Array G₁) (t' : Midfall.Halo2.Transcript),
+        Midfall.Halo2.Transcript.readN.go (hashableG1 E.g1) t acc n = .ok (arr, t') ∧
+        t'.pos = pref.size +
+          (qs.map fun Q => (msgWire E (Msg.g1 Q)).size).sum ∧ t'.buffer = t.buffer := by
+  intro n
+  induction n with
+  | zero =>
+      intro acc t pref qs rest hlen hbuf hpos hp henc hwidth
+      have hqs : qs = [] := List.eq_nil_of_length_eq_zero hlen
+      subst hqs
+      refine ⟨acc, t, ?_, ?_, rfl⟩
+      · simp only [Midfall.Halo2.Transcript.readN.go]
+      · simp [hpos]
+  | succ n ih =>
+      intro acc t pref qs rest hlen hbuf hpos hp henc hwidth
+      obtain ⟨Q, qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      have hsize : (msgWire E (Msg.g1 Q)).size = g1CompressedWidth := by
+        show (E.g1.toCompressed Q).size = g1CompressedWidth
+        exact hwidth Q
+      have hbuf' : t.buffer = pref ++ msgWire E (Msg.g1 Q) ++
+          (wireMsgs E (qs'.map Msg.g1) ++ rest) := by
+        rw [hbuf, List.map_cons, wireMsgs_cons]
+        simp only [ByteArray.append_assoc]
+      have hbt : bytesTake t.buffer t.pos g1CompressedWidth = some (E.g1.toCompressed Q) := by
+        rw [hbuf', hpos, ← Nat.add_zero (ByteArray.size pref), ByteArray.append_assoc]
+        simp only [msgWire]
+        rw [bytesTake_append_right pref (E.g1.toCompressed Q ++
+          (wireMsgs E (qs'.map Msg.g1) ++ rest)) 0 g1CompressedWidth (by
+            rw [ByteArray.size_append, hwidth]; omega)]
+        rw [bytesTake_append_left (E.g1.toCompressed Q)
+          (wireMsgs E (qs'.map Msg.g1) ++ rest) 0 g1CompressedWidth (by rw [hwidth]; omega)]
+        rw [← hwidth Q, bytesTake_whole]
+      obtain ⟨t1, hread, hpos1, hbuf1⟩ :=
+        transcript_read_ok (hashableG1 E.g1) t (E.g1.toCompressed Q) Q hbt
+          (by rw [hashableG1_readRepr?]; exact henc Q)
+      have hpos1' : t1.pos = (pref ++ msgWire E (Msg.g1 Q)).size := by
+        rw [hpos1, hpos, hashableG1_width, ByteArray.size_append, hsize]
+      have hbuf1' : t1.buffer = (pref ++ msgWire E (Msg.g1 Q)) ++
+          wireMsgs E (qs'.map Msg.g1) ++ rest := by
+        rw [hbuf1, hbuf']
+        simp only [ByteArray.append_assoc]
+      obtain ⟨arr, t2, hrun2, hpos2, hbuf2⟩ :=
+        ih (acc.push Q) t1 (pref ++ msgWire E (Msg.g1 Q)) qs' rest
+          (by simpa using hlen) hbuf1' hpos1' hp henc hwidth
+      refine ⟨arr, t2, ?_, ?_, hbuf2.trans hbuf1⟩
+      · simp only [Midfall.Halo2.Transcript.readN.go]
+        rw [hread]
+        exact hrun2
+      · rw [hpos2, ByteArray.size_append, List.map_cons, List.sum_cons]
+        omega
+
+/-- `readN` of a list of scalars from the exact wired tail. -/
+theorem readN_fr_wire {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (n : Nat) (acc : Array (Fr p)) (t : Midfall.Halo2.Transcript) (pref : Bytes)
+      (xs : List (Fr p)) (rest : Bytes),
+      xs.length = n →
+      t.buffer = pref ++ wireMsgs E (xs.map Msg.fr) ++ rest → t.pos = pref.size →
+      p ≤ 2 ^ 256 →
+      ∃ (arr : Array (Fr p)) (t' : Midfall.Halo2.Transcript),
+        Midfall.Halo2.Transcript.readN.go (hashableFr (p := p)) t acc n = .ok (arr, t') ∧
+        t'.pos = pref.size +
+          (xs.map fun x => (msgWire E (Msg.fr x)).size).sum ∧ t'.buffer = t.buffer := by
+  intro n
+  induction n with
+  | zero =>
+      intro acc t pref xs rest hlen hbuf hpos hp
+      have hxs : xs = [] := List.eq_nil_of_length_eq_zero hlen
+      subst hxs
+      refine ⟨acc, t, ?_, ?_, rfl⟩
+      · simp only [Midfall.Halo2.Transcript.readN.go]
+      · simp [hpos]
+  | succ n ih =>
+      intro acc t pref xs rest hlen hbuf hpos hp
+      obtain ⟨x, xs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      have hsize : (msgWire E (Msg.fr x)).size = 32 := by
+        show (frToRepr (p := p) x).size = 32
+        exact frToRepr_size x
+      have hbuf' : t.buffer = pref ++ msgWire E (Msg.fr x) ++
+          (wireMsgs E (xs'.map Msg.fr) ++ rest) := by
+        rw [hbuf, List.map_cons, wireMsgs_cons]
+        simp only [ByteArray.append_assoc]
+      have hbt : bytesTake t.buffer t.pos 32 = some (frToRepr (p := p) x) := by
+        rw [hbuf', hpos, ← Nat.add_zero (ByteArray.size pref), ByteArray.append_assoc]
+        simp only [msgWire]
+        rw [bytesTake_append_right pref (frToRepr (p := p) x ++
+          (wireMsgs E (xs'.map Msg.fr) ++ rest)) 0 32 (by
+            rw [ByteArray.size_append, frToRepr_size]; omega)]
+        rw [bytesTake_append_left (frToRepr (p := p) x)
+          (wireMsgs E (xs'.map Msg.fr) ++ rest) 0 32 (by rw [frToRepr_size])]
+        rw [← frToRepr_size x, bytesTake_whole]
+      obtain ⟨t1, hread, hpos1, hbuf1⟩ :=
+        transcript_read_ok (hashableFr (p := p)) t (frToRepr (p := p) x) x hbt
+          (by rw [hashableFr_readRepr?]; exact frOfRepr_frToRepr hp x)
+      have hpos1' : t1.pos = (pref ++ msgWire E (Msg.fr x)).size := by
+        rw [hpos1, hpos, hashableFr_width, ByteArray.size_append, hsize]
+      have hbuf1' : t1.buffer = (pref ++ msgWire E (Msg.fr x)) ++
+          wireMsgs E (xs'.map Msg.fr) ++ rest := by
+        rw [hbuf1, hbuf']
+        simp only [ByteArray.append_assoc]
+      obtain ⟨arr, t2, hrun2, hpos2, hbuf2⟩ :=
+        ih (acc.push x) t1 (pref ++ msgWire E (Msg.fr x)) xs' rest
+          (by simpa using hlen) hbuf1' hpos1' hp
+      refine ⟨arr, t2, ?_, ?_, hbuf2.trans hbuf1⟩
+      · simp only [Midfall.Halo2.Transcript.readN.go]
+        rw [hread]
+        exact hrun2
+      · rw [hpos2, ByteArray.size_append, List.map_cons, List.sum_cons]
+        omega
+
+/-- `tmReadN` of G1 points: the group reader of `parseTrace`'s advice/lookup/perm/trash loops. -/
+theorem tmReadN_g1_wire {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (t : Midfall.Halo2.Transcript)
+    (pref : Bytes) (qs : List G₁) (rest : Bytes) (hlen : qs.length = n)
+    (hbuf : t.buffer = pref ++ wireMsgs E (qs.map Msg.g1) ++ rest)
+    (hpos : t.pos = pref.size) (hp : p ≤ 2 ^ 256)
+    (henc : ∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth) :
+    ∃ (arr : Array G₁) (t' : Midfall.Halo2.Transcript),
+      (tmReadN (hashableG1 E.g1) n).run t = .ok (arr, t') ∧
+      t'.pos = pref.size + (qs.map fun Q => (msgWire E (Msg.g1 Q)).size).sum ∧
+      t'.buffer = t.buffer := by
+  obtain ⟨arr, t', hrun, hpos', hbuf'⟩ :=
+    readN_g1_wire E n #[] t pref qs rest hlen hbuf hpos hp henc hwidth
+  refine ⟨arr, t', ?_, hpos', hbuf'⟩
+  rw [tmReadN_run_eq]
+  simpa only [Midfall.Halo2.Transcript.readN] using hrun
+
+/-- `tmReadN` of scalars: the group reader of `readAlgebra`'s eval blocks. -/
+theorem tmReadN_fr_wire {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (t : Midfall.Halo2.Transcript)
+    (pref : Bytes) (xs : List (Fr p)) (rest : Bytes) (hlen : xs.length = n)
+    (hbuf : t.buffer = pref ++ wireMsgs E (xs.map Msg.fr) ++ rest)
+    (hpos : t.pos = pref.size) (hp : p ≤ 2 ^ 256) :
+    ∃ (arr : Array (Fr p)) (t' : Midfall.Halo2.Transcript),
+      (tmReadN (hashableFr (p := p)) n).run t = .ok (arr, t') ∧
+      t'.pos = pref.size + (xs.map fun x => (msgWire E (Msg.fr x)).size).sum ∧
+      t'.buffer = t.buffer := by
+  obtain ⟨arr, t', hrun, hpos', hbuf'⟩ :=
+    readN_fr_wire E n #[] t pref xs rest hlen hbuf hpos hp
+  refine ⟨arr, t', ?_, hpos', hbuf'⟩
+  rw [tmReadN_run_eq]
+  simpa only [Midfall.Halo2.Transcript.readN] using hrun
+
+/-- Splitting the decoded messages at a slot prefix (the segment algebra of the schedule). -/
+theorem exists_split_of_slot_prefix {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type}
+    (ms : List (Msg (Fr p) G₁)) :
+    ∀ (pre rest : List WireSlot), ms.map Msg.slot = pre ++ rest →
+      ∃ ms₁ ms₂, ms = ms₁ ++ ms₂ ∧ ms₁.map Msg.slot = pre ∧ ms₂.map Msg.slot = rest := by
+  induction ms with
+  | nil =>
+      intro pre rest h
+      cases pre with
+      | nil => simp only [List.nil_append] at h; subst h; exact ⟨[], [], rfl, rfl, rfl⟩
+      | cons s pre => simp at h
+  | cons m ms ih =>
+      intro pre rest h
+      cases pre with
+      | nil =>
+          simp only [List.nil_append] at h
+          exact ⟨[], m :: ms, rfl, rfl, h⟩
+      | cons s pre =>
+          simp only [List.map_cons, List.cons_append, List.cons.injEq] at h
+          obtain ⟨hms, hrest⟩ := h
+          obtain ⟨ms₁, ms₂, hsplit, hpre, hpost⟩ := ih pre rest hrest
+          refine ⟨m :: ms₁, ms₂, by rw [hsplit]; rfl, ?_, hpost⟩
+          simp only [List.map_cons, hms, hpre]
+
+/-- A message list all of whose slots are `g1` is a list of G1 messages. -/
+theorem eq_map_g1_of_slots {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type} :
+    ∀ (l : List (Msg (Fr p) G₁)) (n : Nat),
+      l.map Msg.slot = List.replicate n WireSlot.g1 →
+        ∃ Qs : List G₁, l = Qs.map Msg.g1 ∧ Qs.length = n := by
+  intro l
+  induction l with
+  | nil =>
+      intro n h
+      cases n with
+      | zero => exact ⟨[], rfl, rfl⟩
+      | succ n => simp at h
+  | cons m ms ih =>
+      intro n h
+      cases n with
+      | zero => simp at h
+      | succ n =>
+          simp only [List.map_cons, List.replicate_succ, List.cons.injEq] at h
+          obtain ⟨hm, hrest⟩ := h
+          cases m with
+          | g1 Q =>
+              obtain ⟨Qs, hms, hlen⟩ := ih n hrest
+              exact ⟨Q :: Qs, by simp [hms], by simp [hlen]⟩
+          | fr x => simp [Msg.slot] at hm
+/-- A message list all of whose slots are `fr` is a list of scalars. -/
+theorem eq_map_fr_of_slots {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type} :
+    ∀ (l : List (Msg (Fr p) G₁)) (n : Nat),
+      l.map Msg.slot = List.replicate n WireSlot.fr →
+        ∃ xs : List (Fr p), l = xs.map Msg.fr ∧ xs.length = n := by
+  intro l
+  induction l with
+  | nil =>
+      intro n h
+      cases n with
+      | zero => exact ⟨[], rfl, rfl⟩
+      | succ n => simp at h
+  | cons m ms ih =>
+      intro n h
+      cases n with
+      | zero => simp at h
+      | succ n =>
+          simp only [List.map_cons, List.replicate_succ, List.cons.injEq] at h
+          obtain ⟨hm, hrest⟩ := h
+          cases m with
+          | g1 Q => simp [Msg.slot] at hm
+          | fr x =>
+              obtain ⟨xs, hms, hlen⟩ := ih n hrest
+              exact ⟨x :: xs, by simp [hms], by simp [hlen]⟩
+
+/-- Splitting at `n` G1 slots. -/
+theorem exists_split_g1_prefix {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type}
+    (ms : List (Msg (Fr p) G₁)) (n : Nat) (rest : List WireSlot)
+    (h : ms.map Msg.slot = List.replicate n WireSlot.g1 ++ rest) :
+    ∃ (Qs : List G₁) (ms' : List (Msg (Fr p) G₁)),
+      Qs.length = n ∧ ms = Qs.map Msg.g1 ++ ms' ∧ ms'.map Msg.slot = rest := by
+  obtain ⟨ms₁, ms₂, hsplit, hpre, hpost⟩ := exists_split_of_slot_prefix ms _ rest h
+  obtain ⟨Qs, hms₁, hlen⟩ := eq_map_g1_of_slots ms₁ n hpre
+  exact ⟨Qs, ms₂, hlen, by rw [hsplit, hms₁], hpost⟩
+
 /-- `transcriptOf` starts at cursor 0 with exactly `wireMsgs` in the buffer. -/
 theorem transcriptOf_buffer {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]

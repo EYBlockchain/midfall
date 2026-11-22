@@ -1,7 +1,7 @@
 # A6 / ROW.TP — worker report (transcriptParser, t/A6)
 
-**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `79f2de3`** (the previous base was
-`2c6789b`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
+**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `b6e6d42`** (the previous base was
+`79f2de3`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
 (`git log -1`). No push. `formal/baseline` and `/Users/julian/midfall` untouched; no
 frozen/vendor/QVM/Quotient edit.
 
@@ -9,7 +9,7 @@ frozen/vendor/QVM/Quotient edit.
 
 `Rows.lean` is still untouched, so the ROOT cones are unchanged: `lowering_correct` **11**,
 `lowering_sound` **5**, both `assert_axioms` `ok (4 named, 0 native)`.
-`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (2142, 2157, 2184, 2197, 2229) — the
+`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (2406, 2421, 2448, 2461, 2493) — the
 five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT sorry**.
 `gen_sorry.sh` was not run (zero-sorry precondition not met; worker rule W9/DG.2).
 
@@ -72,11 +72,24 @@ PROVED in `TranscriptRows.lean`:
 | **`tmRead_msgs_run`** | **the message-wire engine**: reading a whole `List (Msg …)` one message at a time from `pref ++ wireMsgs E ms ++ rest` succeeds, consumes the list in order, advances by the sum of wire lengths, and leaves the buffer |
 | **`decodeCalldata_slots`** | **the `Decoded` linkage**: `Decoded R cd ms instW inst` gives `ms.map Msg.slot = plan.slots` (via `decodeSlots_map_slot`) |
 | **`tp_agrees_of_agree`** | `tp_agrees` minus `Agree`: the other five `StageInv .transcript` conjuncts are the `TpPost` projections |
+| `tmReadN_run_eq` | `tmReadN.run` is `Transcript.readN` |
+| `readN_g1_wire` / `readN_fr_wire` | the `readN.go` group engines: `n` G1 (resp. scalar) reads from the exact wired tail succeed, advance by the wire length, leave the buffer |
+| **`tmReadN_g1_wire` / `tmReadN_fr_wire`** | the group readers the parser's `tmReadN` calls use (advice, lookups, permutations, trash, eval blocks) |
+| `exists_split_of_slot_prefix` | splitting a decoded message list at any slot prefix, returning both halves' slot lists |
+| `eq_map_g1_of_slots` / `eq_map_fr_of_slots` | a list whose slots are all `g1`/`fr` is a list of G1/scalar messages |
+| `exists_split_g1_prefix` | the `replicate n g1 ++ rest` split used by the advice/lookup/perm/trash loops |
 
-These are exactly the buffer-tail/decode halves of `snapshotAlgebraRun_total`. The missing half is
-the monadic schedule walk itself: `parseTrace`/`readAlgebra` must be shown to *call the reads in
-the order of `ms`*. That is the parser-side counterpart of D1's residual, and its exact shared
-statement (for D1's common module, not yet in the tree) is:
+These are exactly the buffer-tail/decode halves of `snapshotAlgebraRun_total`, plus the group
+readers. The missing half is the monadic schedule walk itself: `parseTrace`/`readAlgebra` must be
+shown to *call the reads in the order of `ms`*, segment by segment (advice phases, logup
+multiplicities/commitments, permutation products, trashcans, quotient limbs, instance/advice/fixed
+evals, q-evals, pi). Each segment is now discharged by a `tmReadN_*_wire` group reader plus an
+`exists_split_*_prefix` split of the current `ms`, with the segment order and counts supplied by
+`R.tpEvents` (`tp_events_slots`) and `tp_fromProtocol`/`tp_planFacts`. D1's `PresWidthSeq` and
+`PrepareLogSlots` are now DEFINITIONS in `EndToEnd.lean` (no closure lemmas yet); they supply the
+width sequence once the same walk is tracked at widths, while A6 tracks success and the cursor here.
+
+The exact shared statement (for D1's common module, not yet in the tree) is:
 
 ```
 /-- D1's `prepare_logSlots`, the width sequence of a successful `Verifier.prepare` run. -/
@@ -174,7 +187,7 @@ leaves below.
 
 ## The five remaining leaves — all blocked by an UNISSUED card
 
-1. **`g1walk_loop_sem`** (2123). Needs **ROW.TP.3's `common_uncompressed_g1` summary** (QUEUE 95h:
+1. **`g1walk_loop_sem`** (2387). Needs **ROW.TP.3's `common_uncompressed_g1` summary** (QUEUE 95h:
    "ISSUED BY ROW.TP (step 1): no card until ROW.TP merges") **and T3.5** (QUEUE row 78, "after
    T3.1", not run). Exact missing fact: an `EvalExpr` contract for the call
    `common_uncompressed_g1(buf_len, proof_cptr)` over the 13-statement helper body
@@ -184,20 +197,20 @@ leaves below.
    `g1WordsOk cd proof_cptr = true`, env/halted preserved and memory equal outside the 128-byte
    window. The loop then needs the `cdSlice` append/`bytesAt` layer (T3.5) to carry the window over
    `j` frames. Neither is in the tree.
-2. **`tp_computes`** (2150). Needs ROW.TP.3/4/5/2 (`common_word`, `transcript_init`, `squeeze_to`
+2. **`tp_computes`** (2414). Needs ROW.TP.3/4/5/2 (`common_word`, `transcript_init`, `squeeze_to`
    summaries; the three scalar loops; the `tpEvents` fold; the walk loop) — unissued. ROW.TP.6
    (this file) is now discharged and is no longer a blocker.
-3. **`tp_agrees`** (2179). Now decomposed by the PROVED `tp_agrees_of_agree`: five of the six
+3. **`tp_agrees`** (2443). Now decomposed by the PROVED `tp_agrees_of_agree`: five of the six
    `StageInv .transcript` conjuncts are exactly `TpPost`'s projections (`LeanRaw .transcript` and
    `Mirror .transcript` are definitional), so only `Agree` is left. `Agree` needs
    **SIM.10 `xcript_total`** (obligation 1 above) plus the `InvAt .transcript (padSnap x …)`
    assembly: the scalar slots are `XcriptSlots`, the G1 windows are `MirrorAt` + the
    decoder/encoder bridges (`decodeCalldata_slots` is the calldata-side half), and the quotient
    limbs/evals windows are the same read-schedule bridge. That is ROW.TP.8's own content.
-4. **`tp_poison`** (2192). Needs ROW.TP.4's three scalar loops and ROW.TP.2's walk loops
+4. **`tp_poison`** (2456). Needs ROW.TP.4's three scalar loops and ROW.TP.2's walk loops
    (end-normally/revert lemmas whose preconditions do not read the loops' computed values) —
    unissued.
-5. **`tp_blockProgS`** (2224). Needs every child above plus the walk-loop normal arm.
+5. **`tp_blockProgS`** (2488). Needs every child above plus the walk-loop normal arm.
 
 No row/bundle/root/`ValidV3` hypothesis was added; no false/vacuous statement was found.
 
