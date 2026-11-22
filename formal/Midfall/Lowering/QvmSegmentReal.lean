@@ -967,3 +967,562 @@ theorem builder_segments_total_of_planSegmentWalk (h : PG_planSegmentWalk) :
     rather than asserted. -/
 theorem planSegment_at_zero (bytes : List Nat) (exprEnd : Nat) :
     planSegment bytes 0 exprEnd = bytes.take exprEnd := rfl
+
+open Midfall.Generator.QuotientCertify
+
+/-! ### 8. THE PLAN'S OWN CURSOR SEQUENCE (card PLSEG): what 'hseg' supplies and what nothing does
+
+THE QUESTION THIS SECTION ANSWERS. Section 7 reduced the registered 'builder_segments_total' to
+'PG_planSegmentWalk' and said the last mile is "one line once the emitter supplies the cursor facts".
+This section checks that claim on the plan's own segments. IT DOES NOT CLOSE, and the reason is not the
+walk machinery: the induction, the six axes and the four real emitted segments are all landed and all
+citable. The reason is that nothing in the tree connects 'buildPlan' to the instruction sequence its
+bytes spell. Three separate facts are missing, and each is named below with the exact goal state, as
+RULES requires. Nothing here adds a hypothesis to a row, to 'ValidV3', to a bundle or to the root; '
+PG_planSegmentWalk' is NOT restated; no sorry is added and none is removed.
+
+WHAT 'hseg' ALREADY SUPPLIES (proved below, no hypothesis). 'identitySegment bytes cursor =
+.ok (exprEnd, foldOp)' is itself a cursor statement, and it is stronger than it looks: the walk it
+certifies advances EXACTLY by the validator's 'quotientOpLen' at every cursor strictly before
+'exprEnd', it lands on 'exprEnd' with a real fold opcode there, it never leaves the stream, and it
+supports an induction principle over the cursors it visited ('iseg_bounds', 'isegGo_advance',
+'iseg_walk_ind'). Together with the slice lemmas ('planSegment_length', 'planSegment_getD',
+'planSegment_take_append') that pins the cursor arithmetic of the row's own segment - which is the part
+of the brief that asked which stream the cursors live in. THE ANSWER ON COMPACTION: the COMPACTED one.
+'finish' compacts first and returns the byte-view of the compaction ('finish_ok_compacted'), and
+'itemStarts' / 'identitySegment' are both computed from 'qvmBytesToNats build.bytes', so the cursors are
+positions in the post-compaction stream while the per-item drops in 'PG_identity_segment_walk' are
+positions in the pre-compaction buffer. 'runSeg' and 'afSeg' are the two witnesses that the two are NOT
+the same bytes, and no card reconciles them: that reconciliation is 'PG_planItemSegment' below.
+
+THE THREE MISSING FACTS.
+(1) 'PG_planSegmentCursorFacts' (NEW, named here): for the slice at an item start, some predicate holds
+    at cursor 0, is carried across every step, and forces a singleton stack at the end - with each step
+    stated as a SUCCESSFUL 'stepAt' whose consumed width equals the validator decoder's width. This is
+    exactly the input section 6's 'axes_of_emitter_facts' consumes, and 'pg_planSegmentWalk_of_cursorFacts'
+    proves the implication (0 sorries in its cone), so the registered sorry really is one application
+    from this Prop and not from anything else.
+(2) 'PG_planItemSegment' (NEW, named here): the slice IS the finalized, compacted emission of one
+    identity item of the plan, over the compacted stream, with the build's table extending the item's.
+    Without (1) this buys nothing; without this, (1) has no source. Proving it is the induction over
+    'buildItems'/'finish' that 'qvm_compile_correct_identity' (Qvm.lean:619) also owes.
+(3) The roster gap, which section 7's header does not mention: 'axes_of_emitter_facts' asks for
+    'stepArm22' at every reachable cursor, and 'stepArm22' EXCLUDES all four LIMB arms - proved below by
+    'not_stepArm22_lin7' and friends, and 'iseg_walks_limb_cursor' shows the row's own 'hseg' admits a
+    cursor holding 'qOpLin7' (the row quantifies over 'limbOps : Bool' and over arbitrary recognizers).
+    So even with (1) and (2) the route serves only the 22-arm fragment unless DEPTH's
+    'PG_stepDepth_at_limb4' and SHAPE's 'PG_stepShape_at_limb2' are also discharged, and
+    'PG_shapeGuardsOfDecoded' is needed for the SHAPE axis regardless. Per-axis limb check, as the brief
+    asks: DEPTH excludes the four limb arms from the ROUTE although their 'stepPopCount' is 0 (so the
+    exclusion is vacuous in content, 'stepPopCount_limb4_zero'); SHAPE covers LIN7 and BILIN7_ROW and
+    excludes MODARITH7 and BILIN7_PAIRWISE (NOT vacuous); CURSOR covers 25 of 26 and excludes only
+    MODARITH7.
+ONE FREEBIE: section 6 lists 'PG_constsCanonical' as a cost of the general route. For this row it is
+free - the row's own 'hconsts' is that formula about that table ('pg_constsCanonical_of_hconsts').
+
+No new file, so no 'Midfall.lean' edit. No 'native_decide', no 'maxRecDepth'/'maxHeartbeats' change, no
+2^256 numeral inside a 'decide' (the one 'decide' here is a 23-byte stream). -/
+
+theorem beq_eq_true {a b : Nat} (h : (a == b) = true) : a = b := by simp at h; exact h
+
+theorem beq_or_eq_true {a b c : Nat} (h : (a == b || a == c) = true) : a = b ∨ a = c := by
+  rw [Bool.or_eq_true] at h
+  cases h with
+  | inl h => exact Or.inl (beq_eq_true h)
+  | inr h => exact Or.inr (beq_eq_true h)
+
+theorem iseg_eq_go (bytes : List Nat) (start : Nat) :
+    identitySegment bytes start = identitySegment.go bytes start bytes.length start := rfl
+
+theorem iseg_go_zero {bytes : List Nat} {start cursor exprEnd foldOp : Nat} :
+    identitySegment.go bytes start 0 cursor = .ok (exprEnd, foldOp) → False := by
+  intro h
+  rw [show identitySegment.go bytes start 0 cursor =
+      (if cursor < bytes.length then
+        (.error "quotient VM segment walk fuel exhausted - port-only bound, see the header"
+          : Except String (Nat × Nat))
+       else .error (identitySegment.neverFolded start)) from by
+    simp only [identitySegment.go]] at h
+  by_cases hlt : cursor < bytes.length
+  · rw [ite_eq_left hlt] at h; cases h
+  · rw [ite_eq_right hlt] at h; cases h
+
+theorem iseg_go_succ_eq (bytes : List Nat) (start fuel cursor : Nat) :
+    identitySegment.go bytes start (fuel + 1) cursor =
+      (if cursor < bytes.length then
+        if (bytes.getD cursor 0 == qOpFoldMain || bytes.getD cursor 0 == qOpFoldSelector) = true then
+          (.ok (cursor, bytes.getD cursor 0) : Except String (Nat × Nat))
+        else if (bytes.getD cursor 0 == qOpNativePermutation
+            || bytes.getD cursor 0 == qOpNativeLookup
+            || bytes.getD cursor 0 == qOpNativeIdentity) = true then
+          (.error ("native marker " ++ qvmHex (bytes.getD cursor 0) ++ " at byte "
+            ++ toString cursor ++ " interrupts an identity expression") : Except String (Nat × Nat))
+        else match quotientOpLen bytes cursor with
+          | .error f => .error f.message
+          | .ok len => identitySegment.go bytes start fuel (cursor + len)
+       else (.error (identitySegment.neverFolded start) : Except String (Nat × Nat))) := by
+  simp only [identitySegment.go]
+  rfl
+
+theorem iseg_go_step {bytes : List Nat} {start fuel cursor exprEnd foldOp : Nat}
+    (h : identitySegment.go bytes start (fuel + 1) cursor = .ok (exprEnd, foldOp)) :
+    (cursor = exprEnd ∧ cursor < bytes.length ∧ bytes.getD cursor 0 = foldOp
+        ∧ (foldOp = qOpFoldMain ∨ foldOp = qOpFoldSelector))
+      ∨ (∃ len, quotientOpLen bytes cursor = .ok len ∧
+          identitySegment.go bytes start fuel (cursor + len) = .ok (exprEnd, foldOp) ∧
+          bytes.getD cursor 0 ≠ qOpFoldMain ∧ bytes.getD cursor 0 ≠ qOpFoldSelector) := by
+  rw [iseg_go_succ_eq] at h
+  by_cases hlt : cursor < bytes.length
+  · rw [ite_eq_left hlt] at h
+    by_cases hfb : (bytes.getD cursor 0 == qOpFoldMain
+        || bytes.getD cursor 0 == qOpFoldSelector) = true
+    · rw [ite_eq_left hfb] at h
+      have hp : (cursor, bytes.getD cursor 0) = (exprEnd, foldOp) := Except.ok.inj h
+      simp only [Prod.mk.injEq] at hp
+      obtain ⟨r1, r2⟩ := hp
+      have hfold : foldOp = qOpFoldMain ∨ foldOp = qOpFoldSelector := by
+        rw [← r2]
+        exact beq_or_eq_true hfb
+      exact Or.inl ⟨r1, hlt, r2, hfold⟩
+    · rw [ite_eq_right hfb] at h
+      by_cases hn : (bytes.getD cursor 0 == qOpNativePermutation
+          || bytes.getD cursor 0 == qOpNativeLookup
+          || bytes.getD cursor 0 == qOpNativeIdentity) = true
+      · rw [ite_eq_left hn] at h; cases h
+      · rw [ite_eq_right hn] at h
+        cases hq : quotientOpLen bytes cursor with
+        | error f => simp only [hq] at h; cases h
+        | ok len =>
+            simp only [hq] at h
+            have hn1 : bytes.getD cursor 0 ≠ qOpFoldMain := by
+              intro e; exact hfb (by simp only [e]; decide)
+            have hn2 : bytes.getD cursor 0 ≠ qOpFoldSelector := by
+              intro e; exact hfb (by simp only [e]; decide)
+            exact Or.inr ⟨len, rfl, h, hn1, hn2⟩
+  · rw [ite_eq_right hlt] at h; cases h
+
+theorem iseg_go_bounds {bytes : List Nat} (start : Nat) :
+    ∀ (fuel cursor exprEnd foldOp : Nat),
+      identitySegment.go bytes start fuel cursor = .ok (exprEnd, foldOp) →
+        cursor ≤ exprEnd ∧ exprEnd < bytes.length ∧
+          (foldOp = qOpFoldMain ∨ foldOp = qOpFoldSelector) ∧ bytes.getD exprEnd 0 = foldOp := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro cursor exprEnd foldOp h
+      exact absurd h iseg_go_zero
+  | succ k ih =>
+      intro cursor exprEnd foldOp h
+      obtain (⟨r1, hlt, hget, hf⟩ | ⟨len, _, hnext, _, _⟩) := iseg_go_step h
+      · exact ⟨by omega, by omega, hf, by rw [← r1]; exact hget⟩
+      · obtain ⟨h1, h2, h3, h4⟩ := ih (cursor + len) exprEnd foldOp hnext
+        exact ⟨by omega, h2, h3, h4⟩
+
+theorem iseg_bounds {bytes : List Nat} {cursor exprEnd foldOp : Nat}
+    (hseg : identitySegment bytes cursor = .ok (exprEnd, foldOp)) :
+    cursor ≤ exprEnd ∧ exprEnd < bytes.length ∧
+      (foldOp = qOpFoldMain ∨ foldOp = qOpFoldSelector) ∧ bytes.getD exprEnd 0 = foldOp :=
+  iseg_go_bounds cursor bytes.length cursor exprEnd foldOp hseg
+
+/-- **THE WALK ADVANCES BY THE VALIDATOR'S WIDTH.** -/
+theorem isegGo_advance {bytes : List Nat} {start fuel cursor exprEnd foldOp : Nat}
+    (h : identitySegment.go bytes start (fuel + 1) cursor = .ok (exprEnd, foldOp))
+    (hne : cursor ≠ exprEnd) :
+    ∃ len, quotientOpLen bytes cursor = .ok len ∧
+      identitySegment.go bytes start fuel (cursor + len) = .ok (exprEnd, foldOp) ∧
+      cursor + len ≤ exprEnd := by
+  obtain (⟨rfl, _, _, _⟩ | ⟨len, hlen, hnext, _, _⟩) := iseg_go_step h
+  · exact absurd rfl hne
+  · have ⟨h1, _, _, _⟩ := iseg_go_bounds start fuel (cursor + len) exprEnd foldOp hnext
+    exact ⟨len, hlen, hnext, h1⟩
+
+/-- **THE CURSOR INDUCTION THE ROW NEEDS.** -/
+theorem iseg_walk_ind {bytes : List Nat} {cursor exprEnd foldOp : Nat}
+    (hseg : identitySegment bytes cursor = .ok (exprEnd, foldOp)) (Q : Nat → Prop)
+    (hbase : Q cursor)
+    (hstep : ∀ c len, cursor ≤ c → c < exprEnd → Q c →
+        quotientOpLen bytes c = .ok len → Q (c + len)) :
+    Q exprEnd := by
+  have key : ∀ fuel c, identitySegment.go bytes cursor fuel c = .ok (exprEnd, foldOp) →
+      cursor ≤ c → Q c → c ≤ exprEnd → Q exprEnd := by
+    intro fuel
+    induction fuel with
+    | zero =>
+        intro c hc _ _ _
+        exact absurd hc iseg_go_zero
+    | succ k ih =>
+        intro c hc hle hQ hle2
+        by_cases hce : c = exprEnd
+        · exact hce ▸ hQ
+        · obtain ⟨len, hlen, hnext, hwidth⟩ := isegGo_advance hc hce
+          have hcl : c < exprEnd := by
+            rcases Nat.lt_or_ge c exprEnd with h | h
+            · exact h
+            · exfalso
+              have ⟨h1, _, _, _⟩ := iseg_go_bounds cursor k (c + len) exprEnd foldOp hnext
+              omega
+          refine ih (c + len) hnext (by omega) (hstep c len hle hcl hQ hlen) ?_
+          have ⟨h1, _, _, _⟩ := iseg_go_bounds cursor k (c + len) exprEnd foldOp hnext
+          exact h1
+  have ⟨h1, _, _, _⟩ := iseg_bounds hseg
+  exact key bytes.length cursor hseg (Nat.le_refl _) hbase h1
+
+theorem planSegment_length (bytes : List Nat) (cursor exprEnd : Nat)
+    (h : exprEnd ≤ bytes.length) :
+    (planSegment bytes cursor exprEnd).length = exprEnd - cursor := by
+  rw [planSegment, List.length_take, List.length_drop]
+  omega
+
+theorem getD_drop_nat : ∀ (j cursor : Nat) (bytes : List Nat),
+    (bytes.drop cursor).getD j 0 = bytes.getD (j + cursor) 0 := by
+  intro j cursor
+  induction cursor with
+  | zero =>
+      intro bytes
+      rw [List.drop_zero, Nat.add_zero]
+  | succ k ih =>
+      intro bytes
+      cases bytes with
+      | nil => rw [List.drop_nil]; rfl
+      | cons b rest =>
+          rw [List.drop_cons (by omega : 0 < k + 1)]
+          show (rest.drop k).getD j 0 = (b :: rest).getD (j + k + 1) 0
+          rw [List.getD_cons_succ]
+          exact ih rest
+
+theorem getD_take_nat :
+    ∀ (l : List Nat) (n j : Nat), j < n → (l.take n).getD j 0 = l.getD j 0 := by
+  intro l
+  induction l with
+  | nil => intro n j _; cases n <;> rfl
+  | cons b rest ih =>
+      intro n
+      cases n with
+      | zero => intro j hj; omega
+      | succ k =>
+          intro j hj
+          cases j with
+          | zero =>
+              show (b :: rest.take k).getD 0 0 = (b :: rest).getD 0 0
+              rw [List.getD_cons_zero, List.getD_cons_zero]
+          | succ j' =>
+              show (b :: rest.take k).getD (j' + 1) 0 = (b :: rest).getD (j' + 1) 0
+              rw [List.getD_cons_succ, List.getD_cons_succ, ih k j' (by omega)]
+
+theorem planSegment_getD (bytes : List Nat) (cursor exprEnd j : Nat)
+    (h : j < exprEnd - cursor) (_h2 : exprEnd ≤ bytes.length) :
+    (planSegment bytes cursor exprEnd).getD j 0 = bytes.getD (cursor + j) 0 := by
+  rw [planSegment, getD_take_nat (bytes.drop cursor) (exprEnd - cursor) j h]
+  rw [getD_drop_nat j cursor bytes, show j + cursor = cursor + j from Nat.add_comm _ _]
+
+theorem planSegment_take_append (bytes : List Nat) (cursor exprEnd : Nat)
+    (h : cursor ≤ exprEnd) :
+    bytes.take cursor ++ planSegment bytes cursor exprEnd = bytes.take exprEnd := by
+  rw [planSegment, ← List.take_add, Nat.add_sub_cancel' h]
+
+
+/-! #### 8c. What 'buildPlan' and 'itemStarts' say about the bytes -/
+
+/-- **THE ROW'S BYTES ARE THE COMPACTED STREAM.** 'finish' compacts FIRST (VmBuilder.lean:1460-1467) and
+    the artifact it returns is the byte-view of that compaction, with the builder's own table unchanged.
+    So the cursor arithmetic of 'itemStarts' and of 'identitySegment' inside 'PG_planSegmentWalk' runs on
+    the COMPACTED stream - exactly as 'runSeg' and 'afSeg' do - and NOT on the pre-compaction bytes.
+    NOTE what this lemma does NOT give: 'qvmBytesToNats build.bytes = cseg' needs the round-trip
+    'qvmBytesToNats (qvmBytesOfNats cseg) = cseg', which holds only when every byte is below 256 and is
+    asserted in the tree only as the 'Bool' gate 'programBytesRoundTrip_ok' ('VmReference.lean:2201'),
+    never as a theorem. -/
+theorem finish_ok_compacted (s : QuotientProgramBuilder) (build : QuotientProgramBuild)
+    (h : finish s = .ok build) :
+    ∃ cseg u, compactQuotientRuns s.bytes = .ok cseg ∧ quotientProgramUsage cseg = .ok u ∧
+      build.bytes = qvmBytesOfNats cseg ∧ build.consts = s.consts ∧ build.maxStack = s.maxStack := by
+  have h1 : finish s = compactQuotientRuns s.bytes >>= (fun bytes =>
+      quotientProgramUsage bytes >>= (fun u =>
+        .ok { bytes := qvmBytesOfNats bytes, consts := s.consts, maxStack := s.maxStack,
+              usedOps := qvmBytesOfNats u.1, usedMemTokens := qvmBytesOfNats u.2 })) := rfl
+  cases hc : compactQuotientRuns s.bytes with
+  | error e =>
+      have h2 : finish s = .error e := by rw [h1, hc]; rfl
+      rw [h2] at h; cases h
+  | ok cseg =>
+      have h2 : finish s = quotientProgramUsage cseg >>= (fun u =>
+          .ok (⟨qvmBytesOfNats cseg, s.consts, s.maxStack, qvmBytesOfNats u.1,
+            qvmBytesOfNats u.2⟩ : QuotientProgramBuild)) := by
+        rw [h1, hc]
+        rfl
+      cases hu : quotientProgramUsage cseg with
+      | error e =>
+          have h3 : finish s = .error e := by rw [h2, hu]; rfl
+          rw [h3] at h; cases h
+      | ok u =>
+          have h3 : finish s = .ok (⟨qvmBytesOfNats cseg, s.consts, s.maxStack,
+              qvmBytesOfNats u.1, qvmBytesOfNats u.2⟩ : QuotientProgramBuild) := by
+            rw [h2, hu]
+            rfl
+          rw [h3] at h
+          have heq := Except.ok.inj h
+          cases heq
+          exact ⟨cseg, u, rfl, hu, rfl, rfl, rfl⟩
+
+/-- An empty item list starts no new cursor: the result is the accumulator reversed. -/
+theorem itemStartsGo_nil (bytes : List Nat) (acc : List Nat) :
+    itemStartsGo bytes [] 0 acc = acc.reverse := rfl
+
+/-- **THE CURSOR AT AN IDENTITY ITEM START.** The identity item at the head of the list contributes its own
+    cursor, and the next item starts where the fold ends: 'exprEnd + len(fold)'. Read off the definition,
+    so this is the 'itemStarts' half of the row's cursor arithmetic. -/
+theorem itemStartsGo_cons_identity (bytes : List Nat) (id : QuotientIdentity)
+    (rest : List QuotientProgramItem) (acc : List Nat) (exprEnd foldOp len : Nat)
+    (hseg : identitySegment bytes 0 = .ok (exprEnd, foldOp))
+    (hlen : quotientOpLen bytes exprEnd = .ok len) :
+    itemStartsGo bytes (.identity id :: rest) 0 acc =
+      itemStartsGo bytes rest (exprEnd + len) (0 :: acc) := by
+  rw [itemStartsGo.eq_2]
+  simp only [hseg, hlen]
+
+/-! #### 8d. The rosters the landed packages can consume, and where they stop -/
+
+/-- **DEPTH'S ROSTER EXCLUDES ALL FOUR LIMB ARMS.** 'axes_of_emitter_facts' (section 6) asks for
+    'stepArm22' at every reachable cursor, so a segment whose cursor holds a limb arm cannot go through
+    that route even if the emitter supplies every other fact. DEPTH names the four-arm refinement as
+    'PG_stepDepth_at_limb4' (QvmDepth.lean:1277); it is OPEN. -/
+theorem not_stepArm22_lin7 : ¬ stepArm22 qOpLin7 := by intro h; cases h <;> contradiction
+theorem not_stepArm22_bilin7Row : ¬ stepArm22 qOpBilin7Row := by intro h; cases h <;> contradiction
+theorem not_stepArm22_bilin7Pairwise : ¬ stepArm22 qOpBilin7Pairwise := by
+  intro h; cases h <;> contradiction
+theorem not_stepArm22_modarith7 : ¬ stepArm22 qOpModarith7 := by intro h; cases h <;> contradiction
+
+/-- **SHAPE'S ROSTER COVERS THE TWO PUSHING LIMB ARMS AND NOT THE OTHER TWO** - the per-axis check the
+    brief asks for: SHAPE's exclusion is NOT vacuous ('PG_stepShape_at_limb2', OPEN), DEPTH's is vacuous in
+    content (all four limb arms push, 'stepPopCount' is 0 for each: 'pc_lin7' ... 'pc_modarith7') but NOT
+    in the route, because the route asks for the roster as a hypothesis. -/
+theorem shapeArm24_lin7 : shapeArm24 qOpLin7 := Or.inr (Or.inl rfl)
+theorem shapeArm24_bilin7Row : shapeArm24 qOpBilin7Row := Or.inr (Or.inr rfl)
+theorem not_shapeArm24_bilin7Pairwise : ¬ shapeArm24 qOpBilin7Pairwise := by
+  intro h; cases h with
+  | inl h => cases h <;> contradiction
+  | inr h => cases h <;> contradiction
+theorem not_shapeArm24_modarith7 : ¬ shapeArm24 qOpModarith7 := by
+  intro h; cases h with
+  | inl h => cases h <;> contradiction
+  | inr h => cases h <;> contradiction
+theorem stepPopCount_limb4_zero :
+    stepPopCount qOpLin7 = 0 ∧ stepPopCount qOpBilin7Row = 0 ∧
+      stepPopCount qOpBilin7Pairwise = 0 ∧ stepPopCount qOpModarith7 = 0 :=
+  ⟨QvmDepth.pc_lin7, QvmDepth.pc_bilin7Row, QvmDepth.pc_bilin7Pairwise, QvmDepth.pc_modarith7⟩
+
+theorem cursorArm25_lin7 : cursorArm25 qOpLin7 := Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))))))))))))))))
+theorem not_cursorArm25_modarith7 : ¬ cursorArm25 qOpModarith7 := by
+  intro h; cases h <;> contradiction
+
+/-- **THE LIMB CURSOR IS REACHABLE BY THE ROW'S OWN WALK.** A 23-byte stream whose first instruction is
+    'LIN7' (static width 22) with the fold at byte 22: 'identitySegment' walks it and stops at the fold,
+    so the row's 'hseg' admits a cursor whose opcode is outside 'stepArm22'. That is why section 7's
+    'one line' is not one line for a limb-emitting plan: 'withLimbVmOps' is a 'Bool' the row quantifies
+    over, and 'qvmBytesToNats build.bytes' can hold a limb opcode. -/
+theorem iseg_walks_limb_cursor :
+    identitySegment ([qOpLin7] ++ List.replicate 21 0 ++ [qOpFoldMain]) 0 =
+      .ok (22, qOpFoldMain) := by
+  show identitySegment.go _ _ _ _ = _
+  decide
+
+
+/-! #### 8e. THE CURSOR FACT NOTHING SUPPLIES, NAMED -/
+
+/-- **THE ROW'S 'hconsts' IS SHAPE'S 'PG_constsCanonical'.** Section 6 lists 'PG_constsCanonical' as one
+    of the two Props the general route costs. For 'builder_segments_total' it is FREE: the row's own
+    'hconsts' is the same formula about the same table, so the only named Prop section 6 actually still
+    needs is 'PG_shapeGuardsOfDecoded'. -/
+theorem pg_constsCanonical_of_hconsts (build : QuotientProgramBuild)
+    (hconsts : ∀ c ∈ build.consts, c.toNat < qvmFrModulus) :
+    PG_constsCanonical build.consts := hconsts
+
+/-- **THE MISSING CURSOR FACT, NAMED.** 'PG_planSegmentWalk' (section 7) says a plan's segment admits a
+    'WalkInvariant'. What no card supplies is WHY: the emitter has to say, for a plan it has not
+    enumerated, that the bytes at the item's cursor are a sequence of instructions each of which the
+    validator decodes at that cursor, the interpreter executes successfully with EXACTLY the width the
+    validator reads, and which leaves the invariant intact - ending with one value on the stack. That is
+    this Prop. It is stated about the SLICE the row walks (so it is not a restatement of the row's
+    conclusion: it names the validator's decoder and the width equation, which 'WalkInvariant' does not
+    mention), and it is exactly the input section 6's 'axes_of_emitter_facts' consumes. Exact goal state
+    at a slice cursor 'idx', with 'seg := planSegment (qvmBytesToNats build.bytes) cursor exprEnd':
+
+      idx < seg.length
+      P idx stack mem
+      ⊢ ∃ op len s, decodeByteQuotientInstruction seg idx = .ok (op, len)
+          ∧ stepAt seg build.consts idx stack mem = .ok s ∧ len = s.consumed
+          ∧ P (idx + len) s.stack s.mem
+
+    What makes it unprovable today is NOT the walk machinery - section 6 already turns it into a
+    'WalkInvariant' - but that nothing in the tree connects 'buildPlan' to the emitted instruction
+    sequence: see 'PG_planItemSegment' below and the three further blockers in the header of this
+    section. -/
+def PG_planSegmentCursorFacts : Prop :=
+  ∀ (r : QuotientShapeRecognizers) (_hr : RecognizersSound r)
+    (plan : QuotientProgramPlan) (limbOps : Bool) (build : QuotientProgramBuild)
+    (hbuild : buildPlan r plan (withLimbVmOps limbOps) = .ok build)
+    (hbounded : ∀ id, QuotientProgramItem.identity id ∈ plan.items → exprBounded id.expr)
+    (hconsts : ∀ c ∈ build.consts, c.toNat < qvmFrModulus)
+    (cursor exprEnd foldOp : Nat) (hstart : cursor ∈ itemStarts plan build)
+    (hseg : Midfall.Generator.QuotientCertify.identitySegment (qvmBytesToNats build.bytes) cursor =
+      .ok (exprEnd, foldOp))
+    (mem : QuotientRefMemory),
+    ∃ P : Nat → List QVMFr → QuotientRefMemory → Prop,
+      P 0 ([] : List QVMFr) mem ∧
+        (∀ idx stack mem,
+            idx < (planSegment (qvmBytesToNats build.bytes) cursor exprEnd).length →
+              P idx stack mem →
+              ∃ op len s, Midfall.Generator.QuotientValidator.decodeByteQuotientInstruction
+                  (planSegment (qvmBytesToNats build.bytes) cursor exprEnd) idx = .ok (op, len) ∧
+                stepAt (planSegment (qvmBytesToNats build.bytes) cursor exprEnd) build.consts
+                  idx stack mem = .ok s ∧
+                len = s.consumed ∧ P (idx + len) s.stack s.mem) ∧
+        (∀ idx stack mem,
+            ¬ idx < (planSegment (qvmBytesToNats build.bytes) cursor exprEnd).length →
+              P idx stack mem → ∃ v, stack = [v])
+
+/-- **THE ONE LINE, ONCE THE CURSOR FACT IS SUPPLIED.** Proved: 'PG_planSegmentCursorFacts' implies
+    'PG_planSegmentWalk', and with section 7's 'builder_segments_total_of_planSegmentWalk' that is the
+    registered sorry. Nothing was added to the row: the hypothesis is a standalone Prop. -/
+theorem pg_planSegmentWalk_of_cursorFacts (h : PG_planSegmentCursorFacts) : PG_planSegmentWalk := by
+  intro r hr plan limbOps build hbuild hbounded hconsts cursor exprEnd foldOp hstart hseg mem
+  obtain ⟨P, hinit, hstep, hterm⟩ :=
+    h r hr plan limbOps build hbuild hbounded hconsts cursor exprEnd foldOp hstart hseg mem
+  refine ⟨P, ⟨hinit, ?_, hterm⟩⟩
+  intro idx stack mem hidx hP
+  obtain ⟨op, len, s, hdec, hst, hlen, hP'⟩ := hstep idx stack mem hidx hP
+  exact ⟨s, hst, by rw [← hlen]; exact hP'⟩
+
+/-- **THE COROLLARY FOR THE REGISTERED SORRY, AS A THEOREM.** If the emitter ever supplies the cursor
+    fact, 'builder_segments_total' closes by these two applications and nothing else. Recorded so that
+    the distance is a checked term, not a claim in a comment. -/
+theorem builder_segments_total_of_cursorFacts (h : PG_planSegmentCursorFacts) :
+    ∀ (r : QuotientShapeRecognizers) (hr : RecognizersSound r)
+      (plan : QuotientProgramPlan) (limbOps : Bool) (build : QuotientProgramBuild)
+      (hbuild : buildPlan r plan (withLimbVmOps limbOps) = .ok build)
+      (hbounded : ∀ id, QuotientProgramItem.identity id ∈ plan.items → exprBounded id.expr)
+      (hconsts : ∀ c ∈ build.consts, c.toNat < qvmFrModulus)
+      (cursor exprEnd foldOp : Nat) (hstart : cursor ∈ itemStarts plan build)
+      (hseg : Midfall.Generator.QuotientCertify.identitySegment (qvmBytesToNats build.bytes) cursor =
+        .ok (exprEnd, foldOp))
+      (mem : QuotientRefMemory),
+        ∃ v mem', Midfall.Generator.evalQuotientIdentity
+          (planSegment (qvmBytesToNats build.bytes) cursor exprEnd) build.consts mem =
+            .ok (v, mem') :=
+  builder_segments_total_of_planSegmentWalk (pg_planSegmentWalk_of_cursorFacts h)
+
+/-- **AND THE OTHER HALF OF THE GAP: WHICH ITEM WROSE THESE BYTES.** Even 'PG_planSegmentCursorFacts'
+    presupposes that the slice at an item start IS an emitted segment. Nothing states it. This is the
+    emitter-side correspondence, in the emitter's own vocabulary and with no interpreter in it: the slice
+    is the finalized, compacted emission of one identity item of the plan, over the COMPACTED stream
+    ('finish_ok_compacted' above pins that 'build.bytes' is the compaction of the builder's bytes, so the
+    drop below is a drop in the PRE-compaction buffer while the cursor is a position in the POST-compaction
+    one - which is exactly the subtlety the brief asks about, and exactly what no card has reconciled). -/
+def PG_planItemSegment : Prop :=
+  ∀ (r : QuotientShapeRecognizers) (_hr : RecognizersSound r)
+    (plan : QuotientProgramPlan) (limbOps : Bool) (build : QuotientProgramBuild)
+    (hbuild : buildPlan r plan (withLimbVmOps limbOps) = .ok build)
+    (cursor exprEnd foldOp : Nat) (hstart : cursor ∈ itemStarts plan build)
+    (hseg : Midfall.Generator.QuotientCertify.identitySegment (qvmBytesToNats build.bytes) cursor =
+      .ok (exprEnd, foldOp)),
+    ∃ (id : QuotientIdentity) (s₀ s₁ : QuotientProgramBuilder) (t : QuotientTarget)
+      (gap : Option Nat) (cseg : List Nat) (tail : List Word256),
+      QuotientProgramItem.identity id ∈ plan.items ∧
+      identityExpr r s₀ id.expr t gap = .ok s₁ ∧
+      compactQuotientRuns (s₁.bytes.drop s₀.bytes.length) = .ok cseg ∧
+      finalizedIdentitySegment cseg = some (planSegment (qvmBytesToNats build.bytes) cursor exprEnd) ∧
+      (∀ c ∈ s₁.consts, c.toNat < qvmFrModulus) ∧
+      build.consts = s₁.consts ++ tail
+
+/-! #### 8f. Acceptance prints for section 8 -/
+
+#print axioms Midfall.Lowering.QvmSegmentReal.iseg_bounds
+#print axioms Midfall.Lowering.QvmSegmentReal.iseg_walk_ind
+#print axioms Midfall.Lowering.QvmSegmentReal.isegGo_advance
+#print axioms Midfall.Lowering.QvmSegmentReal.planSegment_length
+#print axioms Midfall.Lowering.QvmSegmentReal.planSegment_getD
+#print axioms Midfall.Lowering.QvmSegmentReal.planSegment_take_append
+#print axioms Midfall.Lowering.QvmSegmentReal.finish_ok_compacted
+#print axioms Midfall.Lowering.QvmSegmentReal.itemStartsGo_cons_identity
+#print axioms Midfall.Lowering.QvmSegmentReal.not_stepArm22_lin7
+#print axioms Midfall.Lowering.QvmSegmentReal.not_shapeArm24_modarith7
+#print axioms Midfall.Lowering.QvmSegmentReal.iseg_walks_limb_cursor
+#print axioms Midfall.Lowering.QvmSegmentReal.pg_constsCanonical_of_hconsts
+#print axioms Midfall.Lowering.QvmSegmentReal.pg_planSegmentWalk_of_cursorFacts
+#print axioms Midfall.Lowering.QvmSegmentReal.builder_segments_total_of_cursorFacts
+#cone_sorries Midfall.Lowering.QvmSegmentReal.pg_planSegmentWalk_of_cursorFacts
+#cone_sorries Midfall.Lowering.QvmSegmentReal.builder_segments_total_of_cursorFacts
+#cone_sorries Midfall.Lowering.QvmSegmentReal.finish_ok_compacted
+#cone_sorries Midfall.Lowering.QvmSegmentReal.iseg_walk_ind
+
+/-! #### 8g. The item decomposition, proved at its base case -/
+
+/-- The initial builder the row's 'hbuild' uses has an EMPTY byte buffer, so for a one-item plan the
+    per-item drop that 'PG_identity_segment_walk' and 'PG_planItemSegment' speak of is a drop of nothing. -/
+theorem withLimbVmOps_bytes_nil (enabled : Bool) : (withLimbVmOps enabled).bytes = [] := rfl
+
+/-- One identity item builds by emitting that item and nothing else. -/
+theorem buildItems_one_identity (r : QuotientShapeRecognizers) (sf : SelectorFoldPlan)
+    (id : QuotientIdentity) (s₀ : QuotientProgramBuilder) :
+    buildItems r sf [.identity id] s₀ =
+      identityExpr r s₀ id.expr id.target (sf.gapFor id) := by
+  rw [buildItems.eq_2]
+  cases h : identityExpr r s₀ id.expr id.target (sf.gapFor id) with
+  | error e => rfl
+  | ok s => simp only [buildItems.eq_1]; rfl
+
+/-- **THE BASE CASE OF THE ITEM DECOMPOSITION.** A plan with exactly one identity item, built
+    successfully, emitted that item's expression and then finished: no other emitter step is involved. -/
+theorem buildPlan_one_identity (r : QuotientShapeRecognizers) (plan : QuotientProgramPlan)
+    (id : QuotientIdentity) (limbOps : Bool) (build : QuotientProgramBuild)
+    (hitems : plan.items = [.identity id])
+    (hbuild : buildPlan r plan (withLimbVmOps limbOps) = .ok build) :
+    ∃ s₁, identityExpr r (withLimbVmOps limbOps) id.expr id.target
+        (plan.selectorFold.gapFor id) = .ok s₁ ∧ finish s₁ = .ok build := by
+  have hstart : buildPlan r plan (withLimbVmOps limbOps)
+      = (buildItems r plan.selectorFold plan.items (withLimbVmOps limbOps) >>= finish) := rfl
+  rw [hstart, hitems, buildItems_one_identity r plan.selectorFold id
+    (withLimbVmOps limbOps)] at hbuild
+  cases h2 : identityExpr r (withLimbVmOps limbOps) id.expr id.target
+      (plan.selectorFold.gapFor id) with
+  | error e => rw [h2] at hbuild; cases hbuild
+  | ok s₁ => rw [h2] at hbuild; exact ⟨s₁, rfl, hbuild⟩
+
+/-- **THE BASE CASE OF 'PG_planItemSegment', PROVED.** For a one-identity-item plan the emitted buffer of
+    that item IS the buffer the compaction ran on, the artifact's bytes are the byte-view of that
+    compaction, and the artifact's table is the item's table - so for THIS plan shape the row's slice is
+    established to be an emitted segment, which is the half of the gap that is not an interpreter claim at
+    all. What is NOT reachable this way is an item in the MIDDLE of the list: there the per-item drop runs
+    through the earlier items' PRE-compaction bytes while 'itemStarts' counts the COMPACTED stream, and
+    the two agree only if compaction never crosses an item boundary - true, because every item ends with a
+    fold and 'isAffineAddOp' is false for both fold opcodes, but proved nowhere in the tree. -/
+theorem planItemSegment_one_item (r : QuotientShapeRecognizers) (plan : QuotientProgramPlan)
+    (id : QuotientIdentity) (limbOps : Bool) (build : QuotientProgramBuild)
+    (hitems : plan.items = [.identity id])
+    (hbuild : buildPlan r plan (withLimbVmOps limbOps) = .ok build) :
+    ∃ s₁ cseg, identityExpr r (withLimbVmOps limbOps) id.expr id.target
+        (plan.selectorFold.gapFor id) = .ok s₁ ∧
+      compactQuotientRuns (s₁.bytes.drop (withLimbVmOps limbOps).bytes.length) = .ok cseg ∧
+      build.bytes = qvmBytesOfNats cseg ∧ build.consts = s₁.consts := by
+  obtain ⟨s₁, hs₁, hfin⟩ := buildPlan_one_identity r plan id limbOps build hitems hbuild
+  obtain ⟨cseg, u, hc, hu, hb, hconsts, _⟩ := finish_ok_compacted s₁ build hfin
+  have hdrop : s₁.bytes.drop (withLimbVmOps limbOps).bytes.length = s₁.bytes := by
+    rw [withLimbVmOps_bytes_nil, List.length_nil, List.drop_zero]
+  exact ⟨s₁, cseg, hs₁, by rw [hdrop]; exact hc, hb, hconsts⟩
+
+#print axioms Midfall.Lowering.QvmSegmentReal.buildItems_one_identity
+#print axioms Midfall.Lowering.QvmSegmentReal.buildPlan_one_identity
+#print axioms Midfall.Lowering.QvmSegmentReal.planItemSegment_one_item
+#cone_sorries Midfall.Lowering.QvmSegmentReal.planItemSegment_one_item
+#cone_sorries Midfall.Lowering.QvmSegmentReal.buildPlan_one_identity
+
+/-! #### 8h. Why compaction cannot cross an identity boundary -/
+
+/-- The compactor only starts a run at an opcode 'isAffineAddOp' accepts, and neither fold opcode is one -
+    so the fold that ends an identity item is never swallowed into the next item's run. This is the fact
+    'PG_planItemSegment' needs for an item in the MIDDLE of the list; stated as two 'rfl' lemmas so the
+    claim in section 8g is checked rather than asserted. -/
+theorem not_isAffineAddOp_foldMain : isAffineAddOp qOpFoldMain = false := rfl
+theorem not_isAffineAddOp_foldSelector : isAffineAddOp qOpFoldSelector = false := rfl
+
+#print axioms Midfall.Lowering.QvmSegmentReal.not_isAffineAddOp_foldMain
+#print axioms Midfall.Lowering.QvmSegmentReal.not_isAffineAddOp_foldSelector

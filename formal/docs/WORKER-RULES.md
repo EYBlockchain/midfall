@@ -28,7 +28,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
 - Do NOT run gen_sorry.sh; the orchestrator regenerates the register at merge time. Report your own
   sorry delta with python3 scripts/lean_grep.py sorry FILE.
 - Never hand-edit SORRY.md.
-- Baseline: register 85 data rows / 18 ROOT (a main-tree reading of 86 is stale oleans, not a
+- Baseline: register 78 data rows / 14 ROOT (a main-tree reading of 86 is stale oleans, not a
   contradiction); cones lowering_correct 15, lowering_sound 7 (measured at 558cf5b - the 18/8 figure was stale); fingerprint 14,109 tokens /
   0x3149ae4f...bef176; KAT 1648/119 (pin moved 1633->1640 by QSTREAM's 7 new gates).
 
