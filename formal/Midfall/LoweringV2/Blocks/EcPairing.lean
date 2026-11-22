@@ -350,4 +350,109 @@ theorem bytesAppend_assoc (a b c : Bytes) :
 #assert_axioms Midfall.LoweringV2.Blocks.EcPairing.bytesAt_four_copyWithin
   [propext, Classical.choice, Quot.sound] native []
 
+
+/-! ## The honest staticcall answer at 0x0f -/
+
+/-- `honestRelations`'s `find?` at the pairing address is the pairing relation. -/
+theorem find_pairing (product : PairingProduct) (req : YulSemantics.EVM.CallRequest)
+    (htarget : req.target = pairingAddress) :
+    (honestRelations product).find? (fun r => hits r req) = some (pairingRelation product) := by
+  unfold honestRelations
+  simp only [hits]
+  rw [htarget]
+  rfl
+
+/-- A successful `pairingRelation.respond` is the answer word, and its input is valid. -/
+theorem pairingRelation_respond_some (product : PairingProduct)
+    (req : YulSemantics.EVM.CallRequest) (o : Midfall.Yul.CallOutcome)
+    (htarget : req.target = pairingAddress)
+    (h : (pairingRelation product).respond (toYulReq req) = some o) :
+    pairingValidInput (ByteArray.mk req.input.toArray) = true ∧ o.success = true ∧
+      o.returndata = pairingOutputWord (product (ByteArray.mk req.input.toArray)) := by
+  unfold ExternalCallRelation.respond at h
+  simp only [toYulReq, pairingRelation] at h
+  simp only [htarget] at h
+  simp only [bne_self_eq_false, Bool.false_or] at h
+  by_cases hv : pairingValidInput (ByteArray.mk req.input.toArray) = true
+  · simp only [hv, Bool.not_true, Bool.false_eq_true, ite_false] at h
+    simp only [pairingOutput, hv, ↓reduceIte, Option.some.injEq] at h
+    subst h
+    exact ⟨hv, rfl, rfl⟩
+  · simp only [hv, Bool.not_false, Bool.true_or, Bool.false_eq_true, ite_true] at h
+    cases h
+
+/-- **THE HONEST RESPONSE AT 0x0f IS THE PAIRING ANSWER.** From `honestOf` at the pairing address
+    and a successful response, the return word is `pairingOutputWord`, and the input is valid. -/
+theorem honestOf_pairing (product : PairingProduct) (req : YulSemantics.EVM.CallRequest)
+    (st : EvmState) (resp : EVM.CallResponse) (htarget : req.target = pairingAddress)
+    (hsucc : resp.success = true)
+    (h : honestOf (honestRelations product) req st = some resp) :
+    ∃ o : Midfall.Yul.CallOutcome, resp = ofOutcome st o ∧ o.success = true ∧
+      o.returndata = pairingOutputWord (product (ByteArray.mk req.input.toArray)) := by
+  have hfind := find_pairing product req htarget
+  unfold honestOf at h
+  rw [hfind] at h
+  simp only [Option.map, Option.some.injEq] at h
+  by_cases hv : pairingValidInput (ByteArray.mk req.input.toArray) = true
+  · have hresp : (pairingRelation product).respond (toYulReq req) =
+        some { success := true, returndata := (pairingOutputWord
+          (product (ByteArray.mk req.input.toArray))) } := by
+      unfold ExternalCallRelation.respond
+      simp only [toYulReq, pairingRelation]
+      simp only [htarget]
+      simp only [bne_self_eq_false, Bool.false_or, hv, Bool.not_true, Bool.false_eq_true,
+        ite_false, pairingOutput, ↓reduceIte]
+    rw [hresp] at h
+    subst h
+    exact ⟨_, rfl, rfl, rfl⟩
+  · have hnone : (pairingRelation product).respond (toYulReq req) = none := by
+      unfold ExternalCallRelation.respond
+      simp only [toYulReq, pairingRelation]
+      simp only [htarget]
+      simp only [bne_self_eq_false, Bool.false_or, hv, Bool.not_false, Bool.true_or,
+        Bool.false_eq_true, ite_true, pairingOutput, ↓reduceIte]
+    rw [hnone] at h
+    simp only [failResp] at h
+    rw [← h] at hsucc
+    simp at hsucc
+
+/-- The answer word read at offset zero. -/
+theorem wordFrom_pairingOutputWord (b : Bool) :
+    wordFrom (pairingOutputWord b).data.toList 0 = (if b then 1 else 0) := by
+  cases b <;> decide
+
+/-- **THE PRODUCT FROM A SUCCESSFUL HONEST STATICCALL.** This is T.4's remaining semantic step:
+    a successful `permissive (callsOf product)` response at 0x0f, whose 32-byte return word is 1,
+    forces `product input = true`. -/
+theorem product_of_honest_staticcall (product : PairingProduct)
+    (req : YulSemantics.EVM.CallRequest) (st4 : EvmState) (resp : EVM.CallResponse)
+    (input : Bytes) (htarget : req.target = pairingAddress)
+    (hsucc : resp.success = true)
+    (hcall : (permissive (callsOf product)).Call req st4 resp)
+    (hinput : ByteArray.mk req.input.toArray = input)
+    (hword : wordFrom resp.returndata 0 = 1) :
+    product input = true := by
+  have hc : (callsOf product).Call req st4 resp := hcall.2 hsucc
+  simp only [callsOf, honestCalls] at hc
+  rcases hc with hgraph | ⟨_, hfalse⟩
+  · obtain ⟨o, hresp, _hsucc_o, hout⟩ :=
+      honestOf_pairing product req st4 resp htarget hsucc hgraph
+    subst hresp
+    simp only [ofOutcome] at hword hout
+    rw [hout, hinput] at hword
+    rw [wordFrom_pairingOutputWord] at hword
+    by_cases hb : product input = true
+    · exact hb
+    · simp [hb] at hword
+  · cases hfalse
+
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.pairingRelation_respond_some
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.honestOf_pairing
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.wordFrom_pairingOutputWord
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.product_of_honest_staticcall
+  [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV2.Blocks.EcPairing
