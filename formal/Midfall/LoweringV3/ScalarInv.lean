@@ -202,6 +202,31 @@ def mxMemFr (mem : Nat → UInt8) (p : Nat) (x fv : U256) : Nat → UInt8 :=
   storeWord (storeWord (storeWord (storeWord (storeWord (storeWord mem p 32)
     (p + 32) 32) (p + 64) 32) (p + 96) x) (p + 128) (fv - 2)) (p + 160) fv
 
+/-- Evaluating `add(var x, lit n)` gives `pv + ofNat n` and leaves the state unchanged. -/
+theorem eval_add_var_lit {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st' : EvmState} (x : String) (n : Nat) (pv : U256) (hp : VEnv.get V x = some pv)
+    {a : U256} (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.add [Expr.var x, Expr.lit (Literal.number n)]) (.vals [a] st')) :
+    a = pv + BitVec.ofNat 256 n ∧ st' = st := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hnil hhead =>
+          cases hnil with
+          | argsCons hnil2 htail =>
+              cases hnil2 with
+              | argsNil =>
+                  cases htail with
+                  | lit =>
+                      cases hhead with
+                      | var hget =>
+                          rename_i v
+                          have hv : v = pv := Option.some.inj (hget.symm.trans hp)
+                          subst hv
+                          simp [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+                          exact ⟨hbi.1.symm, hbi.2.symm⟩
+
 /-- The address of an `add(var p, lit n)` after evaluation. -/
 theorem toNat_add_ofNat (a : U256) (n : Nat) (h : a.toNat + n < 2 ^ 256) :
     (a + BitVec.ofNat 256 n).toNat = a.toNat + n := by
