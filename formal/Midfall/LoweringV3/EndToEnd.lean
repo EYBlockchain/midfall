@@ -672,6 +672,105 @@ def PresWidthSeq {α : Type} (ws : List Nat) (m : TranscriptM α) : Prop :=
   ∀ t t' a, m.run t = .ok (a, t') →
     t'.log.toList.map (fun r => r.1) = t.log.toList.map (fun r => r.1) ++ ws
 
+namespace PresWidthSeq
+
+theorem pure {α : Type} (x : α) : PresWidthSeq [] (StateT.pure x : TranscriptM α) := by
+  intro t t' a h
+  cases h
+  simp
+
+theorem lift {α : Type} (e : Except Fault α) : PresWidthSeq [] (StateT.lift e) := by
+  intro t t' a h
+  cases e with
+  | error e => cases h
+  | ok x =>
+      cases h
+      simp
+
+theorem get : PresWidthSeq [] (StateT.get : TranscriptM Transcript) := by
+  intro t t' a h
+  cases h
+  simp
+
+theorem bind {α β : Type} {m : TranscriptM α} {f : α → TranscriptM β}
+    {ws1 ws2 : List Nat} (hm : PresWidthSeq ws1 m)
+    (hf : ∀ x, PresWidthSeq ws2 (f x)) : PresWidthSeq (ws1 ++ ws2) (m >>= f) := by
+  intro t t' b h
+  have h2 : m t >>= (fun p : α × Transcript => f p.1 p.2) = .ok (b, t') := h
+  cases hmt : m t with
+  | error e =>
+      rw [hmt] at h2
+      cases h2
+  | ok p =>
+      cases p with
+      | mk a t1 =>
+          rw [hmt] at h2
+          have h1 := hm t t1 a hmt
+          have h3 := hf a t1 t' b h2
+          rw [h3, h1, List.append_assoc]
+
+theorem seq {α β : Type} {m : TranscriptM α} {n : TranscriptM β}
+    {ws1 ws2 : List Nat} (hm : PresWidthSeq ws1 m) (hn : PresWidthSeq ws2 n) :
+    PresWidthSeq (ws1 ++ ws2) (m >>= fun _ => n) :=
+  PresWidthSeq.bind hm (fun _ => hn)
+
+theorem ite {α : Type} {c : Prop} [inst : Decidable c] {m n : TranscriptM α}
+    {ws : List Nat} (hm : PresWidthSeq ws m) (hn : PresWidthSeq ws n) :
+    PresWidthSeq ws (if c then m else n) := by
+  split
+  · exact hm
+  · exact hn
+
+theorem fmap {α β : Type} (g : α → β) {m : TranscriptM α} {ws : List Nat}
+    (hm : PresWidthSeq ws m) : PresWidthSeq ws (g <$> m) := by
+  intro t t' b h
+  have h2 : (fun p : α × Transcript => (g p.1, p.2)) <$> m t =
+      (.ok (b, t') : Except Fault (β × Transcript)) := h
+  cases hrun : m t with
+  | error e =>
+      rw [hrun] at h2
+      cases h2
+  | ok p =>
+      cases p with
+      | mk a t1 =>
+          rw [hrun] at h2
+          cases h2
+          exact hm t t1 a hrun
+
+theorem read {T : Type} (h : Midfall.Halo2.Hashable T) :
+    PresWidthSeq [h.width] (tmRead h) := by
+  intro s t' a hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmRead_run_fields h st buf pos hash log] at hrun
+      unfold Transcript.read at hrun
+      split at hrun
+      · cases hrun
+      · split at hrun
+        · cases hrun
+        · cases hrun
+          simp [Transcript.common, Array.toList_push]
+
+theorem common {T : Type} (h : Midfall.Halo2.Hashable T) (input : T) :
+    PresWidthSeq [] (tmCommon h input) := by
+  intro s t' a hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmCommon_run_fields h st buf pos hash log input] at hrun
+      cases hrun
+      simp [Transcript.common]
+
+theorem squeezeChallenge {p : ℕ} [Fact (Nat.Prime p)] :
+    PresWidthSeq [] (tmSqueezeChallenge (p := p)) := by
+  intro s t' a hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmSqueeze_run_fields st buf pos hash log] at hrun
+      cases hrun
+      simp [Transcript.squeezeChallenge, Transcript.squeeze]
+
+end PresWidthSeq
+
 /-- **THE EXACT BRIDGE STILL OPEN.** `Verifier.prepare`'s log widths must be the
     render layout's slot list. This is `prepare_logSlots`; it is a Prop, not a
     hypothesis of `ValidV3`, `EndToEndV3`, or the root. -/
