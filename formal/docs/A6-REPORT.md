@@ -1,13 +1,13 @@
 # A6 / ROW.TP — worker report (transcriptParser, t/A6)
 
 **Branch** `t/A6`, **base** `formal/baseline` @ `cc5b5ad`, **worktree** `/Users/julian/midfall-f`.
-**HEAD** is the commit that adds this file (see `git log -1`); the Lean work is the three commits
+**HEAD** is `d2823ca` + this docs commit (see `git log -1`); the Lean work is the three commits
 before it (`a3f7a06`, `e0bc81f`, `b9d1568`). No push. `formal/baseline` and `/Users/julian/midfall`
 untouched.
 
 ## What landed
 
-New module `formal/Midfall/LoweringV3/TranscriptRows.lean` (800 lines), imported from
+New module `formal/Midfall/LoweringV3/TranscriptRows.lean` (800 lines, final), imported from
 `formal/Midfall.lean` (line 203; `check_orphans.py`: `ok: all 224 modules are reachable`).
 
 PROVED:
@@ -76,7 +76,7 @@ the one *unproved premise gap* (PG-PARSER), not a refuted statement.
 - `assert_axioms lowering_correct` / `lowering_sound`: `ok (4 named, 0 native)`.
 - Register delta: **+6 non-ROOT sorried declarations** (the six leaves above); no ROOT row changed.
   `python3 scripts/lean_grep.py sorry formal/Midfall/LoweringV3/TranscriptRows.lean` prints six
-  lines (496, 525, 540, 555, 568, 600). `gen_sorry.sh` was NOT run (worker rule W9/DG.2: the
+  lines (497, 526, 541, 556, 569, 601). `gen_sorry.sh` was NOT run (worker rule W9/DG.2: the
   orchestrator regenerates).
 
 `tp_blockSim` is proved and ready to wire. The one-line insertion in `Rows.lean` is
