@@ -205,6 +205,107 @@ theorem shadowed_append_self (sh : List String) (x : String) :
       · simp only [hyx]
         exact ih
 
+/-- The variable occurrences of an expression, for the shadow side conditions of the inliner. -/
+def tpExprVars : Expr EVM.Op → List String
+  | .lit _ => []
+  | .var x => [x]
+  | .builtin _ args => args.flatMap tpExprVars
+  | .call _ args => args.flatMap tpExprVars
+
+theorem tpVars_call_two (f a b : String) :
+    tpExprVars (Expr.call f [Expr.var a, Expr.var b]) = [a, b] := by simp [tpExprVars]
+
+theorem tpVars_builtin_add_three (a b : String) (n : Nat) :
+    tpExprVars (Expr.builtin Op.add [Expr.var a, Expr.var b, Expr.lit (.number n)]) = [a, b] := by simp [tpExprVars]
+
+theorem tpVars_builtin_add_var (a : String) (n : Nat) :
+    tpExprVars (Expr.builtin Op.add [Expr.var a, Expr.lit (.number n)]) = [a] := by simp [tpExprVars]
+
+theorem tpVars_builtin_lt_two (a b : String) :
+    tpExprVars (Expr.builtin Op.lt [Expr.var a, Expr.var b]) = [a, b] := by simp [tpExprVars]
+
+theorem tpVars_builtin_calldatacopy (a b : String) (n : Nat) :
+    tpExprVars (Expr.builtin Op.calldatacopy [Expr.var a, Expr.var b, Expr.lit (.number n)]) =
+      [a, b] := by simp [tpExprVars]
+
+mutual
+/-- **THE USE-SITE RULE, ALL-VARIABLES FORM.** An expression every one of whose variable
+    occurrences is shadowed is left alone by `inExpr`, at every fuel. -/
+theorem tp_inExpr_eq_of_shadowed (consts : Inline.Consts) (sh : List String) :
+    ∀ (f : Nat) (e : Expr EVM.Op),
+      (∀ x ∈ tpExprVars e, Inline.shadowed sh x = true) →
+      Inline.inExpr f e consts sh = e := by
+  intro f e h
+  cases f with
+  | zero => rfl
+  | succ m =>
+      cases e with
+      | lit l => rfl
+      | var x =>
+          have hx : Inline.shadowed sh x = true := h x (by simp [tpExprVars])
+          simp [Inline.inExpr, hx]
+      | builtin op args =>
+          show Expr.builtin op (args.map (fun a => Inline.inExpr m a consts sh)) =
+            Expr.builtin op args
+          rw [tp_inExpr_args_eq consts sh m args (fun a ha x hx => h x (by
+            simp only [tpExprVars, List.mem_flatMap]
+            exact ⟨a, ha, hx⟩))]
+      | call fn args =>
+          show Expr.call fn (args.map (fun a => Inline.inExpr m a consts sh)) =
+            Expr.call fn args
+          rw [tp_inExpr_args_eq consts sh m args (fun a ha x hx => h x (by
+            simp only [tpExprVars, List.mem_flatMap]
+            exact ⟨a, ha, hx⟩))]
+
+theorem tp_inExpr_args_eq (consts : Inline.Consts) (sh : List String) :
+    ∀ (f : Nat) (args : List (Expr EVM.Op)),
+      (∀ a ∈ args, ∀ x ∈ tpExprVars a, Inline.shadowed sh x = true) →
+      args.map (fun a => Inline.inExpr f a consts sh) = args := by
+  intro f args
+  induction args with
+  | nil => intro h; rfl
+  | cons a rest ih =>
+      intro h
+      rw [List.map_cons,
+        tp_inExpr_eq_of_shadowed consts sh f a (fun x hx => h a (by simp) x hx),
+        ih (fun b hb x hx => h b (by simp [hb]) x hx)]
+end
+
+/-- Assignments whose expression is shadowed survive the inliner. -/
+theorem inlineStmtStep_assign_shadowed (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts) (sh : List String) (x : String) (e : Expr EVM.Op)
+    (h : ∀ y ∈ tpExprVars e, Inline.shadowed sh y = true) :
+    (Inline.inlineStmtStep rec consts sh (Stmt.assign [x] e)).1 = Stmt.assign [x] e := by
+  simp only [Inline.inlineStmtStep]
+  rw [tp_inExpr_eq_of_shadowed consts sh Inline.exprFuel e h]
+
+/-- Expression statements whose expression is shadowed survive the inliner. -/
+theorem inlineStmtStep_expr_shadowed (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts) (sh : List String) (e : Expr EVM.Op)
+    (h : ∀ y ∈ tpExprVars e, Inline.shadowed sh y = true) :
+    (Inline.inlineStmtStep rec consts sh (Stmt.exprStmt e)).1 = Stmt.exprStmt e := by
+  simp only [Inline.inlineStmtStep]
+  rw [tp_inExpr_eq_of_shadowed consts sh Inline.exprFuel e h]
+
+/-- A `let` whose expression is shadowed survives the inliner. -/
+theorem inlineStmtStep_let_shadowed (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts) (sh : List String) (x : String) (e : Expr EVM.Op)
+    (h : ∀ y ∈ tpExprVars e, Inline.shadowed sh y = true) :
+    (Inline.inlineStmtStep rec consts sh (Stmt.letDecl [x] (some e))).1 =
+      Stmt.letDecl [x] (some e) := by
+  simp only [Inline.inlineStmtStep, Option.map]
+  rw [tp_inExpr_eq_of_shadowed consts sh Inline.exprFuel e h]
+
+/-- The scan of a singleton block whose statement survives is the singleton block. -/
+theorem inlineScan_single (fuel : Nat) (consts : Inline.Consts) (sh : List String)
+    (s : Stmt EVM.Op)
+    (hs : (Inline.inlineStmtStep (Inline.inlineScan fuel consts) consts sh s).1 = s) :
+    (Inline.inlineScan (fuel + 1) consts sh [s]).blks = [s] := by
+  have hstep : (Inline.inlineStep (Inline.inlineScan fuel consts) consts sh [s]).blks =
+      [(Inline.inlineStmtStep (Inline.inlineScan fuel consts) consts sh s).1] := rfl
+  rw [show Inline.inlineScan (fuel + 1) consts sh [s] =
+    Inline.inlineStep (Inline.inlineScan fuel consts) consts sh [s] from rfl, hstep, hs]
+
 /-- **ROW.TP.1, PORTED AND PROVED.** A walk loop is constant-free where its three cursors are
     bound: the inliner returns it unchanged. So a walk is FIXED TEXT plus one numeral, at every
     table. Evidence :728-735, statement verbatim.
@@ -220,7 +321,149 @@ theorem inline_g1WalkLoop (fuel : Nat) (consts : Inline.Consts) (sh : List Strin
     (hp : Inline.shadowed sh "proof_cptr" = true) (hb : Inline.shadowed sh "buf_len" = true) :
     (Inline.inlineScan (fuel + 2) consts sh [GenAst.g1WalkLoop walk bytes]).blks =
       [GenAst.g1WalkLoop walk bytes] := by
-  sorry
+  -- The loop's parts, as `g1WalkLoop` writes them (statements and their expressions).
+  let eInit : Expr EVM.Op :=
+    Expr.builtin Op.add [Expr.var "proof_cptr", Expr.lit (.number bytes)]
+  let eCond : Expr EVM.Op := Expr.builtin Op.lt [Expr.var "proof_cptr", Expr.var "end"]
+  let e1 : Expr EVM.Op :=
+    Expr.call "common_uncompressed_g1" [Expr.var "buf_len", Expr.var "proof_cptr"]
+  let e2 : Expr EVM.Op :=
+    Expr.builtin Op.calldatacopy [Expr.var walk, Expr.var "proof_cptr", Expr.lit (.number 128)]
+  let e3 : Expr EVM.Op := Expr.builtin Op.add [Expr.var walk, Expr.lit (.number 128)]
+  let e4 : Expr EVM.Op :=
+    Expr.builtin Op.add [Expr.var "proof_cptr", Expr.lit (.number 128)]
+  let initStmt : Stmt EVM.Op := Stmt.letDecl ["end"] (some eInit)
+  let s1 : Stmt EVM.Op := Stmt.assign ["buf_len"] e1
+  let s2 : Stmt EVM.Op := Stmt.exprStmt e2
+  let s3 : Stmt EVM.Op := Stmt.assign [walk] e3
+  let s4 : Stmt EVM.Op := Stmt.assign ["proof_cptr"] e4
+  -- The shadow facts after the loop's own `let end`.
+  have hb' : Inline.shadowed (sh ++ ["end"]) "buf_len" = true :=
+    shadowed_append_right sh ["end"] "buf_len" hb
+  have hp' : Inline.shadowed (sh ++ ["end"]) "proof_cptr" = true :=
+    shadowed_append_right sh ["end"] "proof_cptr" hp
+  have hw' : Inline.shadowed (sh ++ ["end"]) walk = true :=
+    shadowed_append_right sh ["end"] walk hw
+  -- The init `let end := proof_cptr + bytes`.
+  have hinit : (Inline.inlineScan (fuel + 1) consts sh [initStmt]).blks = [initStmt] := by
+    apply inlineScan_single
+    apply inlineStmtStep_let_shadowed
+    intro y hy
+    rw [show tpExprVars eInit = ["proof_cptr"] from
+      tpVars_builtin_add_var "proof_cptr" bytes] at hy
+    simp at hy
+    rcases hy with h
+    subst y
+    exact hp
+  -- The four body statements, each at the shadow list it is actually scanned with.
+  have hs1 : (Inline.inlineStmtStep (Inline.inlineScan (fuel + 1) consts) consts
+      (sh ++ ["end"]) s1).1 = s1 := by
+    apply inlineStmtStep_assign_shadowed
+    intro y hy
+    rw [show tpExprVars e1 = ["buf_len", "proof_cptr"] from
+      tpVars_call_two "common_uncompressed_g1" "buf_len" "proof_cptr"] at hy
+    simp at hy
+    rcases hy with h | h
+    · subst y; exact hb'
+    · subst y; exact hp'
+  have hs2 : (Inline.inlineStmtStep (Inline.inlineScan (fuel + 1) consts) consts
+      ((sh ++ ["end"]) ++ ["buf_len"]) s2).1 = s2 := by
+    apply inlineStmtStep_expr_shadowed
+    intro y hy
+    rw [show tpExprVars e2 = [walk, "proof_cptr"] from
+      tpVars_builtin_calldatacopy walk "proof_cptr" 128] at hy
+    simp at hy
+    rcases hy with h | h
+    · subst y; exact shadowed_append_right (sh ++ ["end"]) ["buf_len"] walk hw'
+    · subst y; exact shadowed_append_right (sh ++ ["end"]) ["buf_len"] "proof_cptr" hp'
+  have hs3 : (Inline.inlineStmtStep (Inline.inlineScan (fuel + 1) consts) consts
+      ((sh ++ ["end"]) ++ ["buf_len"]) s3).1 = s3 := by
+    apply inlineStmtStep_assign_shadowed
+    intro y hy
+    rw [show tpExprVars e3 = [walk] from tpVars_builtin_add_var walk 128] at hy
+    simp at hy
+    rcases hy with h
+    subst y
+    exact shadowed_append_right (sh ++ ["end"]) ["buf_len"] walk hw'
+  have hs4 : (Inline.inlineStmtStep (Inline.inlineScan (fuel + 1) consts) consts
+      (((sh ++ ["end"]) ++ ["buf_len"]) ++ [walk]) s4).1 = s4 := by
+    apply inlineStmtStep_assign_shadowed
+    intro y hy
+    rw [show tpExprVars e4 = ["proof_cptr"] from tpVars_builtin_add_var "proof_cptr" 128] at hy
+    simp at hy
+    rcases hy with h
+    subst y
+    have hp'' : Inline.shadowed ((sh ++ ["end"]) ++ ["buf_len"]) "proof_cptr" = true :=
+      shadowed_append_right (sh ++ ["end"]) ["buf_len"] "proof_cptr" hp'
+    exact shadowed_append_right ((sh ++ ["end"]) ++ ["buf_len"]) [walk] "proof_cptr" hp''
+  -- The body scan, split three times at the threaded shadow lists.
+  have hbody : (Inline.inlineScan (fuel + 1) consts (sh ++ ["end"]) [s1, s2, s3, s4]).blks =
+      [s1, s2, s3, s4] := by
+    rw [show [s1, s2, s3, s4] = [s1] ++ [s2, s3, s4] from rfl,
+      Inline.inlineScan_append]
+    rw [inlineScan_single fuel consts (sh ++ ["end"]) s1 hs1]
+    rw [show [s2, s3, s4] = [s2] ++ [s3, s4] from rfl, Inline.inlineScan_append]
+    rw [show (sh ++ ["end"]) ++ [s1].flatMap Inline.boundOf = (sh ++ ["end"]) ++ ["buf_len"]
+      by
+        show (sh ++ ["end"]) ++
+          ([(Stmt.assign ["buf_len"] e1)] : List (Stmt EVM.Op)).flatMap Inline.boundOf =
+            (sh ++ ["end"]) ++ ["buf_len"]
+        simp [Inline.boundOf, List.flatMap_cons, List.flatMap_nil]]
+    rw [inlineScan_single fuel consts ((sh ++ ["end"]) ++ ["buf_len"]) s2 hs2]
+    rw [show [s3, s4] = [s3] ++ [s4] from rfl, Inline.inlineScan_append]
+    rw [show ((sh ++ ["end"]) ++ ["buf_len"]) ++ [s2].flatMap Inline.boundOf =
+      (sh ++ ["end"]) ++ ["buf_len"] by
+        show ((sh ++ ["end"]) ++ ["buf_len"]) ++
+          ([(Stmt.exprStmt e2)] : List (Stmt EVM.Op)).flatMap Inline.boundOf =
+            (sh ++ ["end"]) ++ ["buf_len"]
+        simp [Inline.boundOf, List.flatMap_cons, List.flatMap_nil]]
+    rw [inlineScan_single fuel consts ((sh ++ ["end"]) ++ ["buf_len"]) s3 hs3]
+    rw [show (((sh ++ ["end"]) ++ ["buf_len"]) ++ [s3].flatMap Inline.boundOf) =
+      ((sh ++ ["end"]) ++ ["buf_len"]) ++ [walk] by
+        show (((sh ++ ["end"]) ++ ["buf_len"]) ++
+          ([(Stmt.assign [walk] e3)] : List (Stmt EVM.Op)).flatMap Inline.boundOf) =
+            ((sh ++ ["end"]) ++ ["buf_len"]) ++ [walk]
+        simp [Inline.boundOf, List.flatMap_cons, List.flatMap_nil]]
+    rw [inlineScan_single fuel consts (((sh ++ ["end"]) ++ ["buf_len"]) ++ [walk]) s4 hs4]
+  -- The condition, at the shadow list the init binder leaves.
+  have hcond : Inline.inExpr Inline.exprFuel eCond consts (sh ++ ["end"]) = eCond := by
+    apply tp_inExpr_eq_of_shadowed
+    intro y hy
+    rw [show tpExprVars eCond = ["proof_cptr", "end"] from
+      tpVars_builtin_lt_two "proof_cptr" "end"] at hy
+    simp at hy
+    rcases hy with h | h
+    · subst y; exact hp'
+    · subst y; exact shadowed_append_self sh "end"
+  -- One `inlineStep`, the singleton fold.
+  show (Inline.inlineScan (fuel + 2) consts sh
+    [Stmt.forLoop [initStmt] eCond [] [s1, s2, s3, s4]]).blks =
+      [Stmt.forLoop [initStmt] eCond [] [s1, s2, s3, s4]]
+  have hstep : (Inline.inlineScan (fuel + 2) consts sh
+      [Stmt.forLoop [initStmt] eCond [] [s1, s2, s3, s4]]).blks =
+      [(Inline.inlineStmtStep (Inline.inlineScan (fuel + 1) consts) consts sh
+        (Stmt.forLoop [initStmt] eCond [] [s1, s2, s3, s4])).1] := rfl
+  rw [hstep]
+  congr 1
+  have hfor : (Inline.inlineStmtStep (Inline.inlineScan (fuel + 1) consts) consts sh
+      (Stmt.forLoop [initStmt] eCond [] [s1, s2, s3, s4])).1 =
+      Stmt.forLoop (Inline.inlineScan (fuel + 1) consts sh [initStmt]).blks
+        (Inline.inExpr Inline.exprFuel eCond consts
+          (sh ++ (Inline.inlineScan (fuel + 1) consts sh [initStmt]).blks.flatMap
+            Inline.boundOf))
+        (Inline.inlineScan (fuel + 1) consts
+          (sh ++ (Inline.inlineScan (fuel + 1) consts sh [initStmt]).blks.flatMap
+            Inline.boundOf) []).blks
+        (Inline.inlineScan (fuel + 1) consts
+          (sh ++ (Inline.inlineScan (fuel + 1) consts sh [initStmt]).blks.flatMap
+            Inline.boundOf) [s1, s2, s3, s4]).blks := rfl
+  rw [hfor, hinit]
+  have hbInit : ([initStmt] : List (Stmt EVM.Op)).flatMap Inline.boundOf = ["end"] := by
+    show ([(Stmt.letDecl ["end"] (some eInit))] : List (Stmt EVM.Op)).flatMap
+      Inline.boundOf = ["end"]
+    simp [Inline.boundOf]
+  rw [hbInit, hcond, hbody]
+  rw [show (Inline.inlineScan (fuel + 1) consts (sh ++ ["end"]) []).blks = [] from rfl]
 
 /-! ## 4. THE NAMED LEAVES -/
 
@@ -527,6 +770,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockSim
 #cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockProgS
 
+#assert_axioms Midfall.LoweringV3.TranscriptRows.inline_g1WalkLoop [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_inExpr_eq_of_shadowed [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.inlineScan_single [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.shadowed_append_right [propext] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.shadowed_append_self [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_events_slots_witness_nonempty [propext, Classical.choice, Quot.sound] native []
