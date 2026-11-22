@@ -618,6 +618,61 @@ theorem frWord_sub {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : Fr p
     rw [hbz, Nat.sub_zero, Nat.add_zero, Nat.add_mod_right]
   · rw [Midfall.Halo2.frWord_toNat hp]
 
+/-! ## 6c. THE RUNNING POWERS AND THE SQUARING LOOP, AT FIELD LEVEL -/
+
+theorem wPow2_frWord {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    (x : Fr p) (k : Nat) :
+    wPow2 (BitVec.ofNat 256 p : U256) k (Midfall.Halo2.frWord x) =
+      Midfall.Halo2.frWord (x ^ (2 ^ k)) := by
+  induction k generalizing x with
+  | zero => simp [wPow2]
+  | succ k ih =>
+      rw [wPow2, ← frWord_mul hp, ih (x * x)]
+      congr 1
+      rw [mul_pow, ← pow_add]
+      congr 1
+      rw [pow_succ]
+      ring
+
+theorem omegaPows_frWord {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    (om w0 : Fr p) (i : Nat) :
+    omegaPows (BitVec.ofNat 256 p : U256) (Midfall.Halo2.frWord om)
+        (Midfall.Halo2.frWord w0) i =
+      Midfall.Halo2.frWord (w0 * om ^ i) := by
+  induction i with
+  | zero => simp [omegaPows]
+  | succ i ih =>
+      rw [omegaPows, ih, frWord_mul hp]
+      rw [show w0 * om ^ (i + 1) = (w0 * om ^ i) * om by rw [pow_succ]; ring]
+      rw [frWord_mul hp, frWord_mul hp]
+
+theorem frWord_one {p : ℕ} [Fact (Nat.Prime p)] :
+    Midfall.Halo2.frWord (1 : Fr p) = (1 : U256) := by
+  rw [Midfall.Halo2.frWord, ZMod.val_one]
+  rfl
+
+/-- A canonical word is the `frWord` of its own `toNat`. -/
+theorem frWord_ofNat_toNat {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    {w : U256} (hw : w.toNat < p) :
+    Midfall.Halo2.frWord ((w.toNat : Fr p)) = w := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Midfall.Halo2.frWord_toNat hp, ZMod.val_natCast, Nat.mod_eq_of_lt hw]
+
+/-- The `LagRel` value `L i`, as a field element. -/
+theorem lagWord_eq_frWord {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    (xnW nInvW invW omW : U256) (xnF nInvF invF omF : Fr p)
+    (hxn : xnW = Midfall.Halo2.frWord xnF) (hn : nInvW = Midfall.Halo2.frWord nInvF)
+    (hi : invW = Midfall.Halo2.frWord invF) (ho : omW = Midfall.Halo2.frWord omF) :
+    wMulmodAt (wMulmodAt (wAddmodAt xnW ((BitVec.ofNat 256 p : U256) - 1)
+        (BitVec.ofNat 256 p : U256)) nInvW (BitVec.ofNat 256 p : U256))
+      (wMulmodAt invW omW (BitVec.ofNat 256 p : U256)) (BitVec.ofNat 256 p : U256) =
+    Midfall.Halo2.frWord ((xnF - 1) * nInvF * invF * omF) := by
+  rw [hxn, hn, hi, ho]
+  rw [show (1 : U256) = Midfall.Halo2.frWord (1 : Fr p) from (frWord_one (p := p)).symm]
+  rw [← frWord_sub hp xnF 1]
+  rw [show (xnF - 1) * nInvF * invF * omF = ((xnF - 1) * nInvF) * (invF * omF) by ring]
+  rw [frWord_mul hp, frWord_mul hp, frWord_mul hp]
+
 /-! ## 7. INVERSION HELPERS FOR THE SEMANTIC LOOP PROOFS (T3.9.b/d) -/
 
 theorem eval_var_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}

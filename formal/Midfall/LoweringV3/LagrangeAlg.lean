@@ -122,7 +122,7 @@ lemma foldl_digits_step {F : Type} [Field F] (x : F) (L : List Nat)
   rw [List.map_reverse, List.foldl_reverse]
   exact foldr_digits_step x L h
 
-theorem powVartime_eq_pow {p : ℕ} [Fact (Nat.Prime p)] (x : ZMod p) (e : Nat) :
+theorem powVartime_eq_pow {F : Type} [Field F] (x : F) (e : Nat) :
     powVartime x e = x ^ e := by
   rw [powVartime]
   rcases Nat.eq_zero_or_pos e with rfl | he
@@ -140,6 +140,8 @@ theorem powVartime_eq_pow {p : ℕ} [Fact (Nat.Prime p)] (x : ZMod p) (e : Nat) 
 end Midfall.LoweringV3.LagrangeAlg
 
 namespace Midfall.Halo2
+
+open Midfall.LoweringV3.LagrangeAlg
 
 variable {F : Type} [Field F] [DecidableEq F]
 
@@ -361,5 +363,52 @@ theorem lagrangeTriple_ok {p : ℕ} [Fact (Nat.Prime p)] {G : Type}
     dsimp only
     exact ⟨beq_iff_eq.mp hsize, rfl, rfl, rfl⟩
   · simp at h
+
+
+theorem omegaInv_pow_mul_omega_pow {F : Type} [Field F] {wi w : F} (h : wi * w = 1)
+    {L i : Nat} (hi : i ≤ L) :
+    wi ^ L * w ^ i = wi ^ (L - i) := by
+  calc
+    wi ^ L * w ^ i = (wi ^ (L - i) * wi ^ i) * w ^ i := by
+      rw [← pow_add, Nat.sub_add_cancel hi]
+    _ = wi ^ (L - i) * (wi ^ i * w ^ i) := by ring
+    _ = wi ^ (L - i) * (wi * w) ^ i := by rw [mul_pow]
+    _ = wi ^ (L - i) * 1 := by rw [h, one_pow]
+    _ = wi ^ (L - i) := by rw [mul_one]
+
+lemma rotateOmega_value (d : EvaluationDomain F) (v : F) (z : Int) :
+    d.rotateOmega v (Rotation.value z) =
+      if 0 ≤ z then v * powVartime d.getOmega z.toNat
+      else v * powVartime d.getOmegaInv z.natAbs := rfl
+
+theorem rotateOmega_neg_range (d : EvaluationDomain F) {L i : Nat} (h : i ≤ L) :
+    d.rotateOmega 1 (Rotation.value (-((L : Nat) : Int) + (i : Int))) =
+      d.omegaInv ^ (L - i) := by
+  rw [rotateOmega_value]
+  have hr : (-((L : Nat) : Int) + (i : Int)) = -(((L - i : Nat)) : Int) := by omega
+  rw [hr]
+  by_cases hi : i = L
+  · subst hi
+    rw [if_pos (by omega)]
+    simp [powVartime, EvaluationDomain.getOmega]
+  · have hlt : i < L := by omega
+    have hpos : ¬ (0 : Int) ≤ -(((L - i : Nat)) : Int) := by omega
+    rw [if_neg hpos]
+    rw [Int.natAbs_neg, Int.natAbs_natCast, powVartime_eq_pow,
+      EvaluationDomain.getOmegaInv, one_mul]
+
+theorem rotateOmega_mul_neg_range (d : EvaluationDomain F) (v : F) {L i : Nat} (h : i ≤ L) :
+    d.rotateOmega v (Rotation.value (-((L : Nat) : Int) + (i : Int))) =
+      v * d.omegaInv ^ (L - i) := by
+  rw [rotateOmega_value]
+  have hr : (-((L : Nat) : Int) + (i : Int)) = -(((L - i : Nat)) : Int) := by omega
+  rw [hr]
+  by_cases hi : i = L
+  · subst hi
+    rw [if_pos (by omega)]
+    simp [powVartime, EvaluationDomain.getOmega]
+  · have hpos : ¬ (0 : Int) ≤ -(((L - i : Nat)) : Int) := by omega
+    rw [if_neg hpos]
+    rw [Int.natAbs_neg, Int.natAbs_natCast, powVartime_eq_pow, EvaluationDomain.getOmegaInv]
 
 end Midfall.Halo2
