@@ -1923,3 +1923,87 @@ theorem eval_mstore_second_pass_inv {funs : FunEnv (Bridge.Dialect c g)}
               cases hbi
               subst htouch
               exact ⟨_, _, _, hlc, hmpv', hpw, rfl⟩
+
+theorem eval_mulmod_vars_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x y z : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod [Expr.var x, Expr.var y, Expr.var z]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.var x, Expr.var y, Expr.var z],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl | rfl <;>
+      exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, ter] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
+
+theorem eval_mulmod_mload_var_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p a z : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod
+        [Expr.builtin Op.mload [Expr.var p], Expr.var a, Expr.var z]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.builtin Op.mload [Expr.var p], Expr.var a, Expr.var z],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl | rfl
+    · exact eval_mload_var_halt_false hh
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, ter] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
+
+theorem eval_mulmod_second_pass_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod
+        [Expr.var "l_i_common",
+          Expr.builtin Op.mulmod
+            [Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "pow_of_omega", Expr.var "r"],
+          Expr.var "r"]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.var "l_i_common", Expr.builtin Op.mulmod
+      [Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "pow_of_omega", Expr.var "r"],
+      Expr.var "r"],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl | rfl
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+    · exact eval_mulmod_mload_var_halt_false hh
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, ter] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
+
+theorem eval_mstore_second_pass_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mstore
+        [Expr.var "mptr", Expr.builtin Op.mulmod
+          [Expr.var "l_i_common", Expr.builtin Op.mulmod
+            [Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "pow_of_omega", Expr.var "r"],
+            Expr.var "r"]]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.var "mptr", Expr.builtin Op.mulmod
+      [Expr.var "l_i_common", Expr.builtin Op.mulmod
+        [Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "pow_of_omega", Expr.var "r"],
+        Expr.var "r"]],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+    · exact eval_mulmod_second_pass_halt_false hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
+
