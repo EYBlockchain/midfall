@@ -740,7 +740,7 @@ theorem ofNat_sub_32 (p : Nat) (hp : p < 2 ^ 256) (hp32 : 32 ≤ p) :
 
 theorem bi_staticcall_tail_lets {c : ExternalCalls} {g : ExternalGas}
     (funs : FunEnv (Bridge.Dialect c g))
-    (mem : Nat → UInt8) (p a : Nat) (x : U256) (v : Nat) (hp : p < 2 ^ 256) :
+    (M : Nat → UInt8) (p a : Nat) (v : Nat) (hp : p < 2 ^ 256) :
     StmtsContractAll (D := Bridge.Dialect c g) funs
       [ GenAst.ylet "all_inv" (GenAst.yop EVM.Op.mload [GenAst.yvar "gp_mptr"]),
         GenAst.ylet "first_mptr" (GenAst.yvar "mptr_start"),
@@ -751,15 +751,18 @@ theorem bi_staticcall_tail_lets {c : ExternalCalls} {g : ExternalGas}
       (fun V st =>
         VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p) ∧
         VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
-        st.memory = mxMem mem p x ∧
-        loadWord (mxMem mem p x) p = BitVec.ofNat 256 v)
-      (fun _ st V' st' o => o = .normal ∧
+        st.memory = M ∧
+        loadWord M p = BitVec.ofNat 256 v)
+      (fun Vpre st V' st' o => o = .normal ∧
         VEnv.get V' "all_inv" = some (BitVec.ofNat 256 v) ∧
         VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
         VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 a + 32) ∧
         VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p - 32) ∧
         VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a) ∧
-        st' = touchMemory st (BitVec.ofNat 256 p).toNat 32) := by
+        st' = touchMemory st (BitVec.ofNat 256 p).toNat 32 ∧
+        V' = VEnv.set (("second_mptr", BitVec.ofNat 256 a + 32) ::
+          ("first_mptr", BitVec.ofNat 256 a) :: ("all_inv", BitVec.ofNat 256 v) :: Vpre)
+          "gp_mptr" (BitVec.ofNat 256 p - 32)) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hgp, hmstart, hmem, hv⟩ := hpre
   -- s1 mload
@@ -820,7 +823,7 @@ theorem bi_staticcall_tail_lets {c : ExternalCalls} {g : ExternalGas}
                 Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
                   (x := "all_inv") (y := "gp_mptr") (by decide)]
             exact hgp
-          refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, rfl⟩
+          refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, rfl, ?_⟩
           · -- all_inv
             rw [Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "all_inv") (by decide),
               Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "second_mptr") (y := "all_inv") (by decide),
@@ -845,6 +848,9 @@ theorem bi_staticcall_tail_lets {c : ExternalCalls} {g : ExternalGas}
               Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "first_mptr") (y := "mptr_start") (by decide),
               Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "mptr_start") (by decide)]
             exact hmstart
+          · -- exact tail environment
+            rw [← hvms', ← hvfm, ← hvval]
+            rfl
         · cases h4 with
           | assignVal he hl => exact absurd rfl hne4
           | assignHalt he => exact (eval_sub_var_lit_no_halt he).elim
