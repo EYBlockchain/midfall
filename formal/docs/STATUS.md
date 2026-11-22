@@ -38,15 +38,15 @@ and the `snapshotOf_prepareMsgs` retirement.
   no-halt lemmas for the second-pass body. T3.9.c is one block-state equation + window invariant
   from green; T3.9.b guard-TRUE remains on the semantic route. A5/`batch_invert_summary` is the
   row prerequisite.
-- **A5** (`36f034f`): `BatchInvert.lean` vocabulary/forms, **`bi_forward_loop`**, the `wMulmodAt`
-  associativity, and the backward-pass algebra (`bwdAll`/`bwdInvVal`/`bwdEnv`) are merged. The
-  `bwdMem` store-chain arithmetic and `batch_invert_summary` (memory-level modexp bridge) are in
-  flight.
-- **A6 transcriptParser** (`t/A6`): `tp_blockSim` glue and `inline_g1WalkLoop` green, six named
-  TP leaves remain; the branch is WIP (not merged — it would add six non-ROOT rows).
-- **A9 PCS** (`8916dc0`): `decode_exists` and the PCS-local inliner/loop infrastructure merged
-  (zero sorries). Confirmed the queue's A8/QVM dependency is schedule-only; block 2 and the
-  `scalar_inv` summary are next.
+- **A5** (`0407d61`): `BatchInvert.lean` forms, **`bi_forward_loop`**, associativity, the
+  backward algebra, `bwdMem` and the cursor lemmas are merged. `bi_backward_loop` is now only the
+  `Stop`/`SetMany`/`restore` bookkeeping; `batch_invert_summary` follows.
+- **A6 transcriptParser** (`t/A6`): `tp_blockSim` glue, `inline_g1WalkLoop`, and the PG-PARSER
+  bridge (`tp_planFacts`/`tp_fromProtocol`/`userPhasesOf_advice`/`tpEvents_filterMap_eq`) are green;
+  six named TP leaves remain (the branch is WIP — it would add six non-ROOT rows).
+- **A9 PCS** (`7034462`/`d40b6de`): `decode_exists`, `pcsBlock2_inline`, the loop vocabulary and
+  **`pcs_loop_false`** are merged (zero sorries). Confirmed the queue's A8/QVM dependency is
+  schedule-only; `pcs_loop_true` and the `scalar_inv` summary are next.
 - **A4 continuation** (`midfall-g`, `t/A4`): T3.9.c/e and the b guard-TRUE semantic loop.
 
 **Shortest path to the conditional e2e theorem:** A4/A5 -> A6/A9 -> A11 -> A12 -> A13 -> D1
@@ -56,10 +56,11 @@ M9/M10 C/D tracks are DONE/non-vacuity work, not prerequisites of `lowering_corr
   SPILL2/CURFACT landed. `q_blockSim`/`q_blockProgS` remain.
 - **QVM compile-correctness** (`t/QVMBUILD`): the 26/26 arm table and reduction are merged; then
   `PG_identity_preFold` and `PG_termFold_structure` were PROVED and merged (`25459b2`/`3ff837d`).
-  The worker then PROVED `qvm_compile_correct_identity` FALSE as stated (selector gap low byte
-  `0x0a` collides with `FOLD_MAIN` in `finalizedIdentitySegment`). **D-GATE3 is signed:** make the
-  segment target-aware (strip `FOLD_SELECTOR` by 4 / `FOLD_MAIN` by 1); that repair is in flight.
-  It owns `Qvm.lean`/`QvmShift`/`QvmEmit`; the segment/spill/Quotient files stay with the QVM agent.
+  The worker PROVED the old shape false (selector gap low byte `0x0a` collides with `FOLD_MAIN`);
+  **D-GATE3 target-aware repair landed** at f767d5f. The identity row is now true and reduced to
+  `PG_identity_emitterValue` + `PG_identity_compactionValue`; LIN7 and ROW decoder ties are proved,
+  PAIRWISE/MODARITH7 and the compaction value remain. It owns `Qvm.lean`/`QvmShift`/`QvmEmit`; the
+  segment/spill/Quotient files stay with the QVM agent.
 
 ## 3. Next READY
 
