@@ -42,43 +42,6 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 
 /-! ## 1. The `gas()` scan: a program that never asks for gas has the same runs under any oracle -/
 
-/-- The scan that replaces TOT.1's "decidable scan of the literal program": no `gas()` anywhere,
-    function bodies included. Structural in the fuel, like `Bridge.noWritersScan`, so `decide`
-    reduces it. Ported verbatim from the evidence (`GeneratorRows.lean:1215`). -/
-def gasFreeScan : Nat → Scan → Bool
-  | 0, _ => false
-  | n + 1, sc =>
-    match sc with
-    | .e (.lit _) => true
-    | .e (.var _) => true
-    | .e (.builtin op args) => !(op == EVM.Op.gas) && gasFreeScan n (.es args)
-    | .e (.call _ args) => gasFreeScan n (.es args)
-    | .es [] => true
-    | .es (e :: rest) => gasFreeScan n (.e e) && gasFreeScan n (.es rest)
-    | .s (.block body) => gasFreeScan n (.b body)
-    | .s (.funDef _ _ _ body) => gasFreeScan n (.b body)
-    | .s (.letDecl _ none) => true
-    | .s (.letDecl _ (some e)) => gasFreeScan n (.e e)
-    | .s (.assign _ e) => gasFreeScan n (.e e)
-    | .s (.cond c body) => gasFreeScan n (.e c) && gasFreeScan n (.b body)
-    | .s (.switch c cases dflt) =>
-        gasFreeScan n (.e c) && gasFreeScan n (.cs cases) &&
-          (match dflt with | none => true | some d => gasFreeScan n (.b d))
-    | .s (.forLoop init c post body) =>
-        gasFreeScan n (.b init) && gasFreeScan n (.e c) &&
-          gasFreeScan n (.b post) && gasFreeScan n (.b body)
-    | .s (.exprStmt e) => gasFreeScan n (.e e)
-    | .s .break => true
-    | .s .continue => true
-    | .s .leave => true
-    | .b [] => true
-    | .b (s :: ss) => gasFreeScan n (.s s) && gasFreeScan n (.b ss)
-    | .cs [] => true
-    | .cs ((_, b) :: rest) => gasFreeScan n (.b b) && gasFreeScan n (.cs rest)
-
-/-- A block executes no `gas()`. -/
-def GasFree (b : Block EVM.Op) : Prop := ∃ n, gasFreeScan n (.b b) = true
-
 /-- **NON-VACUITY OF THE SCAN (W12 falsifier for `gasFree_of_valid`).** The scan is not the constant
     `true`: it refuses a `gas()` and accepts a `msize()`, both PROVED by `decide` at fuel 20 with
     no render content. Ported from the evidence (`GeneratorRows.lean:1249`). -/
@@ -785,14 +748,14 @@ theorem step_gas_irrel {c : ExternalCalls} {g g' : ExternalGas} :
         (ihbody (gfs_block_stmt hb) henv)
 
 
-/-- **LEAF (TOT.1): THE PROGRAM OF A VALID RENDER EXECUTES NO `gas()`.** PREMISE GAP PG-GAS in the
-    evidence: `SupportedV2` excludes the three features that print `gas()`, but no clause says the
-    program is free of it. Owner: TOT.1 (WP A12). WITNESS: the named gap
-    `gap_lowering_correct_witness_unexhibited` - `ValidV3` has no inhabitant the tree can name until
-    WP B4 (D-P75 item 5). FALSIFIER: the two `example`s above. -/
+/-- **LEAF (TOT.1): THE PROGRAM OF A VALID RENDER EXECUTES NO `gas()`.** PROVED by D-GATE1:
+    `programOk` now carries `GasFree (R.prog 0 0)` as its fourth conjunct (the PG-GAS clause the
+    evidence asked for), and `gasFree_prog_addr_indep` transfers it from `0 0` to every `vkAddr`
+    through the ST.12 erasure identity. The two `example`s above are the scan's non-vacuity
+    falsifier. -/
 theorem gasFree_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (vkAddr : U256) :
-    GasFree (R.prog vkAddr 0) := by
-  sorry
+    GasFree (R.prog vkAddr 0) :=
+  gasFree_prog_addr_indep R vkAddr 0 hR.program.2.2.1
 
 /-- **LEAF (TOT.1.a): A GAS-FREE PROGRAM HAS THE SAME RUNS UNDER EVERY GAS ORACLE.** PROVED
     (WP A12). The generic derivation transport is `step_gas_irrel` below: one induction on `Step`
@@ -1093,5 +1056,8 @@ theorem totalV3_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
 #cone_sorries Midfall.LoweringV3.runBody_gas_oblivious
 #print axioms Midfall.LoweringV3.runBody_gas_oblivious
 #assert_axioms Midfall.LoweringV3.runBody_gas_oblivious [propext, Classical.choice, Quot.sound] native []
+#cone_sorries Midfall.LoweringV3.gasFree_of_valid
+#print axioms Midfall.LoweringV3.gasFree_of_valid
+#assert_axioms Midfall.LoweringV3.gasFree_of_valid [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3

@@ -423,12 +423,13 @@ theorem blockProgS_of_progContractsW (R : Render p G₁ G₂ Gₜ) (Q : EvalObje
 /-- **OBLIGATIONS 1 AND 3, WIDENED: TWO OUTCOMES.** PROVED, and it adds no leaf of its own beyond the
     two scan obligations ST.10 and ST.12 that twoOutcomesV3_of_valid already rests on. The exit scan is
     read off ValidCore.program - the same projection exitDiscipline_of_valid performs on ValidV3, at
-    the ValidCore face of it (programOk's third conjunct), so no clause is added and no fact restated.
+    the ValidCore face of it (programOk's fourth conjunct, after D-GATE1's GasFree), so no clause is
+    added and no fact restated.
     Conjunct 3 reads no evaluator and no accumulator fact, whatever the evaluator answers: that is why
     TwoOutcomesW needs no Q. -/
 theorem twoOutcomesW_of_valid (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) (hR : ValidW R Q) :
     TwoOutcomesW R :=
-  twoOutcomesW_of_scans R hR.core.noWriters hR.core.program.2.2.1
+  twoOutcomesW_of_scans R hR.core.noWriters hR.core.program.2.2.2.1
 
 /-- **OBLIGATION 1, SOUNDNESS HALF, WIDENED: PROGRAM-LEVEL REJECTION.** SKELETON. NAMED LEAVES: the
     seven widened simulation rows of SimContractsW sequenced (SIM.2's proofs, re-pointed at BlockSimW),

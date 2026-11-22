@@ -2839,8 +2839,9 @@ theorem twoOutcomes_of_scans (R : Render p G₁ G₂ Gₜ)
   with `WellFormedV3`. `FR_MODULUS = p` and `returnMptr` are NOT conjuncts: they are THEOREMS of
   `constsCoherent` (additions 6 and 7), proved below.
 
-  WHY `programOk` IS A `Prop` AND NOT THE OBJECT TEXT'S `Bool`: two conjuncts - the exit scan and the
-  gas scan - are fuel-bounded scans stated as `∃ n, scan n = true`, exactly as `NoWriters` is
+  WHY `programOk` IS A `Prop` AND NOT THE OBJECT TEXT'S `Bool`: three conjuncts - the exit scan and
+  the two gas scans (`GasCallOk`, D-GATE1's `GasFree`) - are fuel-bounded scans stated as
+  `∃ n, scan n = true`, exactly as `NoWriters` is
   (`Bridge.lean:1108`). Folding them into one `Bool` would pin a fuel in the statement and make the
   class depend on the witness: a render whose program needs one more unit of fuel than the pin would
   be excluded by a number that means nothing. So `programOkB` is the decidable bundle the clause table
@@ -3114,6 +3115,166 @@ def gasScan : Nat → Scan → Bool
 /-- **D-P71 addition 1.** Every `gas()` of the block is the gas argument of a call. -/
 def GasCallOk (b : Block EVM.Op) : Prop := ∃ n, gasScan n (.b b) = true
 
+/-- **THE GAS-FREE SCAN (D-GATE1).** No `gas()` anywhere, function bodies included. Structural in
+    the fuel, like `Bridge.noWritersScan`, so `decide` reduces it. Moved here from
+    `LoweringV3/Totality.lean` by D-GATE1 so the `programOk` class can carry the clause; TOT.1's
+    `GasFreeScan` is its `∃ fuel` face. Ported verbatim from the evidence
+    (`GeneratorRows.lean:1215`). -/
+def gasFreeScan : Nat → Scan → Bool
+  | 0, _ => false
+  | n + 1, sc =>
+    match sc with
+    | .e (.lit _) => true
+    | .e (.var _) => true
+    | .e (.builtin op args) => !(op == EVM.Op.gas) && gasFreeScan n (.es args)
+    | .e (.call _ args) => gasFreeScan n (.es args)
+    | .es [] => true
+    | .es (e :: rest) => gasFreeScan n (.e e) && gasFreeScan n (.es rest)
+    | .s (.block body) => gasFreeScan n (.b body)
+    | .s (.funDef _ _ _ body) => gasFreeScan n (.b body)
+    | .s (.letDecl _ none) => true
+    | .s (.letDecl _ (some e)) => gasFreeScan n (.e e)
+    | .s (.assign _ e) => gasFreeScan n (.e e)
+    | .s (.cond c body) => gasFreeScan n (.e c) && gasFreeScan n (.b body)
+    | .s (.switch c cases dflt) =>
+        gasFreeScan n (.e c) && gasFreeScan n (.cs cases) &&
+          (match dflt with | none => true | some d => gasFreeScan n (.b d))
+    | .s (.forLoop init c post body) =>
+        gasFreeScan n (.b init) && gasFreeScan n (.e c) &&
+          gasFreeScan n (.b post) && gasFreeScan n (.b body)
+    | .s (.exprStmt e) => gasFreeScan n (.e e)
+    | .s .break => true
+    | .s .continue => true
+    | .s .leave => true
+    | .b [] => true
+    | .b (s :: ss) => gasFreeScan n (.s s) && gasFreeScan n (.b ss)
+    | .cs [] => true
+    | .cs ((_, b) :: rest) => gasFreeScan n (.b b) && gasFreeScan n (.cs rest)
+
+/-- A block executes no `gas()`. -/
+def GasFree (b : Block EVM.Op) : Prop := ∃ n, gasFreeScan n (.b b) = true
+
+/-! ### D-GATE1: `gasFreeScan` cannot see an erased literal
+
+  The same erasure the writer and exit scans use (ST.12, `eraseB`): the wrapper addresses occur
+  only as `let` literals, so `eraseB (R.prog 0 0) = eraseB (R.prog vkAddr qAddr)` and the scan
+  transfers. This is what turns the `programOk` clause at `0 0` into the leaf at every `vkAddr`. -/
+
+theorem gasFreeScan_erase (n : Nat) : ∀ (sc : Scan),
+    gasFreeScan n sc = gasFreeScan n (eraseScan sc) := by
+  induction n with
+  | zero => intro sc; rfl
+  | succ n ih =>
+      intro sc
+      cases sc with
+      | e x =>
+          cases x with
+          | lit l => rfl
+          | var x => rfl
+          | builtin op args =>
+              show (!(op == EVM.Op.gas) && gasFreeScan n (.es args)) =
+                (!(op == EVM.Op.gas) && gasFreeScan n (.es (eraseEs args)))
+              rw [ih (Scan.es args)]; rfl
+          | call f args =>
+              show gasFreeScan n (.es args) = gasFreeScan n (.es (eraseEs args))
+              rw [ih (Scan.es args)]; rfl
+      | es xs =>
+          induction xs with
+          | nil => rfl
+          | cons a rest =>
+              show (gasFreeScan n (.e a) && gasFreeScan n (.es rest)) =
+                (gasFreeScan n (.e (eraseE a)) && gasFreeScan n (.es (eraseEs rest)))
+              rw [ih (Scan.e a), ih (Scan.es rest)]; rfl
+      | s x =>
+          refine match x with
+          | Stmt.block b => by
+              simp only [eraseScan, eraseS]
+              show gasFreeScan n (.b b) = gasFreeScan n (.b (eraseB b))
+              rw [ih (Scan.b b)]; rfl
+          | Stmt.funDef _ _ _ body => by
+              simp only [eraseScan, eraseS]
+              show gasFreeScan n (.b body) = gasFreeScan n (.b (eraseB body))
+              rw [ih (Scan.b body)]; rfl
+          | Stmt.letDecl _ val => by
+              simp only [eraseScan, eraseS]
+              cases val with
+              | none => rfl
+              | some e =>
+                  show gasFreeScan n (.e e) = gasFreeScan n (.e (eraseE e))
+                  rw [ih (Scan.e e)]; rfl
+          | Stmt.assign _ e => by
+              simp only [eraseScan, eraseS]
+              show gasFreeScan n (.e e) = gasFreeScan n (.e (eraseE e))
+              rw [ih (Scan.e e)]; rfl
+          | Stmt.cond c body => by
+              simp only [eraseScan, eraseS]
+              show (gasFreeScan n (.e c) && gasFreeScan n (.b body)) =
+                (gasFreeScan n (.e c) && gasFreeScan n (.b (eraseB body)))
+              rw [ih (Scan.b body)]; rfl
+          | Stmt.switch c cs d => by
+              simp only [eraseScan, eraseS]
+              show (gasFreeScan n (.e c) && gasFreeScan n (.cs cs) &&
+                    match d with | none => true | some db => gasFreeScan n (.b db)) =
+                   (gasFreeScan n (.e c) && gasFreeScan n (.cs (eraseCs cs)) &&
+                    match eraseOd d with | none => true | some db => gasFreeScan n (.b db))
+              rw [ih (Scan.cs cs)]
+              cases d with
+              | none => rfl
+              | some db =>
+                  show (gasFreeScan n (.e c) && gasFreeScan n (.cs (eraseCs cs)) &&
+                        gasFreeScan n (.b db)) =
+                       (gasFreeScan n (.e c) && gasFreeScan n (.cs (eraseCs cs)) &&
+                        gasFreeScan n (.b (eraseB db)))
+                  rw [ih (Scan.b db)]; rfl
+          | Stmt.forLoop init c post body => by
+              simp only [eraseScan, eraseS]
+              show (gasFreeScan n (.b init) && gasFreeScan n (.e c) &&
+                    gasFreeScan n (.b post) && gasFreeScan n (.b body)) =
+                   (gasFreeScan n (.b (eraseB init)) && gasFreeScan n (.e c) &&
+                    gasFreeScan n (.b (eraseB post)) && gasFreeScan n (.b (eraseB body)))
+              rw [ih (Scan.b init), ih (Scan.b post), ih (Scan.b body)]; rfl
+          | Stmt.exprStmt e => by
+              simp only [eraseScan, eraseS]
+          | Stmt.break => rfl
+          | Stmt.continue => rfl
+          | Stmt.leave => rfl
+      | b bs =>
+          induction bs with
+          | nil => rfl
+          | cons a rest =>
+              show (gasFreeScan n (.s a) && gasFreeScan n (.b rest)) =
+                (gasFreeScan n (.s (eraseS a)) && gasFreeScan n (.b (eraseB rest)))
+              rw [ih (Scan.s a), ih (Scan.b rest)]; rfl
+      | cs xs =>
+          induction xs with
+          | nil => rfl
+          | cons p rest =>
+              show (gasFreeScan n (.b p.2) && gasFreeScan n (.cs rest)) =
+                (gasFreeScan n (.b (eraseB p.2)) && gasFreeScan n (.cs (eraseCs rest)))
+              rw [ih (Scan.b p.2), ih (Scan.cs rest)]; rfl
+
+/-- The congruence form: two scans with the same erasure have the same answer. -/
+theorem gasFreeScan_congr (n : Nat) (sc₁ sc₂ : Scan)
+    (h : eraseScan sc₁ = eraseScan sc₂) : gasFreeScan n sc₁ = gasFreeScan n sc₂ :=
+  calc gasFreeScan n sc₁ = gasFreeScan n (eraseScan sc₁) := gasFreeScan_erase n sc₁
+    _ = gasFreeScan n (eraseScan sc₂) := congrArg (gasFreeScan n) h
+    _ = gasFreeScan n sc₂ := (gasFreeScan_erase n sc₂).symm
+
+/-- `GasFree` is a statement about the erased block only. -/
+theorem gasFree_of_eraseB_eq {b₁ b₂ : Block EVM.Op} (h : eraseB b₁ = eraseB b₂)
+    (hg : GasFree b₁) : GasFree b₂ := by
+  obtain ⟨n, hn⟩ := hg
+  exact ⟨n, by
+    rw [gasFreeScan_congr n (.b b₂) (.b b₁) (congrArg Scan.b h.symm)]
+    exact hn⟩
+
+/-- The program's gas scan does not see the two wrapper addresses (D-GATE1). PROVED from the
+    erasure identity `eraseB_asmOf_eq` and `gasFreeScan_erase`: this is the address independence
+    `gasFree_of_valid` needs, at both addresses, not just `0 0`. -/
+theorem gasFree_prog_addr_indep (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256)
+    (hg : GasFree (R.prog 0 0)) : GasFree (R.prog vkAddr qAddr) :=
+  gasFree_of_eraseB_eq (eraseB_asmOf_eq R.pv R.model 0 0 vkAddr qAddr) hg
+
 /-- WITNESS: a call's own `gas()` passes the scan - the arm that "no gas()" would have excluded, and
     the arm every external-evaluator render lives in. PROVED by `decide`. -/
 theorem gasCallOk_witness : GasCallOk (yul% {
@@ -3301,13 +3462,15 @@ def programOkCore (pv : PlanView) (m : Model) (numInstances : Nat)
 def programOkB (R : Render p G₁ G₂ Gₜ) : Bool :=
   programOkCore R.pv R.model R.cfg.numInstances R.vk
 
-/-- **THE PROGRAM CLAUSE**: the bundle above plus the TWO SCANS. Both are `∃ n` propositions and stay
-    out of the `Bool` so that no fuel is pinned in the statement (section header). ONE exit scan
-    (D-P71 addition 5): `ExitDiscipline` is the scan of §I and `ExitShape` below is the SAME
-    `exitScan` applied to a different block - there is no second scan function in the tree. -/
+/-- **THE PROGRAM CLAUSE**: the bundle above plus the THREE SCANS. All are `∃ n` propositions and
+    stay out of the `Bool` so that no fuel is pinned in the statement (section header). ONE exit
+    scan (D-P71 addition 5): `ExitDiscipline` is the scan of §I and `ExitShape` below is the SAME
+    `exitScan` applied to a different block - there is no second scan function in the tree.
+    `GasFree` is the D-GATE1 addition: the whole program executes no `gas()` at all, stronger than
+    `GasCallOk`'s "only as a call's gas argument"; it is what TOT.1.a's oracle independence needs. -/
 def programOk (R : Render p G₁ G₂ Gₜ) : Prop :=
-  programOkB R = true ∧ GasCallOk (R.prog 0 0) ∧ ExitDiscipline (R.prog 0 0) ∧
-    programFits R.pv R.model
+  programOkB R = true ∧ GasCallOk (R.prog 0 0) ∧ GasFree (R.prog 0 0) ∧
+    ExitDiscipline (R.prog 0 0) ∧ programFits R.pv R.model
 
 /-- The three names the projections read are in the data table for EVERY plan view and model,
     whatever the four optional arms of the model hold. -/
@@ -3394,6 +3557,8 @@ def GeneratedBy (R : Render p G₁ G₂ Gₜ) : Prop :=
     is the one the registered `prog_slices_decompV3` cites. Neither is dropped; `noShadow_of_programOk`
     projects the second.
   * `exitDiscipline`: kept, as ONE scan, inside `programOk` (addition 5).
+  * `gasFree`: D-GATE1, inside `programOk`: no `gas()` anywhere in the program (the TOT.1 leaf's
+    projection; `GasCallOk` alone permits a call's own `gas()` argument).
   * `cdBound`, `transcriptMptr`, `vkPins`, `vkProgressPins`: the first two are conjuncts of
     `programOkB`; the pin bundles are NOT clauses - `constsCoherent` is, and `vkPins` /
     `vkProgressPins` / `transcriptMptr` are theorems of it (`GeneratorCertified.lean:458` proves the
@@ -3441,7 +3606,7 @@ theorem programOkB_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) : pro
 /-- The address-fit conjunct of the program clause (D-QVM1). -/
 theorem programFit_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
     programFits R.pv R.model :=
-  hR.program.2.2.2
+  hR.program.2.2.2.2
 
 /-- The interpreter's own window, at the model's quotient program. -/
 theorem quotientProgramFits_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
@@ -3495,7 +3660,7 @@ theorem negLagranges_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
     2 ≤ R.pv.numNegLagranges := negLagranges_of_programOk (programOkB_of_valid hR)
 
 theorem exitDiscipline_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
-    ExitDiscipline (R.prog 0 0) := hR.program.2.2.1
+    ExitDiscipline (R.prog 0 0) := hR.program.2.2.2.1
 
 theorem gasCallOk_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) : GasCallOk (R.prog 0 0) :=
   hR.program.2.1
