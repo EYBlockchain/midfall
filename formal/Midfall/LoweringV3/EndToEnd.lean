@@ -664,6 +664,72 @@ theorem decodeRust_slots_eq_logWidths (E : VerifierEnv p G₁ G₂ Gₜ) (F : Fe
   exact ⟨t, list_mapM_slot E t.log.toList ms hw hmap⟩
 
 
+/-- The exact width-sequence invariant the missing verifier proof needs. `ws` is
+    the list of widths appended by a transcript-monad program, in order. PROVED
+    closure lemmas for this predicate are the next mechanical layer; the bridge is
+    stated here as a named Prop so no round of work can hide it in prose. -/
+def PresWidthSeq {α : Type} (ws : List Nat) (m : TranscriptM α) : Prop :=
+  ∀ t t' a, m.run t = .ok (a, t') →
+    t'.log.toList.map (fun r => r.1) = t.log.toList.map (fun r => r.1) ++ ws
+
+/-- **THE EXACT BRIDGE STILL OPEN.** `Verifier.prepare`'s log widths must be the
+    render layout's slot list. This is `prepare_logSlots`; it is a Prop, not a
+    hypothesis of `ValidV3`, `EndToEndV3`, or the root. -/
+def PrepareLogSlots (R : Render p G₁ G₂ Gₜ) : Prop :=
+  ∀ (inst : Array (Fr p)) (π : Bytes)
+    (d : DualMSM (Fr p) G₁ G₂ Gₜ) (t : Transcript),
+    (prepare (Gₜ := Gₜ) R.E Features.solidity R.vk [[1]] [[inst.toList]]).run
+        (Transcript.initFromBytes π) = .ok (d, t) →
+      t.log.toList.map (fun r =>
+        if r.1 = g1CompressedWidth then WireSlot.g1 else WireSlot.fr) =
+        (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots
+
+/-- **THE KZG-PARTITION BRIDGE, NAMED.** The two independent ports of the
+    intermediate-set construction must have the same number of point sets. The
+    correspondence of the two query lists is the argument the separate lane owes;
+    this Prop is the exact count equality, with no weakening. -/
+def KzgPartitionBridge
+    (queriesV : Array (Midfall.Halo2.VerifierQuery (Fr p) G₁))
+    (queriesG : List Midfall.Generator.Query) : Prop :=
+  ∀ setsV setsG,
+    Midfall.Halo2.constructIntermediateSets (F := Fr p) (C := G₁)
+        (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queriesV = .ok setsV →
+    Midfall.Generator.constructIntermediateSetsImpl queriesG = .ok setsG →
+    setsV.2.size = setsG.pointSets.length
+
+/-- `PrepareLogSlots` gives `readScheduleAgrees_of_validV3`'s conclusion through
+    the proved `decodeRust`/log-width reduction. -/
+theorem readScheduleAgrees_of_prepareLogSlots (R : Render p G₁ G₂ Gₜ)
+    (h : PrepareLogSlots R) :
+    ∀ (inst : Array (Fr p)) (π : Bytes) (ms : List (Msg (Fr p) G₁)),
+      decodeRust (Gₜ := Gₜ) R.E Features.solidity R.vk inst π = some ms →
+        ms.map Msg.slot =
+          (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots := by
+  intro inst π ms hdec
+  obtain ⟨d, t, hrun, _hpos, hmap⟩ := decodeRust_some R.E Features.solidity R.vk inst π ms hdec
+  have hw : ∀ rec ∈ t.log.toList, rec.1 = 32 ∨ rec.1 = g1CompressedWidth := by
+    have hpres : PresWidths (prepare (Gₜ := Gₜ) R.E Features.solidity R.vk [[1]] [[inst.toList]]) :=
+      presWidths_prepare (p := p) R.E Features.solidity R.vk [[1]] [[inst.toList]]
+    exact hpres (Transcript.initFromBytes π) t d (Transcript.LogWidths.initFromBytes π) hrun
+  rw [list_mapM_slot R.E t.log.toList ms hw hmap]
+  exact h inst π d t hrun
+
+/-- **`end_to_end` CONDITIONAL ON THE ONE NAMED BRIDGE.** This is the full
+    `EndToEndV3` signature and conclusion; the only extra premise is
+    `PrepareLogSlots R`. -/
+theorem end_to_end_of_prepareLogSlots (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hR : ValidV3 R) (hEq : LoweringEquivalenceV3 R product)
+    (W : ExecEnv) (Lyt : EVM.Layout) (vkAddr : U256)
+    (hdep : DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLawsV3 R.E.g1)
+    (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hside : ∀ cd, calldataOfV3 R π inst = .ok cd →
+      SoundSide R keccak256 cd ∧ CompleteSide R keccak256 cd)
+    (h : PrepareLogSlots R) :
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
+  end_to_end_of_readSchedule R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
+    inst π hn hside (readScheduleAgrees_of_prepareLogSlots R h inst π)
+
 /-- **THE NAMED D1 BLOCKER.** `ValidV3` pins the plan to the generator
     (`generated`), and `SupportedV2.layout` pins only the MEMORY map. Neither pins
     the verifier's read order: `decodeRust` is a run of `Verifier.prepare`, while
@@ -707,6 +773,15 @@ def gap_readScheduleAgrees : String :=
 
 open Midfall.Tools.Done in
 #assert_axioms Midfall.LoweringV3.end_to_end_of_readSchedule
+  [propext, Classical.choice, Quot.sound, sorryAx] native []
+
+#check @readScheduleAgrees_of_prepareLogSlots
+#check @end_to_end_of_prepareLogSlots
+
+#cone_sorries Midfall.LoweringV3.end_to_end_of_prepareLogSlots
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV3.end_to_end_of_prepareLogSlots
   [propext, Classical.choice, Quot.sound, sorryAx] native []
 
 #cone_sorries Midfall.LoweringV3.end_to_end_forward_of_readSchedule
