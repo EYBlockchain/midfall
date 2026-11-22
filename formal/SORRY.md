@@ -75,8 +75,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Lowering.transcriptParser_spec | Midfall.Lowering.Partials | theorem | OPEN | - | `cd8f5ff36e0746fd` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.vkLoading_spec | Midfall.Lowering.Partials | theorem | OPEN | - | `c2f09d7df1c9e765` | P-SE: semantic equivalence obligations |
 | Midfall.LoweringV2.Blocks.FinalPairing.ec_pairing_contract | Midfall.LoweringV2.Blocks.FinalPairing | theorem | OPEN | - | `dd0af6f267ae0d8d` | V2 (PLAN-V2): FP.0 FinalPairing skeleton - P.1 algebra, T.4 staticcall, T.5 steps |
-| Midfall.LoweringV2.Blocks.FinalPairing.fp_pairing_algebra | Midfall.LoweringV2.Blocks.FinalPairing | theorem | OPEN | - | `ff71682088fb8833` | V2 (PLAN-V2): FP.0 FinalPairing skeleton - P.1 algebra, T.4 staticcall, T.5 steps |
-| Midfall.LoweringV2.Blocks.FinalPairing.fp_stmt_steps | Midfall.LoweringV2.Blocks.FinalPairing | theorem | OPEN | - | `3a5e133d052af026` | V2 (PLAN-V2): FP.0 FinalPairing skeleton - P.1 algebra, T.4 staticcall, T.5 steps |
 | Midfall.LoweringV2.Blocks.VkLoading.vk_poison_walk | Midfall.LoweringV2.Blocks.VkLoading | theorem | OPEN | - | `26e8c971c0e3695b` | V2 (PLAN-V2): S.4/S.9 vkLoading row - Q0.x/Q1.x cards, see docs/QUEUE.md |
 | Midfall.LoweringV2.Blocks.VkLoading.vk_progress | Midfall.LoweringV2.Blocks.VkLoading | theorem | OPEN | - | `27383cf076f32568` | V2 (PLAN-V2): S.4/S.9 vkLoading row - Q0.x/Q1.x cards, see docs/QUEUE.md |
 | Midfall.LoweringV2.Blocks.VkLoading.vk_sound_clean | Midfall.LoweringV2.Blocks.VkLoading | theorem | OPEN | - | `af938e7c295cf4c2` | V2 (PLAN-V2): S.4/S.9 vkLoading row - Q0.x/Q1.x cards, see docs/QUEUE.md |
