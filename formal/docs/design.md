@@ -2817,3 +2817,20 @@ the replacement (W13); the ROWFALSE refutations stay as the W12 falsifiers of th
 register; a row is not stated with a new hypothesis to avoid the edit. If a consumer cannot be
 retired without weakening the root, STOP and report the exact consumer instead of inventing a
 replacement.
+
+## D-GATE2 — **Approved: correct the T3.9.g `lag_agrees` exponent**
+
+> **Status: APPROVED.** Signed 2026-11-22 in the OpenCode session, after the A4 planning pass
+> proved the statement false as written. The question and answer: *"Correct the exponent
+> (Recommended)"*.
+
+**Decision.** `lag_agrees` (T3.9.g) is restated with
+`w0 = omegaInv ^ numNegLagranges`, matching `PayloadAgrees.omegaInvToL`
+(`LoweringV3/Statements.lean:671-675`), `Protocol.lean:675` and `Vk.lean:777-780`. `LagRel` is
+unchanged; the rest of the conclusion is already consistent at the corrected exponent. This is a
+row-level statement repair, not a frozen edit. The A4 worker proves the corrected form and reports;
+the two lag rows may then use it.
+
+**Consequence.** The old off-by-one form is not registered and is not cited; no hypothesis is added
+to any row, bundle or the root. The A4/A5 order inversion (A5 `batch_invert_summary` is a
+prerequisite of the lag range row) is recorded in STATUS and is an internal queue reorder.
