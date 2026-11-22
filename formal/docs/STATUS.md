@@ -227,3 +227,10 @@ the `lowering_correct` cone. No row, bundle, `ValidV3` or root hypothesis was ad
 - **D-GATE5/6/7 are statement repairs**, all signed: no row, bundle, `ValidV3` or root hypothesis was
   added. The closure manifest will be regenerated once after the three repairs merge; until then the
   only valid global gate is `verify.sh --quick` (KAT replay deferred).
+
+## 9. Calldata ownership
+
+The calldata codec component (`calldata_roundtrip`, `calldata_canonical`,
+`repack_spec_of_decodeRust`) remains with the port-audit lane, after its D-GATE6/7/F4–F7 fixes.
+`calldata_roundtrip`/`calldata_canonical` are independent encode/decode proofs; `repack_spec_of_decodeRust`
+depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be claimed as a shortcut.
