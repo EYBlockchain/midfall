@@ -77,7 +77,35 @@ conjunct; the headline signature is unchanged.
   the long Step-induction pair.
 - **A8** QVM row - blocked on the two statement changes above, not on the fit.
 
-## 4. Waiting on human
+## 4. Waiting on human (exact asks)
+
+1. **PG-VKHEADER — blocks `vk_blockProgS`, then A3 and A4+.** `PayloadAgrees` pins the payload
+   WORD `constants.getD i`; the S3–S8 VK-header checks read the copied MEMORY word
+   `mload(vkMptr + 32*i)` for `i ∈ {1,2,7,8,9,10}`, which equals the pinned word only if
+   `11 ≤ R.pv.vk.constants.length` (and the copy window is 32*i+32 ≤ vk.len). With seven
+   constants `vk.len = 224`, so the copy ends before slot 7 and a StageInv.start state with a
+   nonzero slot-7 word is admissible. The worker proved the boundary lemmas and left the exact
+   goal state in `VkClean.lean`/`Rows.lean`; the minimal repair is a frozen `PayloadAgrees`
+   conjunct `11 ≤ vk.constants.length` (or the byte-window equation). No hypothesis was added.
+2. **`gasFree_of_valid` — blocks TOT.1.** `GasCallOk` is strictly weaker than `GasFree`; the
+   flags exclude the three renderers that print `gas()`, but no program clause says the AST is
+   gas-free. Choose (a) a frozen `programOk` conjunct `gasFree : GasFree (R.prog 0 0)` (a
+   `decide`-per-render check), or (b) an emitter structural library (one induction per emitter).
+3. **`snapshotOf_prepareMsgs` — blocks 1 ROOT row of both roots.** Accept the D6 KAT/replay gate as
+   the evidence and retire the row, or port `prepare`'s schedule onto the phase records.
+4. **DG.3 pinned zone** — the card's 972 declarations is stale; the current five-root closure is
+   4823 declarations / 526 external leaves / digest `5d8c45843135d536`. Sign the zone before it
+   joins `Frozen.sha256`.
+5. **DG.7 CI** — needs the human's permission to push/delete a throwaway branch on `origin`; the
+   local negative control (`gate_negctl.py`) is not wired into `checks.sh`.
+6. **B5/OBJ.11** — needs cargo and authorization to re-export the tracked `.sol` fixtures; OBJ.10/
+   OBJ.12/T3.3 are still absent.
+7. **C1/WID.3/WID.4** — `cargo` is not on PATH and `zk_stdlib/examples/assets/midnight-srs-2p19`
+   / `-2p20` are absent; the exporter is shared with B5/OBJ.11.
+8. **QVM/D-QVM2** — the agent has executed the retirement and stated `QInterpRefinesSegment`; the
+   proof is the remaining lane, not a human item unless the fold output predicate needs a ruling.
+
+## 4a. Original waiting list
 
 1. **D-QVM2 contains one unsatisfiable clause.** It asks the replacement to state the fold arms
    against the reference evalQuotientIdentity value, but the reference REFUSES all five stream
