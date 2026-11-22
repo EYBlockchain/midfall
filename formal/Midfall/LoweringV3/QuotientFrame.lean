@@ -2227,4 +2227,173 @@ theorem qArmValueAll_mulConstU8 {c : ExternalCalls} {g : ExternalGas}
 #print axioms Midfall.LoweringV3.QuotientFrame.qArmValue_neg
 #print axioms Midfall.LoweringV3.QuotientFrame.wAddmod_eq_qvmFrNeg
 
+
+/-! ### L. THE REFERENCE TIES (RTIE): the emitted arm's word IS the reference step's value
+
+**THE GAP, IN ONE SENTENCE.** 'armcount.py' prints 'reference-tied 23', and that number is a NAME
+INTERSECTION: an arm having both a 'qArmValueAll_X' triple and a named 'qStepValue_X' does not make
+any theorem equate the two. QFIX ('QuotientLoopCompose.lean' section 8) landed the first real linkage
+('qfix_reference_pushConst' - the reference's own value for ONE arm) and LOOPPRE did not extend it, so
+before this section the number of arms with a PROVED emitted-to-reference equation was **one**. This
+section lands the ties for the six register-only arms - NEG, ADD, MUL, POW5, ADD_CONST_U8,
+MUL_CONST_U8 - and the RTIE section of 'QuotientArms' lands the non-limb memory-reading arms. Each tie
+is ONE equation: the left side is the reference step function 'evalQuotientIdentityStep' applied to the
+arm's opcode and operand bytes; the right side is the same step record with **the arm's own word** in
+the slot the reference pushes.
+
+**WHAT 'THE ARM'S WORD' MEANS, PRECISELY, AND WHY IT IS NOT 'rfl' BY CONSTRUCTION.** For each arm the
+word is the expression the 'Step' derivation 'qArmRun_X' leaves in 'q_top' - 'wAddmod 0 (wSubFr x)' for
+NEG, 'wAddmod y x' for ADD, 'wMulmod x (wMulmod (wMulmod x x) (wMulmod x x))' for POW5, and so on. That
+is the EVM-operator form the emitted block ACTUALLY computes, not the 'BitVec.ofNat 256 (qvmFrAdd ...)'
+form the 'StmtsContractAll' post of 'qArmValueAll_X' has already rewritten it to. Stating the tie
+against the 'qArmValueAll_X' form would be 'rfl' by construction and would prove nothing; stated against
+the 'qArmRun_X' form it is the arithmetic content QLOOP named, discharged by the bridges QVAL and QARMS
+landed ('wAddmod_eq_qvmFrNeg', 'wAddmod_eq_qvmFrAdd', 'wMulmod_eq_qvmFrMul', 'wMulmod_eq_qvmFrPow5').
+NOTE 1 of section I said to try 'rfl' once and then go to the arithmetic lemma; every tie here needed
+the lemma, and none of them is a bare 'rfl' at the word level.
+
+**THE READER EQUATIONS ARE HYPOTHESES, AND THAT IS THE HONEST SHAPE.** Two arms here read a
+constant-table entry. The reference reads it as 'constAt consts b₀ 0 = .ok v'; the emitted arm reads it
+as 'loadWord st.memory (cb + (b₀ <<< 5)).toNat = v'. The tie is stated with the REFERENCE-side equation
+as a hypothesis, because the bridge between the 'consts' list and the machine's const-table memory is
+'AgreesConsts' - a contract predicate this file does not own. A tie that silently identified the two
+reads would claim more than the tree supports.
+
+NO HYPOTHESIS WAS ADDED TO A ROW, to 'ValidV3', to a bundle or to the root (RULES); no statement names
+a fixture (D-P71); there is no 'native_decide' and no sorry in this section. -/
+
+/-- **THE CANONICALITY BRIDGE THE TIES RUN ON.** A field element is below 'qvmFrModulus', which is below
+    '2 ^ 256' ('qvmFrModulus_lt256'), so storing one in a 256-bit word and reading it back as a natural
+    is the identity. This is the fact that lets a tie be stated as 'the word's .toNat' instead of as a
+    congruence about 'BitVec.ofNat'. -/
+theorem rtie_fr_lt256 (n : Nat) (hn : n < qvmFrModulus) : n < 2 ^ 256 :=
+  Nat.lt_of_lt_of_le hn (Nat.le_of_lt qvmFrModulus_lt256)
+
+/-- The round trip 'field element -> word -> natural' is the identity. -/
+theorem rtie_ofNat_toNat (n : Nat) (hn : n < qvmFrModulus) :
+    (BitVec.ofNat 256 n).toNat = n := by
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (rtie_fr_lt256 n hn)]
+
+/-- The three field operations land below the modulus, so the bridge above applies to all of them.
+    ('qvmFrAdd_lt' / 'qvmFrMul_lt' exist in 'Midfall/Lowering/QvmFold.lean', which this file cannot
+    reach - 'QvmFold' imports 'Qvm', not the other way round - so they are reproved here, in one line
+    each, rather than by widening an import.) -/
+theorem rtie_qvmFrAdd_lt (a b : QVMFr) : qvmFrAdd a b < qvmFrModulus := by
+  unfold qvmFrAdd
+  exact Nat.mod_lt _ (by decide : 0 < qvmFrModulus)
+
+theorem rtie_qvmFrMul_lt (a b : QVMFr) : qvmFrMul a b < qvmFrModulus := by
+  unfold qvmFrMul
+  exact Nat.mod_lt _ (by decide : 0 < qvmFrModulus)
+
+theorem rtie_qvmFrNeg_lt (a : QVMFr) : qvmFrNeg a < qvmFrModulus := by
+  unfold qvmFrNeg
+  exact Nat.mod_lt _ (by decide : 0 < qvmFrModulus)
+
+/-- **TIE 1 - NEG.** The reference step at 'qOpNeg' pushes the field negation of its operand; the
+    emitted arm's word is 'wAddmod 0 (wSubFr x)' ('qArmRun_neg', QuotientFrame.lean:886). The two are
+    equal for a canonical 'x' - the canonicity is NEG's own, 'subFr_needsCanonicity' (WpX) says it cannot
+    be dropped, and section I note 2 records that it is NOT needed for the 'addmod'/'mulmod' arms below. -/
+theorem rtie_neg (rest : List Nat) (consts : List Word256) (stack : List QVMFr)
+    (x : U256) (hx : x.toNat < qvmFrModulus) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep (qOpNeg :: rest) consts 0 qOpNeg (x.toNat :: stack) mem
+      = .ok { stack := (wAddmod 0 (wSubFr x)).toNat :: stack, consumed := 1,
+              hConsumed := by omega, mem := mem } := by
+  have h : (wAddmod 0 (wSubFr x)).toNat = qvmFrNeg x.toNat := by
+    rw [wAddmod_eq_qvmFrNeg x hx, rtie_ofNat_toNat _ (rtie_qvmFrNeg_lt _)]
+  rw [qStepValue_neg, ← h]
+
+/-- **TIE 2 - ADD.** The reference pops 'top' then 'next' and pushes 'qvmFrAdd next top' - the order the
+    reference's own head is the RIGHT operand ('qStepValue_add', section B). The emitted arm's word is
+    'wAddmod y x' for 'y' the word at the popped slot ('qArmRun_add'). No canonicity hypothesis: 'wAddmod'
+    reduces by 'qvmFrModulus' before the wrap. -/
+theorem rtie_add (rest : List Nat) (consts : List Word256) (stack : List QVMFr)
+    (x y : U256) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep (qOpAdd :: rest) consts 0 qOpAdd
+        (x.toNat :: y.toNat :: stack) mem
+      = .ok { stack := (wAddmod y x).toNat :: stack, consumed := 1, hConsumed := by omega,
+              mem := mem } := by
+  have h : (wAddmod y x).toNat = qvmFrAdd y.toNat x.toNat := by
+    rw [wAddmod_eq_qvmFrAdd, rtie_ofNat_toNat _ (rtie_qvmFrAdd_lt _ _)]
+  rw [qStepValue_add, ← h]
+
+/-- **TIE 3 - MUL.** The 'mulmod' twin of 'rtie_add'. -/
+theorem rtie_mul (rest : List Nat) (consts : List Word256) (stack : List QVMFr)
+    (x y : U256) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep (qOpMul :: rest) consts 0 qOpMul
+        (x.toNat :: y.toNat :: stack) mem
+      = .ok { stack := (wMulmod y x).toNat :: stack, consumed := 1, hConsumed := by omega,
+              mem := mem } := by
+  have h : (wMulmod y x).toNat = qvmFrMul y.toNat x.toNat := by
+    rw [wMulmod_eq_qvmFrMul, rtie_ofNat_toNat _ (rtie_qvmFrMul_lt _ _)]
+  rw [qStepValue_mul, ← h]
+
+/-- **TIE 4 - POW5, THE ONE THAT IS NOT 'rfl'.** The emitted arm computes 'v * (v^2)^2 mod r' as three
+    nested 'mulmod's ('qArmRun_pow5'); the reference pushes '((v * v^2) mod r * v^2) mod r'
+    ('qStepValue_pow5', preserving the Rust's bracketing at VmReference.lean:790). Those agree only
+    through 'qvmFrMul_pow5_nest', which is why section I note 1 says never to attempt a definitional tie
+    on this arm. The tie below is the first time the two BRACKETINGS are exhibited as one equation
+    between the reference step and the arm's word. -/
+theorem rtie_pow5 (rest : List Nat) (consts : List Word256) (stack : List QVMFr)
+    (x : U256) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep (qOpPow5 :: rest) consts 0 qOpPow5
+        (x.toNat :: stack) mem
+      = .ok { stack := (wMulmod x (wMulmod (wMulmod x x) (wMulmod x x))).toNat :: stack,
+              consumed := 1, hConsumed := by omega, mem := mem } := by
+  have h : (wMulmod x (wMulmod (wMulmod x x) (wMulmod x x))).toNat
+      = qvmFrMul (qvmFrMul x.toNat (qvmFrMul x.toNat x.toNat)) (qvmFrMul x.toNat x.toNat) := by
+    rw [wMulmod_eq_qvmFrPow5, rtie_ofNat_toNat _ (rtie_qvmFrMul_lt _ _)]
+  rw [qStepValue_pow5, ← h]
+
+/-- **TIE 5 - ADD_CONST_U8.** The arm's word is 'wAddmod x v' for 'v' the const-table word it read
+    ('qArmRun_addConstU8'); the reference pushes 'qvmFrAdd acc v' for 'v' the entry at
+    'constAt consts b₀ 0'. The tie carries the REFERENCE-side reader equation, named at the arm's word:
+    'constAt consts b₀ 0 = .ok v.toNat'. What it does NOT assume is that the two reads are the same read -
+    that is 'AgreesConsts', and it is the composition's job, not this theorem's. -/
+theorem rtie_addConstU8 (b₀ : Nat) (rest : List Nat) (consts : List Word256)
+    (x v : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hv : Midfall.Generator.constAt consts b₀ 0 = .ok v.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpAddConstU8, b₀] ++ rest) consts 0
+        qOpAddConstU8 (x.toNat :: stack) mem
+      = .ok { stack := (wAddmod x v).toNat :: stack, consumed := 2, hConsumed := by omega,
+              mem := mem } := by
+  have h : (wAddmod x v).toNat = qvmFrAdd x.toNat v.toNat := by
+    rw [wAddmod_eq_qvmFrAdd, rtie_ofNat_toNat _ (rtie_qvmFrAdd_lt _ _)]
+  rw [qStepValue_addConstU8 b₀ rest consts v.toNat x.toNat stack mem hv, ← h]
+
+/-- **TIE 6 - MUL_CONST_U8.** The 'mulmod' twin of 'rtie_addConstU8'. -/
+theorem rtie_mulConstU8 (b₀ : Nat) (rest : List Nat) (consts : List Word256)
+    (x v : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hv : Midfall.Generator.constAt consts b₀ 0 = .ok v.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpMulConstU8, b₀] ++ rest) consts 0
+        qOpMulConstU8 (x.toNat :: stack) mem
+      = .ok { stack := (wMulmod x v).toNat :: stack, consumed := 2, hConsumed := by omega,
+              mem := mem } := by
+  have h : (wMulmod x v).toNat = qvmFrMul x.toNat v.toNat := by
+    rw [wMulmod_eq_qvmFrMul, rtie_ofNat_toNat _ (rtie_qvmFrMul_lt _ _)]
+  rw [qStepValue_mulConstU8 b₀ rest consts v.toNat x.toNat stack mem hv, ← h]
+
+-- RTIE acceptance prints: every tie is a proved equation with no axioms beyond the standard three and
+-- an empty sorry cone.
+#print axioms Midfall.LoweringV3.QuotientFrame.rtie_neg
+#print axioms Midfall.LoweringV3.QuotientFrame.rtie_add
+#print axioms Midfall.LoweringV3.QuotientFrame.rtie_mul
+#print axioms Midfall.LoweringV3.QuotientFrame.rtie_pow5
+#print axioms Midfall.LoweringV3.QuotientFrame.rtie_addConstU8
+#print axioms Midfall.LoweringV3.QuotientFrame.rtie_mulConstU8
+#cone_sorries Midfall.LoweringV3.QuotientFrame.rtie_neg
+#cone_sorries Midfall.LoweringV3.QuotientFrame.rtie_add
+#cone_sorries Midfall.LoweringV3.QuotientFrame.rtie_mul
+#cone_sorries Midfall.LoweringV3.QuotientFrame.rtie_pow5
+#cone_sorries Midfall.LoweringV3.QuotientFrame.rtie_addConstU8
+#cone_sorries Midfall.LoweringV3.QuotientFrame.rtie_mulConstU8
+#print axioms Midfall.LoweringV3.QuotientFrame.rtie_ofNat_toNat
+#check @Midfall.LoweringV3.QuotientFrame.rtie_neg
+#check @Midfall.LoweringV3.QuotientFrame.rtie_add
+#check @Midfall.LoweringV3.QuotientFrame.rtie_mul
+#check @Midfall.LoweringV3.QuotientFrame.rtie_pow5
+#check @Midfall.LoweringV3.QuotientFrame.rtie_addConstU8
+#check @Midfall.LoweringV3.QuotientFrame.rtie_mulConstU8
+
+
 end Midfall.LoweringV3.QuotientFrame

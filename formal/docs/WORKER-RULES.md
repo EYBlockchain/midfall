@@ -30,7 +30,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
 - Never hand-edit SORRY.md.
 - Baseline: register 85 data rows / 18 ROOT (a main-tree reading of 86 is stale oleans, not a
   contradiction); cones lowering_correct 15, lowering_sound 7 (measured at 558cf5b - the 18/8 figure was stale); fingerprint 14,109 tokens /
-  0x3149ae4f...bef176; KAT 1640/118 (pin moved 1633->1640 by QSTREAM's 7 new gates).
+  0x3149ae4f...bef176; KAT 1648/119 (pin moved 1633->1640 by QSTREAM's 7 new gates).
 
 ## Hard bounds
 - D-P71: theorems are generic in the render, program, context and template table. No fixture in a
@@ -120,7 +120,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
   fuel-indexed match stays stuck even with unary fuel and a literal list. The VM and `native_decide` both
   compute it, and `native_decide` is banned outside `Midfall/Instances`. **Use a hand-measured Bool or a
   proved structural lemma instead.** (VALP2, measured.)
-- **`kat_gate.py` asserts an EXACT pin (currently 1640/118).** Adding an `#eval -- expect` gate without
+- **`kat_gate.py` asserts an EXACT pin (currently 1648/119).** Adding an `#eval -- expect` gate without
   moving the pin reddens the gate; moving the pin is an ownership breach unless disclosed and reconciled
   by the orchestrator. **If the KAT will not fit your budget, hand-measure as a Bool and claim neither way
   for KAT itself** - that is what VALP2 did and it is the standard.

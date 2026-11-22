@@ -12149,4 +12149,338 @@ theorem qArmValueAll_modarith7 {c : ExternalCalls} {g : ExternalGas}
 #print axioms Midfall.LoweringV3.QuotientArms.qArmValueAll_modarith7
 #cone_sorries Midfall.LoweringV3.QuotientArms.qArmValueAll_modarith7
 
+
+/-! ## RTIE - THE REFERENCE TIES FOR THE MEMORY-READING NON-LIMB ARMS
+
+**WHAT THIS SECTION LANDS.** The RTIE section of 'QuotientFrame' states the gap and the tie form: ONE
+equation whose left side is the reference step function 'evalQuotientIdentityStep' applied to the arm's
+opcode and operand bytes, and whose right side is the same step record with the ARM'S OWN WORD in the
+pushed slot. This section lands that form for the THIRTEEN non-limb arms whose triples live here: the six PUSH
+arms, the four single-read fused arms, ADD_MUL_MEM_MEM, and the two helper-stated fused arms
+ADD_MUL_CONST_U8_MEM_U16 and ADD_MUL_MEM_MEM_CONST_U8 (whose reference side needed the
+'rtie_affineLinearTerm' / 'rtie_affineProductTerm' expansions below - section B stopped at the helper).
+Read together the two sections take the number of arms with a PROVED emitted-to-reference equation from
+ONE ('qfix_reference_pushConst') to NINETeen.
+
+**THE PUSH ARMS' TIE IS A NAMING STEP, NOT AN ARITHMETIC ONE, AND IT IS LABELLED THAT WAY.** For
+PUSH_CONST the arm's post word is 'BitVec.ofNat 256 v' for the 'v' its own read equation names, and the
+reference's pushed value is the 'constAt' / 'literal' / 'token' reader. There is no arithmetic to do:
+the content of the tie is that the reference step's output is written as the ARM's word, and the price
+is one reader hypothesis naming that word. The six push ties below therefore carry a reader equation
+('constAt consts slot 0 = .ok w.toNat', or '(mem.literal p).1 = w.toNat', or '(mem.token t o).1 =
+w.toNat') and are otherwise 'rfl' after citing section B. That is the honest shape: the bridge from the
+machine's memory to the reference's 'consts' / 'QuotientRefMemory' is 'AgreesConsts' / 'AgreesFrame',
+which is a contract predicate and not a theorem of this file (RULES: name the missing fact, do not
+invent a hypothesis for a row).
+
+**THE SEVEN ARITHMETIC TIES HERE ARE REAL ONES.** ADD_MEM_U16, MUL_MEM_U16, ADD_CONST, MUL_CONST,
+ADD_MUL_MEM_MEM, ADD_MUL_CONST_U8_MEM_U16 and ADD_MUL_MEM_MEM_CONST_U8 leave 'BitVec.ofNat 256 (qvmFrAdd ...)'/'... qvmFrMul ...' in 'q_top' - the reference's
+OWN field functions, applied to the words the arm read. The tie says the reference step pushes exactly
+that word's natural, which needs the canonicality bridge 'rtie_ofNat_toNat' (a field element is below
+'qvmFrModulus < 2 ^ 256', so the 256-bit wrap loses nothing) and nothing else. No canonicity hypothesis
+on the operands, for the reason the file header records: 'wAddmod'/'wMulmod' reduce by 'qvmFrModulus'
+before the wrap.
+
+**THE FOUR LIMB ARMS AND THE TWO FOLD ARMS ARE NOT TIED HERE, AND WHY.** LIN7, BILIN7_ROW,
+BILIN7_PAIRWISE and MODARITH7 are proved only under 'PG_limbCountAgrees' ('hlimbs' / 'hfit' - an open
+human decision), and their reference values are the 'limbLinearForm' / 'limbRowForm' /
+'limbPairwiseForm' / 'modarith7Form' helpers, whose value against the emitted limb walk is exactly what
+that decision gates; a tie here would assume what the decision is about. FOLD_MAIN and FOLD_SELECTOR
+have no 'qStepValue' at all - the reference REFUSES fold inside an identity program - and their ties are
+the stream-port ones in 'QuotientFoldTie.lean', which are against a different reference object and are
+not counted here.
+
+NO HYPOTHESIS WAS ADDED TO A ROW, to 'ValidV3', to a bundle or to the root (RULES); no statement names a
+fixture (D-P71); there is no 'native_decide' and no sorry in this section. -/
+
+/-- **TIE - PUSH_CONST.** The arm leaves the const-table word 'w' it read at 'q_const_mptr + 32 * slot'
+    ('qArmValueAll_pushConst', QuotientArms.lean:3072); the reference step at 'qOpPushConst' pushes the
+    'constAt' entry at the same slot. Given the reader equation naming the arm's word, the two are one
+    equation. Consumed 3, matching the reference's 'consumed' and the arm's 'q_pc + 2' from the segment
+    start (the dispatch already consumed the opcode byte). -/
+theorem rtie_pushConst (b₀ b₁ : Nat) (rest : List Nat) (consts : List Word256) (w : U256)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hv : Midfall.Generator.constAt consts (b₀ * 256 + b₁) 0 = .ok w.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpPushConst, b₀, b₁] ++ rest) consts 0
+        qOpPushConst stack mem
+      = .ok { stack := w.toNat :: stack, consumed := 3, hConsumed := by omega, mem := mem } := by
+  rw [qStepValue_pushConst b₀ b₁ rest consts w.toNat stack mem hv]
+
+/-- **TIE - PUSH_CONST_U8.** The one-byte-slot twin. -/
+theorem rtie_pushConstU8 (b₀ : Nat) (rest : List Nat) (consts : List Word256) (w : U256)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hv : Midfall.Generator.constAt consts b₀ 0 = .ok w.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpPushConstU8, b₀] ++ rest) consts 0
+        qOpPushConstU8 stack mem
+      = .ok { stack := w.toNat :: stack, consumed := 2, hConsumed := by omega, mem := mem } := by
+  rw [qStepValue_pushConstU8 b₀ rest consts w.toNat stack mem hv]
+
+/-- **TIE - PUSH_MEM_U16.** The reference's literal read is the hypothesis; the arm's word is 'w'. -/
+theorem rtie_pushMemU16 (b₀ b₁ : Nat) (rest : List Nat) (consts : List Word256) (w : U256)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hlit : (mem.literal (b₀ * 256 + b₁)).1 = w.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpPushMemU16, b₀, b₁] ++ rest) consts 0
+        qOpPushMemU16 stack mem
+      = .ok { stack := w.toNat :: stack, consumed := 3, hConsumed := by omega,
+              mem := (mem.literal (b₀ * 256 + b₁)).2 } := by
+  rw [qStepValue_pushMemU16 b₀ b₁ rest consts stack mem, hlit]
+
+/-- **TIE - PUSH_MEM_LITERAL.** The u32-pointer twin. -/
+theorem rtie_pushMemLiteral (b₀ b₁ b₂ b₃ : Nat) (rest : List Nat) (consts : List Word256)
+    (w : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hlit : (mem.literal (((b₀ * 256 + b₁) * 256 + b₂) * 256 + b₃)).1 = w.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep
+        ([qOpPushMemLiteral, b₀, b₁, b₂, b₃] ++ rest) consts 0 qOpPushMemLiteral stack mem
+      = .ok { stack := w.toNat :: stack, consumed := 5, hConsumed := by omega,
+              mem := (mem.literal (((b₀ * 256 + b₁) * 256 + b₂) * 256 + b₃)).2 } := by
+  rw [qStepValue_pushMemLiteral b₀ b₁ b₂ b₃ rest consts stack mem, hlit]
+
+/-- **TIE - PUSH_MEM_TOKEN.** The token-domain read; the arm's token byte is 'tcq.mem.l0' decoded from
+    the program word, and the reference's is the 'byteAt' operand - the tie is stated at the
+    reference's 't' with the reader equation naming the arm's word, exactly as the four above. -/
+theorem rtie_pushMemToken (t : Nat) (rest : List Nat) (consts : List Word256) (w : U256)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hlit : (mem.token t 0).1 = w.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpPushMemToken, t] ++ rest) consts 0
+        qOpPushMemToken stack mem
+      = .ok { stack := w.toNat :: stack, consumed := 2, hConsumed := by omega,
+              mem := (mem.token t 0).2 } := by
+  rw [qStepValue_pushMemToken t rest consts stack mem, hlit]
+
+/-- **TIE - PUSH_MEM_TOKEN_OFFSET.** The token read at a u32 offset. -/
+theorem rtie_pushMemTokenOffset (t o₀ o₁ o₂ o₃ : Nat) (rest : List Nat) (consts : List Word256)
+    (w : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hlit : (mem.token t (((o₀ * 256 + o₁) * 256 + o₂) * 256 + o₃)).1 = w.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep
+        ([qOpPushMemTokenOffset, t, o₀, o₁, o₂, o₃] ++ rest) consts 0 qOpPushMemTokenOffset
+        stack mem
+      = .ok { stack := w.toNat :: stack, consumed := 6, hConsumed := by omega,
+              mem := (mem.token t (((o₀ * 256 + o₁) * 256 + o₂) * 256 + o₃)).2 } := by
+  rw [qStepValue_pushMemTokenOffset t o₀ o₁ o₂ o₃ rest consts stack mem, hlit]
+
+/-- **TIE - ADD_MEM_U16.** The arm's post word is 'BitVec.ofNat 256 (qvmFrAdd x.toNat v.toNat)'
+    ('qArmValueAll_addMemU16', QuotientArms.lean:288) for 'x' the accumulator register and 'v' the word
+    it loaded at the decoded pointer; the reference pushes 'qvmFrAdd acc (mem.literal p).1'. Under the
+    reader equation '(mem.literal p).1 = v.toNat' the two are the same natural, and the only step beyond
+    'rfl' is the canonicality bridge. -/
+theorem rtie_addMemU16 (b₀ b₁ : Nat) (rest : List Nat) (consts : List Word256)
+    (x v : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hlit : (mem.literal (b₀ * 256 + b₁)).1 = v.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpAddMemU16, b₀, b₁] ++ rest) consts 0
+        qOpAddMemU16 (x.toNat :: stack) mem
+      = .ok { stack := (BitVec.ofNat 256 (qvmFrAdd x.toNat v.toNat)).toNat :: stack,
+              consumed := 3, hConsumed := by omega, mem := (mem.literal (b₀ * 256 + b₁)).2 } := by
+  rw [qStepValue_addMemU16 b₀ b₁ rest consts x.toNat stack mem, hlit,
+    rtie_ofNat_toNat _ (rtie_qvmFrAdd_lt _ _)]
+
+/-- **TIE - MUL_MEM_U16.** The 'mulmod' twin. -/
+theorem rtie_mulMemU16 (b₀ b₁ : Nat) (rest : List Nat) (consts : List Word256)
+    (x v : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hlit : (mem.literal (b₀ * 256 + b₁)).1 = v.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpMulMemU16, b₀, b₁] ++ rest) consts 0
+        qOpMulMemU16 (x.toNat :: stack) mem
+      = .ok { stack := (BitVec.ofNat 256 (qvmFrMul x.toNat v.toNat)).toNat :: stack,
+              consumed := 3, hConsumed := by omega, mem := (mem.literal (b₀ * 256 + b₁)).2 } := by
+  rw [qStepValue_mulMemU16 b₀ b₁ rest consts x.toNat stack mem, hlit,
+    rtie_ofNat_toNat _ (rtie_qvmFrMul_lt _ _)]
+
+/-- **TIE - ADD_CONST.** The u16 const-table twin of 'rtie_addConstU8' at the arm level: the arm's word
+    is 'BitVec.ofNat 256 (qvmFrAdd x.toNat v.toNat)' ('qArmValueAll_addConst', QuotientArms.lean:728)
+    and the reference pushes 'qvmFrAdd acc v' for 'v' the 'constAt' entry. -/
+theorem rtie_addConst (b₀ b₁ : Nat) (rest : List Nat) (consts : List Word256)
+    (x v : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hv : Midfall.Generator.constAt consts (b₀ * 256 + b₁) 0 = .ok v.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpAddConst, b₀, b₁] ++ rest) consts 0
+        qOpAddConst (x.toNat :: stack) mem
+      = .ok { stack := (BitVec.ofNat 256 (qvmFrAdd x.toNat v.toNat)).toNat :: stack,
+              consumed := 3, hConsumed := by omega, mem := mem } := by
+  rw [qStepValue_addConst b₀ b₁ rest consts v.toNat x.toNat stack mem hv,
+    rtie_ofNat_toNat _ (rtie_qvmFrAdd_lt _ _)]
+
+/-- **TIE - MUL_CONST.** The 'mulmod' twin. -/
+theorem rtie_mulConst (b₀ b₁ : Nat) (rest : List Nat) (consts : List Word256)
+    (x v : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hv : Midfall.Generator.constAt consts (b₀ * 256 + b₁) 0 = .ok v.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep ([qOpMulConst, b₀, b₁] ++ rest) consts 0
+        qOpMulConst (x.toNat :: stack) mem
+      = .ok { stack := (BitVec.ofNat 256 (qvmFrMul x.toNat v.toNat)).toNat :: stack,
+              consumed := 3, hConsumed := by omega, mem := mem } := by
+  rw [qStepValue_mulConst b₀ b₁ rest consts v.toNat x.toNat stack mem hv,
+    rtie_ofNat_toNat _ (rtie_qvmFrMul_lt _ _)]
+
+/-- **TIE - ADD_MUL_MEM_MEM.** Two literal reads, chained: the reference reads the rhs on the memory the
+    lhs read produced ('qStepValue_addMulMemMem', section B - the arm's own memory image is the
+    composition too, per the file header's state table), so the tie carries TWO reader equations, one
+    per read, and the second is stated at the chained memory. The arm's word is
+    'BitVec.ofNat 256 (qvmFrAdd x.toNat (qvmFrMul lv.toNat rv.toNat))'
+    ('qArmValueAll_addMulMemMem', QuotientArms.lean:1307). -/
+theorem rtie_addMulMemMem (l₀ l₁ r₀ r₁ : Nat) (rest : List Nat) (consts : List Word256)
+    (x lv rv : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hlit : (mem.literal (l₀ * 256 + l₁)).1 = lv.toNat)
+    (hrit : ((mem.literal (l₀ * 256 + l₁)).2.literal (r₀ * 256 + r₁)).1 = rv.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep
+        ([qOpAddMulMemMem, l₀, l₁, r₀, r₁] ++ rest) consts 0 qOpAddMulMemMem (x.toNat :: stack) mem
+      = .ok { stack :=
+                (BitVec.ofNat 256 (qvmFrAdd x.toNat (qvmFrMul lv.toNat rv.toNat))).toNat :: stack,
+              consumed := 5, hConsumed := by omega,
+              mem := ((mem.literal (l₀ * 256 + l₁)).2.literal (r₀ * 256 + r₁)).2 } := by
+  rw [qStepValue_addMulMemMem l₀ l₁ r₀ r₁ rest consts x.toNat stack mem, hlit, hrit,
+    rtie_ofNat_toNat _ (rtie_qvmFrAdd_lt _ _)]
+
+-- RTIE acceptance prints for this section.
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_pushConst
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_pushConstU8
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_pushMemU16
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_pushMemLiteral
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_pushMemToken
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_pushMemTokenOffset
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_addMemU16
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_mulMemU16
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_addConst
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_mulConst
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_addMulMemMem
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_pushConst
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_pushConstU8
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_pushMemU16
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_pushMemLiteral
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_pushMemToken
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_pushMemTokenOffset
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_addMemU16
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_mulMemU16
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_addConst
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_mulConst
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_addMulMemMem
+#check @Midfall.LoweringV3.QuotientArms.rtie_pushConst
+#check @Midfall.LoweringV3.QuotientArms.rtie_addMulMemMem
+
+/-- The two fused arms below need field-product commutativity: the reference's 'affineLinearTerm'
+    returns 'qvmFrMul c v' (coefficient first) while the emitted arm's word is
+    'qvmFrMul pv cv' (literal first). One line, and it is the only place the order differs. -/
+theorem rtie_qvmFrMul_comm (a b : QVMFr) : qvmFrMul a b = qvmFrMul b a := by
+  unfold qvmFrMul
+  rw [Nat.mul_comm]
+
+/-- **THE REFERENCE-SIDE HELPER EXPANSION THE TWO FUSED ARMS NEED.** Section B stated
+    'qStepValue_addMulConstU8MemU16' against the reference's own 'affineLinearTerm' helper and did not
+    unfold it, so the emitted arm's word could not be compared with the helper's value. Here is that
+    expansion: the decoded u16 pointer, the decoded slot byte, the const read at index 1 (the cursor -
+    'constAt' uses the third argument only for the fault message), and the literal read, spelled out.
+    The recipe is section B's: unfold, decide the dispatch, then rewrite the readers by 'rfl' equations -
+    never one big 'simp (config := {decide := true})', which is what timed the kernel out at 48 s on the
+    two double-read arms. -/
+theorem rtie_affineLinearTerm (p₀ p₁ c₀ : Nat) (rest : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (cv : QVMFr)
+    (hv : Midfall.Generator.constAt consts c₀ 1 = .ok cv) :
+    Midfall.Generator.affineLinearTerm ([qOpAddMulConstU8MemU16, p₀, p₁, c₀] ++ rest) consts mem 1
+      = .ok (qvmFrMul cv (mem.literal (p₀ * 256 + p₁)).1, 3,
+              (mem.literal (p₀ * 256 + p₁)).2) := by
+  unfold Midfall.Generator.affineLinearTerm
+  have h₁ : Midfall.Generator.readU16 ([qOpAddMulConstU8MemU16, p₀, p₁, c₀] ++ rest) 1 =
+      .ok (p₀ * 256 + p₁) := rfl
+  have h₂ : Midfall.Generator.byteAt ([qOpAddMulConstU8MemU16, p₀, p₁, c₀] ++ rest) 3 =
+      .ok c₀ := rfl
+  rw [h₁, h₂]
+  simp only [bind, Except.bind]
+  rw [hv]
+
+/-- The 'affineProductTerm' twin: two chained literal reads and a slot byte. -/
+theorem rtie_affineProductTerm (l₀ l₁ r₀ r₁ c₀ : Nat) (rest : List Nat)
+    (consts : List Word256) (mem : QuotientRefMemory) (cv : QVMFr)
+    (hv : Midfall.Generator.constAt consts c₀ 1 = .ok cv) :
+    Midfall.Generator.affineProductTerm
+        ([qOpAddMulMemMemConstU8, l₀, l₁, r₀, r₁, c₀] ++ rest) consts mem 1
+      = .ok (qvmFrMul (qvmFrMul (mem.literal (l₀ * 256 + l₁)).1
+            ((mem.literal (l₀ * 256 + l₁)).2.literal (r₀ * 256 + r₁)).1) cv,
+            5, ((mem.literal (l₀ * 256 + l₁)).2.literal (r₀ * 256 + r₁)).2) := by
+  unfold Midfall.Generator.affineProductTerm
+  have h₁ : Midfall.Generator.readU16
+      ([qOpAddMulMemMemConstU8, l₀, l₁, r₀, r₁, c₀] ++ rest) 1 = .ok (l₀ * 256 + l₁) := rfl
+  have h₂ : Midfall.Generator.readU16
+      ([qOpAddMulMemMemConstU8, l₀, l₁, r₀, r₁, c₀] ++ rest) 3 = .ok (r₀ * 256 + r₁) := rfl
+  have h₃ : Midfall.Generator.byteAt
+      ([qOpAddMulMemMemConstU8, l₀, l₁, r₀, r₁, c₀] ++ rest) 5 = .ok c₀ := rfl
+  rw [h₁, h₂, h₃]
+  simp only [bind, Except.bind]
+  rw [hv]
+
+/-- **TIE - ADD_MUL_CONST_U8_MEM_U16.** The arm's post word is
+    'BitVec.ofNat 256 (qvmFrAdd x.toNat (qvmFrMul pv.toNat cv.toNat))'
+    ('qArmValueAll_addMulConstU8MemU16', QuotientArms.lean:1662); the reference pushes
+    'qvmFrAdd acc t.1' for 't' the 'affineLinearTerm' result, whose value is 'qvmFrMul cv pv' - the
+    reversed factor order, fixed by 'rtie_qvmFrMul_comm'. Consumed 4 = the opcode byte plus the helper's
+    own 3. -/
+theorem rtie_addMulConstU8MemU16 (p₀ p₁ c₀ : Nat) (rest : List Nat) (consts : List Word256)
+    (x pv cv : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hv : Midfall.Generator.constAt consts c₀ 1 = .ok cv.toNat)
+    (hlit : (mem.literal (p₀ * 256 + p₁)).1 = pv.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep
+        ([qOpAddMulConstU8MemU16, p₀, p₁, c₀] ++ rest) consts 0 qOpAddMulConstU8MemU16
+        (x.toNat :: stack) mem
+      = .ok { stack :=
+                (BitVec.ofNat 256 (qvmFrAdd x.toNat (qvmFrMul pv.toNat cv.toNat))).toNat :: stack,
+              consumed := 4, hConsumed := by omega,
+              mem := (mem.literal (p₀ * 256 + p₁)).2 } := by
+  have ht : Midfall.Generator.affineLinearTerm
+      ([qOpAddMulConstU8MemU16, p₀, p₁, c₀] ++ rest) consts mem 1
+      = .ok (qvmFrMul cv.toNat pv.toNat, 3, (mem.literal (p₀ * 256 + p₁)).2) := by
+    rw [rtie_affineLinearTerm p₀ p₁ c₀ rest consts mem cv.toNat hv, hlit]
+  have hstep : Midfall.Generator.evalQuotientIdentityStep
+      ([qOpAddMulConstU8MemU16, p₀, p₁, c₀] ++ rest) consts 0 qOpAddMulConstU8MemU16
+      (x.toNat :: stack) mem
+      = .ok { stack := qvmFrAdd x.toNat (qvmFrMul cv.toNat pv.toNat) :: stack, consumed := 4,
+              hConsumed := by omega, mem := (mem.literal (p₀ * 256 + p₁)).2 } :=
+    qStepValue_addMulConstU8MemU16 ([p₀, p₁, c₀] ++ rest) consts x.toNat stack mem
+      (qvmFrMul cv.toNat pv.toNat, 3, (mem.literal (p₀ * 256 + p₁)).2) ht
+  rw [hstep, rtie_qvmFrMul_comm cv.toNat pv.toNat,
+    rtie_ofNat_toNat _ (rtie_qvmFrAdd_lt _ _)]
+
+/-- **TIE - ADD_MUL_MEM_MEM_CONST_U8.** The four-read fused arm: the arm's post word is
+    'BitVec.ofNat 256 (qvmFrAdd x.toNat (qvmFrMul (qvmFrMul lv.toNat rv.toNat) cv.toNat))'
+    ('qArmValueAll_addMulMemMemConstU8', QuotientArms.lean:2128) and the reference's
+    'affineProductTerm' value is 'qvmFrMul (qvmFrMul l r) c' - SAME order, no commutativity step.
+    Consumed 6 = opcode plus the helper's 5. -/
+theorem rtie_addMulMemMemConstU8 (l₀ l₁ r₀ r₁ c₀ : Nat) (rest : List Nat)
+    (consts : List Word256) (x lv rv cv : U256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hv : Midfall.Generator.constAt consts c₀ 1 = .ok cv.toNat)
+    (hlit : (mem.literal (l₀ * 256 + l₁)).1 = lv.toNat)
+    (hrit : ((mem.literal (l₀ * 256 + l₁)).2.literal (r₀ * 256 + r₁)).1 = rv.toNat) :
+    Midfall.Generator.evalQuotientIdentityStep
+        ([qOpAddMulMemMemConstU8, l₀, l₁, r₀, r₁, c₀] ++ rest) consts 0
+        qOpAddMulMemMemConstU8 (x.toNat :: stack) mem
+      = .ok { stack :=
+                (BitVec.ofNat 256
+                  (qvmFrAdd x.toNat (qvmFrMul (qvmFrMul lv.toNat rv.toNat) cv.toNat))).toNat
+                  :: stack,
+              consumed := 6, hConsumed := by omega,
+              mem := ((mem.literal (l₀ * 256 + l₁)).2.literal (r₀ * 256 + r₁)).2 } := by
+  have ht : Midfall.Generator.affineProductTerm
+      ([qOpAddMulMemMemConstU8, l₀, l₁, r₀, r₁, c₀] ++ rest) consts mem 1
+      = .ok (qvmFrMul (qvmFrMul lv.toNat rv.toNat) cv.toNat, 5,
+              ((mem.literal (l₀ * 256 + l₁)).2.literal (r₀ * 256 + r₁)).2) := by
+    rw [rtie_affineProductTerm l₀ l₁ r₀ r₁ c₀ rest consts mem cv.toNat hv, hlit, hrit]
+  have hstep : Midfall.Generator.evalQuotientIdentityStep
+      ([qOpAddMulMemMemConstU8, l₀, l₁, r₀, r₁, c₀] ++ rest) consts 0 qOpAddMulMemMemConstU8
+      (x.toNat :: stack) mem
+      = .ok { stack :=
+                qvmFrAdd x.toNat (qvmFrMul (qvmFrMul lv.toNat rv.toNat) cv.toNat) :: stack,
+              consumed := 6, hConsumed := by omega,
+              mem := ((mem.literal (l₀ * 256 + l₁)).2.literal (r₀ * 256 + r₁)).2 } :=
+    qStepValue_addMulMemMemConstU8 ([l₀, l₁, r₀, r₁, c₀] ++ rest) consts x.toNat stack mem
+      (qvmFrMul (qvmFrMul lv.toNat rv.toNat) cv.toNat, 5,
+        ((mem.literal (l₀ * 256 + l₁)).2.literal (r₀ * 256 + r₁)).2) ht
+  rw [hstep, rtie_ofNat_toNat _ (rtie_qvmFrAdd_lt _ _)]
+
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_addMulConstU8MemU16
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_addMulMemMemConstU8
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_affineLinearTerm
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_affineProductTerm
+#print axioms Midfall.LoweringV3.QuotientArms.rtie_qvmFrMul_comm
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_addMulConstU8MemU16
+#cone_sorries Midfall.LoweringV3.QuotientArms.rtie_addMulMemMemConstU8
+#check @Midfall.LoweringV3.QuotientArms.rtie_addMulConstU8MemU16
+#check @Midfall.LoweringV3.QuotientArms.rtie_addMulMemMemConstU8
+
+
+
+
 end Midfall.LoweringV3.QuotientArms
