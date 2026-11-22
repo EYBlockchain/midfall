@@ -20,7 +20,7 @@ The QVM lane stays with its existing agent (midfall-c/d).
     root lowering_correctW ... not reported (C0 not started)
     root generator_correct ... not reported (D2 not started)
     register ................. 79 rows / 15 ROOT; 0 REFUTED, 1 VACUOUS
-    KAT ...................... 1648/119 pinned (WID.2; the merged-tree full gate is the authority)
+    KAT ...................... 1648/119 (full gate, 2026-11-22)
     frozen axioms ............ 5 named + 159 native_decide; roots are standard three + sorryAx,
                                native []
 
