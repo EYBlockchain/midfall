@@ -1016,6 +1016,21 @@ theorem bwdGp_eq (s k j : Nat) (hs : s + 32 * k < 2 ^ 256) (hj : j ≤ k - 3) :
     Nat.mod_eq_of_lt (by omega : s + 32 * (k - 3 - j) < 2 ^ 256)]
   omega
 
+
+/-- One iteration of the `mptr` walk: `bwdMptr (j+1) = bwdMptr j - 32`. -/
+theorem bwdMptr_succ (a k j : Nat) : bwdMptr a k (j + 1) = bwdMptr a k j - 32 := by
+  unfold bwdMptr
+  rw [show 32 * (j + 1) = 32 * j + 32 by ring]
+  rw [BitVec.sub_sub]
+  conv_rhs => rw [show (32 : U256) = BitVec.ofNat 256 32 from rfl, ← BitVec.ofNat_add]
+
+/-- One iteration of the `gp_mptr` walk: `bwdGp (j+1) = bwdGp j - 32`. -/
+theorem bwdGp_succ (s k j : Nat) : bwdGp s k (j + 1) = bwdGp s k j - 32 := by
+  unfold bwdGp
+  rw [show 32 * (j + 1) = 32 * j + 32 by ring]
+  rw [BitVec.sub_sub]
+  conv_rhs => rw [show (32 : U256) = BitVec.ofNat 256 32 from rfl, ← BitVec.ofNat_add]
+
 /-! ## 5. PREMISE GAP PG-BATCHINVERT (exact statements; no hypothesis added to a row)
 
   **(1) CLOSED at §4b: `bi_forward_loop` IS PROVED, with the statement-9 canonicality pre.**
@@ -1060,6 +1075,20 @@ theorem bwdGp_eq (s k j : Nat) (hs : s + 32 * k < 2 ^ 256) (hj : j ≤ k - 3) :
   `modexpOutput` is `bytesNatBE (modPow base (rw-2) rw) 32`; `modPow_inv` at `p := rw.toNat`
   (`Assumptions/Eip2537.lean:319`, general in `p`) finishes. The old plan - re-proving the private
   `modexpInvFrame_slices` for an arbitrary modulus - is NOT needed and should not be attempted.
+
+  **STATE OF `bi_backward_loop` (HLP.1.c), measured this pass.** The theorem is stated in a
+  scratch at the exact §5 shape (with `k` explicit and a hypothesis `e-a = 32*k`, avoiding the
+  `(e-a)/32` rewrite that caused the previous `Application type mismatch`es). The **exit branch**
+  (`j = k-2`) is PROVED against the `bwdMem`/`bwdEnv` lemmas. The **iteration branch** reduces the
+  two mloads (`hloadgp` via `loadWord_congr`+`bwdMem_scratch`, `hloadmptr` via
+  `loadWord_bwdMem_untouched`) and the body `simp only [wpS, wpSS, wpE, wpA, …]` leaves exactly
+  `Stop (Stop (Stop (Inv (restore …) (storeWord …))))`; the exact remaining goal is the three
+  `VEnv.get` matches on `((bwdEnv j).set "all_inv" …).set "mptr" (v-32)` (`mptr`, `mptr` again,
+  `gp_mptr`) followed by `Inv (bwdEnv j+1) (storeWord (bwdMem j) (toNat (bwdMptr j)) (bwdInvVal j))`.
+  The three matches need `venv_get_set_ne`/`venv_get_set_same` with `hmptrj`/`hgpmj`; the `Inv`
+  needs `restore_cons_length` + the env equation, and `bwdMptr (j+1) = bwdMptr j - 32` /
+  `bwdGp (j+1) = bwdGp j - 32` (`BitVec.sub_sub` + `BitVec.ofNat_add`) for the state. No
+  mathematical or arithmetic obstruction remains; it is the `Stop`/`SetMany`/`restore` bookkeeping.
 
   **PLAN FOR `bi_backward_loop` (HLP.1.c), the next leaf.** With `k = (e-a)/32` and
   `hae : a + 96 ≤ e` (so `3 ≤ k`), the loop is statement 29 and starts after the `sub(gp_mptr, 32)`:
@@ -1171,6 +1200,8 @@ theorem bwdGp_eq (s k j : Nat) (hs : s + 32 * k < 2 ^ 256) (hj : j ≤ k - 3) :
 #assert_axioms storeWord_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdMptr_eq [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdGp_eq [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdMptr_succ [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdGp_succ [propext, Classical.choice, Quot.sound]
 
 
 
