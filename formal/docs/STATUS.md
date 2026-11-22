@@ -61,8 +61,9 @@ M9/M10 C/D tracks are DONE/non-vacuity work, not prerequisites of `lowering_corr
   **D-GATE3 target-aware repair landed** at f767d5f. The identity row is now true and reduced to
   `PG_identity_emitterValue` + `PG_identity_compactionValue`; LIN7 and ROW decoder ties are proved,
   MODARITH7 block/fold shifts are landed. The block-composition route is gated by the one
-  `modarith7Form_shift` header (flag-dependent, compiled-tail defeq), not by a new induction;
-  PAIRWISE and the compaction value remain. It owns `Qvm.lean`/`QvmShift`/`QvmEmit`; the
+  `modarith7Form_shift` header (flag-dependent, compiled join-point shape; not a timeout). The QVM
+  lane is split: `t/QVMIDGREEN` is on `PG_identity_compactionValue`, and a dedicated `t/QVMHDR`
+  worker has one focused attempt at the header (no read-only-file edits); PAIRWISE remains after. It owns `Qvm.lean`/`QvmShift`/`QvmEmit`; the
   segment/spill/Quotient files stay with the QVM agent.
 
 ## 3. Next READY
