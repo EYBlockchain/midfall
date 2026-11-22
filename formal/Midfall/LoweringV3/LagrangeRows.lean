@@ -221,7 +221,7 @@ theorem venv_get_set_same {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : 
       obtain ⟨y, u⟩ := p
       by_cases hy : y = x
       · subst hy
-        simp [VEnv.set, VEnv.get, List.find?]
+        simp [VEnv.set, VEnv.get]
       · have hget : VEnv.get rest x = some v := by
           have h2 : VEnv.get ((y, u) :: rest) x = some v := h
           simpa [VEnv.get, List.find?, hy] using h2
@@ -623,7 +623,7 @@ theorem lag_denoms_loop {c : ExternalCalls} {g : ExternalGas}
         , Stmt.assign ["pow_of_omega"] (Expr.builtin Op.mulmod
             [Expr.var "pow_of_omega", Expr.var "omega", Expr.var "r"]) ]] Q := by
     refine allRuns_for_cons_wp (Bridge.Dialect c g) (Bopen c g) (Cnone _)
-      (Bopen_sound c g) (Cnone_sound _) (n := 20) Inv ?hinit ?hstep
+      (Bopen_sound c g) (Cnone_sound _) (n := 12) Inv ?hinit ?hstep
     · -- init: 'pow_of_omega := mload(aL)' establishes the invariant at j = 0
       refine ⟨rfl, ⟨?_⟩⟩
       show Inv (["pow_of_omega"].zip
@@ -687,6 +687,10 @@ theorem lag_denoms_loop {c : ExternalCalls} {g : ExternalGas}
             · intro a ha
               exact writeWords_outside st.memory D P (j := n + m) (a := a) ha
       · -- guard true: j < n + m, one store
+        -- OPEN (PG-HEARTBEAT): unfolding this TWO-STATEMENT body together with its post at the
+        -- fuel the nested addmod/sub needs (13) exceeds 200000 heartbeats; 12 is one short at the
+        -- deepest `pow_of_omega` read. The next step is the semantic `allRuns_loop` route of the
+        -- card (inversions landed above), not a heartbeat raise.
         sorry
   intro V' st' o hrun
   exact hmain V' st' o hrun
@@ -980,3 +984,74 @@ theorem lag_lblind_loop {c : ExternalCalls} {g : ExternalGas}
           exact ⟨_, rfl⟩
   intro V' st' o hrun
   exact hmain V' st' o hrun
+
+/-! ## 9. PREMISE GAPS HIT BY THIS TRANCHE (exact PG_* notes; no hypothesis added to any row)
+
+  **PG-LAG-HEARTBEAT (T3.9.b, measured).** The two-statement denominator body needs fuel 13 for the
+  nested `addmod(x, sub(r, pow), r)` (the expression depth is 12, and fuel 12 makes `wpA` hit `0`,
+  which is `False`); at 13 the `simp only [wpS, wpSS, wpE, wpA, Bopen, stepOp, bin, ter, …]`
+  unfolding of the body TOGETHER WITH the post exceeds the default 200000 heartbeats. The fix is
+  the card's semantic `allRuns_loop` route (the inversion helpers of section 7 are landed for it),
+  not `maxHeartbeats`. `lag_denoms_loop`'s guard-FALSE branch, the whole `l_blind` loop (T3.9.d)
+  and all of T3.9.a are PROVED; only this one branch is open.
+
+  **PG-LAG-AGREES (T3.9.g, D-GATE2 correction).** The corrected statement is the evidence's
+  `lag_agrees` (:595-607) with `hW`'s last-but-two argument changed from
+  `frWord (ω⁻¹ ^ (numNegLagranges - 1))` to `frWord (ω⁻¹ ^ numNegLagranges)`:
+
+      theorem lag_agrees (R) (hR : ValidV3 R) (hm : 2 ≤ R.pv.numNegLagranges)
+        (s2 : SnapAlgebra p G₁) (l : SnapLagrange p G₁)
+        (hl : snapshotLagrangeStep (G₁ := G₁) R.vk s2 = .ok l)
+        (hxn : s2.alg.xn = s2.alg.x ^ (2 ^ R.pv.k)) (inst : Array (Fr p)) (W : LagWords)
+        (hW : LagRel (BitVec.ofNat 256 p) (frWord s2.alg.x) (frWord R.vk.domain.omega)
+          (frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges))
+          (frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p))⁻¹) R.pv.k R.pv.numInstances
+          R.pv.numNegLagranges (fun j => frWord (inst.getD j 0)) W) :
+        W.xn = frWord s2.alg.xn ∧ W.lLast = frWord l.lagrange.lLast ∧
+        W.lBlind = frWord l.lagrange.lBlind ∧ W.l0 = frWord l.lagrange.l0 ∧
+        ∀ e, l.instanceEval = some e → W.instEval = frWord e
+
+  IT IS NOT LANDED HERE, and no sorried copy is added: it has no proved falsifier yet (W12), and the
+  proof rests on three things absent from the tree:
+  (a) **PG-BATCHINVERT** - `batchInvert` (`Halo2/Exec/Arith.lean:99`) has KATs only, no spec. The
+      proof needs: `batchInvert xs` returns entrywise inverses on a nonzero entry, zero at a zero
+      entry, and `allInv = (∏ xs)⁻¹`. `LagRel`'s `inv` is a CHOICE of inverses; uniqueness in the
+      field is what turns the batch result into it.
+  (b) **PG-LIRANGE** - `lIRange`'s value (`Halo2/Exec/Domain.lean:245`) is
+      `rotateOmega ((x - ω^r)⁻¹ * ((xn - 1) * barycentricWeight)) r`; matching `LagRel`'s
+      `L i = (xn - 1) * n⁻¹ * inv i * ω^i` needs `barycentricWeight = n⁻¹` and
+      `rotateOmega v r = v * ω^r`, plus the `x ∉ domain` side condition (the KAT at :356-359 shows
+      the zero-entry degradation).
+  (c) **PG-TRIPLE-RANGE** - `lagrangeTriple`'s `lLast = lEvals[0]`, `lBlind = Σ drop 1 take bf`,
+      `l0 = lEvals[bf+1]` with `bf = numNegLagranges - 2` (from `EnvAgrees.negLagranges`), is
+      `L 0 / Σ_{i< m-2} L(2+i) / L m` at `w0 = ω⁻ᴸ`; this is the index arithmetic that the
+      `-1` exponent got wrong.
+  (d) **PG-OMEGAINV-SLOT** - `PayloadAgrees.omegaInvToL` gives `ω⁻¹ ^ rotationLast.natAbs`; the
+      corrected `hW` uses `ω⁻¹ ^ numNegLagranges`. The equality of those two exponents
+      (`numNegLagranges = |rotationLast|`) is not a `ValidV3` clause; D-GATE2 corrects the
+      *consumer*, so the caller must supply it, exactly as `hxn` is supplied.
+
+  **PG-SNAPSHOT-LAG** - `snapshotLagrangeStep` (`Snapshot.lean:230`) returns `Except Fault`; the
+  `.ok` success under `ValidV3` (the `blindingFactors`/`lIRange` length check at `Verifier.lean:252`)
+  is not derivable from the validity bundle and is a hypothesis of T3.9.g's statement (`hl`), as
+  the evidence has it.
+
+  **PG-POWVARTIME** - `powVartime x (2^k - 1) = x^(2^k - 1)` for the `x^n - 1` numerator (used by
+  the `LagRel` `L` and by the VK `xn` slot). The tree has `powVartime` (`Arith.lean`) but no such
+  equation at a symbolic exponent; `hxn : s2.alg.xn = x^(2^k)` is supplied, so the proof needs the
+  `xn - 1` step only, via `(x^(2^k) - 1)`.
+
+  **PG-LOADWORD-BYTES / PG-CDWORD** - `loadWord` of `bytesAt` = `payloadWord` (the VK payload read
+  bridge, shared with A3/VkClean) and `cdWord cd a = calldataload`-of-the-instance-word (the
+  `lag_instance_loop` T3.9.e read). Neither is needed by a/b/d; they are T3.9.e/g's.
+
+  **PG-FITS** - the `2^256` fits the loops need: `D + 32*(n+m) < 2^256` for the denominator window
+  (`hD`, a hypothesis of T3.9.b, exactly as the evidence states it), `D + 32*m < 2^256` for the
+  blind window (`hD`, T3.9.d), and the scratch-window fit for `batch_invert` (`hs`) which is
+  HLP.1.b's, not this tranche's. `ValidV3` does not supply them: they are `PG-LAG-FITS`, caller
+  side. The card's Stop condition (the fits come from `memory.map.WellFormed`) is NOT closed.
+
+  **PG-BATCHINVERT-SUMMARY (A5)** - `batch_invert_summary` (`GeneratorRows.lean:317`) is absent
+  from the tree; T3.9.h (the poisoned half) and the row's `success = 1` arm need it, and A5 is
+  ordered AFTER A4. The loop work above does not depend on it.
+-/
