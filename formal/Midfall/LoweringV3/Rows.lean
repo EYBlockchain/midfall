@@ -59,7 +59,19 @@ theorem vk_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
     BlockSim R Partial.vkLoading H vkAddr (permissive (callsOf product)) g cd :=
   VkClean.vk_blockSimV3 R product hR H vkAddr cd g
 
-/-- **LEAF (GEN.1, WP A3): the vkLoading progress row.** Evidence `GeneratorRows.lean:1103`. -/
+/-- **LEAF (GEN.1, WP A3): the vkLoading progress row.** Evidence `GeneratorRows.lean:1103`.
+
+    **OPEN - PG-VKHEADER.** `BlockProgS` has no revert arm, so every run under `LeanAccepts`
+    must exit normally at `StageInv .vk`. The S1 guard and the calldata checks are ready
+    (`VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3` / `_CODEHASH_WORD_V3`, and `envelopeOk`
+    from `Decoded`), but the six VK-header cross-checks read memory offsets
+    `vkMptr + 32*i`, `i ∈ {1,2,7,8,9,10}`, after a copy of only `vk.len` bytes. `PayloadAgrees`
+    pins `constants.getD i` but forces only `7 ≤ constants.length`
+    (`VkClean.payloadAgrees_constants_length`); with seven constants and no commitments
+    `vk.len = 224` and slots 7-10 are past the copy and unpinned by `Inv .start`. The exact
+    goal state is recorded in `VkClean.lean` section 7 (PG-VKHEADER): the missing clause is
+    `11 ≤ R.pv.vk.constants.length`, or the serialized-payload window equation. `PayloadAgrees`
+    is frozen, so the repair is a signed statement change; no hypothesis was added to the row. -/
 theorem vk_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash) (vkAddr : U256) (cd : Bytes)

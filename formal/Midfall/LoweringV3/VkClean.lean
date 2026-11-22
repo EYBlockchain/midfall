@@ -1309,4 +1309,156 @@ theorem vk_blockSimV3 (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (
 #cone_sorries Midfall.LoweringV3.VkClean.vk_blockSimV3
 #assert_axioms Midfall.LoweringV3.VkClean.vk_blockSimV3
   [propext, Classical.choice, Quot.sound] native []
+
+/-! ## 7. THE PROGRESS ROW'S TWO VK PINS AT ValidV3, AND PG-VKHEADER
+
+  `vk_blockProgS` differs from `vk_blockSim` in one decisive way: `exitProgAt` for a
+  non-`traceReturn` block offers NO revert arm, so the progress row needs every run under
+  `LeanAccepts` to exit NORMALLY. The clean walk (`vk_clean_walkV3`) already gives
+  `halt ∧ Reverted ∨ normal ∧ StageInv .vk`, so the whole obligation is to rule out the halt.
+  A halt of the vkLoading slice is always one of four guards firing:
+
+  * S1 `iszero(and(eq(extcodesize(vk), EXPECTED_VK_LENGTH),
+                    eq(extcodehash(vk), EXPECTED_VK_CODEHASH_WORD)))`;
+  * S9 (after the six header checks) and S13 (after the three calldata checks):
+    `iszero(success)`.
+
+  The TABLE half of S1 is already a theorem of `ValidV3` (the two `vkProgressPins` fields,
+  `consts_lookup_EXPECTED_VK_LENGTH_V3` / `_CODEHASH_WORD_V3` below); the calldata checks are
+  forced by `LeanAccepts`'s `Decoded` through `envelopeOk`. The SIX HEADER CHECKS ARE NOT,
+  and the exact missing fact is recorded at the end of this section as **PG-VKHEADER**. -/
+
+/-- The derived `vkProgressPins.vkLen` at `ValidV3` (the `LoweringV2.Consts` proof runs on the
+    frozen `Render.Valid`; `ValidV3` is a parallel copy, so the row needs this face). -/
+theorem consts_lookup_EXPECTED_VK_LENGTH_V3 {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
+    (h : vkCodehashArm R.model) :
+    R.consts.lookup "EXPECTED_VK_LENGTH" = some R.plan.vk.runtimeBytes.size := by
+  have hvk : R.pv.vk = R.plan.vk := rfl
+  have hl := Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR "EXPECTED_VK_LENGTH"
+    R.pv.vk.runtimeBytes.size
+    (Midfall.LoweringV2.expectedConsts_lookup_EXPECTED_VK_LENGTH R.pv R.model h)
+  rwa [hvk] at hl
+
+/-- The derived `vkProgressPins.vkHash` at `ValidV3`. -/
+theorem consts_lookup_EXPECTED_VK_CODEHASH_WORD_V3 {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
+    (h : vkCodehashArm R.model) :
+    R.consts.lookup "EXPECTED_VK_CODEHASH_WORD" =
+      some (keccak256 R.plan.vk.runtimeBytes).toNat := by
+  have hvk : R.pv.vk = R.plan.vk := rfl
+  have hl := Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR
+    "EXPECTED_VK_CODEHASH_WORD" (keccak256 R.pv.vk.runtimeBytes).toNat
+    (Midfall.LoweringV2.expectedConsts_lookup_EXPECTED_VK_CODEHASH_WORD R.pv R.model h)
+  rwa [hvk] at hl
+
+/-- A nonzero `Fr` element is a nonzero word: `frWord` reduces modulo `2^256`, and
+    `p = frModulusConstant < 2^256` keeps the residue nonzero. -/
+theorem frWord_ne_zero_of_ne_zero {x : Fr p} (hmod : p = frModulusConstant) (hx : x ≠ 0) :
+    frWord x ≠ 0 := by
+  intro h
+  apply hx
+  have hval : x.val = 0 := by
+    have ht := congrArg BitVec.toNat h
+    simp only [frWord] at ht
+    rw [BitVec.toNat_ofNat] at ht
+    have hp2 : p < 2 ^ 256 := by rw [hmod]; norm_num [frModulusConstant]
+    have hx2 : x.val < 2 ^ 256 := Nat.lt_trans (ZMod.val_lt x) hp2
+    rw [Nat.mod_eq_of_lt hx2] at ht
+    simpa using ht
+  exact (ZMod.val_eq_zero x).mp hval
+
+/-- `getD` past the end is the default; the tree's `List.getD_eq_default` is not imported on this
+    path, so the two-line induction is local. -/
+theorem getD_default_of_length_le : ∀ (l : List (String × Word256)) (n : Nat)
+    (d : String × Word256), l.length ≤ n → l.getD n d = d
+  | [], _, d, _ => rfl
+  | _ :: _, 0, d, h => absurd h (by simp)
+  | _ :: t, k + 1, d, h => getD_default_of_length_le t k d (by simpa using h)
+
+/-- A copy leaves a byte above its window untouched. The progress row's slot-7 read is this
+    case: with seven constants and no commitments the copy is 224 bytes, so the word at
+    `vkMptr + 224` is the pre-state's memory, which no clause pins. -/
+theorem copyInto_untouched (mem : Nat → UInt8) (dst src n : Nat) (bs : List UInt8) (a : Nat)
+    (h : a < dst ∨ dst + n ≤ a) : copyInto mem dst src n bs a = mem a := by
+  unfold copyInto
+  rw [if_neg]
+  omega
+
+/-- A payload with exactly seven constants and no commitments is 224 bytes. -/
+theorem vkLen_of_seven_constants (vk : Halo2VerifyingKey) (hc : vk.constants.length = 7)
+    (hf : vk.fixedComms = []) (hp : vk.permutationComms = []) : vk.len = 224 := by
+  simp [Halo2VerifyingKey.len, hc, hf, hp]
+
+/-- The copy of a 224-byte payload leaves the slot-7 word (bytes 224..255) untouched. -/
+theorem copyInto_224_slot7 (mem : Nat → UInt8) (dst src : Nat) (bs : List UInt8) :
+    copyInto mem dst src 224 bs (dst + 224) = mem (dst + 224) :=
+  copyInto_untouched mem dst src 224 bs (dst + 224) (Or.inr (Nat.le_refl _))
+
+/-- With seven constants the slot-7 payload word is the default 0, while the copy never wrote
+    the slot; the S7 check compares the pre-state's memory word to 0. -/
+theorem payloadWord_slot7_zero_of_length_seven (pv : PlanView)
+    (h : pv.vk.constants.length = 7) :
+    payloadWord pv vkHeaderTemplateSlotsDefault.hasAccumulator = 0 := by
+  show (pv.vk.constants.getD vkHeaderTemplateSlotsDefault.hasAccumulator ("", 0)).2 = 0
+  rw [getD_default_of_length_le _ _ _
+    (by simpa [vkHeaderTemplateSlotsDefault] using Nat.le_of_eq h)]
+
+/-- **PG-VKHEADER: `PayloadAgrees` FORCES SEVEN CONSTANTS, NOT ELEVEN.** Slot 6 is
+    `omegaInvToL`, the word `frWord (omegaInv ^ |rotationLast|)`, a unit and hence nonzero; a
+    constants list of length ≤ 6 would make `getD 6` the default `0`. The vkLoading header
+    cross-checks read slots 1, 2 and 7-10, so slot 6 is exactly the last one `PayloadAgrees`
+    pins: the clause says nothing about the three accumulator-window slots 7-10 or about a
+    copy window that stops before them.
+
+    THIS IS THE MISSING FACT OF `vk_blockProgS`. At the point between S2 (the copy) and S3
+    (the first header check), for `i ∈ {1, 2, 7, 8, 9, 10}` the row needs
+
+      loadWord
+        { st with memory := copyInto st.memory (ptrAddr R.pv.memory.vkMptr) 1 R.pv.vk.len
+            R.plan.vk.runtimeBytes.data.toList }
+        (ptrAddr (Ptr.add R.pv.memory.vkMptr i))
+        = (R.plan.vk.constants.getD i ("", 0)).2,
+
+    while `PayloadAgrees` gives only the right-hand `payloadWord` values. The left-hand word is
+    the i-th 32-byte word of the SERIALIZED payload (`Halo2VerifyingKey.bytes`: constants
+    first, then fixed and permutation commitments), so the equation holds only when
+    `i < constants.length` AND `32 * (i + 1) ≤ vk.len`. `ValidV3` carries neither: with
+    `constants.length = 7` and no commitments, `vk.len = 224` (`Halo2VerifyingKey.len`), the
+    copy ends exactly at the slot-7 word, and `copyInto_untouched` makes that word the
+    pre-state's memory. `Inv .start`'s only memory clause is the 128-byte g1_identity window,
+    which `vkPins_disjoint_of_generated` puts outside the payload, so for such a payload a
+    `StageInv .start` state with a nonzero word at `vkMptr + 224` is admissible and the S8
+    check (accumulator limb bits vs 0) is then false. No `ValidV3` inhabitant is exhibited
+    (B4 has not run): what is proved is that the clause table does not exclude this shape.
+    A real deployment has the eleven header constants, but that is a fact about the
+    INPUT `R.plan.vk` (`generateAll` takes it as `planVk`), not a consequence of `generated`,
+    and `PayloadAgrees` is a word-level equation, not a byte-window one. The minimal repair is
+    one conjunct on the payload clause (`11 ≤ R.pv.vk.constants.length`, or the window equation
+    above); `PayloadAgrees` is frozen, so it is a signed statement change. Per D-P71 no
+    hypothesis is attached to the row and the leaf stays OPEN. -/
+theorem payloadAgrees_constants_length {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
+    (h : PayloadAgrees R) : 7 ≤ R.pv.vk.constants.length := by
+  by_contra hlt
+  have hle : R.pv.vk.constants.length ≤ 6 := by omega
+  have hget : R.pv.vk.constants.getD vkHeaderTemplateSlotsDefault.omegaInvToL ("", 0) =
+      ("", 0) :=
+    getD_default_of_length_le _ _ _ (by simpa [vkHeaderTemplateSlotsDefault] using hle)
+  have hz : payloadWord R.pv vkHeaderTemplateSlotsDefault.omegaInvToL = 0 := by
+    show (R.pv.vk.constants.getD vkHeaderTemplateSlotsDefault.omegaInvToL ("", 0)).2 = 0
+    rw [hget]
+  have hval := h.omegaInvToL
+  rw [hz] at hval
+  have hne : frWord (R.vk.domain.omegaInv ^ R.plan.meta_.rotationLast.natAbs) ≠ 0 := by
+    refine frWord_ne_zero_of_ne_zero hR.env.modulus (pow_ne_zero _ ?_)
+    intro h0
+    have hm := hR.env.omegaInvMul
+    rw [h0, zero_mul] at hm
+    exact zero_ne_one hm
+  exact hne hval.symm
+
+#print axioms Midfall.LoweringV3.VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3
+#print axioms Midfall.LoweringV3.VkClean.consts_lookup_EXPECTED_VK_CODEHASH_WORD_V3
+#print axioms Midfall.LoweringV3.VkClean.copyInto_untouched
+#print axioms Midfall.LoweringV3.VkClean.payloadAgrees_constants_length
+#assert_axioms Midfall.LoweringV3.VkClean.payloadAgrees_constants_length
+  [propext, Classical.choice, Quot.sound] native []
 end Midfall.LoweringV3.VkClean
