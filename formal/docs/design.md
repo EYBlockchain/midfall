@@ -2939,3 +2939,34 @@ carries no `build.json`, so the original SRS/feature inputs cannot be recovered.
    strengthen this to whole-file equality; until then the build stamp is an INPUT, not a proof line.
 This is not a weakening of `ValidV3` or any row; it is a precise statement of what the artifact
 reproduces. T3.3's slice literals remain a separate gate.
+
+## D-GATE5 — **Approved: exclude the zero KZG challenge from the completeness side**
+
+> **Status: APPROVED.** Signed 2026-11-22 in the OpenCode session after D1's
+> `kzgPartitionBridge_false_at_x0` PROVED the unconditional partition-count equality false:
+> two distinct commitments opened at rotations `{0,1}` give generator point sets `2` but Halo2
+> point sets `1` at `x = 0`, while `ChallengesGood.xNotRoot` (`x^n ≠ 1`) is satisfied at `x = 0`.
+
+**Decision.** `ChallengesGood` (`Lowering/Inv.lean:692`) gains one field:
+
+```lean
+xNonzero : S.alg.x ≠ 0
+```
+
+`CompleteSide` (`LoweringV2/Statements.lean:1186`) already quantifies over `ChallengesGood`, so
+every completeness claim now excludes the degenerate `x = 0` challenge. This is the minimal
+non-degeneracy clause, exactly parallel to the existing `xNotRoot`; a uniformly sampled challenge
+is nonzero with overwhelming probability, and the contract's `x = 0` path cannot be used to
+establish the generator's rotation-keyed partition.
+
+This is a **statement repair**, not a hypothesis on a row, bundle, `ValidV3` or the root: the
+`LoweringEquivalenceV3`/`EndToEndV3` signatures do not change. It is a class-level change like
+D-GATE2/D-GATE3. Because `ChallengesGood` is in the frozen statements' closure, the
+`Closure.manifest` must be regenerated and its `Frozen.sha256` line updated with the repair;
+the frozen `.lean` files themselves are unchanged. The W12 falsifier
+`kzgPartitionBridge_false_at_x0` stays in the tree as the evidence for the clause.
+
+**Condition.** If a consumer cannot derive `x ≠ 0` from a real transcript, report that consumer;
+do not drop the clause to keep it. If the Rust verifier is found to accept `x = 0` and the intended
+semantics is to handle rather than exclude it, that needs a new decision and a different partition
+alignment; the current generator partition is provably wrong there.
