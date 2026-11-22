@@ -214,6 +214,47 @@ theorem bi_staticcall_segment_form (consts : Inline.Consts) :
       , GenAst.yset "gp_mptr" (GenAst.yop EVM.Op.sub [GenAst.yvar "gp_mptr", GenAst.ylit 32]) ] := by
   kernel_rfl
 
+theorem readBytes_getD (bs : List UInt8) (h : bs.length = 32) :
+    readBytes (fun i => bs.getD i 0) 0 32 = bs := by
+  unfold readBytes
+  apply List.ext_getElem
+  · simp [h]
+  · intro i hi hi'
+    simp only [List.getElem_map, List.getElem_range, Nat.zero_add]
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi']
+    rfl
+
+theorem wordFrom_bytesNatBE (v : Nat) (hv : v < 2 ^ 256) :
+    wordFrom (bytesNatBE v 32).data.toList 0 = BitVec.ofNat 256 v := by
+  have hlen : (bytesNatBE v 32).data.toList.length = 32 := by
+    rw [Array.length_toList, ByteArray.size_data]
+    exact Midfall.Assumptions.bytesNatBE_size v 32
+  have hread : readBytes (fun i => (bytesNatBE v 32).data.toList.getD i 0) 0 32
+      = (bytesNatBE v 32).data.toList := readBytes_getD _ hlen
+  have h := bytesToNatBE_readBytes (mem := fun i => (bytesNatBE v 32).data.toList.getD i 0) 0
+  rw [hread] at h
+  have harr : ByteArray.mk ((bytesNatBE v 32).data.toList.toArray) = bytesNatBE v 32 := by
+    rw [Array.toArray_toList]
+  rw [harr, bytesToNatBE_bytesNatBE, show (256 : Nat) ^ 32 = 2 ^ 256 by norm_num,
+    Nat.mod_eq_of_lt hv] at h
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hv]
+  show (loadWord (fun i => (bytesNatBE v 32).data.toList.getD i 0) 0).toNat = v
+  exact h.symm
+
+theorem loadWord_copyReturn_bytesNatBE (mem : Nat → UInt8) (p : Nat) (v : Nat)
+    (hv : v < 2 ^ 256) :
+    loadWord (copyReturn mem p 32 (bytesNatBE v 32).data.toList) p = BitVec.ofNat 256 v := by
+  have hlen : (bytesNatBE v 32).data.toList.length = 32 := by
+    rw [Array.length_toList, ByteArray.size_data]
+    exact Midfall.Assumptions.bytesNatBE_size v 32
+  rw [Midfall.Yul.Word.loadWord_copyReturn mem p 32 p _ (by
+    constructor
+    · omega
+    · rw [hlen]; omega)]
+  rw [show p - p = 0 by omega]
+  exact wordFrom_bytesNatBE v hv
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -260,5 +301,8 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms callsOf_modexp_returndata [propext, Classical.choice, Quot.sound]
 #assert_axioms modexpValidInput_of_output_some [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_staticcall_segment_form [propext, Classical.choice, Quot.sound]
+#assert_axioms readBytes_getD [propext, Classical.choice, Quot.sound]
+#assert_axioms wordFrom_bytesNatBE [propext, Classical.choice, Quot.sound]
+#assert_axioms loadWord_copyReturn_bytesNatBE [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3.ModexpGeneral
