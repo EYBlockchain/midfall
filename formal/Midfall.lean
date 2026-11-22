@@ -206,6 +206,7 @@ import Midfall.LoweringV3.BatchInvert
 import Midfall.LoweringV3.ModexpGeneral
 import Midfall.LoweringV3.PcsRows
 import Midfall.LoweringV3.ScalarInv
+import Midfall.LoweringV3.ScalarInvSummary
 import Midfall.LoweringV3.VkRow
 import Midfall.LoweringV3.MemoryPairs
 import Midfall.LoweringV3.VkWindow
