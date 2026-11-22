@@ -345,10 +345,7 @@ theorem qCaseList_head_label (ctx : PartialCtx) (program : QuotientProgram)
 #cone_sorries Midfall.Lowering.QuotientLoopCompose.qinterpSwitch_of_selects
 #cone_sorries Midfall.Lowering.QuotientLoopCompose.qinterpSwitch_selectedBlock_pushConst
 
--- D-QVM2 (design.md:2763-2792) retired that row under W13 and its sorry was deleted in the same
--- commit that stated the replacement, so there is no sorried row left to print here. The replacement is
--- 'Midfall.Lowering.QuotientInterp.QInterpRefinesSegment' (QuotientInterp.lean section 11), a stated
--- contract with no sorry; the print below says so rather than going silent.
+-- The row is untouched by this file: still one sorry, still at QuotientInterp.lean:253.
 #cone_sorries Midfall.Lowering.QuotientInterp.QInterpRefinesSegment
 
 
@@ -485,4 +482,394 @@ theorem qfix_repaired_pre_holds_at_the_exhibit {c : ExternalCalls} {g : External
 -- (no #assert_axioms here: this file does not import Midfall.Tools.Done; the #print axioms above is the print.)
 -- (no #assert_axioms here: this file does not import Midfall.Tools.Done; the #print axioms above is the print.)
 -- (no #assert_axioms here: this file does not import Midfall.Tools.Done; the #print axioms above is the print.)
+
+/-! ### 9. O1: THE LOOP-PRE CONTRACT - 'GenAst.qvmLoopPre' IS NOW A CONTRACT (LOOPPRE)
+
+**WHAT THIS SECTION LANDS.** 'QuotientRows' section 13.4 named four obligations between the repaired
+contract of 'QuotientInterp' section 10 and a proof of the loop, and (O1) was the first: *'no contract
+exists for 'qvmLoopPre', so nothing transports 'AtSegment' at 's' to the arm's pre at 'q_pc = base +
+cursor + 1' ... and it needs G1 to turn 'q_pc.toNat' back into the true address.'* That transport is
+now a named contract, 'qvmLoopPre_contract'; it FEEDS the head arm's own precondition
+('qvmLoopPre_feeds_pushConst'); and guard 1 is proved NECESSARY as well as sufficient
+guard 1 is NECESSARY as well as sufficient, as an argument rather than a theorem: take the window
+'base := 2^256, len := 3, cursor := 0, exprEnd := 3' - legal by 'inWindow', head byte the reference's
+'PUSH_CONST_U8' so guard 3b holds, and 'AtSegment' satisfied OF THE REGISTERS EXACTLY AS 'ATSEGMENT'
+WRITES THEM, i.e. 'q_pc := BitVec.ofNat 256 (base + cursor)' = ZERO because the address does not fit.
+Memory agrees with the window at all three offsets and the byte at the wrapped address 0 is 7, so the
+fetch reads 7 while the head byte is 9: without guard 1 the bridge is FALSE, not merely unprovable.
+That is ROWFALSE's artefact 1 seen from the fetch rather than from the loop guard. THE EXHIBIT IS NOT
+LANDED: 'qvmLoopPre_needs_noWrap' was written, elaborated to the kernel, and died there with '(kernel)
+deep recursion detected' on the side condition 'qOpPushConstU8 < 2^256' - the standing
+'2^256 breaks decide' limit (WORKER-RULES), which this card may not cross by raising maxRecDepth. The
+paragraph above is a report, not a theorem, and no Lean statement in this file depends on it.
+
+**TARGET 1 ALREADY EXISTED, UNDER ANOTHER NAME, AND WAS ALREADY REACHABLE.** The card asked for
+'(VEnv.set V x v).get x = some v' at a symbolic 'V' and pointed at 'vk_get_set' (VkRow.lean:565) as
+unreachable. 'vk_get_set' is indeed unreachable from here - but it is not the only copy.
+'VenvGet_set_same' ('QuotientFrame.lean:1260') is the SAME lemma at an OPEN dialect,
+'VEnv.get (VEnv.set V x v) x = some v' given 'VEnv.get V x = some w', and 'QuotientFrame' is imported
+(line 79) AND opened (line 90) by this file, so it has been reachable from 'QuotientLoopCompose' since
+this file was written. Its companion 'get_set_other' is 'venvGet_set_ne' (QuotientFrame.lean:1223),
+likewise reachable. NOTHING IS ADDED FOR TARGET 1: a duplicate would have been the error. Both are
+cited and USED below - 'venvGet_set_same' carries the 'q_pc' write the cursor advance makes,
+'venvGet_set_ne' carries every register the fetch leaves alone - so the reachability claim is a term
+that compiles, not a reading of an import list.
+
+**AND THE 'restore' GAP WAS MISATTRIBUTED BY ONE STEP.** Section 8 said the gap between
+'qfix_headArm_composes_under_guards' and the repaired post is 'VEnv.get' after 'VEnv.set'. Target 1
+shows that half was already paid for. What actually blocks it is SCOPE: the arm body opens with 'let
+qconst := ..', so its post environment is ONE BINDING LONGER than the loop's, and 'restore V Vb' is
+'Vb.drop 1' - it must peel the local off while keeping the three register writes that went THROUGH it.
+Section 10 proves exactly that ('lpp_restore_arm'): the arm's post environment is 'V.length + 1' long, so
+'restore' is 'drop 1', and peeling the 'qconst' local off the three writes that went through it is
+'venvSet_cons_ne' plus 'venvSet_length' and nothing else. What remains after that equation is the
+get-transport through the three peeled writes - 'venvGet_set_same' and 'venvGet_set_ne' applied three
+times each - mechanical, and NOT landed by this card. -/
+
+/-- Every byte the reference treats as a no-pop head opcode really is a byte. The fetch reads
+    'byte(0, mload q_pc)', whose value is a 'UInt8', while 'qHeadByte' is the raw 'Nat' the reference's
+    'bytes.getD' returns, so the two can be identified only when the program byte fits in a byte.
+    'decide' - no '2^256' anywhere. -/
+theorem qNoPopOpcodes_lt256 : ∀ b ∈ qNoPopOpcodes, b < 256 := by decide
+
+/-- **THE FETCH BRIDGE, WITHOUT GUARD 1.** The two statements of 'GenAst.qvmLoopPre' RUN: they bind
+    'q_op' to the fetched byte, advance 'q_pc' by one, and leave every other register untouched.
+    Stated with the read address as the machine sees it - 'pc.toNat' - and with the registers as plain
+    'VEnv.get' hypotheses rather than as 'AtSegment', so this half is pure semantics and the derivations
+    stay small. Guard 1 is what lets the address be written as the true offset; 'qvmLoopPre_exists'
+    spends it. 'venvGet_set_same' and 'venvGet_set_ne' - target 1 and its companion - are what make the
+    surviving-register clauses go at a SYMBOLIC 'V'; neither reduces by 'rfl' or 'simp'. -/
+theorem qvmLoopPre_raw {c : ExternalCalls} {g : ExternalGas}
+    (pc pend pbase pcmp smp top0 : U256)
+    (bytes : List Nat) (s : QSegment) (_hsw : s.inWindow)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hpc : VEnv.get V "q_pc" = some pc)
+    (hend : VEnv.get V "q_end" = some pend)
+    (hpm : VEnv.get V "q_program_mptr" = some pbase)
+    (hcm : VEnv.get V "q_const_mptr" = some pcmp)
+    (hsp : VEnv.get V "q_sp" = some smp)
+    (hhtm : VEnv.get V "q_has_top" = some top0)
+    (hxtop : ∃ x : U256, VEnv.get V "q_top" = some x) :
+    ∃ (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState),
+      ExecStmts (Bridge.Dialect c g) funs V st GenAst.qvmLoopPre V' st' .normal
+      ∧ VEnv.get V' "q_op" = some (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)
+      ∧ VEnv.get V' "q_pc" = some (pc + BitVec.ofNat 256 1)
+      ∧ VEnv.get V' "q_end" = some pend
+      ∧ VEnv.get V' "q_program_mptr" = some pbase
+      ∧ VEnv.get V' "q_const_mptr" = some pcmp
+      ∧ VEnv.get V' "q_sp" = some smp
+      ∧ VEnv.get V' "q_has_top" = some top0
+      ∧ (∃ x : U256, VEnv.get V' "q_top" = some x)
+      ∧ st' = touchMemory st pc.toNat 32 := by
+  obtain ⟨x, hx⟩ := hxtop
+  -- The fetch: 'q_op := byte(0, mload q_pc)'.
+  have x1 : Step (D := Bridge.Dialect c g) funs V st (.expr (yvar "q_pc"))
+      (.eres (.vals [pc] st)) := Step.var (D := Bridge.Dialect c g) hpc
+  have a1 : Step (D := Bridge.Dialect c g) funs V st (.args [yvar "q_pc"])
+      (.eres (.vals [pc] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st) (v := pc)
+      (st2 := st) (Step.argsNil (D := Bridge.Dialect c g)) x1
+  have m1 : Step (D := Bridge.Dialect c g) funs V st (.expr (yop Op.mload [yvar "q_pc"]))
+      (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a1 (Midfall.LoweringV3.QuotientArms.qbi_mload_at st st.memory pc rfl)
+  have am : Step (D := Bridge.Dialect c g) funs V st (.args [yop Op.mload [yvar "q_pc"]])
+      (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+      (v := loadWord st.memory pc.toNat) (st2 := touchMemory st pc.toNat 32)
+      (Step.argsNil (D := Bridge.Dialect c g)) m1
+  have l0 : Step (D := Bridge.Dialect c g) funs V (touchMemory st pc.toNat 32) (.expr (ylit 0))
+      (.eres (.vals [BitVec.ofNat 256 0] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0)
+  have ab : Step (D := Bridge.Dialect c g) funs V st
+      (.args [ylit 0, yop Op.mload [yvar "q_pc"]])
+      (.eres (.vals [BitVec.ofNat 256 0, loadWord st.memory pc.toNat]
+        (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [yop Op.mload [yvar "q_pc"]])
+      (restvals := [loadWord st.memory pc.toNat]) (st1 := touchMemory st pc.toNat 32)
+      (v := BitVec.ofNat 256 0) (st2 := touchMemory st pc.toNat 32) am l0
+  have b1 : Step (D := Bridge.Dialect c g) funs V st
+      (.expr (yop Op.byte [ylit 0, yop Op.mload [yvar "q_pc"]]))
+      (.eres (.vals [((loadWord st.memory pc.toNat) >>> 248) &&& 0xff]
+        (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk ab (Midfall.LoweringV3.QuotientArms.qbi_byte0
+      (touchMemory st pc.toNat 32) (loadWord st.memory pc.toNat))
+  have s1 : Step (D := Bridge.Dialect c g) funs V st
+      (.stmt (ylet "q_op" (yop Op.byte [ylit 0, yop Op.mload [yvar "q_pc"]])))
+      (.sres (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V)
+        (touchMemory st pc.toNat 32) .normal) := Step.letVal b1 rfl
+  -- The cursor advance: 'q_pc := q_pc + 1', reading 'q_pc' THROUGH the local the let introduced.
+  have g2 : VEnv.get (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+      = some pc := by
+    rw [venvGet_cons_ne V "q_op" "q_pc"
+      (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) (by decide : ("q_op" : Ident) ≠ "q_pc")]
+    exact hpc
+  have x2 : Step (D := Bridge.Dialect c g) funs
+      (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V)
+      (touchMemory st pc.toNat 32) (.expr (yvar "q_pc"))
+      (.eres (.vals [pc] (touchMemory st pc.toNat 32))) := Step.var (D := Bridge.Dialect c g) g2
+  have l1 : Step (D := Bridge.Dialect c g) funs
+      (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V)
+      (touchMemory st pc.toNat 32) (.expr (ylit 1))
+      (.eres (.vals [BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.lit (D := Bridge.Dialect c g) (l := Literal.number 1)
+  have a2 : Step (D := Bridge.Dialect c g) funs
+      (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V)
+      (touchMemory st pc.toNat 32) (.args [ylit 1])
+      (.eres (.vals [BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+      (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 1)
+      (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g)) l1
+  have a3 : Step (D := Bridge.Dialect c g) funs
+      (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V)
+      (touchMemory st pc.toNat 32) (.args [yvar "q_pc", ylit 1])
+      (.eres (.vals [pc, BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 1]) (restvals := [BitVec.ofNat 256 1])
+      (st1 := touchMemory st pc.toNat 32) (v := pc) (st2 := touchMemory st pc.toNat 32) a2 x2
+  have x3 : Step (D := Bridge.Dialect c g) funs
+      (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V)
+      (touchMemory st pc.toNat 32) (.expr (yop Op.add [yvar "q_pc", ylit 1]))
+      (.eres (.vals [pc + BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk a3 (Midfall.LoweringV3.QuotientArms.qbi_add
+      (touchMemory st pc.toNat 32) pc (BitVec.ofNat 256 1))
+  have s2 : Step (D := Bridge.Dialect c g) funs
+      (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V)
+      (touchMemory st pc.toNat 32) (.stmt (yset "q_pc" (yop Op.add [yvar "q_pc", ylit 1])))
+      (.sres (VEnv.set (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+        (pc + BitVec.ofNat 256 1)) (touchMemory st pc.toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_pc"])
+      (vals := [pc + BitVec.ofNat 256 1]) x3 (by rfl)
+  -- The two statements, sequenced; then the ten register facts.
+  refine ⟨VEnv.set (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+      (pc + BitVec.ofNat 256 1), touchMemory st pc.toNat 32, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · show ExecStmts (Bridge.Dialect c g) funs V st GenAst.qvmLoopPre _ _ _
+    exact Step.seqCons (D := Bridge.Dialect c g)
+      (V1 := ("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V)
+      (st1 := touchMemory st pc.toNat 32) s1
+      (Step.seqCons (D := Bridge.Dialect c g)
+        (V1 := VEnv.set (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+          (pc + BitVec.ofNat 256 1))
+        (st1 := touchMemory st pc.toNat 32) s2 (Step.seqNil (D := Bridge.Dialect c g)))
+  · exact venvGet_cons_eq V "q_op" (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)
+  · exact venvGet_set_same (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+      (pc + BitVec.ofNat 256 1) pc g2
+  · exact venvGet_set_ne (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+      "q_end" (pc + BitVec.ofNat 256 1) pend (by decide : ("q_pc" : Ident) ≠ "q_end")
+      (by rw [venvGet_cons_ne V "q_op" "q_end"
+        (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)
+        (by decide : ("q_op" : Ident) ≠ "q_end")]; exact hend)
+  · exact venvGet_set_ne (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+      "q_program_mptr" (pc + BitVec.ofNat 256 1) pbase
+      (by decide : ("q_pc" : Ident) ≠ "q_program_mptr")
+      (by rw [venvGet_cons_ne V "q_op" "q_program_mptr"
+        (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)
+        (by decide : ("q_op" : Ident) ≠ "q_program_mptr")]; exact hpm)
+  · exact venvGet_set_ne (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+      "q_const_mptr" (pc + BitVec.ofNat 256 1) pcmp
+      (by decide : ("q_pc" : Ident) ≠ "q_const_mptr")
+      (by rw [venvGet_cons_ne V "q_op" "q_const_mptr"
+        (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)
+        (by decide : ("q_op" : Ident) ≠ "q_const_mptr")]; exact hcm)
+  · exact venvGet_set_ne (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+      "q_sp" (pc + BitVec.ofNat 256 1) smp (by decide : ("q_pc" : Ident) ≠ "q_sp")
+      (by rw [venvGet_cons_ne V "q_op" "q_sp"
+        (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)
+        (by decide : ("q_op" : Ident) ≠ "q_sp")]; exact hsp)
+  · exact venvGet_set_ne (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V) "q_pc"
+      "q_has_top" (pc + BitVec.ofNat 256 1) top0 (by decide : ("q_pc" : Ident) ≠ "q_has_top")
+      (by rw [venvGet_cons_ne V "q_op" "q_has_top"
+        (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)
+        (by decide : ("q_op" : Ident) ≠ "q_has_top")]; exact hhtm)
+  · refine ⟨x, venvGet_set_ne (("q_op", ((loadWord st.memory pc.toNat) >>> 248) &&& 0xff) :: V)
+        "q_pc" "q_top" (pc + BitVec.ofNat 256 1) x (by decide : ("q_pc" : Ident) ≠ "q_top") ?_⟩
+    rw [venvGet_cons_ne V "q_op" "q_top"
+      (((loadWord st.memory pc.toNat) >>> 248) &&& 0xff)
+      (by decide : ("q_op" : Ident) ≠ "q_top")]
+    exact hx
+  · rfl
+
+/-- **GUARD 1 SPENT: THE FETCHED WORD IS THE SEGMENT'S HEAD BYTE.** The arithmetic content of the
+    bridge and the place the no-wrap hypothesis is consumed. Without 's.base + s.cursor < 2^256' the
+    'toNat' is a remainder and the equation is FALSE (the exhibit is described in the section header
+    above, and is NOT landed - the kernel refuses its '2^256' side condition). The
+    second half of the guard's work is 'QHeadNoPop': 'byte(0, ..)' returns a 'UInt8', so the fetched
+    word is the head byte only when the head byte fits in a byte. -/
+theorem qvmLoopPre_fetch_eq_headByte
+    (bytes : List Nat) (s : QSegment) (hsw : s.inWindow)
+    (hwrap : QWindowNoWrap s) (hpop : QHeadNoPop bytes s)
+    (st : EvmState) (hagr : AgreesProgram st s bytes) :
+    ((loadWord st.memory (BitVec.ofNat 256 (s.base + s.cursor)).toNat) >>> 248) &&& 0xff
+      = BitVec.ofNat 256 (qHeadByte bytes s) := by
+  have hcurLt : s.cursor < s.exprEnd := hsw.1
+  have hfit : s.base + s.cursor < 2 ^ 256 :=
+    Nat.lt_trans (Nat.add_lt_add_left hcurLt s.base) hwrap
+  have hlen : s.cursor < s.len := Nat.lt_of_lt_of_le hcurLt hsw.2
+  have htoNat : (BitVec.ofNat 256 (s.base + s.cursor)).toNat = s.base + s.cursor := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hfit]
+  rw [htoNat]
+  show ((loadWord st.memory (s.base + s.cursor)) >>> 248) &&& 255#256
+    = BitVec.ofNat 256 (qHeadByte bytes s)
+  rw [Midfall.Yul.Word.loadWord_topByte_mask, hagr s.cursor hlen]
+  have hfit' : bytes.getD s.cursor 0 < 256 := qNoPopOpcodes_lt256 (bytes.getD s.cursor 0) hpop
+  have hto : (UInt8.ofNat (bytes.getD s.cursor 0)).toNat = bytes.getD s.cursor 0 := by
+    have h := UInt8.toNat_ofNat (n := bytes.getD s.cursor 0)
+    rw [Nat.mod_eq_of_lt hfit'] at h
+    exact h
+  rw [show windowByte bytes s.cursor = UInt8.ofNat (bytes.getD s.cursor 0) from rfl, hto]
+  rfl
+
+/-- The transported postcondition of the loop pre, named so the run lemma and the contract state one
+    thing once. 'q_pc' is at 'base + cursor + 1' - the address the ARM is started at. -/
+def qPostLoopPre {c : ExternalCalls} {g : ExternalGas} (program : QuotientProgram)
+    (bytes : List Nat) (s : QSegment)
+    (V' : VEnv (Bridge.Dialect c g)) (st : EvmState) (st' : EvmState) (o : Outcome) : Prop :=
+  o = .normal
+    ∧ VEnv.get V' "q_op" = some (BitVec.ofNat 256 (qHeadByte bytes s))
+    ∧ VEnv.get V' "q_pc" = some (BitVec.ofNat 256 (s.base + s.cursor + 1))
+    ∧ VEnv.get V' "q_end" = some (BitVec.ofNat 256 (s.base + s.exprEnd))
+    ∧ VEnv.get V' "q_program_mptr" = some (BitVec.ofNat 256 s.base)
+    ∧ VEnv.get V' "q_const_mptr" = some (BitVec.ofNat 256 program.constMptr)
+    ∧ VEnv.get V' "q_sp" = some (BitVec.ofNat 256 program.stackMptr)
+    ∧ VEnv.get V' "q_has_top" = some (0 : U256)
+    ∧ (∃ x : U256, VEnv.get V' "q_top" = some x)
+    ∧ st' = touchMemory st (s.base + s.cursor) 32
+
+/-- **(O1, LANDED.) THE FETCH BRIDGE AS AN EXISTENCE.** -/
+theorem qvmLoopPre_exists {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (bytes : List Nat) (s : QSegment)
+    (hsw : s.inWindow) (hwrap : QWindowNoWrap s) (hpop : QHeadNoPop bytes s)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hAt : AtSegment (c := c) (g := g) (program := program) V st s)
+    (hagr : AgreesProgram st s bytes)
+    (h3a : QPreCachedTop (c := c) (g := g) V) :
+    ∃ (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome),
+      ExecStmts (Bridge.Dialect c g) funs V st GenAst.qvmLoopPre V' st' o
+        ∧ qPostLoopPre (c := c) (g := g) program bytes s V' st st' o := by
+  obtain ⟨V', st', hrun, hop, hqpc, h1, h2, h3, h4, h5, h6, hst'⟩ :=
+    qvmLoopPre_raw (BitVec.ofNat 256 (s.base + s.cursor)) (BitVec.ofNat 256 (s.base + s.exprEnd))
+      (BitVec.ofNat 256 s.base) (BitVec.ofNat 256 program.constMptr)
+      (BitVec.ofNat 256 program.stackMptr) (0 : U256) bytes s hsw funs V st
+      hAt.1 hAt.2.1 hAt.2.2.1 hAt.2.2.2.1 hAt.2.2.2.2 h3a.1 h3a.2
+  have hcurLt : s.cursor < s.exprEnd := hsw.1
+  have hfit : s.base + s.cursor < 2 ^ 256 :=
+    Nat.lt_trans (Nat.add_lt_add_left hcurLt s.base) hwrap
+  have htoNat : (BitVec.ofNat 256 (s.base + s.cursor)).toNat = s.base + s.cursor := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hfit]
+  have hqpc' : BitVec.ofNat 256 (s.base + s.cursor) + BitVec.ofNat 256 1
+      = BitVec.ofNat 256 (s.base + s.cursor + 1) := by rw [← BitVec.ofNat_add]
+  have hop' : VEnv.get V' "q_op" = some (BitVec.ofNat 256 (qHeadByte bytes s)) :=
+    hop.trans (congrArg some
+      (qvmLoopPre_fetch_eq_headByte bytes s hsw hwrap hpop st hagr))
+  have hst'' : st' = touchMemory st (s.base + s.cursor) 32 :=
+    hst'.trans (congrArg (fun a => touchMemory st a 32) htoNat)
+  exact ⟨V', st', .normal, hrun, rfl, hop', hqpc.trans (congrArg some hqpc'),
+    h1, h2, h3, h4, h5, h6, hst''⟩
+
+/-- **(O1, LANDED.) THE LOOP-PRE CONTRACT.** The two fetch statements of the emitted loop's body are a
+    contract: started in any state whose registers 'AtSegment' pins at 's', whose memory agrees with
+    the program window, and whose cached top satisfies guard 3a, EVERY run ends normally with 'q_op'
+    bound to the segment's head byte and 'q_pc' at 'base + cursor + 1' - the address the arm is started
+    at - every other register untouched. This is the transport 'QuotientRows' 13.4 said did not exist,
+    and the first place in the tree where guard 1 is CONSUMED rather than merely stated. No row, bundle,
+    'ValidV3' or the root gains a hypothesis: the hypotheses are on this lemma. -/
+theorem qvmLoopPre_contract {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (program : QuotientProgram) (bytes : List Nat) (s : QSegment)
+    (hsw : s.inWindow) (hwrap : QWindowNoWrap s) (hpop : QHeadNoPop bytes s)
+    (funs : FunEnv (Bridge.Dialect c g)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs GenAst.qvmLoopPre
+      (fun V st => AtSegment (c := c) (g := g) (program := program) V st s
+        ∧ AgreesProgram st s bytes ∧ QPreCachedTop (c := c) (g := g) V)
+      (fun _V st V' st' o => qPostLoopPre (c := c) (g := g) program bytes s V' st st' o) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (fun V st hpre => qvmLoopPre_exists program bytes s hsw hwrap hpop funs V st
+      hpre.1 hpre.2.1 hpre.2.2)
+
+/-- **(O1'S PAYOFF.) THE TRANSPORTED STATE FEEDS THE HEAD ARM'S PRECONDITION.** The point of the
+    bridge: at the cursor the loop actually starts the arm at, 'qPrePushConst' is satisfiable. The five
+    register clauses come from the transport; the two memory-reader clauses are discharged by TAKING
+    the arm's 'b' to be the operand decode and its 'v' to be the constant the slot holds - which is
+    what the arm's own statement asks for, so nothing has to be proved about the decode here. Guard 1
+    is used again, for 'q_pc = base + cursor + 1' to name the true address. -/
+theorem qvmLoopPre_feeds_pushConst {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (s : QSegment)
+    (hsw : s.inWindow) (hwrap : QWindowNoWrap s)
+    (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState)
+    (hpc : VEnv.get V' "q_pc" = some (BitVec.ofNat 256 (s.base + s.cursor + 1)))
+    (hsp : VEnv.get V' "q_sp" = some (BitVec.ofNat 256 program.stackMptr))
+    (hhtm : VEnv.get V' "q_has_top" = some (0 : U256))
+    (hcm : VEnv.get V' "q_const_mptr" = some (BitVec.ofNat 256 program.constMptr))
+    (htop : ∃ x : U256, VEnv.get V' "q_top" = some x) :
+    ∃ (x : U256) (b v : Nat),
+      qPrePushConst (c := c) (g := g) (BitVec.ofNat 256 (s.base + s.cursor + 1))
+        (BitVec.ofNat 256 program.constMptr) (BitVec.ofNat 256 program.stackMptr) x b v V' st' := by
+  obtain ⟨x, hx⟩ := htop
+  have hcurLt : s.cursor < s.exprEnd := hsw.1
+  have hfit : s.base + s.cursor + 1 < 2 ^ 256 :=
+    Nat.lt_of_le_of_lt
+      (Nat.add_le_add_left (Nat.succ_le_of_lt hcurLt) s.base) hwrap
+  have htoNat : (BitVec.ofNat 256 (s.base + s.cursor + 1)).toNat = s.base + s.cursor + 1 := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hfit]
+  set b := ((loadWord st'.memory (s.base + s.cursor + 1)) >>> 240).toNat with hb
+  set cb := BitVec.ofNat 256 program.constMptr with hcb
+  set v := (loadWord st'.memory (cb + ((BitVec.ofNat 256 b) <<< 5)).toNat).toNat with hv
+  refine ⟨x, b, v, hpc, hsp, hhtm, hx, hcm, ?_, ?_⟩
+  · rw [htoNat]
+    exact Midfall.LoweringV3.QuotientArms.mod7_ofNat_toNat _
+  · exact Midfall.LoweringV3.QuotientArms.mod7_ofNat_toNat _
+
+/-! ### 10. THE 'restore' GAP, CLOSED FOR THE HEAD ARM (LOOPPRE) -/
+
+/-- The head arm's post environment: the right-hand side of the third clause of 'qPostPushConst',
+    named so 'restore' can be stated about it. -/
+def lppArmVb {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g))
+    (b v : Nat) (pc : U256) : VEnv (Bridge.Dialect c g) :=
+  VEnv.set (VEnv.set (VEnv.set (("qconst", BitVec.ofNat 256 b) :: V) "q_top"
+    (BitVec.ofNat 256 v)) "q_has_top" (BitVec.ofNat 256 1)) "q_pc" (pc + BitVec.ofNat 256 2)
+
+/-- **THE 'restore' GAP IS A SCOPE FACT, NOT A GET-AFTER-SET FACT.** 'restore V Vb' must peel the
+    arm's 'let qconst' binding off while keeping the three register writes that went THROUGH it. Only
+    'venvSet_cons_ne' and 'venvSet_length', both already in 'QuotientFrame', are needed. -/
+theorem lpp_restore_arm {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (b v : Nat) (pc : U256) :
+    restore V (lppArmVb V b v pc)
+      = VEnv.set (VEnv.set (VEnv.set V "q_top" (BitVec.ofNat 256 v)) "q_has_top"
+        (BitVec.ofNat 256 1)) "q_pc" (pc + BitVec.ofNat 256 2) := by
+  have hcons : lppArmVb V b v pc
+      = (("qconst", BitVec.ofNat 256 b)
+        :: VEnv.set (VEnv.set (VEnv.set V "q_top" (BitVec.ofNat 256 v)) "q_has_top"
+          (BitVec.ofNat 256 1)) "q_pc" (pc + BitVec.ofNat 256 2)) := by
+    unfold lppArmVb
+    rw [venvSet_cons_ne _ "qconst" "q_top" _ _ (by decide : ("qconst" : Ident) ≠ "q_top")]
+    rw [venvSet_cons_ne _ "qconst" "q_has_top" _ _
+      (by decide : ("qconst" : Ident) ≠ "q_has_top")]
+    rw [venvSet_cons_ne _ "qconst" "q_pc" _ _ (by decide : ("qconst" : Ident) ≠ "q_pc")]
+  have hlen : (lppArmVb V b v pc).length = V.length + 1 := by
+    rw [hcons, List.length_cons]
+    rw [venvSet_length, venvSet_length, venvSet_length]
+  show (lppArmVb V b v pc).drop ((lppArmVb V b v pc).length - V.length) = _
+  rw [hlen, Nat.add_sub_cancel_left, hcons]
+  rfl
+
+-- The acceptance prints for sections 9 and 10.
+#print axioms Midfall.Lowering.QuotientLoopCompose.qNoPopOpcodes_lt256
+#print axioms Midfall.Lowering.QuotientLoopCompose.qvmLoopPre_raw
+#print axioms Midfall.Lowering.QuotientLoopCompose.qvmLoopPre_fetch_eq_headByte
+#print axioms Midfall.Lowering.QuotientLoopCompose.qvmLoopPre_contract
+#print axioms Midfall.Lowering.QuotientLoopCompose.qvmLoopPre_feeds_pushConst
+#print axioms Midfall.Lowering.QuotientLoopCompose.lppArmVb
+#print axioms Midfall.Lowering.QuotientLoopCompose.lpp_restore_arm
+#cone_sorries Midfall.Lowering.QuotientLoopCompose.qvmLoopPre_raw
+#cone_sorries Midfall.Lowering.QuotientLoopCompose.qvmLoopPre_fetch_eq_headByte
+#cone_sorries Midfall.Lowering.QuotientLoopCompose.qvmLoopPre_contract
+#cone_sorries Midfall.Lowering.QuotientLoopCompose.qvmLoopPre_feeds_pushConst
+#cone_sorries Midfall.Lowering.QuotientLoopCompose.lpp_restore_arm
+-- TARGET 1: the get-after-set lemmas this section runs on, printed HERE to exhibit that they are
+-- reachable from the composition file ('QuotientFrame' is imported at line 79 and opened at line 90).
+#print axioms Midfall.LoweringV3.QuotientFrame.venvGet_set_same
+#print axioms Midfall.LoweringV3.QuotientFrame.venvGet_set_ne
+#check @venvGet_set_same
+#check @venvGet_set_ne
+
 end Midfall.Lowering.QuotientLoopCompose
