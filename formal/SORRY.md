@@ -107,7 +107,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.LoweringV3.runBody_mono | Midfall.LoweringV3.Statements | theorem | OPEN | - | `789d844c4becf6c1` | V3 ST.13 - monotonicity in the call relation (Bridge layer). Experiment: induction on Step; the call relation occurs only in externalCall (EVMExec.lean), in a positive position |
 | Midfall.LoweringV3.tp_blockProgS | Midfall.LoweringV3.Rows | theorem | OPEN | ROOT | `8fb584b32507e2a2` | V3 ROW.TP (WP A6) - the transcriptParser progress row (Rows.lean); evidence GeneratorRows.lean:830, leaf ROW.TP.10 |
 | Midfall.LoweringV3.tp_blockSim | Midfall.LoweringV3.Rows | theorem | OPEN | ROOT | `64db83ff28872960` | V3 ROW.TP (WP A6) - the transcriptParser simulation row (Rows.lean); children tp_computes / tp_agrees / tp_poison land with ROW.TP; evidence GeneratorRows.lean:817 |
-| Midfall.LoweringV3.twoOutcomes_of_exitDiscipline | Midfall.LoweringV3.Statements | theorem | OPEN | ROOT | `01a1088791717d4a` | V3 ST.10 - replaces rejects_of_not_accepts (WP-M5c). Experiment: one induction on Step in the shape of Bridge.Run_worldEq_of_noWriters (Bridge.lean:1221), then Step.stmts_append_inv at the tail and mstore/ret by simp [stepOp] |
 | Midfall.LoweringV3.vk_blockProgS | Midfall.LoweringV3.Rows | theorem | OPEN | ROOT | `f15073fe4296958e` | V3 GEN.1 (WP A3) - the vkLoading progress row at BlockProgS (Rows.lean); evidence GeneratorRows.lean:1103 |
 | Midfall.LoweringV3.vk_blockSim | Midfall.LoweringV3.Rows | theorem | OPEN | ROOT | `957089d10b511667` | V3 GEN.1 (WP A3) - the vkLoading simulation row at BlockSim over StageInv (Rows.lean); evidence GeneratorRows.lean:1096 at the V3 reading |
 | Midfall.LoweringW.completeAnyGasW_of_progs | Midfall.LoweringV3.CompositionW | theorem | OPEN | - | `7f41adee570c333f` | V3 SIM.2 + SIM.6 re-pointed at BlockProgSW, plus ST.13 (runBody_mono) and WID.19 - the widened completeness at EVERY total gas oracle (D-P72 clause 5); CompleteW is then PROVED from it by CompleteAnyGasW.toComplete |
@@ -119,7 +118,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Statements.verifyMsgs_iff_spec | Midfall.Statements | theorem | OPEN | - | `3085a73fec19d53f` | frozen statements (S1..S7 land later) |
 | Midfall.Yul.Bridge.Evaluator.rel_worldLocal | Midfall.Yul.Bridge | theorem | OPEN | - | `f77b57bbcc305a5b` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
 | Midfall.Yul.Bridge.RunCommitted_keccakOf | Midfall.Yul.Bridge | theorem | OPEN | - | `2e73797d4a998bae` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
-| Midfall.Yul.Bridge.Run_worldEq_of_noWriters | Midfall.Yul.Bridge | theorem | OPEN | - | `e15a14387c645048` | V3 SIM.5 - the shared Step induction (ST.10 cites it) |
 | Midfall.Yul.Bridge.keccakOf_invariant | Midfall.Yul.Bridge | theorem | OPEN | - | `d30baf9a5253b859` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
 
 ## Upstream sorries we must not depend on
