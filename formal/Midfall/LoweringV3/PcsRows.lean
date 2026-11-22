@@ -46,10 +46,12 @@
 
   ROW.PCS.2 (`pcs_b2_sem`), the block SEM leaves 1/3/4/5/6 and the row glue are not stated here.
   Stating them without their proofs would add register rows that need their own W12 falsifiers, and
-  `Rows.lean`'s two pcs leaves must not be moved onto unproved children. `pcs_b2_sem`'s remaining
-  obstacle is NOT a premise: it is the kernel shape of `Inline.inlineContractConstants` on
-  `pcsBlock2Ast` (the inliner unfolds through 64 fuel levels with a symbolic `Consts`, so the
-  literal block has to be reached by the `inlineScan_append`/`stepAcc` route, phase 2).
+  `Rows.lean`'s two pcs leaves must not be moved onto unproved children. Section 4 proves the
+  block-2 inner-scope inliner facts (`inline_init`, `inline_post`, `inline_loopBody_false/true`) at
+  the shadow lists the block actually threads. The remaining pieces for `pcs_b2_sem` are exactly:
+  (a) the block-wrapper fuel alignment `inlineContractConstants consts (pcsBlock2Ast nb trunc) =
+  pcsBlock2Inline a1 aP nb trunc`, and (b) the loop's `AllRuns` contract over `pcsLoopBody`. Neither
+  is a premise; neither is a new hypothesis on a row.
 -/
 import Midfall.LoweringV2.Stages
 import Midfall.Lowering.GenAstPcs
@@ -216,7 +218,114 @@ theorem decode_exists (R : Render p G₁ G₂ Gₜ) (cd : Bytes) (raw : List (Ra
           obtain ⟨inst, hinst⟩ := instOfWords?_of_rawDecode (p := p) hraw
           exact ⟨_, _, inst, hcd, hinst⟩
 
+/-! ## 4. Block 2 inliner groundwork (ROW.PCS.2, phase 2)
+
+  `pcsBlock2Ast` is a five-statement block whose only loop is the x1 power table. The full
+  `pcs_b2_sem` statement is about `Inline.inlineContractConstants consts (pcsBlock2Ast nb trunc)`;
+  reaching the literal AST from that term is an INLINER-shape obligation, not a premise. The four
+  facts below are the concrete shadow-list steps that obligation needs. They are stated at the
+  shadow lists the block actually threads, because `shadowed` is a list recursion and a general
+  `sh` makes the statement false when `sh` names no binder. No hypothesis is added to any row:
+  these are lemmas about `Inline` alone.
+
+  Still open for `pcs_b2_sem` (recorded, not sorried): the full-block equality
+  `inlineContractConstants consts (pcsBlock2Ast nb trunc) = pcsBlock2Inline a1 aP nb trunc`
+  (`pcsBlock2Inline` is the literal five-statement block) needs the `inlineScan 64`/`inlineScan 63`
+  fuel alignment at the block wrapper; then the loop's `AllRuns` contract. Both are phase 2. -/
+
+/-- `inExpr` on a literal is the literal at every fuel. -/
+theorem inExpr_lit (fuel : Nat) (l : Literal) (consts : Inline.Consts) (sh : List String) :
+    Inline.inExpr fuel (Expr.lit l) consts sh = Expr.lit l := by
+  cases fuel with
+  | zero => rfl
+  | succ f => rfl
+
+/-- Block 2's loop body, at a fixed `trunc`. -/
+def pcsLoopBody (trunc : Bool) : Block EVM.Op :=
+  [ GenAst.yset "p" (GenAst.yop EVM.Op.add [GenAst.yvar "p", GenAst.ylit 32]),
+    GenAst.yset "acc" (GenAst.yop EVM.Op.mulmod
+      [GenAst.yvar "acc", GenAst.yvar "x1", GenAst.yvar "r"]),
+    GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.yvar "p",
+      if trunc then GenAst.yop EVM.Op.and [GenAst.yvar "acc", GenAstPcs.truncMaskExpr]
+      else GenAst.yvar "acc"]) ]
+
+/-- Block 2's loop init. -/
+def pcsInit : Block EVM.Op := [GenAst.ylet "i" (GenAst.ylit 0)]
+
+/-- Block 2's loop post block. -/
+def pcsPost : Block EVM.Op :=
+  [GenAst.yset "i" (GenAst.yop EVM.Op.add [GenAst.yvar "i", GenAst.ylit 1])]
+
+/-- The body inlines to itself at the block's own shadow list, non-truncated arm. -/
+theorem inline_loopBody_false (consts : Inline.Consts) (hr : consts.lookup "r" = none) :
+    Inline.inlineScan 63 consts ["x1", "acc", "p", "i"] (pcsLoopBody false) =
+      { blks := pcsLoopBody false, exhausted := false } := by
+  rw [show Inline.inlineScan 63 consts ["x1", "acc", "p", "i"] (pcsLoopBody false) =
+      Inline.inlineStep (Inline.inlineScan 62 consts) consts ["x1", "acc", "p", "i"]
+        (pcsLoopBody false) from rfl]
+  simp only [Inline.inlineStep, List.foldl_cons, List.foldl_nil, List.append_nil, pcsLoopBody,
+    GenAst.yset, GenAst.yop, GenAst.yvar, GenAst.ylit, GenAst.yexpr,
+    Inline.inlineStmtStep.eq_4, Inline.inlineStmtStep.eq_9,
+    Inline.inExpr.eq_1, Inline.inExpr.eq_2, Inline.inExpr.eq_3, Inline.inExpr.eq_4,
+    Inline.inExpr.eq_5, inExpr_lit, Inline.exprFuel, Inline.boundOf, hr,
+    List.map_cons, List.map_nil, Bool.false_or, Bool.or_false,
+    (show Inline.shadowed ["x1", "acc", "p", "i"] "p" = true by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"]) "acc" = true by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"]) "x1" = true by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"]) "r" = false by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"] ++ ["acc"]) "p" = true by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"] ++ ["acc"]) "acc" = true by decide)]
+  rfl
+
+/-- The body inlines to itself at the block's own shadow list, truncated arm. -/
+theorem inline_loopBody_true (consts : Inline.Consts) (hr : consts.lookup "r" = none) :
+    Inline.inlineScan 63 consts ["x1", "acc", "p", "i"] (pcsLoopBody true) =
+      { blks := pcsLoopBody true, exhausted := false } := by
+  rw [show Inline.inlineScan 63 consts ["x1", "acc", "p", "i"] (pcsLoopBody true) =
+      Inline.inlineStep (Inline.inlineScan 62 consts) consts ["x1", "acc", "p", "i"]
+        (pcsLoopBody true) from rfl]
+  simp only [Inline.inlineStep, List.foldl_cons, List.foldl_nil, List.append_nil, pcsLoopBody,
+    GenAst.yset, GenAst.yop, GenAst.yvar, GenAst.ylit, GenAst.yexpr,
+    Inline.inlineStmtStep.eq_4, Inline.inlineStmtStep.eq_9,
+    Inline.inExpr.eq_1, Inline.inExpr.eq_2, Inline.inExpr.eq_3, Inline.inExpr.eq_4,
+    Inline.inExpr.eq_5, inExpr_lit, Inline.exprFuel, Inline.boundOf, hr,
+    List.map_cons, List.map_nil, Bool.false_or, Bool.or_false,
+    (show Inline.shadowed ["x1", "acc", "p", "i"] "p" = true by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"]) "acc" = true by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"]) "x1" = true by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"]) "r" = false by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"] ++ ["acc"]) "p" = true by decide),
+    (show Inline.shadowed (["x1", "acc", "p", "i"] ++ ["p"] ++ ["acc"]) "acc" = true by decide)]
+  rfl
+
+/-- The loop init inlines to itself at the shadow list entering block 2's loop. -/
+theorem inline_init (consts : Inline.Consts) :
+    Inline.inlineScan 63 consts ["x1", "acc", "p"] pcsInit =
+      { blks := pcsInit, exhausted := false } := by
+  rw [show Inline.inlineScan 63 consts ["x1", "acc", "p"] pcsInit =
+      Inline.inlineStep (Inline.inlineScan 62 consts) consts ["x1", "acc", "p"] pcsInit from rfl]
+  simp only [Inline.inlineStep, List.foldl_cons, List.foldl_nil, List.append_nil, List.nil_append, pcsInit,
+    GenAst.ylet, GenAst.ylit, Inline.inlineStmtStep.eq_3, inExpr_lit,
+    Inline.exprFuel, Inline.boundOf, Option.map_some, Option.map_none, Bool.false_or]
+
+/-- The loop post block inlines to itself at the loop's own shadow list. -/
+theorem inline_post (consts : Inline.Consts) :
+    Inline.inlineScan 63 consts ["x1", "acc", "p", "i"] pcsPost =
+      { blks := pcsPost, exhausted := false } := by
+  rw [show Inline.inlineScan 63 consts ["x1", "acc", "p", "i"] pcsPost =
+      Inline.inlineStep (Inline.inlineScan 62 consts) consts ["x1", "acc", "p", "i"] pcsPost
+        from rfl]
+  simp only [Inline.inlineStep, List.foldl_cons, List.foldl_nil, List.append_nil, List.nil_append, pcsPost,
+    GenAst.yset, GenAst.yop, GenAst.yvar, GenAst.ylit, Inline.inlineStmtStep.eq_4,
+    Inline.inExpr.eq_2, Inline.inExpr.eq_3, inExpr_lit, Inline.exprFuel, Inline.boundOf,
+    List.map_cons, List.map_nil, Bool.false_or,
+    (show Inline.shadowed ["x1", "acc", "p", "i"] "i" = true by decide)]
+
 #assert_axioms Midfall.LoweringV3.PcsRows.decode_exists [propext, Classical.choice, Quot.sound]
   native []
+#assert_axioms Midfall.LoweringV3.PcsRows.inline_loopBody_false
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.inline_loopBody_true
+  [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.PcsRows
