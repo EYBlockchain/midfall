@@ -54,6 +54,7 @@
 -/
 import Midfall.LoweringV2.Stages
 import Midfall.Lowering.GenAstPcs
+import Midfall.Yul.Word
 import Midfall.Tools.Done
 set_option autoImplicit false
 
@@ -443,6 +444,188 @@ theorem pcsBlock2_inline (consts : Inline.Consts) (hr : consts.lookup "r" = none
         (show Inline.shadowed [] "X1_MPTR" = false by decide),
         (show Inline.shadowed ["x1"] "X1_POWERS_MPTR" = false by decide)]
 
+/-! ## 5. Block 2 loop vocabulary (ROW.PCS.2, phase 2; all PROVED)
+
+  The x1 power table's loop is stated over `wPowers` and written by `pcsWriteWords`. These are
+  the render-free definitions and the read-over-write/outside lemmas the loop contract needs; the
+  `AllRuns` proof itself is the next step and is not stated here (no register row is added). The
+  generic `VEnv` lemmas are dialect-generic copies of the ones `LagrangeRows`/`QuotientRows`
+  already proved; they are copied rather than imported so this file's cone does not pull in the
+  quotient modules. -/
+
+/-- `VEnv.set` preserves length. -/
+theorem venv_set_length {D : YulSemantics.Dialect} [DecidableEq D.Value] (V : VEnv D)
+    (x : Ident) (a : D.Value) : (VEnv.set V x a).length = V.length := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x <;> simp [VEnv.set, hy, ih]
+
+/-- Setting a variable twice is setting it once. -/
+theorem venv_set_set {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D} {x : Ident}
+    {a b : D.Value} : VEnv.set (VEnv.set V x a) x b = VEnv.set V x b := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x <;> simp [VEnv.set, hy, ih]
+
+/-- Reading back a variable just set when it is bound. -/
+theorem venv_get_set_same {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x : Ident} {v w : D.Value} (h : VEnv.get V x = some v) :
+    VEnv.get (VEnv.set V x w) x = some w := by
+  induction V with
+  | nil => cases h
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x
+      · subst hy
+        simp [VEnv.set, VEnv.get]
+      · have hget : VEnv.get rest x = some v := by
+          have h2 : VEnv.get ((y, u) :: rest) x = some v := h
+          simpa [VEnv.get, List.find?, hy] using h2
+        have h3 := ih hget
+        simpa [VEnv.set, VEnv.get, List.find?, hy] using h3
+
+/-- Reading a different variable from a cons. -/
+theorem venv_get_cons_ne {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x y : Ident} {v : D.Value} (h : y ≠ x) :
+    VEnv.get ((x, v) :: V) y = VEnv.get V y := by
+  have hd : decide (x = y) = false := decide_eq_false (fun h' => h h'.symm)
+  simp only [VEnv.get, List.find?, hd]
+
+/-- Reading the head binding at its own name. -/
+theorem venv_get_cons_self {D : YulSemantics.Dialect} [DecidableEq D.Value] (V : VEnv D)
+    (x : Ident) (v : D.Value) : VEnv.get ((x, v) :: V) x = some v := by
+  simp [VEnv.get, List.find?]
+
+/-- Reading a different variable after a set. -/
+theorem venv_get_set_ne {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x y : Ident} {v : D.Value} (h : y ≠ x) :
+    VEnv.get (VEnv.set V x v) y = VEnv.get V y := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y', u⟩ := p
+      by_cases hyx : y' = x
+      · subst hyx
+        have hyy : ¬ (y' = y) := fun h' => h h'.symm
+        simp [VEnv.set, VEnv.get, List.find?, hyy]
+      · have hset : VEnv.set ((y', u) :: rest) x v = (y', u) :: VEnv.set rest x v := by
+          simp [VEnv.set, hyx]
+        rw [hset]
+        by_cases hyy : y' = y
+        · subst hyy
+          simp [VEnv.get, List.find?]
+        · simpa [VEnv.get, List.find?, hyy] using ih
+
+/-- Setting a bound variable to its own value is the identity. -/
+theorem venv_set_eq_self {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x : Ident} {v : D.Value} (h : VEnv.get V x = some v) : VEnv.set V x v = V := by
+  classical
+  induction V with
+  | nil => cases h
+  | cons p rest ih =>
+      cases p with
+      | mk y u =>
+      by_cases hy : y = x
+      · subst hy
+        have huv : u = v := Option.some.inj (by simpa [VEnv.get, List.find?] using h)
+        subst huv
+        simp [VEnv.set]
+      · have hget : VEnv.get rest x = some v := by
+          have h2 : VEnv.get ((y, u) :: rest) x = some v := h
+          simpa [VEnv.get, List.find?, hy] using h2
+        have hset := ih hget
+        simp [VEnv.set, hy, hset]
+
+/-- A loop-exit environment drops the loop's own binding and keeps the in-place updates. -/
+theorem restore_cons_set {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {y x : Ident} {a b : D.Value} :
+    restore V ((y, b) :: VEnv.set V x a) = VEnv.set V x a := by
+  simp [restore, venv_set_length]
+
+/-- A block that only assigns exits by `restore`-identity. -/
+theorem restore_set_same {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x : Ident} {a : D.Value} : restore V (VEnv.set V x a) = VEnv.set V x a := by
+  simp [restore, venv_set_length]
+
+/-- Setting two distinct variables commutes. -/
+theorem venv_set_comm {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D} {x y : Ident}
+    {a b : D.Value} (h : x ≠ y) :
+    VEnv.set (VEnv.set V x a) y b = VEnv.set (VEnv.set V y b) x a := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨z, u⟩ := p
+      by_cases hzx : z = x
+      · subst hzx
+        have hzy : ¬ (z = y) := fun h' => h h'
+        simp [VEnv.set, hzy]
+      · by_cases hzy : z = y
+        · subst hzy
+          have hzx' : ¬ (z = x) := fun h' => hzx h'
+          simp [VEnv.set, hzx']
+        · simp [VEnv.set, hzx, hzy, ih]
+
+/-- A scope that adds one binding exits by dropping it. -/
+theorem restore_cons_length {D : YulSemantics.Dialect} [DecidableEq D.Value] {V W : VEnv D}
+    {y : Ident} {b : D.Value} (h : W.length = V.length) :
+    restore V ((y, b) :: W) = W := by
+  simp [restore, h]
+
+/-- EVM `mulmod` at an arbitrary modulus word. -/
+def wMulmodAt (a b n : U256) : U256 :=
+  if n = 0 then 0 else BitVec.ofNat 256 ((a.toNat * b.toNat) % n.toNat)
+
+/-- The x1 power table exactly as block 2's loop writes it. -/
+def wPowers (r x1 : U256) (mask : Bool) : Nat → U256 × U256
+  | 0 => (1, 1)
+  | i + 1 =>
+      let acc := wMulmodAt (wPowers r x1 mask i).1 x1 r
+      (acc, if mask then acc &&& BitVec.ofNat 256 (2 ^ 128 - 1) else acc)
+
+/-- The memory a run of `j` stores leaves at `D, D+32, …`. -/
+def pcsWriteWords (mem : Nat → UInt8) (D : Nat) (f : Nat → U256) : Nat → (Nat → UInt8)
+  | 0 => mem
+  | j + 1 => storeWord (pcsWriteWords mem D f j) (D + 32 * j) (f j)
+
+/-- Reading back the `i`-th stored word. -/
+theorem pcsLoadWord_writeWords_lt (mem : Nat → UInt8) (D : Nat) (f : Nat → U256) :
+    ∀ {j i : Nat}, i < j → loadWord (pcsWriteWords mem D f j) (D + 32 * i) = f i
+  | 0, i, h => absurd h (Nat.not_lt_zero i)
+  | j + 1, i, h => by
+      by_cases hij : i = j
+      · subst hij
+        rw [pcsWriteWords, Midfall.Yul.Word.loadWord_storeWord_same]
+      · have hi : i < j := Nat.lt_of_le_of_ne (Nat.le_of_lt_succ h) hij
+        have hdisj : D + 32 * i + 32 ≤ D + 32 * j := by omega
+        rw [pcsWriteWords, show loadWord (storeWord (pcsWriteWords mem D f j) (D + 32 * j) (f j))
+              (D + 32 * i) = loadWord (pcsWriteWords mem D f j) (D + 32 * i) from
+            Midfall.Yul.Word.loadWord_storeWord_disjoint _ _ _ _ (Or.inl hdisj)]
+        exact pcsLoadWord_writeWords_lt mem D f hi
+
+/-- A byte outside the written window is unchanged. -/
+theorem pcsWriteWords_outside (mem : Nat → UInt8) (D : Nat) (f : Nat → U256) :
+    ∀ {j a : Nat}, (a < D ∨ D + 32 * j ≤ a) → pcsWriteWords mem D f j a = mem a
+  | 0, a, _ => rfl
+  | j + 1, a, h => by
+      rw [pcsWriteWords]
+      have hnot : ¬ (D + 32 * j ≤ a ∧ a < D + 32 * j + 32) := by
+        rintro ⟨h1, h2⟩
+        omega
+      rw [storeWord, ite_eq_right hnot]
+      exact pcsWriteWords_outside mem D f (j := j) (a := a) (by omega)
+
+/-- Re-storing the same word at the same address is the identity. -/
+theorem storeWord_storeWord_same (mem : Nat → UInt8) (p : Nat) (v : U256) :
+    storeWord (storeWord mem p v) p v = storeWord mem p v := by
+  funext a
+  by_cases h : p ≤ a ∧ a < p + 32
+  · simp [storeWord, h]
+  · simp [storeWord, h]
+
 #assert_axioms Midfall.LoweringV3.PcsRows.decode_exists [propext, Classical.choice, Quot.sound]
   native []
 #assert_axioms Midfall.LoweringV3.PcsRows.inline_loopBody_false
@@ -451,5 +634,7 @@ theorem pcsBlock2_inline (consts : Inline.Consts) (hr : consts.lookup "r" = none
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.pcsBlock2_inline
   [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.pcsLoadWord_writeWords_lt
+  [propext, Quot.sound] native []
 
 end Midfall.LoweringV3.PcsRows
