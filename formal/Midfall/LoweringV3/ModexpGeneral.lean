@@ -258,7 +258,7 @@ theorem loadWord_copyReturn_bytesNatBE (mem : Nat → UInt8) (p : Nat) (v : Nat)
 
 /-! ## The staticcall walk's statement inversions (21-28) -/
 
-open Midfall.LoweringV2.Blocks.VkLoading
+open Midfall.LoweringV2.Blocks.VkLoading Midfall.LoweringV3.ScalarInv
 
 theorem eval_args_litvar_no_halt {c : ExternalCalls} {g : ExternalGas}
     {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
@@ -451,8 +451,8 @@ theorem ret_and_eq32_stmt {c : ExternalCalls} {g : ExternalGas}
           Expr.lit (Literal.number 32)]]))
       (fun V st => ∃ rv, VEnv.get V "ret" = some rv ∧
         (rv = 0 ∨ (rv = 1 ∧ st.returndata.length = 32)))
-      (fun _ st V' st' o => o = .normal ∧
-        ∃ rv, VEnv.get V' "ret" = some rv ∧ st' = st) := by
+      (fun V st V' st' o => o = .normal ∧
+        ∃ rv, VEnv.get V "ret" = some rv ∧ V' = VEnv.set V "ret" rv ∧ st' = st) := by
   intro V st hpre V' st' o hrun
   obtain ⟨rv, hrv, hcases⟩ := hpre
   cases hrun with
@@ -467,16 +467,10 @@ theorem ret_and_eq32_stmt {c : ExternalCalls} {g : ExternalGas}
           rw [hlen']
           show (1 : U256) &&& b2w (decide (BitVec.ofNat 256 32 = BitVec.ofNat 256 32)) = 1
           decide
-      refine ⟨rfl, rv, ?_, rfl⟩
+      refine ⟨rfl, rv, hrv, ?_, rfl⟩
       rw [hvals]
-      change VEnv.get (VEnv.setMany V ["ret"] [rv &&& b2w (BitVec.ofNat 256 st'.returndata.length =
-        BitVec.ofNat 256 32)]) "ret" = some rv
-      rw [show VEnv.setMany V ["ret"] [rv &&& b2w (BitVec.ofNat 256 st'.returndata.length =
-          BitVec.ofNat 256 32)] =
-        VEnv.set V "ret" (rv &&& b2w (BitVec.ofNat 256 st'.returndata.length =
-          BitVec.ofNat 256 32)) from rfl]
       rw [hcv']
-      exact Midfall.LoweringV3.PcsRows.venv_get_set_same (D := Bridge.Dialect c g) hrv
+      rfl
   | assignHalt he =>
       exact (eval_ret_and_eq32_no_halt he).elim
 
@@ -529,6 +523,30 @@ theorem exec_assign_iszero_inv {c : ExternalCalls} {g : ExternalGas}
       simp only [VEnv.setMany]
       rfl
   | assignHalt he => exact (eval_iszero_ret_no_halt he).elim
+
+theorem exec_assign_iszero_one {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome}
+    (hrv : VEnv.get V "ret" = some 1)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign ["precompile_failed"] (Expr.builtin EVM.Op.iszero [Expr.var "ret"]))
+      V' st' o) :
+    o = .normal ∧ V' = VEnv.set V "precompile_failed" 0 ∧ st' = st := by
+  have h' := exec_assign_iszero_inv (rv := 1) hrv h
+  rw [show b2w ((1 : U256) = 0) = 0 from rfl] at h'
+  exact h'
+
+theorem exec_assign_iszero_zero {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome}
+    (hrv : VEnv.get V "ret" = some 0)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign ["precompile_failed"] (Expr.builtin EVM.Op.iszero [Expr.var "ret"]))
+      V' st' o) :
+    o = .normal ∧ V' = VEnv.set V "precompile_failed" 1 ∧ st' = st := by
+  have h' := exec_assign_iszero_inv (rv := 0) hrv h
+  rw [show b2w ((0 : U256) = 0) = 1 from rfl] at h'
+  exact h'
 
 theorem exec_guard_inv {c : ExternalCalls} {g : ExternalGas}
     {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
@@ -690,6 +708,170 @@ theorem exec_assign_sub_var_lit_inv {c : ExternalCalls} {g : ExternalGas}
   | assignHalt he => exact (eval_sub_var_lit_no_halt he).elim
 
 
+theorem finishCall_staticcall_memory (st : EvmState) (resp : CallResponse)
+    (io is oo os : Nat) :
+    (finishCall .staticcall st resp io is oo os).memory =
+      copyReturn st.memory oo os resp.returndata := rfl
+
+theorem touchMemory_memory (st : EvmState) (p n : Nat) :
+    (touchMemory st p n).memory = st.memory := rfl
+
+theorem finishCall_staticcall_env (st : EvmState) (resp : CallResponse)
+    (io is oo os : Nat) :
+    (finishCall .staticcall st resp io is oo os).env = st.env := by
+  simp [finishCall, touchMemory2, touchMemory]
+
+/-- `ofNat a + 32` is `ofNat (a+32)` when the sum fits. -/
+theorem ofNat_add_32 (a : Nat) (h : a + 32 < 2 ^ 256) :
+    ((BitVec.ofNat 256 a : U256) + BitVec.ofNat 256 32) = BitVec.ofNat 256 (a + 32) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_add, BitVec.toNat_ofNat, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt (by omega : 32 < 2 ^ 256), Nat.mod_eq_of_lt (by omega : a < 2 ^ 256),
+    Nat.mod_eq_of_lt h]
+
+/-- `ofNat p - 32` is `ofNat (p-32)` when `p` fits and `32 ≤ p`. -/
+theorem ofNat_sub_32 (p : Nat) (hp : p < 2 ^ 256) (hp32 : 32 ≤ p) :
+    ((BitVec.ofNat 256 p : U256) - BitVec.ofNat 256 32) = BitVec.ofNat 256 (p - 32) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_sub, BitVec.toNat_ofNat, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt (by omega : 32 < 2 ^ 256), Nat.mod_eq_of_lt hp,
+    Nat.mod_eq_of_lt (by omega : p - 32 < 2 ^ 256)]
+  omega
+
+theorem bi_staticcall_tail_lets {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g))
+    (mem : Nat → UInt8) (p a : Nat) (x : U256) (v : Nat) (hp : p < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [ GenAst.ylet "all_inv" (GenAst.yop EVM.Op.mload [GenAst.yvar "gp_mptr"]),
+        GenAst.ylet "first_mptr" (GenAst.yvar "mptr_start"),
+        GenAst.ylet "second_mptr" (GenAst.yop EVM.Op.add
+          [GenAst.yvar "first_mptr", GenAst.ylit 32]),
+        GenAst.yset "gp_mptr" (GenAst.yop EVM.Op.sub
+          [GenAst.yvar "gp_mptr", GenAst.ylit 32])]
+      (fun V st =>
+        VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p) ∧
+        VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        st.memory = mxMem mem p x ∧
+        loadWord (mxMem mem p x) p = BitVec.ofNat 256 v)
+      (fun _ st V' st' o => o = .normal ∧
+        VEnv.get V' "all_inv" = some (BitVec.ofNat 256 v) ∧
+        VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 a + 32) ∧
+        VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p - 32) ∧
+        VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        st' = touchMemory st (BitVec.ofNat 256 p).toNat 32) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hgp, hmstart, hmem, hv⟩ := hpre
+  -- s1 mload
+  rcases Step.stmts_cons_inv hrun with ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨pp, vv, hgetpp, hvval, ho1, hV1, hst1⟩ :=
+      exec_let_mload_var_inv (x := "all_inv") h1
+    rw [hgp] at hgetpp
+    injection hgetpp with hpp
+    subst hpp
+    subst hV1
+    subst hst1
+    rw [hmem] at hvval
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp] at hvval
+    rw [hv] at hvval
+    -- s2 first
+    rcases Step.stmts_cons_inv hrest1 with ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · obtain ⟨vms, hgetms, ho2, hV2, hst2⟩ :=
+        exec_let_var_inv (x := "first_mptr") (y := "mptr_start") h2
+      subst hV2
+      subst hst2
+      rw [Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "mptr_start")
+        (by decide)] at hgetms
+      rw [hmstart] at hgetms
+      injection hgetms with hvms
+      have hvms' : vms = BitVec.ofNat 256 a := hvms.symm
+      -- s3 second
+      rcases Step.stmts_cons_inv hrest2 with ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
+      · obtain ⟨vfm, hgetfm, ho3, hV3, hst3⟩ :=
+          exec_let_add_var_lit_inv (x := "second_mptr") (y := "first_mptr") (k := 32) h3
+        subst hV3
+        subst hst3
+        simp [VEnv.get, List.find?] at hgetfm
+        have hvfm : vfm = vms := hgetfm.symm
+        -- s4 gp_mptr
+        rcases Step.stmts_cons_inv hrest3 with ⟨V4, st4, h4, hrest4⟩ | ⟨h4, hne4⟩
+        · obtain ⟨vgp, hgetgp, ho4, hV4, hst4⟩ :=
+            exec_assign_sub_var_lit_inv (x := "gp_mptr") (k := 32) h4
+          subst hV4
+          subst hst4
+          cases hrest4
+          -- read gp_mptr through the two lets and the ret/pf sets
+          rw [Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                (x := "second_mptr") (y := "gp_mptr") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                (x := "first_mptr") (y := "gp_mptr") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                (x := "all_inv") (y := "gp_mptr") (by decide)] at hgetgp
+          rw [hgp] at hgetgp
+          have hvgp : vgp = BitVec.ofNat 256 p := Option.some.inj hgetgp.symm
+          subst hvgp
+          have hgetpre : VEnv.get (("second_mptr", vfm + BitVec.ofNat 256 32) ::
+                ("first_mptr", vms) :: ("all_inv", vv) :: V) "gp_mptr" =
+              some (BitVec.ofNat 256 p) := by
+            rw [Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "second_mptr") (y := "gp_mptr") (by decide),
+                Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "first_mptr") (y := "gp_mptr") (by decide),
+                Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "all_inv") (y := "gp_mptr") (by decide)]
+            exact hgp
+          refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, rfl⟩
+          · -- all_inv
+            rw [Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "all_inv") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "second_mptr") (y := "all_inv") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "first_mptr") (y := "all_inv") (by decide)]
+            simp [VEnv.get, List.find?]
+            rw [hvval]
+          · -- first_mptr
+            rw [Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "first_mptr") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "second_mptr") (y := "first_mptr") (by decide)]
+            simp [VEnv.get, List.find?]
+            rw [hvms]
+          · -- second_mptr
+            rw [Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "second_mptr") (by decide)]
+            simp [VEnv.get, List.find?]
+            rw [hvfm, hvms]
+          · -- gp_mptr
+            rw [Midfall.LoweringV3.PcsRows.venv_get_set_same (D := Bridge.Dialect c g) hgetpre]
+            rfl
+          · -- mptr_start
+            rw [Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "mptr_start") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "second_mptr") (y := "mptr_start") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "first_mptr") (y := "mptr_start") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "mptr_start") (by decide)]
+            exact hmstart
+        · cases h4 with
+          | assignVal he hl => exact absurd rfl hne4
+          | assignHalt he => exact (eval_sub_var_lit_no_halt he).elim
+      · cases h3 with
+        | letVal he hl => exact absurd rfl hne3
+        | letHalt he =>
+            exact (Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := .add)
+              (by intro a b st r hr
+                  simp only [builtinWithExternal, stepOp, bin] at hr
+                  cases hr
+                  exact ⟨_, _, rfl⟩)
+              (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+              (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) he).elim
+    · cases h2 with
+      | letVal he hl => exact absurd rfl hne2
+      | letHalt he => exact (Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts he).elim
+  · cases h1 with
+    | letVal he hl => exact absurd rfl hne1
+    | letHalt he => exact (eval_mload_var_halt_false he).elim
+
+
+/-- The inverse's value fits in a word. -/
+theorem zmod_inv_val_lt (x : U256) : ((x.toNat : ZMod blsR)⁻¹).val < 2 ^ 256 := by
+  have hR : blsR < 2 ^ 256 := by decide
+  have h := ZMod.val_lt ((x.toNat : ZMod blsR)⁻¹)
+  omega
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -736,6 +918,13 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms callsOf_modexp_returndata [propext, Classical.choice, Quot.sound]
 #assert_axioms modexpValidInput_of_output_some [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_staticcall_segment_form [propext, Classical.choice, Quot.sound]
+#assert_axioms ofNat_add_32 [propext, Classical.choice, Quot.sound]
+#assert_axioms finishCall_staticcall_memory [propext, Classical.choice, Quot.sound]
+#assert_axioms touchMemory_memory [propext, Classical.choice, Quot.sound]
+#assert_axioms finishCall_staticcall_env [propext, Classical.choice, Quot.sound]
+#assert_axioms ofNat_sub_32 [propext, Classical.choice, Quot.sound]
+#assert_axioms zmod_inv_val_lt [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_staticcall_tail_lets [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_args_litvar_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_staticcall_args [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_staticcall_inv [propext, Classical.choice, Quot.sound]
@@ -747,6 +936,8 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms eval_iszero_ret_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_iszero_ret_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_iszero_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_assign_iszero_one [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_assign_iszero_zero [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_sub_var_lit_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_sub_var_lit_no_halt [propext, Classical.choice, Quot.sound]
