@@ -279,6 +279,45 @@ theorem limbLinearForm_eq_denoteLin (bytes : List Nat) (consts : List Word256)
       rw [hden]
       rfl
 
+
+/-- THE DECODER-SIDE ROW TIE. `limbRowForm` reads the lhs pointer first, hits it, then runs
+    the seven-limb linear decoder on the remaining terms and multiplies. The shape
+    denotation `denoteLimbShape ρ (.bilin7Row lhs terms)` is the same product. The lhs and
+    term pointers are required to be memory hits at `ρ`, which is the no-miss condition the
+    valuation layer supplies; this is the ROW analogue of `limbLinearForm_eq_denoteLin`. -/
+theorem limbRowForm_eq_denoteLimbRow (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (ρ : Valuation) (lhs : Nat) (terms : List (Word256 × Nat))
+    (slots : List Nat) (idx : Nat)
+    (hlen : terms.length = quotientVmLimbs)
+    (hlhs : Midfall.Generator.readU16 bytes idx = .ok lhs)
+    (hbyte : ∀ i t slot, i < terms.length → terms.getD i (0, 0) = t → slots.getD i 0 = slot →
+        Midfall.Generator.byteAt bytes (idx + 2 + 3 * i) = .ok slot)
+    (hptr : ∀ i t slot, i < terms.length → terms.getD i (0, 0) = t → slots.getD i 0 = slot →
+        Midfall.Generator.readU16 bytes (idx + 2 + 3 * i + 1) = .ok t.2)
+    (hconst : ∀ i t slot, i < terms.length → terms.getD i (0, 0) = t → slots.getD i 0 = slot →
+        Midfall.Generator.constAt consts slot (idx + 2 + 3 * i) = fqFromU256 t.1)
+    (hmem : ∀ p ∈ terms.map Prod.snd, mem.literal p = (ρ 0 (p % 2 ^ 32), mem))
+    (hlhsmem : mem.literal lhs = (ρ 0 (lhs % 2 ^ 32), mem)) :
+    Midfall.Generator.limbRowForm bytes consts mem idx =
+      (denoteLimbShape ρ (.bilin7Row lhs terms)).map (fun v => (v, 23, mem)) := by
+  unfold Midfall.Generator.limbRowForm
+  rw [hlhs]
+  simp only [bind, Except.bind]
+  rw [hlhsmem]
+  rw [limbLinearForm_eq_denoteLin bytes consts mem ρ terms slots (idx + 2) hlen
+    (by intro i t sl hi ht hs; exact hbyte i t sl hi ht hs)
+    (by intro i t sl hi ht hs; exact hptr i t sl hi ht hs)
+    (by intro i t sl hi ht hs; exact hconst i t sl hi ht hs) hmem]
+  unfold denoteLimbShape
+  cases hd : denoteLin ρ terms with
+  | error e =>
+      simp only [hd, Except.map, bind, Except.bind, pure, Except.pure]
+  | ok v =>
+      have h7 : 3 * terms.length = 21 := by
+        rw [hlen]; rfl
+      simp only [hd, Except.map, bind, Except.bind, pure, Except.pure]
+      rw [h7]
+
 /-! ### 3. The builder side, and what is named rather than sorried -/
 
 /-- The builder's slot map agrees with its constant table: every coefficient the builder can
@@ -299,6 +338,7 @@ def termBlock : List Nat → List (Word256 × Nat) → List Nat
   | _, [] => []
   | slot :: slots, (_c, ptr) :: terms =>
       slot :: ptr / 256 :: ptr % 256 :: termBlock slots terms
+
 
 /-- THE MISSING BUILDER LINK, named rather than sorried. Combined with
     'limbLinearForm_eq_denoteLin' above this is exactly the theorem form of
@@ -1604,5 +1644,63 @@ theorem PG_termFold_structure_proof : Midfall.Lowering.QvmEmit.PG_termFold_struc
   exact ⟨slots, hlen, hbytes, hslots, hconsts⟩
 
 #print axioms Midfall.Lowering.QvmEmit.PG_termFold_structure_proof
+
+/-! #### The ROW builder half -/
+
+theorem emitU16_consts (s : QuotientProgramBuilder) (v : Nat) (s' : QuotientProgramBuilder)
+    (h : emitU16 s v = .ok s') : s'.consts = s.consts := by
+  unfold emitU16 at h
+  split at h
+  · cases h
+  · cases h; rfl
+
+theorem emitU16_constSlots (s : QuotientProgramBuilder) (v : Nat) (s' : QuotientProgramBuilder)
+    (h : emitU16 s v = .ok s') : s'.constSlots = s.constSlots := by
+  unfold emitU16 at h
+  split at h
+  · cases h
+  · cases h; rfl
+
+theorem emitLimbRow_bytes (s : QuotientProgramBuilder) (lhs : Nat)
+    (terms : List (Word256 × Nat)) (s' : QuotientProgramBuilder)
+    (hcs : ConstTableSound s) (hlhs : lhs ≤ 0xffff)
+    (htermptr : ∀ p ∈ terms.map Prod.snd, p ≤ 0xffff)
+    (h : emitLimbShape s (.bilin7Row lhs terms) = .ok s') :
+    ∃ slots, slots.length = terms.length ∧
+      s'.bytes = s.bytes ++ [qOpBilin7Row, lhs / 256, lhs % 256] ++ termBlock slots terms ∧
+      (∀ i slot, i < terms.length → slots.getD i 0 = slot → slot ≤ 255) ∧
+      (∀ i t slot, i < terms.length → terms.getD i (0, 0) = t →
+        slots.getD i 0 = slot → ∃ rest, s'.consts.drop slot = t.1 :: rest) := by
+  unfold emitLimbShape at h
+  obtain ⟨a1, h1, h2⟩ := peel_bind h
+  obtain ⟨a2, h3, h4⟩ := peel_bind h1
+  have hs' : s' = pushStackAcct a1 := (Except.ok.inj h2).symm
+  have hcsl : a2.constSlots = s.constSlots := by
+    rw [emitU16_constSlots (pushByte s qOpBilin7Row) lhs a2 h3]; rfl
+  have hcst : a2.consts = s.consts := by
+    rw [emitU16_consts (pushByte s qOpBilin7Row) lhs a2 h3]; rfl
+  have hcs2 : ConstTableSound a2 := by
+    intro c sl h0
+    have h0' : constSlotOf s c = some sl := by
+      unfold constSlotOf at h0 ⊢
+      rw [hcsl] at h0
+      exact h0
+    obtain ⟨rest, hrest⟩ := hcs c sl h0'
+    exact ⟨rest, by rw [hcst]; exact hrest⟩
+  obtain ⟨slots, hlen, hbytes, hslots, hconsts, _⟩ :=
+    termFold_structure a2 terms siteBilin7RowSlot a1 hcs2 htermptr h4
+  refine ⟨slots, hlen, ?_, hslots, ?_⟩
+  · rw [hs']
+    change a1.bytes = s.bytes ++ [qOpBilin7Row, lhs / 256, lhs % 256] ++ termBlock slots terms
+    rw [hbytes]
+    have hb2 : a2.bytes = (pushByte s qOpBilin7Row).bytes ++ [lhs / 256, lhs % 256] :=
+      emitU16_bytes (pushByte s qOpBilin7Row) lhs a2 h3
+    rw [hb2]
+    simp only [pushStackAcct, pushByte, appendBytes]
+    simp [List.append_assoc]
+  · intro i t sl hi ht hs
+    have hcons : s'.consts = a1.consts := by rw [hs']; rfl
+    obtain ⟨rest, hrest⟩ := hconsts i t sl hi ht hs
+    exact ⟨rest, by rw [hcons]; exact hrest⟩
 
 end Midfall.Lowering.QvmEmit
