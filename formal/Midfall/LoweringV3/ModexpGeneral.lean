@@ -872,6 +872,223 @@ theorem zmod_inv_val_lt (x : U256) : ((x.toNat : ZMod blsR)⁻¹).val < 2 ^ 256 
   have h := ZMod.val_lt ((x.toNat : ZMod blsR)⁻¹)
   omega
 
+open Midfall.LoweringV3.ScalarInv Midfall.LoweringV2.Blocks.TraceReturn
+
+variable {c : ExternalCalls} {g : ExternalGas}
+
+/-! ## The `scalar_inv` staticcall arm: evaluation, no-halt, and the guard contract -/
+
+theorem eval_staticcall_frame (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st1 : EvmState} {gasv pv a : U256}
+    (hgas : VEnv.get V "MODEXP_GAS" = some gasv) (hp : VEnv.get V "p" = some pv)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.staticcall
+        [Expr.var "MODEXP_GAS", Expr.lit (Literal.number 5), Expr.var "p",
+         Expr.lit (Literal.number 192), Expr.var "p", Expr.lit (Literal.number 32)])
+      (.vals [a] st1)) :
+    ∃ resp, c.Call ⟨.staticcall, gasv, 5, 0, readBytes st.memory pv.toNat 192⟩ st resp ∧
+      a = resp.flag ∧
+      st1 = finishCall .staticcall st resp pv.toNat 192 pv.toNat 32 := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hrest1 hhead1 =>
+        cases hrest1 with
+        | argsCons hrest2 hhead2 =>
+          cases hrest2 with
+          | argsCons hrest3 hhead3 =>
+            cases hrest3 with
+            | argsCons hrest4 hhead4 =>
+              cases hrest4 with
+              | argsCons hrest5 hhead5 =>
+                cases hrest5 with
+                | argsCons hrest6 hhead6 =>
+                  cases hrest6 with
+                  | argsNil =>
+                    obtain ⟨hv6, hs6⟩ := eval_lit_eq funs V (st := st) 32 hhead6
+                    obtain ⟨hv5, hs5⟩ := eval_var_eq funs V "p" pv hp hhead5
+                    obtain ⟨hv4, hs4⟩ := eval_lit_eq funs V (st := _) 192 hhead4
+                    obtain ⟨hv3, hs3⟩ := eval_var_eq funs V "p" pv hp hhead3
+                    obtain ⟨hv2, hs2⟩ := eval_lit_eq funs V (st := _) 5 hhead2
+                    obtain ⟨hv1, hs1⟩ := eval_var_eq funs V "MODEXP_GAS" gasv hgas hhead1
+                    rw [hs1, hs2, hs3, hs4, hs5, hs6] at hbi
+                    rw [hv1, hv2, hv3, hv4, hv5, hv6] at hbi
+                    simp [Bridge.Dialect, builtinWithExternal, externalCall] at hbi
+                    rcases hbi with ⟨resp, hcall, hok⟩
+                    exact ⟨resp, hcall, hok.1, hok.2⟩
+theorem eval_iszero_staticcall_frame (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g))
+    {st st1 : EvmState} {gasv pv cv : U256}
+    (hgas : VEnv.get V "MODEXP_GAS" = some gasv) (hp : VEnv.get V "p" = some pv)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.iszero
+        [Expr.builtin EVM.Op.staticcall
+          [Expr.var "MODEXP_GAS", Expr.lit (Literal.number 5), Expr.var "p",
+           Expr.lit (Literal.number 192), Expr.var "p", Expr.lit (Literal.number 32)]])
+      (.vals [cv] st1)) :
+    ∃ resp, c.Call ⟨.staticcall, gasv, 5, 0, readBytes st.memory pv.toNat 192⟩ st resp ∧
+      cv = b2w (resp.flag = 0) ∧
+      st1 = finishCall .staticcall st resp pv.toNat 192 pv.toNat 32 := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hrest hhead =>
+          cases hrest with
+          | argsNil =>
+              obtain ⟨resp, hcall, hflag, hst⟩ := eval_staticcall_frame funs V hgas hp hhead
+              rw [hst] at hbi
+              simp [Bridge.Dialect, builtinWithExternal, stepOp, un] at hbi
+              refine ⟨resp, hcall, ?_, hbi.2.symm⟩
+              rw [← hbi.1, hflag]
+              rfl
+
+theorem expr_staticcall_frame_ne_halts (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) {st st' : EvmState} :
+    ¬ EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.staticcall
+        [Expr.var "MODEXP_GAS", Expr.lit (Literal.number 5), Expr.var "p",
+         Expr.lit (Literal.number 192), Expr.var "p", Expr.lit (Literal.number 32)])
+      (.halt st') := by
+  intro h
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest1 hhead1 =>
+        cases hrest1 with
+        | argsCons hrest2 hhead2 =>
+          cases hrest2 with
+          | argsCons hrest3 hhead3 =>
+            cases hrest3 with
+            | argsCons hrest4 hhead4 =>
+              cases hrest4 with
+              | argsCons hrest5 hhead5 =>
+                cases hrest5 with
+                | argsCons hrest6 hhead6 =>
+                  cases hrest6 with
+                  | argsNil =>
+                    simp [Bridge.Dialect, builtinWithExternal, externalCall] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h =>
+        cases h with
+        | argsRestHalt h' =>
+          cases h' with
+          | argsRestHalt h'' =>
+            cases h'' with
+            | argsRestHalt h3 =>
+              cases h3 with
+              | argsRestHalt h4 =>
+                cases h4 with
+                | argsRestHalt h5 => cases h5
+                | argsHeadHalt _ hh => exact trExprLit_ne_halts hh
+              | argsHeadHalt _ hh => exact trExprVar_ne_halts hh
+            | argsHeadHalt _ hh => exact trExprLit_ne_halts hh
+          | argsHeadHalt _ hh => exact trExprVar_ne_halts hh
+        | argsHeadHalt _ hh => exact trExprLit_ne_halts hh
+      | argsHeadHalt _ h' => exact trExprVar_ne_halts h'
+
+theorem expr_iszero_staticcall_frame_ne_halts (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) {st st' : EvmState} :
+    ¬ EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.iszero
+        [Expr.builtin EVM.Op.staticcall
+          [Expr.var "MODEXP_GAS", Expr.lit (Literal.number 5), Expr.var "p",
+           Expr.lit (Literal.number 192), Expr.var "p", Expr.lit (Literal.number 32)]])
+      (.halt st') := by
+  intro h
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hhead =>
+          cases hrest with
+          | argsNil =>
+              simp [Bridge.Dialect, builtinWithExternal, stepOp, un] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h => cases h
+      | argsHeadHalt _ h' => exact expr_staticcall_frame_ne_halts funs V h'
+
+theorem staticcallGuard_contract (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {cenv : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (xv pv gasv sel : U256)
+    (hfail : lookupFun funs "fail" = some (failFDecl, cenv)) :
+    StmtContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (Stmt.cond (Expr.builtin EVM.Op.iszero
+          [Expr.builtin EVM.Op.staticcall
+            [Expr.var "MODEXP_GAS", Expr.lit (Literal.number 5), Expr.var "p",
+             Expr.lit (Literal.number 192), Expr.var "p", Expr.lit (Literal.number 32)]])
+        [Stmt.exprStmt (Expr.call "fail" [Expr.var "ERR_PRECOMPILE_FAILED"])])
+      (fun V st => VEnv.get V "MODEXP_GAS" = some gasv ∧ VEnv.get V "p" = some pv ∧
+        VEnv.get V "ERR_PRECOMPILE_FAILED" = some sel ∧
+        VEnv.get V "x" = some xv ∧ 0 < xv.toNat ∧ xv.toNat < Midfall.Yul.blsR ∧
+        readBytes st.memory pv.toNat 192 = (modexpInvFrame xv.toNat).data.toList)
+      (fun V st V' st' o =>
+        (o = .normal ∧ V' = V ∧
+          ∃ resp, resp.success = true ∧
+            (permissive (callsOf product)).Call
+              ⟨.staticcall, gasv, 5, 0, readBytes st.memory pv.toNat 192⟩ st resp ∧
+            st' = finishCall .staticcall st resp pv.toNat 192 pv.toNat 32 ∧
+            resp.returndata =
+              (bytesNatBE ((xv.toNat : ZMod Midfall.Yul.blsR)⁻¹).val 32).data.toList ∧
+            loadWord st'.memory pv.toNat =
+              BitVec.ofNat 256 ((xv.toNat : ZMod Midfall.Yul.blsR)⁻¹).val)
+        ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+  refine StmtContractAll.cond ?_ ?_
+  · intro V st cv st₁ hpre heval
+    obtain ⟨hgas, hp, hsel, hx, hx0, hxlt, hframe⟩ := hpre
+    obtain ⟨resp, hcall, hcv, hst⟩ := eval_iszero_staticcall_frame funs V hgas hp heval
+    constructor
+    · intro hzero
+      by_cases hs : resp.success = true
+      · have hc : (callsOf product).Call
+            ⟨.staticcall, gasv, 5, 0, readBytes st.memory pv.toNat 192⟩ st resp := by
+          have h := hcall
+          rw [permissive] at h
+          exact h.2 hs
+        have hbytes : ByteArray.mk (readBytes st.memory pv.toNat 192).toArray =
+            ByteArray.mk (readBytes (mxMem st.memory pv.toNat xv) pv.toNat 192).toArray := by
+          congr 1
+          rw [hframe, mxMem_frame]
+        have hout := mxMem_modexpOutput st.memory pv.toNat xv hx0 hxlt
+        rw [← hbytes] at hout
+        have hvalid := modexpValidInput_of_output_some hout
+        have hret := callsOf_modexp_returndata (product := product)
+          (req := ⟨.staticcall, gasv, 5, 0, readBytes st.memory pv.toNat 192⟩)
+          (st := st) (resp := resp)
+          (out := bytesNatBE ((xv.toNat : ZMod Midfall.Yul.blsR)⁻¹).val 32)
+          rfl hvalid hout hc hs
+        refine Or.inl ⟨rfl, rfl, resp, hs, hcall, hst, hret, ?_⟩
+        rw [hst]
+        show loadWord (copyReturn st.memory pv.toNat 32 resp.returndata) pv.toNat = _
+        rw [hret]
+        have hv256 : ((xv.toNat : ZMod Midfall.Yul.blsR)⁻¹).val < 2 ^ 256 := by
+          have h := ZMod.val_lt (a := ((xv.toNat : ZMod Midfall.Yul.blsR)⁻¹))
+          have hR : Midfall.Yul.blsR < 2 ^ 256 := by norm_num [Midfall.Yul.blsR]
+          omega
+        exact loadWord_copyReturn_bytesNatBE st.memory pv.toNat _ hv256
+      · have hflag : resp.flag = 0 := by simp [CallResponse.flag, hs]
+        have h1 : b2w (resp.flag = 0) = 1 := by rw [hflag]; rfl
+        have : (1 : U256) = 0 := by
+          rw [h1] at hcv
+          rw [hcv] at hzero
+          exact hzero
+        exact absurd this (by decide)
+    · intro hnz V' st' o hbody
+      cases hbody with
+      | block hb =>
+          have hfail' : lookupFun (hoist (Bridge.Dialect (permissive (callsOf product)) g)
+              [Stmt.exprStmt (Expr.call "fail" [Expr.var "ERR_PRECOMPILE_FAILED"])] :: funs)
+              "fail" = some (failFDecl, cenv) := hfail
+          rcases Step.stmts_cons_inv
+            (D := Bridge.Dialect (permissive (callsOf product)) g) hb with
+              ⟨V1, st1, h1, hrest⟩ | ⟨h1, hne⟩
+          · exact absurd (fail_call_reverts hfail' h1).1 (by decide)
+          · exact Or.inr (fail_call_reverts hfail' h1)
+  · intro V st st₁ hpre heval
+    exact absurd heval (expr_iszero_staticcall_frame_ne_halts funs V)
+
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -948,5 +1165,10 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms readBytes_getD [propext, Classical.choice, Quot.sound]
 #assert_axioms wordFrom_bytesNatBE [propext, Classical.choice, Quot.sound]
 #assert_axioms loadWord_copyReturn_bytesNatBE [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_staticcall_frame [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_iszero_staticcall_frame [propext, Classical.choice, Quot.sound]
+#assert_axioms expr_staticcall_frame_ne_halts [propext, Classical.choice, Quot.sound]
+#assert_axioms expr_iszero_staticcall_frame_ne_halts [propext, Classical.choice, Quot.sound]
+#assert_axioms staticcallGuard_contract [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3.ModexpGeneral
