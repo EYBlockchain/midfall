@@ -7,6 +7,8 @@
 -- equality the staticcall step needs.
 import Midfall.LoweringV3.PcsRows
 import Midfall.LoweringV3.BatchInvert
+import Midfall.LoweringV3.ScalarInv
+import Midfall.Assumptions.Eip2537
 
 set_option autoImplicit false
 
@@ -107,6 +109,25 @@ theorem bytesAppend_toList (a b : Bytes) :
   show (ByteArray.mk (a.data ++ b.data)).data.toList = _
   simp
 
+
+/-! ## The batch frame as `modexpInvFrame` and its honest output -/
+
+/-- The six stores of the batch frame (base `x`, modulus `blsR`) as a `ByteArray` are exactly
+`modexpInvFrame x.toNat`: the list equality is A9's `ScalarInv.mxMem_frame`, lifted through
+`Array.toArray_toList`/`ByteArray.ext`. -/
+theorem mxMem_frame_byteArray (mem : Nat → UInt8) (p : Nat) (x : U256) :
+    ByteArray.mk (readBytes (Midfall.LoweringV3.ScalarInv.mxMem mem p x) p 192).toArray =
+      modexpInvFrame x.toNat := by
+  rw [Midfall.LoweringV3.ScalarInv.mxMem_frame]
+
+theorem mxMem_modexpOutput (mem : Nat → UInt8) (p : Nat) (x : U256)
+    (hx0 : 0 < x.toNat) (hx : x.toNat < Midfall.Yul.blsR) :
+    modexpOutput (ByteArray.mk (readBytes (Midfall.LoweringV3.ScalarInv.mxMem mem p x) p 192).toArray) =
+      some (bytesNatBE ((x.toNat : ZMod Midfall.Yul.blsR)⁻¹).val 32) := by
+  rw [mxMem_frame_byteArray]
+  exact modexpInv_correct x.toNat hx0 hx
+
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -147,5 +168,7 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
     readBytes_storeWord_32 _ (p + 160) w5]
 
 #assert_axioms readBytes_six [propext, Classical.choice, Quot.sound]
+#assert_axioms mxMem_frame_byteArray [propext, Classical.choice, Quot.sound]
+#assert_axioms mxMem_modexpOutput [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3.ModexpGeneral
