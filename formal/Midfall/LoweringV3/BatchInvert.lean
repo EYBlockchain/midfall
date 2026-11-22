@@ -236,6 +236,42 @@ theorem wMulmodAt_ne_zero_iff {r x y : U256} (hp : Nat.Prime r.toNat)
     wMulmodAt x y r ≠ 0 ↔ x ≠ 0 ∧ y ≠ 0 := by
   rw [Ne, wMulmodAt_eq_zero_iff hp hx hy, not_or]
 
+
+/-- **ASSOCIATIVITY OF EVM `mulmod` AT A NON-ZERO MODULUS.** For any `a b c` and `r ≠ 0`,
+`(a*b mod r)*c mod r = a*(b*c mod r) mod r`: both sides are `(a*b*c) mod r`. This is the one
+arithmetic fact the backward pass needs (it multiplies the running inverse by a word and then by
+the next), and it is stated at any non-zero `r` - prime is not needed for this step. PROVED from
+`Nat.mod_mul_mod` / `Nat.mul_mod_mod` (`Init/Data/Nat/Lemmas.lean`). -/
+theorem wMulmodAt_assoc {r a b cc : U256} (hr : r ≠ 0) :
+    wMulmodAt (wMulmodAt a b r) cc r = wMulmodAt a (wMulmodAt b cc r) r := by
+  have hrpos : 0 < r.toNat := by
+    have h : r.toNat ≠ 0 := by
+      intro h0
+      exact hr (BitVec.eq_of_toNat_eq (by simpa using h0))
+    omega
+  rw [wMulmodAt, ite_eq_right hr, wMulmodAt, ite_eq_right hr,
+    wMulmodAt, ite_eq_right hr, wMulmodAt, ite_eq_right hr]
+  apply BitVec.eq_of_toNat_eq
+  have hbc : (b.toNat * cc.toNat) % r.toNat < 2 ^ 256 := by
+    have := Nat.mod_lt (b.toNat * cc.toNat) hrpos
+    have := BitVec.isLt r
+    omega
+  have hab : (a.toNat * b.toNat) % r.toNat < 2 ^ 256 := by
+    have := Nat.mod_lt (a.toNat * b.toNat) hrpos
+    have := BitVec.isLt r
+    omega
+  have h2 : ((a.toNat * b.toNat) % r.toNat * cc.toNat) % r.toNat < 2 ^ 256 := by
+    have := Nat.mod_lt (((a.toNat * b.toNat) % r.toNat) * cc.toNat) hrpos
+    have := BitVec.isLt r
+    omega
+  have h4 : (a.toNat * ((b.toNat * cc.toNat) % r.toNat)) % r.toNat < 2 ^ 256 := by
+    have := Nat.mod_lt (a.toNat * ((b.toNat * cc.toNat) % r.toNat)) hrpos
+    have := BitVec.isLt r
+    omega
+  simp only [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hbc, Nat.mod_eq_of_lt hab,
+    Nat.mod_eq_of_lt h2, Nat.mod_eq_of_lt h4]
+  rw [Nat.mod_mul_mod, Nat.mul_mod_mod, Nat.mul_assoc]
+
 /-! ## 4b. THE FORWARD LOOP (HLP.1.b), WITH THE STATEMENT-9 CANONICALITY PRE
 
   The evidence's pre (`GeneratorRows.lean:342`) omits the statement-9 guard's result; `bi_forward_loop`
@@ -697,6 +733,167 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
   intro V' st' o hrun
   exact hmain V' st' o hrun
 
+/-! ## 4c. BACKWARD-PASS INFRASTRUCTURE (HLP.1.c, partial)
+
+  The running inverse `bwdAll`, the stored value `bwdInvVal`, the two pointer walks `bwdMptr` /
+  `bwdGp`, the loop-head environment `bwdEnv` and its six `get` lemmas, plus the two field facts the
+  iteration needs: `wMulmodAt_comm` and the inductions `bwdAll_inv` (the running inverse of
+  `fwdProd (k-1-j)`) and `bwdInvVal_inv` (the stored word is the inverse of `w_{k-1-j}`). The loop
+  THEOREM is not yet in this file; the remaining piece is the `bwdMem` store-chain bookkeeping
+  (the `k-1-j` truncated-subtraction arithmetic in `loadWord_bwdMem_*`). -/
+
+def bwdAll (mem : Nat → UInt8) (a k : Nat) (rw invAll : U256) : Nat → U256
+  | 0 => invAll
+  | j + 1 => wMulmodAt (bwdAll mem a k rw invAll j) (loadWord mem (a + 32 * (k - 1 - j))) rw
+
+/-- The value stored at word `k-1-j` by iteration `j`. -/
+def bwdInvVal (mem : Nat → UInt8) (a k : Nat) (rw invAll : U256) (j : Nat) : U256 :=
+  wMulmodAt (bwdAll mem a k rw invAll j) (fwdProd mem a rw (k - 2 - j)) rw
+
+/-- `mptr` after `j` iterations. -/
+def bwdMptr (a k : Nat) (j : Nat) : U256 :=
+  BitVec.ofNat 256 (a + 32 * (k - 1)) - BitVec.ofNat 256 (32 * j)
+
+/-- `gp_mptr` after `j` iterations. -/
+def bwdGp (s k : Nat) (j : Nat) : U256 :=
+  BitVec.ofNat 256 (s + 32 * (k - 3)) - BitVec.ofNat 256 (32 * j)
+
+/-- The loop-head environment after `j` iterations, anchored at `V`. -/
+def bwdEnv (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g)) : Nat → VEnv (Bridge.Dialect c g)
+  | 0 => V
+  | j + 1 => VEnv.set (VEnv.set (VEnv.set (bwdEnv mem a s k rw invAll V j) "all_inv"
+      (bwdAll mem a k rw invAll (j + 1))) "mptr" (bwdMptr a k (j + 1)))
+      "gp_mptr" (bwdGp s k (j + 1))
+
+theorem bwdEnv_length (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g)) (j : Nat) :
+    (bwdEnv mem a s k rw invAll V j).length = V.length := by
+  induction j with
+  | zero => rfl
+  | succ j ih =>
+      simp only [bwdEnv, venv_set_length (D := Bridge.Dialect c g), ih]
+
+theorem bwdEnv_get_mptr (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g))
+    (hmptr : VEnv.get V "mptr" = some (BitVec.ofNat 256 (a + 32 * (k - 1)))) (j : Nat) :
+    VEnv.get (bwdEnv mem a s k rw invAll V j) "mptr" = some (bwdMptr a k j) := by
+  induction j with
+  | zero => simpa [bwdEnv, bwdMptr] using hmptr
+  | succ j ih =>
+      simp only [bwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "mptr") (by decide)]
+      refine venv_get_set_same (D := Bridge.Dialect c g) (v := bwdMptr a k j)
+        (w := bwdMptr a k (j + 1)) ?_
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "mptr") (by decide)]
+      exact ih
+
+theorem bwdEnv_get_gp_mptr (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g))
+    (hgp : VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 (s + 32 * (k - 3)))) (j : Nat) :
+    VEnv.get (bwdEnv mem a s k rw invAll V j) "gp_mptr" = some (bwdGp s k j) := by
+  induction j with
+  | zero => simpa [bwdEnv, bwdGp] using hgp
+  | succ j ih =>
+      simp only [bwdEnv]
+      refine venv_get_set_same (D := Bridge.Dialect c g) (v := bwdGp s k j)
+        (w := bwdGp s k (j + 1)) ?_
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "gp_mptr") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "gp_mptr") (by decide)]
+      exact ih
+
+theorem bwdEnv_get_all_inv (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g))
+    (h : VEnv.get V "all_inv" = some invAll) (j : Nat) :
+    VEnv.get (bwdEnv mem a s k rw invAll V j) "all_inv" =
+      some (bwdAll mem a k rw invAll j) := by
+  induction j with
+  | zero => simpa [bwdEnv, bwdAll] using h
+  | succ j ih =>
+      simp only [bwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "all_inv") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "all_inv") (by decide)]
+      exact venv_get_set_same (D := Bridge.Dialect c g) ih
+
+theorem bwdEnv_get_second_mptr (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g)) (v : U256)
+    (h : VEnv.get V "second_mptr" = some v) (j : Nat) :
+    VEnv.get (bwdEnv mem a s k rw invAll V j) "second_mptr" = some v := by
+  induction j with
+  | zero => exact h
+  | succ j ih =>
+      simp only [bwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "second_mptr") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "second_mptr") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "second_mptr") (by decide)]
+      exact ih
+
+theorem bwdEnv_get_r (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g)) (h : VEnv.get V "r" = some rw) (j : Nat) :
+    VEnv.get (bwdEnv mem a s k rw invAll V j) "r" = some rw := by
+  induction j with
+  | zero => exact h
+  | succ j ih =>
+      simp only [bwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "r") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "r") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "r") (by decide)]
+      exact ih
+
+theorem bwdEnv_get_ret (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g)) (j : Nat) :
+    VEnv.get (bwdEnv mem a s k rw invAll V j) "ret" = VEnv.get V "ret" := by
+  induction j with
+  | zero => rfl
+  | succ j ih =>
+      simp only [bwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "ret") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "ret") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "ret") (by decide)]
+      exact ih
+
+/-- `wMulmodAt` is commutative at a non-zero modulus. -/
+theorem wMulmodAt_comm {r a b : U256} (hr : r ≠ 0) :
+    wMulmodAt a b r = wMulmodAt b a r := by
+  rw [wMulmodAt, wMulmodAt, ite_eq_right hr, ite_eq_right hr, Nat.mul_comm]
+
+/-- The running inverse: `all_inv` after `j` steps is the inverse of `fwdProd (k-1-j)`. -/
+theorem bwdAll_inv (mem : Nat → UInt8) (a k : Nat) (rw invAll : U256)
+    (hr : rw ≠ 0) (hk : 2 ≤ k)
+    (hinv : wMulmodAt invAll (fwdProd mem a rw (k - 1)) rw = 1)
+    (j : Nat) (hj : j ≤ k - 2) :
+    wMulmodAt (bwdAll mem a k rw invAll j) (fwdProd mem a rw (k - 1 - j)) rw = 1 := by
+  induction j with
+  | zero => simpa [bwdEnv, bwdAll] using hinv
+  | succ j ih =>
+      simp only [bwdAll]
+      have hstep : fwdProd mem a rw (k - 1 - j) =
+          wMulmodAt (fwdProd mem a rw (k - 2 - j))
+            (loadWord mem (a + 32 * (k - 1 - j))) rw := by
+        have h := fwdProd_succ mem a rw (k - 2 - j)
+        rwa [show k - 2 - j + 1 = k - 1 - j by omega] at h
+      rw [show k - 1 - (j + 1) = k - 2 - j by omega, wMulmodAt_assoc hr,
+        show wMulmodAt (loadWord mem (a + 32 * (k - 1 - j))) (fwdProd mem a rw (k - 2 - j)) rw =
+          wMulmodAt (fwdProd mem a rw (k - 2 - j)) (loadWord mem (a + 32 * (k - 1 - j))) rw
+          from wMulmodAt_comm hr,
+        ← hstep]
+      exact ih (by omega)
+
+/-- The word stored at iteration `j` is the inverse of `w_{k-1-j}`. -/
+theorem bwdInvVal_inv (mem : Nat → UInt8) (a k : Nat) (rw invAll : U256)
+    (hr : rw ≠ 0) (hk : 2 ≤ k)
+    (hinv : wMulmodAt invAll (fwdProd mem a rw (k - 1)) rw = 1)
+    (j : Nat) (hj : j ≤ k - 2) :
+    wMulmodAt (bwdInvVal mem a k rw invAll j)
+      (loadWord mem (a + 32 * (k - 1 - j))) rw = 1 := by
+  have hstep : fwdProd mem a rw (k - 1 - j) =
+      wMulmodAt (fwdProd mem a rw (k - 2 - j))
+        (loadWord mem (a + 32 * (k - 1 - j))) rw := by
+    have h := fwdProd_succ mem a rw (k - 2 - j)
+    rwa [show k - 2 - j + 1 = k - 1 - j by omega] at h
+  rw [bwdInvVal, wMulmodAt_assoc hr, ← hstep]
+  exact bwdAll_inv mem a k rw invAll hr hk hinv j hj
+
 /-! ## 5. PREMISE GAP PG-BATCHINVERT (exact statements; no hypothesis added to a row)
 
   **(1) CLOSED at §4b: `bi_forward_loop` IS PROVED, with the statement-9 canonicality pre.**
@@ -833,5 +1030,17 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
 #assert_axioms loadWord_writeWords_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_eq_zero_iff [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_ne_zero_iff [propext, Classical.choice, Quot.sound]
+#assert_axioms wMulmodAt_assoc [propext, Classical.choice, Quot.sound]
+#assert_axioms wMulmodAt_comm [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdAll_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdInvVal_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_length [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_get_gp_mptr [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_get_all_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_get_second_mptr [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_get_r [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_get_ret [propext, Classical.choice, Quot.sound]
+
 
 end Midfall.LoweringV3.BatchInvert
