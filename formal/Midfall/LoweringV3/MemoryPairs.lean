@@ -1063,6 +1063,356 @@ theorem fitsFalsifier_not_construction :
         fitsFalsifier.stackMptr) := by
   decide
 
+
+/-! ## 12. THE BIND INVERSION: THE PROGRAM'S OWN POINTERS, AT THE RENDER FACE (BINDINV)
+
+  DISJNT closed section 11 one step short and said exactly which step: 'qvmWindows_disjoint_of_construction'
+  orders the two windows of an ABSTRACT 'program' whose pointers are handed to it as equations
+  ('hcm', 'hsm'). THIS SECTION LANDS THE STEP FROM THERE TO THE PROGRAM THE GENERATOR BUILT.
+
+  (1) 'newFromVk_windows' - the same ten-bind peel section 8 already performs for the LAYOUT, run to
+      the ELEVENTH bind ('quotientTemplateProgram', PlanNew.lean:754-755). It lands every equation
+      section 11 asked to be handed: 'plan.quotient = some q' (PlanNew.lean:754-759),
+      'q.program.constMptr = pn (vkMptr.add constOff)' (':596'), 'q.program.stackMptr =
+      memory.quotientStackMptr' (':602'), 'q.build.consts.length <= vk.quotientConstWords' (':587',
+      the 'unless' that did NOT fire), 'vkCarriesBuild vk q.build = true' (':774', the last 'unless'
+      before 'pure plan'), and 'q.program.guards.constMax = q.build.consts.length - 1' - the last
+      through 'quotientVmGuards' (LoweringPlan.lean:379, 'constMax := model.numConsts - 1') composed
+      with 'quotientOperandModel' (':441-449', whose second argument IS 'build.consts.length').
+      Three one-function inversions ('quotientVmGuards_ok_constMax',
+      'quotientOperandModel_ok_numConsts', 'quotientTemplateProgram_windows') do the case analysis.
+
+  (2) 'qvmWindows_disjoint_of_ptrs' - section 11's ordering with the 'vkMptr = ptrMemory
+      (valueFromNat _)' HYPOTHESIS REMOVED. It is not needed: 'asUsizeNat_add_le' proves
+      'pn (p.add q) <= ptrAddr p + q * wordBytes' for EVERY pointer, integer-valued or symbolic, and
+      the ordering only ever needs '<='. 'qvmWindows_disjoint_of_generated' then composes it with
+      section 8's layout equation at 'generated'.
+
+  (3) 'spillSlotDisjoint_of_ordered' crosses to the 'BitVec' face 'PG_spillSlotDisjoint'
+      ('QuotientSpill.lean:1321') is stated on, using EXACTLY the three facts DISJNT named: the
+      ordering, the arm's own 'b <= constMax' PRE, and the no-wrap conjuncts of 'quotientProgramFits'
+      ('Statements.lean:3225', clauses 2 and 3+4). The conclusion is 'PG_spillSlotDisjoint' unfolded;
+      its '_program' argument is not used, so the arm file can 'exact' this at its 'hdisj'.
+
+  WHAT STILL IS NOT A THEOREM OF 'generated', STATED PLAINLY. Section 11's '1 <= vk.quotientConstWords'
+  is carried, not discharged: 'vkCarriesBuild' compares a 'take quotientConstWords' slice, and when
+  the reservation is EMPTY that take is '[]' for every offset, so 'quotientConstOffsetWords' stops
+  being pinned and the const window can be declared anywhere. It is a payload NON-DEGENERACY
+  condition, not a memory-disjointness condition: the disjointness gap SPILL named is CLOSED. Nothing
+  was added to 'ValidV3', to a row, to a bundle or to the root (RULES); every hypothesis below sits on
+  a lemma of this file.
+
+  THE ARM FACE NEEDS NOTHING NEW. 'spillSlotDisjoint_of_ordered' asks for 'cb = ofNat 256
+  program.constMptr' and 'sp = ofNat 256 program.stackMptr'. Those two are NOT a fresh hypothesis:
+  'AtSegment' ('Lowering/QuotientInterp.lean:200-204') already pins exactly that pair for the
+  interpreter's own start environment, and 'QuotientLoopCompose.lean:731' proves it is preserved
+  across a segment. So the arm's 'hdisj' conjunct is now a theorem of (i) 'AtSegment', (ii) the fit
+  clause 'quotientProgramFits' - a theorem of 'ValidV3' at 'Statements.lean:3447', (iii) the arm's own
+  'b <= constMax' PRE, and (iv) the construction ordering, whose only unproved input is the payload
+  non-degeneracy condition above. No memory-disjointness fact is assumed anywhere.
+-/
+
+/-- A pointer step never moves an address by more than the step: 'Value.add' on an 'integer' adds
+    'q * wordBytes' before 'asUsizeNat' reads it back, and on an 'identifier' 'asUsizeNat' is 0 on
+    both sides. The inequality is all the ordering needs, which is what removes section 11's 'hvk'. -/
+theorem asUsizeNat_add_le (v : Value) (q : Nat) :
+    Value.asUsizeNat (Value.add v q) <= Value.asUsizeNat v + q * wordBytes := by
+  have hw : wordBytes = 32 := rfl
+  cases v with
+  | integer i =>
+      simp only [Value.add, Value.asUsizeNat, hw]
+      split
+      · split <;> omega
+      · split <;> omega
+  | identifier n off =>
+      simp only [Value.add, Value.asUsizeNat]
+      omega
+
+/-- The same at the pointer face: 'pn (p.add q) <= ptrAddr p + q * wordBytes', for every 'Ptr'. -/
+theorem pn_add_ptrAddr_le (p : Ptr) (q : Nat) :
+    pn (p.add q) <= ptrAddr p + q * wordBytes := by
+  show Value.asUsizeNat ((Ptr.add p q).value) <= Value.asUsizeNat (ptrValue p) + q * wordBytes
+  simp only [Ptr.add, ptrValue]
+  exact asUsizeNat_add_le p.value q
+
+/-- **SECTION 11's ORDERING WITHOUT THE POINTER-SHAPE HYPOTHESIS.** Same construction equations minus
+    'hvk': the const window ends at or before the payload window's end, and the payload window ends
+    before the stack window (section 11's 'new_quotientStack_after_vk'). -/
+theorem qvmWindows_disjoint_of_ptrs {memory : VerifierMemoryLayout}
+    {meta_ : ConstraintSystemMeta} {vk : Halo2VerifyingKey} {vkMptr : Ptr}
+    {config : VerifierMemoryLayoutConfig} {build : QuotientProgramBuild}
+    {program : QuotientProgram} (qcOff qp : Nat)
+    (hmem : memory = VerifierMemoryLayout.new meta_ vk vkMptr config)
+    (hfit : build.consts.length <= vk.quotientConstWords)
+    (hne : 1 <= vk.quotientConstWords)
+    (hco : vk.quotientConstOffsetWords = some qcOff)
+    (hpo : vk.quotientProgramOffsetWords = some qp)
+    (hcar : vkCarriesBuild vk build = true)
+    (hcm : program.constMptr = pn (vkMptr.add qcOff))
+    (hsm : program.stackMptr = memory.quotientStackMptr)
+    (hcmx : program.guards.constMax = build.consts.length - 1) :
+    program.constMptr + 32 * (program.guards.constMax + 1) <= program.stackMptr := by
+  have hlen : ptrAddr vkMptr + vk.len <= memory.quotientStackMptr := by
+    rw [hmem]; exact new_quotientStack_after_vk meta_ vk vkMptr config
+  have hsec := constSection_in_payload vk build qcOff qp hco hpo hfit hne hcar
+  have hw : wordBytes = 32 := rfl
+  have hcm1 : pn (vkMptr.add qcOff) <= ptrAddr vkMptr + qcOff * 32 := by
+    rw [← hw]; exact pn_add_ptrAddr_le vkMptr qcOff
+  have h32 : 32 * (program.guards.constMax + 1) <= 32 * vk.quotientConstWords := by
+    rw [hcmx]
+    refine Nat.mul_le_mul_left 32 ?_
+    rcases Nat.eq_zero_or_pos (build.consts.length) with hz | hz
+    · rw [hz]; omega
+    · omega
+  have hlen' : 32 * vk.constants.length <= vk.len := by
+    show 32 * vk.constants.length <=
+      vk.constants.length * 32 + (vk.fixedComms.length + vk.permutationComms.length) * 128
+    omega
+  have hkey : program.constMptr + 32 * (program.guards.constMax + 1)
+      <= ptrAddr vkMptr + vk.len := by
+    rw [hcm]
+    omega
+  rw [hsm]
+  exact Nat.le_trans hkey hlen
+
+/-- 'quotientVmGuards' succeeds only in its 'ok' branch, whose 'constMax' is 'model.numConsts - 1'
+    (LoweringPlan.lean:376-381, R5: the subtraction is Nat truncation, i.e. saturating_sub). -/
+theorem quotientVmGuards_ok_constMax
+    {model : Midfall.Generator.QuotientValidator.QuotientOperandModel}
+    {memory : VerifierMemoryLayout}
+    {g : QuotientVmGuards} (h : quotientVmGuards model memory = .ok g) :
+    g.constMax = model.numConsts - 1 := by
+  simp only [quotientVmGuards] at h
+  split at h
+  · cases h
+  · cases h
+    rfl
+
+/-- 'quotientOperandModel' fills its second field with 'build.consts.length' (LoweringPlan.lean:441-449). -/
+theorem quotientOperandModel_ok_numConsts {meta_ : ConstraintSystemMeta} {dat : Data} {vk : Halo2VerifyingKey}
+    {vkMptr : Ptr} {memory : VerifierMemoryLayout} {build : QuotientProgramBuild}
+    {sf : SelectorFoldPlan} {m : Midfall.Generator.QuotientValidator.QuotientOperandModel}
+    (h : quotientOperandModel meta_ dat vk vkMptr memory build sf = .ok m) :
+    m.numConsts = build.consts.length := by
+  simp only [quotientOperandModel, Bind.bind, Except.bind] at h
+  obtain ⟨r, _, h2⟩ := (match_ok_iff _ _).mp h
+  cases h2
+  rfl
+
+/-- The one-function inversion of 'quotientTemplateProgram' (PlanNew.lean:579-608): the two Option
+    reads, the two reservations that did not fire, and the three fields of the triple it returns. -/
+theorem quotientTemplateProgram_windows (build : QuotientProgramBuild) (vk : Halo2VerifyingKey)
+    (vkMptr : Ptr) (memory : VerifierMemoryLayout) (sf : SelectorFoldPlan)
+    (opModel : Midfall.Generator.QuotientValidator.QuotientOperandModel)
+    (trip : QuotientProgram × Nat × Midfall.Generator.QuotientFold.QuotientStateSlots)
+    (h : quotientTemplateProgram build vk vkMptr memory sf opModel = .ok trip) :
+    ∃ (constOff progOff : Nat) (g : QuotientVmGuards),
+      vk.quotientConstOffsetWords = some constOff ∧
+      vk.quotientProgramOffsetWords = some progOff ∧
+      build.consts.length <= vk.quotientConstWords ∧
+      quotientVmGuards opModel memory = .ok g ∧
+      trip.1.constMptr = pn (vkMptr.add constOff) ∧
+      trip.1.stackMptr = memory.quotientStackMptr ∧
+      trip.1.guards = g := by
+  cases hco : vk.quotientConstOffsetWords with
+  | none =>
+      have hred : quotientTemplateProgram build vk vkMptr memory sf opModel
+          = Except.error (Fault.panic (QuotientBlocks.siteQ 202
+            "VK must carry quotient constants")) := by
+        simp only [quotientTemplateProgram, Bind.bind, Except.bind, hco]; try rfl
+      rw [hred] at h; cases h
+  | some constOff =>
+    cases hpo : vk.quotientProgramOffsetWords with
+    | none =>
+        have hred : quotientTemplateProgram build vk vkMptr memory sf opModel
+            = Except.error (Fault.panic (QuotientBlocks.siteQ 204
+              "VK must carry quotient program")) := by
+          simp only [quotientTemplateProgram, Bind.bind, Except.bind, hco, hpo]; try rfl
+        rw [hred] at h; cases h
+    | some progOff =>
+      by_cases hc1 : build.consts.length <= vk.quotientConstWords
+      · by_cases hc2 : (PackedProgramCodec.encodeWords build.bytes).length
+            <= vk.quotientProgramWords
+        · cases hg : quotientVmGuards opModel memory with
+          | error e =>
+              have hred : quotientTemplateProgram build vk vkMptr memory sf opModel
+                  = Except.error e := by
+                simp only [quotientTemplateProgram, Bind.bind, Except.bind, hco, hpo, hc1, hc2, hg]
+                try rfl
+              rw [hred] at h; cases h
+          | ok g =>
+              let hprog : QuotientProgram :=
+                { len := ByteArray.size build.bytes,
+                  opUsage := quotientOpcodeUsage build.usedOps,
+                  memUsage := quotientMemUsage build.usedMemTokens,
+                  constMptr := pn (vkMptr.add constOff),
+                  evalNumerMptr := (Midfall.Generator.QuotientFold.QuotientStateSlots.new memory.quotientTmpMptr).evalNumerMptr,
+                  traceIdMptr := (Midfall.Generator.QuotientFold.QuotientStateSlots.new memory.quotientTmpMptr).traceIdMptr,
+                  selectorPowerMptr :=
+                    (Midfall.Generator.QuotientFold.QuotientStateSlots.new memory.quotientTmpMptr).selectorPowerMptr,
+                  selectorMaxPower := sf.maxPower,
+                  selectorTailUpdates := QuotientFoldCompute.selectorTailUpdates sf,
+                  stackMptr := memory.quotientStackMptr,
+                  programMptr := pn (vkMptr.add progOff), guards := g }
+              have hred : quotientTemplateProgram build vk vkMptr memory sf opModel
+                  = .ok (hprog, memory.quotientStackMptr,
+                    Midfall.Generator.QuotientFold.QuotientStateSlots.new memory.quotientTmpMptr) := by
+                simp only [quotientTemplateProgram, Bind.bind, Except.bind, hco, hpo, hc1, hc2, hg]
+                try rfl
+              rw [hred] at h
+              cases h
+              exact ⟨_, _, _, by rfl, by rfl, by assumption, by rfl, by rfl, by rfl, by rfl⟩
+        · have hred : quotientTemplateProgram build vk vkMptr memory sf opModel
+              = Except.error (Fault.panic (QuotientBlocks.siteQ 209
+                "quotient program length exceeded VK payload reservation")) := by
+            simp only [quotientTemplateProgram, Bind.bind, Except.bind, hco, hpo, hc1, hc2]; try rfl
+          rw [hred] at h; cases h
+      · have hred : quotientTemplateProgram build vk vkMptr memory sf opModel
+            = Except.error (Fault.panic (QuotientBlocks.siteQ 205
+              "quotient const table exceeded VK payload reservation")) := by
+          simp only [quotientTemplateProgram, Bind.bind, Except.bind, hco, hpo, hc1]; try rfl
+        rw [hred] at h; cases h
+
+/-- **THE ELEVEN-BIND PEEL.** Everything section 11 asked to be handed, out of the one equation
+    'generated' supplies. -/
+theorem newFromVk_windows {F : Type} [BEq F] (feat : Features) (field : FieldCtx F)
+    (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding)
+    (payload : Halo2VerifyingKey) (plan : LoweringPlan Unit Unit)
+    (h : newFromVk feat field cs rawMeta numInstances accEncoding payload = .ok plan) :
+    ∃ (q : PlannedQuotient) (memory : VerifierMemoryLayout) (vkMptr : Ptr)
+      (constOff progOff : Nat) (meta2 : ConstraintSystemMeta)
+      (config : VerifierMemoryLayoutConfig),
+      plan.quotient = some q ∧ plan.memory = memory ∧
+      memory = VerifierMemoryLayout.new meta2 payload vkMptr config ∧
+      payload.quotientConstOffsetWords = some constOff ∧
+      payload.quotientProgramOffsetWords = some progOff ∧
+      q.build.consts.length <= payload.quotientConstWords ∧
+      vkCarriesBuild payload q.build = true ∧
+      q.program.constMptr = pn (vkMptr.add constOff) ∧
+      q.program.stackMptr = memory.quotientStackMptr ∧
+      q.program.guards.constMax = q.build.consts.length - 1 := by
+  simp only [newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨⟨vkMptr, meta_, dat, _⟩, _, h1⟩ := (match_ok_iff _ _).mp h
+  obtain ⟨proofLayout, _, h2⟩ := (match_ok_iff _ _).mp h1
+  obtain ⟨qplan, _, h3⟩ := (match_ok_iff _ _).mp h2
+  obtain ⟨build, _, h4⟩ := (match_ok_iff _ _).mp h3
+  obtain ⟨nativeWords, _, h5⟩ := (match_ok_iff _ _).mp h4
+  obtain ⟨pcsReq, _, h6⟩ := (match_ok_iff _ _).mp h5
+  obtain ⟨accTerms, _, h7⟩ := (match_ok_iff _ _).mp h6
+  obtain ⟨memory, hmem, h8⟩ := (match_ok_iff _ _).mp h7
+  obtain ⟨opModel, hop, h9⟩ := (match_ok_iff _ _).mp h8
+  obtain ⟨trip, htrip, h10⟩ := (match_ok_iff _ _).mp h9
+  obtain ⟨constOff, progOff, g, hco, hpo, hfit, hvg, hcm, hsm, hg⟩ :=
+    quotientTemplateProgram_windows build payload vkMptr memory qplan.selectorFold opModel trip htrip
+  have honum : opModel.numConsts = build.consts.length := quotientOperandModel_ok_numConsts hop
+  have hgc : g.constMax = opModel.numConsts - 1 := quotientVmGuards_ok_constMax hvg
+  have hcmx : trip.1.guards.constMax = build.consts.length - 1 := by
+    rw [hg, hgc, honum]
+  obtain ⟨config, hnew⟩ : ∃ (config : VerifierMemoryLayoutConfig),
+      memory = VerifierMemoryLayout.new meta_ payload vkMptr config := by
+    simp only [memoryLayoutFor, Bind.bind, Except.bind, envOf] at hmem
+    obtain ⟨t, _, hmem2⟩ := (match_ok_iff _ _).mp hmem
+    exact ⟨_, (Except.ok.inj hmem2).symm⟩
+  let q : PlannedQuotient :=
+    { plan := qplan, build := build, program := trip.1, stackMptr := trip.2.1,
+      stateSlots := trip.2.2 }
+  clear h h1 h2 h3 h4 h5 h6 h7 h8 h9 hmem hop htrip
+  all_goals (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals
+    (try (exact ⟨q, memory, vkMptr, constOff, progOff, meta_, config, rfl, rfl, hnew, hco, hpo, hfit,
+      by assumption, hcm, hsm, hcmx⟩))
+
+/-- **THE RENDER FACE.** 'generated' alone, plus the plan's own quotient bundle and the one payload
+    non-degeneracy condition section 11 named: the const window of THE PROGRAM ITSELF ends before its
+    own operand-stack window. This is 'PG_qvmWindowsOrdered' discharged for the generator's program. -/
+theorem qvmWindows_disjoint_of_generated {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) (q : PlannedQuotient)
+    (hq : R.plan.quotient = some q)
+    (hne : 1 <= R.pv.vk.quotientConstWords) :
+    PG_qvmWindowsOrdered q.program := by
+  obtain ⟨rawMeta, plan, hraw, hpl, hp⟩ := plan_of_generated h
+  obtain ⟨q', memory, vkMptr, constOff, progOff, meta2, config, hq', hpmem, hnew, hco, hpo,
+      hfit, hcar, hcm, hsm, hcmx⟩ :=
+    newFromVk_windows Features.solidity (frFieldCtx R.E.delta) R.vk.cs rawMeta
+      R.cfg.numInstances R.cfg.accumulator R.plan.vk plan hpl
+  have hqq : q' = q := by
+    rw [hp] at hq
+    exact Option.some.inj (hq'.symm.trans hq)
+  subst hqq
+  have hne' : 1 <= R.plan.vk.quotientConstWords := hne
+  exact qvmWindows_disjoint_of_ptrs constOff progOff hnew hfit hne' hco hpo hcar hcm hsm hcmx
+
+/-- **THE BitVec FACE THE ARMS STATE.** The ordering + the arm's own 'b <= constMax' PRE + the no-wrap
+    conjuncts of 'quotientProgramFits'. The conclusion is 'PG_spillSlotDisjoint' unfolded: its
+    '_program' argument is not used, so 'QuotientSpill.lean' can 'exact' this at its 'hdisj'. -/
+theorem spillSlotDisjoint_of_ordered (program : QuotientProgram) (cb sp : BitVec 256) (b : Nat)
+    (hord : PG_qvmWindowsOrdered program)
+    (hfit : Midfall.LoweringV3.quotientProgramFits program)
+    (hcb : cb = BitVec.ofNat 256 program.constMptr)
+    (hsp : sp = BitVec.ofNat 256 program.stackMptr)
+    (hb : (BitVec.ofNat 256 b).toNat <= (BitVec.ofNat 256 program.guards.constMax).toNat) :
+    (cb + ((BitVec.ofNat 256 b) <<< 5)).toNat + 32 <= sp.toNat ∨
+      sp.toNat + 32 <= (cb + ((BitVec.ofNat 256 b) <<< 5)).toNat := by
+  obtain ⟨_, hfitc, hstk, hlast, _, _, _⟩ := hfit
+  have hord' : program.constMptr + 32 * (program.guards.constMax + 1) <= program.stackMptr := hord
+  have hw : 2 ^ 5 = 32 := by norm_num
+  have hcmax : program.guards.constMax < 2 ^ 256 := by omega
+  have hcm : (BitVec.ofNat 256 program.constMptr).toNat = program.constMptr := by
+    rw [BitVec.toNat_ofNat]; exact Nat.mod_eq_of_lt (by omega)
+  have hsm : (BitVec.ofNat 256 program.stackMptr).toNat = program.stackMptr := by
+    rw [BitVec.toNat_ofNat]; exact Nat.mod_eq_of_lt (by omega)
+  have hb0 : (BitVec.ofNat 256 program.guards.constMax).toNat = program.guards.constMax := by
+    rw [BitVec.toNat_ofNat]; exact Nat.mod_eq_of_lt hcmax
+  have hb1 : (BitVec.ofNat 256 b).toNat <= program.guards.constMax := by
+    rw [hb0] at hb; exact hb
+  have hbx : ((BitVec.ofNat 256 b) <<< 5).toNat = (BitVec.ofNat 256 b).toNat * 32 := by
+    rw [BitVec.toNat_shiftLeft, Nat.shiftLeft_eq, hw]
+    refine Nat.mod_eq_of_lt ?_
+    have : (BitVec.ofNat 256 b).toNat * 32 <= program.guards.constMax * 32 :=
+      Nat.mul_le_mul_right 32 hb1
+    omega
+  have hsum : (cb + ((BitVec.ofNat 256 b) <<< 5)).toNat
+      = program.constMptr + (BitVec.ofNat 256 b).toNat * 32 := by
+    rw [hcb, BitVec.toNat_add, hcm, hbx]
+    refine Nat.mod_eq_of_lt ?_
+    have : (BitVec.ofNat 256 b).toNat * 32 <= program.guards.constMax * 32 :=
+      Nat.mul_le_mul_right 32 hb1
+    omega
+  rw [hsum, hsp, hsm]
+  exact Or.inl (by omega)
+
+/-- The whole chain in one line: 'generated', the plan's own bundle, the payload non-degeneracy
+    condition, the fit clause, and the arm's 'b <= constMax' PRE give the arm's disjointness. -/
+theorem spillSlotDisjoint_of_generated {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) (q : PlannedQuotient)
+    (hq : R.plan.quotient = some q)
+    (hne : 1 <= R.pv.vk.quotientConstWords)
+    (hfit : Midfall.LoweringV3.quotientProgramFits q.program)
+    (cb sp : BitVec 256) (b : Nat)
+    (hcb : cb = BitVec.ofNat 256 q.program.constMptr)
+    (hsp : sp = BitVec.ofNat 256 q.program.stackMptr)
+    (hb : (BitVec.ofNat 256 b).toNat <= (BitVec.ofNat 256 q.program.guards.constMax).toNat) :
+    (cb + ((BitVec.ofNat 256 b) <<< 5)).toNat + 32 <= sp.toNat ∨
+      sp.toNat + 32 <= (cb + ((BitVec.ofNat 256 b) <<< 5)).toNat :=
+  spillSlotDisjoint_of_ordered q.program cb sp b
+    (qvmWindows_disjoint_of_generated h q hq hne) hfit hcb hsp hb
+
 end Midfall.LoweringV3.MemoryPairs
 
 /-! ## 8. AXIOMS AND CONE -/
@@ -1120,3 +1470,20 @@ end Midfall.LoweringV3.MemoryPairs
 #print axioms Midfall.LoweringV3.MemoryPairs.payload_below_quotientStack_of_generated
 #print axioms Midfall.LoweringV3.MemoryPairs.payload_below_quotientStack_of_valid
 #assert_axioms Midfall.LoweringV3.MemoryPairs.payload_below_quotientStack_of_valid [propext, Classical.choice, Quot.sound] native []
+
+#print axioms Midfall.LoweringV3.MemoryPairs.asUsizeNat_add_le
+#print axioms Midfall.LoweringV3.MemoryPairs.pn_add_ptrAddr_le
+#print axioms Midfall.LoweringV3.MemoryPairs.qvmWindows_disjoint_of_ptrs
+#cone_sorries Midfall.LoweringV3.MemoryPairs.qvmWindows_disjoint_of_ptrs
+#print axioms Midfall.LoweringV3.MemoryPairs.quotientVmGuards_ok_constMax
+#print axioms Midfall.LoweringV3.MemoryPairs.quotientOperandModel_ok_numConsts
+#print axioms Midfall.LoweringV3.MemoryPairs.quotientTemplateProgram_windows
+#cone_sorries Midfall.LoweringV3.MemoryPairs.quotientTemplateProgram_windows
+#print axioms Midfall.LoweringV3.MemoryPairs.newFromVk_windows
+#cone_sorries Midfall.LoweringV3.MemoryPairs.newFromVk_windows
+#print axioms Midfall.LoweringV3.MemoryPairs.qvmWindows_disjoint_of_generated
+#cone_sorries Midfall.LoweringV3.MemoryPairs.qvmWindows_disjoint_of_generated
+#print axioms Midfall.LoweringV3.MemoryPairs.spillSlotDisjoint_of_ordered
+#cone_sorries Midfall.LoweringV3.MemoryPairs.spillSlotDisjoint_of_ordered
+#print axioms Midfall.LoweringV3.MemoryPairs.spillSlotDisjoint_of_generated
+#cone_sorries Midfall.LoweringV3.MemoryPairs.spillSlotDisjoint_of_generated
