@@ -12,9 +12,11 @@
     it ends with 'V' = VEnv.set V "success" 1' (the nine assigns collapse to one because 'set'
     updates the innermost binding and preserves length, so 'restore V V' = V''), the state transfer,
     the copy's window equation and the three calldata equalities;
-  * §5 'StageInv .vk' assembled from the walk plus the three 'generated'-clause premises;
-  * §6 'vk_blockSimV3': BOTH conjuncts of 'BlockSim R Partial.vkLoading' over 'StageInv', generic in
-    the render.
+  * §5 the wrap refutation: PG-VKMEMORYFIT's mechanism, and §5b the record of the three refused
+    routes; D-QVM1's `programFits` closes the gap they left;
+  * §6 `StageInv .vk` assembled from the walk plus D-QVM1's `fit1_of_valid`/`fit2_of_valid`, the
+    `bytesAt` window lemmas of VkWindow and `vkPins_disjoint_of_generated`, and `vk_blockSimV3`:
+    BOTH conjuncts of `BlockSim R Partial.vkLoading` over `StageInv`, generic in the render.
 
   D-P71: generic in the render; no fixture, no 'native_decide', nothing added to 'ValidV3', to a row,
   to a bundle or to the root.

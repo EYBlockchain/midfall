@@ -47,8 +47,11 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 
 /-! ## 1. vkLoading (owner GEN.1, WP A3) -/
 
-/-- **LEAF (GEN.1, WP A3): the vkLoading simulation row.** Evidence `GeneratorRows.lean:1096`, at the
-    V3 reading. WITNESS: `gap_lowering_correct_witness_unexhibited`. FALSIFIER: header. -/
+/-- **LEAF (GEN.1, WP A3): the vkLoading simulation row - PROVED.** Evidence `GeneratorRows.lean:1096`,
+    at the V3 reading. WITNESS: `gap_lowering_correct_witness_unexhibited`. FALSIFIER: header.
+    The proof is `VkClean.vk_blockSimV3`: `VkClean.vk_clean_walkV3` composes the 13-statement clean
+    walk with `stageInv_vk_of_clean` (D-QVM1's fits turn the copy into `Inv .vk`'s payload window),
+    and `VkClean.vk_poison_walkV3'` is `VkRow.vk_poison_walkV3`. Standard three, cone 0. -/
 theorem vk_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
@@ -228,5 +231,8 @@ theorem prog_rows (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
 
 #print axioms Midfall.LoweringV3.sim_rows
 #print axioms Midfall.LoweringV3.prog_rows
+#print axioms Midfall.LoweringV3.vk_blockSim
+#assert_axioms Midfall.LoweringV3.vk_blockSim
+  [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3
