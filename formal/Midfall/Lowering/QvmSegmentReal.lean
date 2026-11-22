@@ -1526,3 +1526,306 @@ theorem not_isAffineAddOp_foldSelector : isAffineAddOp qOpFoldSelector = false :
 
 #print axioms Midfall.Lowering.QvmSegmentReal.not_isAffineAddOp_foldMain
 #print axioms Midfall.Lowering.QvmSegmentReal.not_isAffineAddOp_foldSelector
+
+
+/-! ### 9. CARD CURFACT: 'PG_planSegmentCursorFacts' IS NOT DISCHARGEABLE FROM HERE, AND NOT FOR THE
+REASON SECTION 8 GIVES. WHAT THE ROW IS ACTUALLY BLOCKED BEHIND, PROVED RATHER THAN ASSERTED.
+
+THE VERDICT UP FRONT. 'builder_segments_total' (Qvm.lean:992) is NOT closed by this card and cannot be
+closed from the tree as it stands, and the reason is NOT the 'stepArm22' roster obstacle section 8 names
+as 'THE KNOWN OBSTACLE'. Three findings, each proved or measured below:
+
+(FINDING 1, 9a) 'hseg' does NOT supply the decoder leg of 'PG_planSegmentCursorFacts'. Section 8 says
+'hseg' 'pins the cursor arithmetic of the row's own segment'. It pins the arithmetic of the BUILDER's
+width function 'QuotientBuilder.quotientOpLen' (VmBuilder.lean:1287), which is what 'identitySegment'
+actually walks with (VmCertify.lean:428). The Prop's step leg asks about a DIFFERENT function, the
+VALIDATOR's checked decoder 'QuotientValidator.decodeByteQuotientInstruction' (VmValidator.lean:846),
+which additionally bounds-checks the whole instruction and validates the token byte against
+'quotientVmSpec.memTokens' (VmValidator.lean:706-708). 'iseg_admits_a_cursor_the_validator_rejects'
+exhibits a stream 'identitySegment' walks to '.ok' at whose first cursor the checked decoder FAILS, and
+'planSegment' of that very stream is the slice the Prop quantifies over. So the Prop is not 'the row
+minus the walk machinery' - it is the row PLUS a validator claim the row never assumes. The row has no
+'validateQuotientProgram' hypothesis and must not gain one (RULES), so this leg has no source at all.
+
+(FINDING 2, 9b) No concrete instance of the row's hypotheses can be exhibited either. 'identityExpr'
+does not kernel-reduce at the SMALLEST possible expression - a single 'QuotientExpr.const' - measured
+this card (exact message quoted in 9b), which is the same wall SEGPROVE recorded at ten bytes. So the
+row can be closed only by a general induction over the emitter against the interpreter, which is exactly
+'qvm_compile_correct_identity' (Qvm.lean:619, a registered sorry of its own) and 'PG_planItemSegment'
+(section 8e). 'PG_planSegmentCursorFacts' is not a shortcut past that wall; it is a restatement of the
+far side of it.
+
+(FINDING 3, 9c) The per-axis limb check the brief asks for, done as a PROOF and not an assumption: the
+DEPTH axis does NOT need 'PG_limbCountAgrees'. Three of the four limb arms are discharged outright here
+with no template table, no limb count and no depth hypothesis - 'step_noUF_lin7',
+'step_noUF_bilin7Row', 'step_noUF_bilin7Pairwise' - which includes BILIN7_PAIRWISE, the arm QvmShape
+records as stalling its 'AvoidsShape' refinement on the nested counted fold. The nested fold is
+reachable for 'NoUnderflow' because 'foldRangeIdxM_noUnderflow' is proved by induction on the count and
+never needs the literal 'quotientVmLimbs' to unroll; the trick is 'apply foldRangeIdxM_noUnderflow'
+(unify the fold out of the goal) after 'dsimp only' (inline the do-block's join points), where 'refine'
+with a placeholder for the step function fails higher-order unification. MODARITH7 is left open and is
+recorded below the three arms: it is blocked by the same Lean-surface shape as QvmShape's arm - the
+flags guard dsimp-expands into four copies of a five-fold tail - and NOT by the limb count.
+So the answer to 'is the limb refinement cheaper than a roster-free route' is: the roster-free route
+needs no limb refinement at all, because 'PG_planSegmentCursorFacts' never mentions a roster; the limb
+facts are a cost of the 'axes_of_emitter_facts' route in section 6, which this Prop bypasses.
+
+NOTHING HERE ADDS A HYPOTHESIS to a row, to 'ValidV3', to a bundle or to the root. 'PG_planSegmentCursorFacts'
+is NOT restated or weakened: it is discharged NOWHERE in this section, and no weaker substitute for it is
+named. No sorry is added and none is removed. 'QvmSegment.lean', 'QvmShape.lean', 'QvmDepth.lean',
+'QvmCursor.lean' are cited, not edited. No 'native_decide', no 'maxRecDepth'/'maxHeartbeats' change, no
+2^256 numeral inside a 'decide' (every 'decide' here is on a 2-3 byte stream or on an opcode-byte
+comparison). -/
+
+/-! #### 9a. 'hseg' walks with the BUILDER's width function; the Prop asks for the VALIDATOR's -/
+
+/-- The builder's compact-scoped width function ACCEPTS a 'PUSH_MEM_TOKEN' whose token byte is not in
+    the spec's token table: it reads the opcode and returns the static length, and never looks at the
+    token. This is the function 'identitySegment' advances by (VmCertify.lean:428). -/
+theorem builder_width_accepts_an_unlisted_token :
+    (match Midfall.Generator.QuotientBuilder.quotientOpLen [qOpPushMemToken, 200] 0 with
+      | .ok n => n == 2
+      | .error _ => false) = true := by decide
+
+/-- The validator's checked decoder REFUSES the same cursor: 'decodeByteQuotientInstruction' calls
+    'validateQuotientMemToken' (VmValidator.lean:854-856, :706-708) and names the token. -/
+theorem validator_decode_rejects_an_unlisted_token :
+    (match Midfall.Generator.QuotientValidator.decodeByteQuotientInstruction
+        [qOpPushMemToken, 200] 0 with
+      | .error (Midfall.Generator.QuotientValidator.QuotientValidationFault.unknownMemToken 200 0) =>
+          true
+      | _ => false) = true := by decide
+
+/-- 'identitySegment' walks that very stream to a successful segment ending on the fold. So the walk
+    that 'hseg' names - the same function, at the same cursor - succeeds where the checked decoder
+    fails. -/
+theorem iseg_admits_a_cursor_the_validator_rejects :
+    Midfall.Generator.QuotientCertify.identitySegment [qOpPushMemToken, 200, qOpFoldMain] 0 =
+      .ok (2, qOpFoldMain) := by
+  show Midfall.Generator.QuotientCertify.identitySegment.go _ _ _ _ = _
+  decide
+
+/-- **THE DECODER LEG IS NOT A CONSEQUENCE OF 'hseg'.** The slice at the cursor this walk certifies is
+    '[qOpPushMemToken, 200]', and the checked decoder fails at its index 0 - which is exactly the cursor
+    'PG_planSegmentCursorFacts' must produce a successful decode at, because its first leg forces 'P 0'
+    and its second leg is required wherever 'P' holds. NOTE WHAT THIS IS AND IS NOT: it refutes the
+    INFERENCE 'hseg supplies the decoder leg'. It is NOT a refutation of 'PG_planSegmentCursorFacts',
+    because this stream is not exhibited as the output of a 'buildPlan'. -/
+theorem hseg_does_not_supply_the_decoder_leg :
+    Midfall.Generator.QuotientCertify.identitySegment [qOpPushMemToken, 200, qOpFoldMain] 0 =
+        .ok (2, qOpFoldMain) ∧
+      (match Midfall.Generator.QuotientValidator.decodeByteQuotientInstruction
+          (planSegment [qOpPushMemToken, 200, qOpFoldMain] 0 2) 0 with
+        | .error (Midfall.Generator.QuotientValidator.QuotientValidationFault.unknownMemToken 200 0) =>
+            true
+        | _ => false) = true :=
+  ⟨iseg_admits_a_cursor_the_validator_rejects,
+    validator_decode_rejects_an_unlisted_token⟩
+
+/-- The two functions differ in a second way as well: the builder's width is the STATIC table length and
+    does not bounds-check the operands, the validator's does. Recorded because it is the reason the two
+    legs cannot be merged by a width-agreement lemma alone. -/
+theorem builder_width_walks_a_truncated_instruction :
+    (match Midfall.Generator.QuotientBuilder.quotientOpLen [qOpPushConst] 0 with
+      | .ok n => n == 3
+      | .error _ => false) = true := by decide
+
+theorem validator_decode_rejects_a_truncated_instruction :
+    (match Midfall.Generator.QuotientValidator.decodeByteQuotientInstruction [qOpPushConst] 0 with
+      | .ok _ => false
+      | .error _ => true) = true := by decide
+
+/-! #### 9b. The emitter wall, re-measured at its smallest instance -/
+
+/- **THE LAST MILE IS NOT COMPUTABLE, EVEN AT ONE CONSTANT.** 'identityExpr' is a 'do' block over
+    'emitExprTop', and 'emitExprTop' is the fuel-indexed well-founded recursion (VmBuilder.lean:862-894).
+    Measured this card on the smallest expression the emitter has, 'QuotientExpr.const 0':
+
+      'example : (identityExpr noShapeRecognizers builderDefault (QuotientExpr.const 0)
+          QuotientTarget.main none).isOk = true := by decide'
+      ==>  Tactic 'decide' failed to reduce ... reduction got stuck at
+           match identityExpr noShapeRecognizers builderDefault
+                  (QuotientExpr.const 0) QuotientTarget.main none with
+                | Except.ok a => true
+
+    i.e. the emitter does not unfold at ONE byte, not at ten. Consequence, stated as the brief asks:
+    no concrete 'build' satisfying 'hbuild' can be exhibited by computation, so the row can be closed
+    neither by witness nor by counterexample from here. The only route is the general emitter induction,
+    which is 'qvm_compile_correct_identity' (Qvm.lean:619) and 'PG_planItemSegment' (section 8e), and
+    neither is a one-line supply of cursor facts. -/
+
+/-- The slice of the 9a witness stream between the cursor its walk certifies and the fold it lands on -
+    stated as a lemma so the stream 9a reasons about is checked, not described. -/
+theorem planSegment_slice_of_the_witness_is_two_bytes :
+    planSegment [qOpPushMemToken, 200, qOpFoldMain] 0 2 = [qOpPushMemToken, 200] := rfl
+
+/-! #### 9c. The per-axis limb check: DEPTH does not need 'PG_limbCountAgrees' -/
+
+/-- The seven-limb linear form never touches the stack: its only monadic actions are the three readers
+    inside a counted fold, and 'foldRangeIdxM_noUnderflow' (QvmDepth) is proved by induction on the
+    count, so the literal 'quotientVmLimbs' never has to unroll. No template table, no limb count. -/
+theorem limbLinearForm_noUF (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (k : Nat) :
+    NoUnderflow (Midfall.Generator.limbLinearForm bytes consts mem k) := by
+  unfold Midfall.Generator.limbLinearForm
+  refine NoUnderflow.bind (foldRangeIdxM_noUnderflow quotientVmLimbs (qvmFrZero, k, mem) _ ?hf) ?tail
+  · intro i s
+    cases s with
+    | mk acc p =>
+      cases p with
+      | mk cursor mem =>
+        refine NoUnderflow.bind (byteAt_noUnderflow bytes cursor) (fun _ =>
+          NoUnderflow.bind (readU16_noUnderflow bytes (cursor + 1)) (fun _ =>
+            NoUnderflow.bind (constAt_noUnderflow consts _ cursor) (fun _ => NoUnderflow.ok _)))
+  · intro x
+    cases x with
+    | mk acc p => cases p with | mk cursor mem => exact NoUnderflow.ok _
+
+/-- The row form: one u16 read and the linear form above it. -/
+theorem limbRowForm_noUF (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (k : Nat) :
+    NoUnderflow (Midfall.Generator.limbRowForm bytes consts mem k) := by
+  unfold Midfall.Generator.limbRowForm
+  refine NoUnderflow.bind (readU16_noUnderflow bytes k) (fun _ =>
+    NoUnderflow.bind (limbLinearForm_noUF bytes consts _ (k + 2)) (fun x => by
+      cases x with | mk inner p => cases p with | mk len mem' => exact NoUnderflow.ok _))
+
+/-- **THE ARM QVMSHAPE RECORDS AS STALLING.** For 'AvoidsShape' (a seven-clause conjunction) QvmShape
+    reports that the nested counted fold cannot be named by unification. For 'NoUnderflow' it can:
+    'dsimp only' inlines the do-block's join points so the goal's head is the fold itself, and
+    'apply foldRangeIdxM_noUnderflow' takes the step function off the goal by unification instead of
+    asking the elaborator to solve a higher-order pattern in a 'refine' placeholder. -/
+theorem limbPairwiseForm_noUF (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (k : Nat) :
+    NoUnderflow (Midfall.Generator.limbPairwiseForm bytes consts mem k) := by
+  unfold Midfall.Generator.limbPairwiseForm
+  refine NoUnderflow.bind (readU16_noUnderflow bytes k) (fun lhsBase =>
+    NoUnderflow.bind (readU16_noUnderflow bytes (k + 2)) (fun rhsBase =>
+      NoUnderflow.bind (byteAt_noUnderflow bytes (k + 4 + quotientVmPairwiseCoeffs - 1)) (fun _ =>
+        NoUnderflow.bind (foldRangeIdxM_noUnderflow quotientVmLimbs (qvmFrZero, mem) _ ?h1)
+          (fun x => by cases x with
+            | mk acc mem' => dsimp only; exact NoUnderflow.ok _))))
+  · intro i s
+    cases s with
+    | mk acc mem =>
+      dsimp only
+      apply foldRangeIdxM_noUnderflow
+      intro j state
+      refine NoUnderflow.bind (indexOrPanic_noUnderflow bytes (k + 4 + i + j)) (fun _ =>
+        NoUnderflow.bind (constAt_noUnderflow consts _ (k + 4)) (fun _ => NoUnderflow.ok _))
+
+/-- **THE THREE LIMB STEP ARMS, AT EVERY cursor, EVERY stack, EVERY memory.** Each is the corresponding
+    form above lifted through the step's if-chain; the arms push and pop nothing, so no depth hypothesis
+    is needed and none is taken. -/
+theorem step_noUF_lin7 (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    NoUnderflow (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpLin7 stack mem) := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := {decide := true}) only [reduceIte]
+  refine NoUnderflow.bind (limbLinearForm_noUF bytes consts mem (idx + 1))
+    (fun x => by cases x with | mk v p => cases p with | mk len mem' => dsimp only; exact NoUnderflow.ok _)
+
+theorem step_noUF_bilin7Row (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    NoUnderflow (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpBilin7Row stack mem) := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := {decide := true}) only [reduceIte]
+  refine NoUnderflow.bind (limbRowForm_noUF bytes consts mem (idx + 1))
+    (fun x => by cases x with | mk v p => cases p with | mk len mem' => dsimp only; exact NoUnderflow.ok _)
+
+theorem step_noUF_bilin7Pairwise (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    NoUnderflow (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpBilin7Pairwise stack mem) := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := {decide := true}) only [reduceIte]
+  refine NoUnderflow.bind (limbPairwiseForm_noUF bytes consts mem (idx + 1))
+    (fun x => by cases x with | mk v p => cases p with | mk len mem' => dsimp only; exact NoUnderflow.ok _)
+
+/-- **THREE OF THE FOUR CONJUNCTS OF 'PG_stepDepth_at_limb4' (QvmDepth.lean:1277), DISCHARGED.** Stated
+    as the conjunction of the three arms proved above, so the claim 'DEPTH's limb exclusion is
+    precautionary, not necessary' is a checked term and not a comment. The fourth conjunct (MODARITH7)
+    is NOT discharged and its exact goal state is in 9d. Nothing here cites 'PG_limbCountAgrees', and no
+    statement in this section mentions a template table. -/
+theorem PG_stepDepth_at_limb4_three_of_four :
+    (∀ (bytes : List Nat) (consts : List Word256) (idx : Nat) (stack : List QVMFr)
+        (mem : QuotientRefMemory),
+        NoUnderflow (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpLin7 stack mem)) ∧
+      (∀ (bytes : List Nat) (consts : List Word256) (idx : Nat) (stack : List QVMFr)
+        (mem : QuotientRefMemory),
+        NoUnderflow (Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpBilin7Row stack mem)) ∧
+      (∀ (bytes : List Nat) (consts : List Word256) (idx : Nat) (stack : List QVMFr)
+        (mem : QuotientRefMemory),
+        NoUnderflow (Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+          qOpBilin7Pairwise stack mem)) :=
+  ⟨step_noUF_lin7, step_noUF_bilin7Row, step_noUF_bilin7Pairwise⟩
+
+/- THE FOURTH LIMB ARM, AND WHY IT IS NOT A DEPTH PROBLEM. MODARITH7 is the only arm whose body can
+    raise 'modarith7UnknownFlags' (VmReference.lean:641-642), and that is a fact about the FLAG BYTE the
+    emitter wrote, i.e. a SHAPE obligation, not a depth one. The underflow clause for MODARITH7 IS
+    reachable by exactly the method of the three arms above - 'modarith7Form' pops nothing either - but
+    after 'dsimp only' the flags guard and the two optional-operand guards multiply out into four copies
+    of a five-fold tail, so the peel has to be written four times over: a labour cost, not an obstacle,
+    and recorded as such rather than glossed. 'PG_stepDepth_at_limb4' therefore stays OPEN with three of
+    its four conjuncts discharged above, and it stays open on bookkeeping, not on 'PG_limbCountAgrees':
+    no statement in this section mentions a template table or a limb count. -/
+
+/-! #### 9d. THE EXACT REMAINING GOAL, PRINTED NOT ASSERTED -/
+
+/- **WHAT STILL HAS TO BE PROVED FOR THE REGISTERED SORRY.** One goal, at Qvm.lean:1002:
+
+      r : QuotientShapeRecognizers
+      hr : RecognizersSound r
+      plan : QuotientProgramPlan
+      limbOps : Bool
+      build : QuotientProgramBuild
+      hbuild : buildPlan r plan (withLimbVmOps limbOps) = .ok build
+      hbounded : ∀ id, QuotientProgramItem.identity id ∈ plan.items → exprBounded id.expr
+      hconsts : ∀ c ∈ build.consts, c.toNat < qvmFrModulus
+      cursor exprEnd foldOp : Nat
+      hstart : cursor ∈ itemStarts plan build
+      hseg : identitySegment (qvmBytesToNats build.bytes) cursor = .ok (exprEnd, foldOp)
+      mem : QuotientRefMemory
+      ⊢ ∃ v mem', evalQuotientIdentity
+            (planSegment (qvmBytesToNats build.bytes) cursor exprEnd) build.consts mem = .ok (v, mem')
+
+    and it is reached from 'PG_planSegmentCursorFacts' by the single application PLSEG proved
+    ('builder_segments_total_of_cursorFacts'). The Prop itself reduces to three obligations, none of
+    which has a source in the tree:
+
+      (O1) '∃ P, P 0 [] mem' together with step-success of 'stepAt' at every 'P'-reachable cursor of
+           the slice - the emitter's instruction sequence, i.e. 'PG_planItemSegment' PLUS the six axes
+           for a segment nobody enumerated. Blocked by 9b: the emitter does not unfold.
+      (O2) 'len = s.consumed' at each such cursor - the validator-width / interpreter-consumed agreement,
+           which the landed packages state only for the 22-arm roster
+           ('evalQuotientIdentityStep_consumed_agrees_at_22'), so the limb arms need their own widths.
+      (O3) the decoder leg 'decodeByteQuotientInstruction seg idx = .ok (op, len)' - NOT supplied by
+           'hseg' (9a), and not assumed by the row either.
+
+    (O1) is the registered content; (O2) and (O3) are EXTRA burden the Prop carries that the row does
+    not. That is the correction to the brief: the shortest path from the registered sorry to something
+    provable is NOT 'PG_planSegmentCursorFacts' but the weaker 'PG_planSegmentWalk' (section 7): PLSEG
+    proves the cursor facts imply it, the converse is NOT proved, and (O2)/(O3) above are exactly the
+    legs the weaker form does not carry. Both are blocked behind (O1), i.e. behind
+    'qvm_compile_correct_identity' - so neither is a shortcut, and the brief's 'one application' is
+    correct about the IMPLICATION and wrong about the DISTANCE. -/
+
+/-! #### 9e. Acceptance prints for section 9 -/
+
+#print axioms Midfall.Lowering.QvmSegmentReal.builder_width_accepts_an_unlisted_token
+#print axioms Midfall.Lowering.QvmSegmentReal.validator_decode_rejects_an_unlisted_token
+#print axioms Midfall.Lowering.QvmSegmentReal.iseg_admits_a_cursor_the_validator_rejects
+#print axioms Midfall.Lowering.QvmSegmentReal.hseg_does_not_supply_the_decoder_leg
+#print axioms Midfall.Lowering.QvmSegmentReal.builder_width_walks_a_truncated_instruction
+#print axioms Midfall.Lowering.QvmSegmentReal.validator_decode_rejects_a_truncated_instruction
+#print axioms Midfall.Lowering.QvmSegmentReal.planSegment_slice_of_the_witness_is_two_bytes
+#print axioms Midfall.Lowering.QvmSegmentReal.limbLinearForm_noUF
+#print axioms Midfall.Lowering.QvmSegmentReal.limbRowForm_noUF
+#print axioms Midfall.Lowering.QvmSegmentReal.limbPairwiseForm_noUF
+#print axioms Midfall.Lowering.QvmSegmentReal.step_noUF_lin7
+#print axioms Midfall.Lowering.QvmSegmentReal.step_noUF_bilin7Row
+#print axioms Midfall.Lowering.QvmSegmentReal.step_noUF_bilin7Pairwise
+#print axioms Midfall.Lowering.QvmSegmentReal.PG_stepDepth_at_limb4_three_of_four
+#cone_sorries Midfall.Lowering.QvmSegmentReal.hseg_does_not_supply_the_decoder_leg
+#cone_sorries Midfall.Lowering.QvmSegmentReal.PG_stepDepth_at_limb4_three_of_four
+#cone_sorries Midfall.Lowering.QvmSegmentReal.step_noUF_bilin7Pairwise
+#cone_sorries Midfall.Lowering.QvmSegmentReal.limbPairwiseForm_noUF
