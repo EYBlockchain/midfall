@@ -516,6 +516,15 @@ theorem inline_g1WalkLoop (fuel : Nat) (consts : Inline.Consts) (sh : List Strin
   rw [hbInit, hcond, hbody]
   rw [show (Inline.inlineScan (fuel + 1) consts (sh ++ ["end"]) []).blks = [] from rfl]
 
+/-- **ROW.TP.3, THE CALL RESOLVES.** `R.scope` resolves `common_uncompressed_g1` to the
+    emitted helper, with the two parameters and the single return slot. PROVED by `rfl` (the
+    helper is the third `funDef` of `R.helpers`). This is the lookup the helper summary and the
+    walk-loop body both start from. -/
+theorem commonG1_lookup (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} :
+    ∃ decl, lookupFun (R.scope c g) "common_uncompressed_g1" = some (decl, R.scope c g) ∧
+      decl.params = ["buf_len", "cptr"] ∧ decl.rets = ["ret"] := by
+  exact ⟨_, rfl, rfl, rfl⟩
+
 /-! ## 4. ROW.TP.6'S BRIDGE — THE MODEL'S PARSER FACTS AND THE PLAN'S LAYOUT -/
 
 /-- `metaDataForVk` rewrites only `numEvals`, `numDummyEvals` and `numPointSets`: the seven fields

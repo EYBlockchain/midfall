@@ -9,7 +9,7 @@ frozen/vendor/QVM/Quotient edit.
 
 `Rows.lean` is still untouched, so the ROOT cones are unchanged: `lowering_correct` **11**,
 `lowering_sound` **5**, both `assert_axioms` `ok (4 named, 0 native)`.
-`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (1572, 1587, 1602, 1615, 1647) — the
+`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (1581, 1596, 1611, 1624, 1656) — the
 five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT sorry**.
 `gen_sorry.sh` was not run (zero-sorry precondition not met; worker rule W9/DG.2).
 
@@ -17,7 +17,7 @@ five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT
 
 | declaration | line | role |
 |---|---|---|
-| `tp_events_slots` | 1417 | the leaf; sorry-free |
+| `tp_events_slots` | 1426 | the leaf; sorry-free |
 | `tp_planFacts` | 706 | PG-PARSER bridge: plan meta/layout are the generator's, model parser facts are computed from them |
 | `tp_fromProtocol` / `TpLayoutFacts` | 946 / 916 | every section's count, width, byte length |
 | `userPhasesOf_advice` | 1098 | the phase table index for index |
@@ -31,6 +31,14 @@ five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT
 Still proved from before: `inline_g1WalkLoop` (ROW.TP.1), `tp_slice`, `tp_blockSim` (cone exactly
 `tp_agrees`, `tp_computes`, `tp_poison`), the W12 falsifiers. Everything is on
 `[propext, Classical.choice, Quot.sound]`; no `native_decide`, no heartbeat/recursion raise.
+
+## New this session: ROW.TP.3's call resolution
+
+`commonG1_lookup` (line 523) is PROVED by `rfl`: `R.scope` resolves
+`common_uncompressed_g1` to the emitted helper with `params = ["buf_len", "cptr"]` and
+`rets = ["ret"]`. This is the lookup both the helper summary and the walk-loop body start from.
+The helper body in `R.scope` is the INLINED body (the const table substitutes `BLS_P_HI` /
+`BLS_P_MINUS_ONE_LO`), so the summary's range-check bridge is over literals.
 
 ## The five remaining leaves — all blocked by an UNISSUED card
 
