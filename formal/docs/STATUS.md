@@ -88,8 +88,9 @@ conjunct; the headline signature is unchanged.
    nonzero slot-7 word is admissible. The worker proved the boundary lemmas and left the exact
    goal state in `VkClean.lean`/`Rows.lean`; the minimal repair is a frozen `PayloadAgrees`
    conjunct `11 ≤ vk.constants.length` (or the byte-window equation). No hypothesis was added.
-2. **`gasFree_of_valid` — SIGNED by D-GATE1; in flight on `t/GASFREE`.** Add the
-   `programOk` `GasFree` clause. (Original ask follows.) `GasCallOk` is strictly weaker than `GasFree`; the
+2. **`gasFree_of_valid` — CLOSED by D-GATE1 (`2488d3b`).** `programOk` now carries the
+   `GasFree` conjunct; `gasFree_of_valid` is its projection (cone 0, standard three); root
+   14 -> 13 and register 78/14 -> 77/13. (Original ask retained below.) `GasCallOk` is strictly weaker than `GasFree`; the
    flags exclude the three renderers that print `gas()`, but no program clause says the AST is
    gas-free. Choose (a) a frozen `programOk` conjunct `gasFree : GasFree (R.prog 0 0)` (a
    `decide`-per-render check), or (b) an emitter structural library (one induction per emitter).
