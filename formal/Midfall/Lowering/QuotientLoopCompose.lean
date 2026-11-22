@@ -345,8 +345,11 @@ theorem qCaseList_head_label (ctx : PartialCtx) (program : QuotientProgram)
 #cone_sorries Midfall.Lowering.QuotientLoopCompose.qinterpSwitch_of_selects
 #cone_sorries Midfall.Lowering.QuotientLoopCompose.qinterpSwitch_selectedBlock_pushConst
 
--- The row is untouched by this file: still one sorry, still at QuotientInterp.lean:253.
-#cone_sorries Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop
+-- D-QVM2 (design.md:2763-2792) retired that row under W13 and its sorry was deleted in the same
+-- commit that stated the replacement, so there is no sorried row left to print here. The replacement is
+-- 'Midfall.Lowering.QuotientInterp.QInterpRefinesSegment' (QuotientInterp.lean section 11), a stated
+-- contract with no sorry; the print below says so rather than going silent.
+#cone_sorries Midfall.Lowering.QuotientInterp.QInterpRefinesSegment
 
 
 

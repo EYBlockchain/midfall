@@ -244,30 +244,36 @@ def segmentV {c : ExternalCalls} {g : ExternalGas} (program : QuotientProgram)
     the row fails on three independent axes: the window bound, the unpinned operand stack, and the
     disagreeing table. W13 says a sorry whose negation is proved is
     deleted and the row restated - a HUMAN ruling, because it moves the register, the fingerprint pin
-    and the 'kat_gate.py' note naming this hole. Until then the sorry stays, and it stays honest: it is
-    a refuted statement, not an unproved one. -/
+    and the 'kat_gate.py' note naming this hole.
 
-/-- **THE CONTRACT AT THE EMITTER'S LOOP, FOR EVERY PROGRAM (card step 2).** 'GenAst.qvmLoop ctx
-    program tcq' is the interpreter loop OBJ.15's structured emitter prints - the opcode fetch
-    'qvmLoopPre', the switch over 'qvmOpcodeArms ++ qvmNativeArms ++ qvmFoldArms' in template order,
-    and the fail-closed default - and this is the one-off lemma route B needs. It is quantified over
-    EVERY context, EVERY 'QuotientProgram' and EVERY template-constant table: no fixture appears, and
-    the window is the program's own ('base = program.programMptr', 'len = program.len'), which is
-    what the prologue writes.
+**D-QVM2 IS THAT RULING, AND THIS COMMIT EXECUTES IT** ('design.md:2763-2792', APPROVED 2026-11-21).
+'qinterpRefines_qvmLoop' is RETIRED: its sorry is deleted here, in the same commit that states the
+replacement (section 11, 'QInterpRefinesSegment'), which is what W13 requires - a sorry deleted without
+its replacement in the same commit would break the ruling, and a replacement stated without retiring
+the refuted row would leave a refuted hole standing. The retired TEXT is kept below as
+'qinterpRefines_qvmLoop_retired', a sorry-free 'Prop', so the refutations stay citable against the
+statement they refute; and the ROWFALSE refutations ('QuotientRows.lean' sections 11 and 12, including
+':1281') STAY IN THE TREE as the W12 falsifiers of the retired text. They are not deleted with the row:
+they are the evidence for retiring it. -/
 
-    REGISTERED HOLE: this is ROW.Q's, not T3.10's - the card is a statement card and its deliverable
-    is the contract plus W12 evidence. QPROBE is the measurement that says it cannot be discharged by
-    unrolling; the arm families of section 6 are the decomposition it will have to follow. -/
-theorem qinterpRefines_qvmLoop {c : ExternalCalls} {g : ExternalGas}
+/-- **THE RETIRED ROW'S TEXT, KEPT AS A 'Prop' AND NOT AS A ROW (D-QVM2).** This is VERBATIM the
+    statement of the sorried row that stood here - same binders, same instantiation of 'reverts',
+    'word', 'AtSegment', 'Top' and 'Agrees', same block '[GenAst.qvmLoop ctx program tcq]', same bytes
+    and constants - with 'theorem ... := by sorry' replaced by 'def ... : Prop' and nothing else
+    changed. It carries no proof and no sorry, so it is NOT a registered hole; it is the retired text,
+    kept so that 'QuotientRows.lean' section 11's falsifiers refute a NAMED declaration instead of a
+    copy inlined into a negation, and so the equivalence is itself proved
+    ('Midfall.LoweringV3.QuotientRows.qinterpRetired_text_is_the_refuted_row'). The replacement is
+    'QInterpRefinesSegment' in section 11. -/
+def qinterpRefines_qvmLoop_retired {c : ExternalCalls} {g : ExternalGas}
     (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
     (funs : FunEnv (Bridge.Dialect c g)) (bytes : List Nat) (consts : List Midfall.Word256)
-    (frameBase frameWords : Nat) :
-    QInterpRefines (D := Bridge.Dialect c g)
-      (reverts := Midfall.Lowering.Reverted) (word := fun w => w)
-      (AtSegment := AtSegment program) (Top := qinterpTop)
-      (Agrees := fun st mem s => Agrees consts program.constMptr frameBase frameWords bytes st mem s)
-      funs [GenAst.qvmLoop ctx program tcq] bytes consts := by
-  sorry
+    (frameBase frameWords : Nat) : Prop :=
+  QInterpRefines (D := Bridge.Dialect c g)
+    (reverts := Midfall.Lowering.Reverted) (word := fun w => w)
+    (AtSegment := AtSegment program) (Top := qinterpTop)
+    (Agrees := fun st mem s => Agrees consts program.constMptr frameBase frameWords bytes st mem s)
+    funs [GenAst.qvmLoop ctx program tcq] bytes consts
 
 /-! ### 6. THE ARM FAMILIES (card step 3) -/
 
@@ -780,7 +786,7 @@ theorem qinterpRefines_falsifier_operand_width {c : ExternalCalls} {g : External
     table. No fixture name appears in either type. -/
 #check @Midfall.Lowering.QuotientInterp.QInterpRefinesShape
 #check @Midfall.Lowering.QuotientInterp.QInterpRefines
-#check @Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop
+#check @Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop_retired
 #check @Midfall.Lowering.QuotientInterp.AtSegment
 #check @Midfall.Lowering.QuotientInterp.qinterpTop
 #check @Midfall.Lowering.QuotientInterp.Agrees
@@ -797,12 +803,18 @@ theorem qinterpRefines_falsifier_operand_width {c : ExternalCalls} {g : External
 /-! ### 10. THE REPAIRED CONTRACT (QFIX): 'QInterpRefines' PLUS ROWFALSE'S THREE GUARDS
 
 **THIS SECTION ADDS A NEW 'Prop' ALONGSIDE THE REFUTED ROW. IT DOES NOT AMEND IT.** The committed
-'QInterpRefines' (section 3) and the sorried row 'qinterpRefines_qvmLoop' (section 5, ':270') are
+'QInterpRefines' (section 3) and the sorried row 'qinterpRefines_qvmLoop' (section 5) are
 UNTOUCHED here: no hypothesis was added to a row, to 'ValidV3', to a bundle or to the root (RULES),
-and the refuted row keeps its sorry - deleting it is the human ruling W13 reserves, because it moves
+and the refuted row kept its sorry - deleting it is the human ruling W13 reserves, because it moves
 SORRY.md, the 375-fragment fingerprint pin and the 'kat_gate.py' note that names this hole. What
 follows is the repair ROWFALSE asked for, STATED and TESTED, so the human can rule on each guard
 separately instead of on a paragraph.
+
+**UPDATE (D-QVM2, EXECUTED IN A LATER COMMIT): the ruling landed.** The row's sorry and its register
+row are gone and the retired text survives as 'qinterpRefines_qvmLoop_retired' (section 5). The
+replacement is 'QInterpRefinesSegment' (section 11): it reuses guards 1, 2 and 3a of this section
+VERBATIM and replaces guard 3b with D-QVM2's whole-segment stack-safety certificate. Nothing else in
+this section was edited beyond this note.
 
 ROWFALSE proved the row's universal closure FALSE ('QuotientRows.lean' sections 11 and 12) and named
 three candidate repairs: the window no-wrap, the table agreement, and a stack/cached-top
@@ -1035,4 +1047,210 @@ theorem qinterpRepaired_satisfied_by_the_fail_closed_block {c : ExternalCalls} {
 #check @Midfall.Lowering.QuotientInterp.QTableAgrees
 #check @Midfall.Lowering.QuotientInterp.QHeadNoPop
 #check @Midfall.Lowering.QuotientInterp.QPreCachedTop
+
+/-! ### 11. THE REPLACEMENT (D-QVM2): THE CONTRACT OVER A FIXED, VALIDATED SEGMENT
+
+**D-QVM2 IS A SIGNED HUMAN RULING ('design.md:2763-2792', APPROVED 2026-11-21) AND THIS SECTION IS
+ITS EXECUTION.** The decision, verbatim: "'qinterpRefines_qvmLoop' is RETIRED under W13 (its negation
+is proved). The replacement is a contract over a fixed 'QSegment' 's', with the caller supplying:
+(1) 's.inWindow' and the D-QVM1 fit ('s.base + s.exprEnd < 2^256'); (2) full template-table agreement
+('tcq' = the table the reference labels come from); (3) a segment stack-safety certificate, the row
+counterpart of 'validateQuotientProgram'/'qvm_validated_noBoundsFault' (the validator rejects '[NEG]'
+at depth 0, which is exactly BOXD's second refutation); (4) the start state the prologue establishes
+('q_sp = program.stackMptr', 'q_has_top = 0)."  'QInterpRefinesSegment' below is that contract: the
+four items are FOUR NAMED HYPOTHESES of the quantified segment - items 1, 2 and 3 as hypotheses of
+'∀ s', item 4 as the named clause of the pre - and the row's sorry was deleted in this same commit,
+which is the consequence D-QVM2 states: "the old row's sorry and its register row are deleted in the
+same commit that adds the replacement (W13); the ROWFALSE refutations stay as the W12 falsifiers of
+the retired text."
+
+**ALIGNED TO QFIX, NOT A FIFTH FORMULATION.** The card's instruction was to read section 10 and align
+to it rather than invent a fifth shape, and that is what this is: 'QInterpRefinesSegment' is
+'QInterpRefinesRepaired' with ONE substitution and no other change. Guard 1 ('QWindowNoWrap'), guard 2
+('QTableAgrees') and guard 3a are reused VERBATIM - 3a widened only in the direction D-QVM2's item 4
+names, so that the pre's fourth clause states 'q_sp = program.stackMptr' beside 'q_has_top = 0'
+('QPrologueStart'; 'qPrologueStart_of_AtSegment_and_preCachedTop' proves it is exactly 'AtSegment' plus
+guard 3a and nothing more). The one substitution is guard 3b: ROWFALSE's head-only test ('QHeadNoPop',
+the FIRST byte is a no-pop opcode) becomes D-QVM2's item 3, a certificate over the WHOLE segment built
+from the validator's OWN decoder and stack-effect table. 'qinterpSegment_of_committed' proves the
+committed contract implies the replacement, exactly as 'qinterpRepaired_of_committed' proves it of
+QFIX's form: a RELAXATION of the refuted claim, not a stronger demand on the emitter.
+
+**WHY ITEM 3 IS A WALK AND NOT A HEAD TEST.** Three facts fix the shape. (i) The validator's own
+finish check requires the walk to end at depth 0 ('quotientProgramFinishCheck', VmValidator.lean:866),
+because a whole PROGRAM is a sequence of identities each closed by a fold; an IDENTITY segment ends
+with the single value 'evalQuotientIdentity' reads off the stack (VmReference.lean:905-908), so the
+segment counterpart of the validator ends at depth 1, not 0. (ii) The reference REFUSES the five
+stream opcodes inside an identity ('VmReference.lean:861-865', 'streamOpcodeInIdentity'), so the walk
+refuses them too - a segment whose head is 'neg' fails on the depth rule and a segment that folds
+fails on the domain rule. (iii) The walk is a computable function of the segment's bytes, so each of
+ROWFALSE's four witnesses is EXCLUDED BY 'decide' rather than by argument; the four exclusions are
+proved in 'QuotientRows.lean' section 14. Item 3 is a hypothesis of the NEW contract, which D-QVM2
+authorises; no hypothesis was added to a row, to 'ValidV3', to a bundle or to the root (RULES).
+
+**WHAT ITEM 3 DOES NOT COVER, NAMED RATHER THAN HUSHED.** It is a STACK-safety certificate: opcode
+decodability, the reference's identity opcode domain, and the static depth walk. It does not say the
+segment's OPERANDS are in range - constant slots inside 'consts', token bases, read windows - which
+is phase 2 of the validator ('validateQuotientProgramOperands'), whose two legs SEGLEG refuted; those
+facts live in 'Agrees' and in obligation (O3) of 'QuotientRows' section 13.4. Nor does any hypothesis
+about a start state discharge the inductive stack correspondence (O2) or the per-arm reference tie
+(O3): the guards are what makes the four refutations impossible, not a proof of the loop. -/
+
+/-- The segment's own bytes: the slice the contract's reference call evaluates and the slice the
+    stack-safety certificate walks. The same expression the post has always used, named once so the
+    certificate and the reference call cannot drift apart. -/
+def qSegmentBytes (bytes : List Nat) (s : QSegment) : List Nat :=
+  (bytes.drop s.cursor).take (s.exprEnd - s.cursor)
+
+/-- The five stream-level opcodes: a width to the validator, an ERROR to the identity interpreter
+    ('VmReference.lean:861-865'). 'Midfall.Lowering.streamIdentityExcluded' (Qvm.lean:1088) is the
+    same five; it is spelled again here because 'Qvm.lean' is not in this file's import graph and this
+    card does not own it. -/
+def qSegmentStreamOpcodes : List Nat :=
+  [qOpFoldMain, qOpFoldSelector, qOpNativePermutation, qOpNativeLookup, qOpNativeIdentity]
+
+/-- ONE STEP OF THE SEGMENT STACK WALK, in the validator's own vocabulary: decode the head with
+    'decodeByteQuotientInstruction' (VmValidator.lean:846, which bounds-checks the instruction and
+    validates token operands), refuse the five stream opcodes, then apply the validator's static
+    stack-effect table 'applyQuotientStackEffect' (VmValidator.lean:723) and advance by the decoded
+    width. 'none' means NOT CERTIFIED: an undecodable head, a stream opcode, an underflow or a
+    violated boundary. Fuel is the segment's own length, sound for the same reason the validator's is
+    (its own R10 note at VmValidator.lean:677, and 'validateQuotientProgram' passes 'bytes.length' at
+    :877): an accepted instruction is at least one byte, so the walk cannot still be mid-instruction. -/
+def qSegmentDepthGo (bytes : List Nat) : Nat → Nat → Nat → Option Nat
+  | 0, _, _ => none
+  | fuel + 1, idx, depth =>
+      if idx < bytes.length then
+        match Midfall.Generator.QuotientValidator.decodeByteQuotientInstruction bytes idx with
+        | .ok (op, len) =>
+            if op ∈ qSegmentStreamOpcodes then none
+            else
+              match Midfall.Generator.QuotientValidator.applyQuotientStackEffect op idx depth 0 with
+              | .ok (depth', _) => qSegmentDepthGo bytes fuel (idx + len) depth'
+              | .error _ => none
+        | .error _ => none
+      else some depth
+
+/-- **ITEM 3 - THE SEGMENT STACK-SAFETY CERTIFICATE (D-QVM2).** The walk above, run over the
+    segment's bytes from an EMPTY stack, ends with EXACTLY ONE value on it: the value the reference
+    returns. 'some 1' is the whole certificate - decodable heads, no stream opcode, no underflow, no
+    boundary violation, and the identity's end depth. This is the row counterpart of
+    'validateQuotientProgram' that D-QVM2 asks for, and it is what rejects '[NEG]' at depth 0:
+    'neg' needs one operand and the segment starts with none. -/
+def QSegmentStackSafe (bytes : List Nat) (s : QSegment) : Prop :=
+  qSegmentDepthGo (qSegmentBytes bytes s) (qSegmentBytes bytes s).length 0 0 = some 1
+
+/-- **ITEM 4 - THE START STATE THE PROLOGUE ESTABLISHES (D-QVM2).** 'q_sp = program.stackMptr' (the
+    operand stack empty at the segment's start, which is also a conjunct of 'AtSegment') and
+    'q_has_top = 0' with the cached top bound - QFIX's guard 3a, plus the 'q_sp' clause item 4 names.
+    It lives in the PRE because 'StmtsContractAll' quantifies over the start state internally: that is
+    where a contract puts a start-state requirement, and it is a hypothesis of the NEW contract, not a
+    patch to the old row. -/
+def QPrologueStart {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (V : VEnv (Bridge.Dialect c g)) : Prop :=
+  VEnv.get V "q_sp" = some (BitVec.ofNat 256 program.stackMptr) ∧
+    VEnv.get V "q_has_top" = some (0 : U256) ∧ ∃ x : U256, VEnv.get V "q_top" = some x
+
+/-- **ITEM 4 IS 'AtSegment' PLUS QFIX'S GUARD 3A AND NOTHING ELSE.** The bridge that shows the
+    replacement adds no start-state content beyond what section 10 already required: 'q_sp' comes from
+    the fifth conjunct of 'AtSegment', the cached-top clauses are guard 3a verbatim. -/
+theorem qPrologueStart_of_AtSegment_and_preCachedTop {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (s : QSegment)
+    (hseg : AtSegment (c := c) (g := g) (program := program) V st s)
+    (htop : QPreCachedTop (c := c) (g := g) V) :
+    QPrologueStart (c := c) (g := g) program V :=
+  ⟨hseg.2.2.2.2, htop.1, htop.2⟩
+
+/-- **THE REPLACEMENT CONTRACT (D-QVM2).** Over a FIXED 'QSegment' 's', with the four caller-supplied
+    items as named hypotheses:
+
+  * ITEM 1 's.inWindow' and 'QWindowNoWrap s' - the segment lies in the window and the window does not
+    wrap the 256-bit cursor word. NOTE, because the card asks for it: at the row's instantiation item
+    1's second half is NOT a burden on the caller - 'windowFit_of_programWindow'
+    ('QuotientRows.lean' section 3b) derives 'QWindowNoWrap s' from 'programFits', so for a segment at
+    the program's own window it is a THEOREM OF 'ValidV3'. It is stated as a hypothesis here because
+    the contract is generic in the window, exactly as QFIX's guard 1 is.
+  * ITEM 2 'QTableAgrees tcq' - full template-table agreement: 'tcq' is the table the reference's
+    opcode labels come from, all thirty-one pairs, proved true of the default table.
+  * ITEM 3 'QSegmentStackSafe bytes s' - the segment stack-safety certificate above.
+  * ITEM 4 'QPrologueStart program V' - the start state the prologue establishes, in the pre beside
+    'AtSegment' and 'Agrees'.
+
+    The post is the committed post: same disjunction, same reference call on the same slice (now named
+    'qSegmentBytes'), same 'Top' and 'AtSegment' positions. Like section 10's form it is fixed at the
+    row's own instantiation ('Bridge.Dialect c g', 'word := fun w => w'), because items 3 and 4 speak
+    about 'U256' registers and reference opcode bytes. -/
+def QInterpRefinesSegment {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (interp : Block EVM.Op)
+    (reverts : EvmState → Prop)
+    (bytes : List Nat) (consts : List Midfall.Word256)
+    (Agrees : EvmState → QuotientRefMemory → QSegment → Prop)
+    (AtSegment : VEnv (Bridge.Dialect c g) → EvmState → QSegment → Prop)
+    (Top : VEnv (Bridge.Dialect c g) → EvmState → U256 → Prop) : Prop :=
+  ∀ (s : QSegment) (mem : QuotientRefMemory),
+    s.inWindow → QWindowNoWrap s → QTableAgrees tcq → QSegmentStackSafe bytes s →
+    StmtsContractAll (D := Bridge.Dialect c g) funs interp
+      (fun V st => AtSegment V st s ∧ Agrees st mem s ∧
+        QPrologueStart (c := c) (g := g) program V)
+      (fun _ _ V' st' o => (o = .halt ∧ reverts st') ∨
+        (o = .normal ∧ ∃ v mem',
+          Midfall.Generator.evalQuotientIdentity (qSegmentBytes bytes s) consts mem = .ok (v, mem') ∧
+          Top V' st' (BitVec.ofNat 256 v) ∧ AtSegment V' st' s.atEnd))
+
+/-- **THE REPLACEMENT IS A RELAXATION OF THE REFUTED CLAIM, NOT A STRONGER ONE.** The committed
+    contract - the retired row's statement - still implies it, by the same one-line argument QFIX used:
+    items 1, 2 and 3 are hypotheses on the quantified segment and item 4 strengthens what the proof is
+    GIVEN, never what the caller must accept. So anything provable of the refuted form is provable of
+    the replacement, and the four witnesses that refute the refuted form do not apply here. -/
+theorem qinterpSegment_of_committed {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (interp : Block EVM.Op)
+    (reverts : EvmState → Prop)
+    (bytes : List Nat) (consts : List Midfall.Word256)
+    (Agrees : EvmState → QuotientRefMemory → QSegment → Prop)
+    (AtSegment : VEnv (Bridge.Dialect c g) → EvmState → QSegment → Prop)
+    (Top : VEnv (Bridge.Dialect c g) → EvmState → U256 → Prop)
+    (h : QInterpRefines (D := Bridge.Dialect c g) (reverts := reverts) (word := fun w => w)
+        (AtSegment := AtSegment) (Top := Top) (Agrees := Agrees) funs interp bytes consts) :
+    QInterpRefinesSegment (c := c) (g := g) program tcq funs interp reverts bytes consts
+      Agrees AtSegment Top :=
+  fun s mem hw _hwrap _htab _hsafe V st hpre =>
+    h s mem hw V st ⟨hpre.1, hpre.2.1⟩
+
+/-- **THE OUTPUT PREDICATE THE FOLD ARMS PRODUCE - D-QVM2'S OPEN DESIGN POINT, STATED AND ANSWERED.
+    The decision says the retired row's 'Top := qinterpTop' "is not the output of a segment ending in
+    'foldMain'/'foldSelector': those arms consume the cached top and write the accumulator at
+    'evalNumerMptr', so the replacement must state the output predicate the fold arms actually
+    produce", against the reference's 'evalQuotientIdentity' value, and report. THE ANSWER, AND IT IS
+    A FINDING ABOUT THE DECISION RATHER THAN A CHOICE OF PREDICATE: there is no such reference value.
+    'evalQuotientIdentityStep' REFUSES all five stream opcodes inside an identity
+    ('VmReference.lean:861-865', 'streamOpcodeInIdentity'), so 'evalQuotientIdentity' returns '.error'
+    on EVERY segment that ends in a fold - 'qdvm2_foldSegment_refused' in 'QuotientRows' section 14
+    proves it at the byte level - and the accumulator slot 'evalNumerMptr' does not appear anywhere in
+    the read-only reference (QuotientArms.lean:5502-5530 names the reference-side card, QSTREAM, that
+    would have to exist first). So the replacement does NOT state a fold output: item 3's certificate
+    refuses the fold opcodes, which is exactly the condition under which 'qinterpTop' IS the emitted
+    image of the reference's value - the segment ends with one word on the reference stack and one
+    live cached top. The fold predicate is stated here for the record, so the design point is closed
+    with a named predicate and a named blocker rather than left as prose: after 'qArmBodyFoldMain'
+    ('GenAstQvm.lean:292-295') the cached top is CLEARED and the accumulator word at
+    'program.evalNumerMptr' holds 'addmod (mulmod acc y) x' for the consumed top 'x'. When QSTREAM
+    lands, 'Top' instantiates to this at a stream contract; nothing here pre-empts it. -/
+def qinterpFoldTop {c : ExternalCalls} {g : ExternalGas}
+    (program : QuotientProgram) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (acc : U256) : Prop :=
+  VEnv.get V "q_has_top" = some (0 : U256) ∧ loadWord st.memory program.evalNumerMptr = acc
+
+/-! THE REPLACEMENT'S OWN ACCEPTANCE PRINTS. -/
+#check @Midfall.Lowering.QuotientInterp.QInterpRefinesSegment
+#check @Midfall.Lowering.QuotientInterp.QSegmentStackSafe
+#check @Midfall.Lowering.QuotientInterp.QPrologueStart
+#check @Midfall.Lowering.QuotientInterp.qinterpFoldTop
+#check @Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop_retired
+#print axioms Midfall.Lowering.QuotientInterp.qinterpSegment_of_committed
+#print axioms Midfall.Lowering.QuotientInterp.qPrologueStart_of_AtSegment_and_preCachedTop
+
+-- ('#assert_axioms' is not available in this file: it comes from 'Midfall.Tools.Done', which this file
+-- does not import and this card will not add. The asserted form of these two prints is in
+-- 'QuotientRows.lean' section 14, which does import it.)
 
