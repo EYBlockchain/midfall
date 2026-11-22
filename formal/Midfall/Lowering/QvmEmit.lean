@@ -1334,3 +1334,256 @@ theorem PG_identity_preFold_proof : Midfall.Lowering.PG_identity_preFold := by
     exact finalizedIdentitySegment_some_of_append_selector pre b1 b2 b3
 
 end Midfall.Lowering.QvmEmit
+
+
+/-! ### 5. `PG_termFold_structure` DISCHARGED: the LIN7 term fold writes `termBlock`
+
+    The builder half of the LIN7 denotation tie (`QvmEmit` section 3) is now a theorem. The
+    invariant `ConstTableSound` is preserved by `constSlot`, the fresh arm grows the table by the
+    quoted coefficient, and `termFold` writes exactly `termBlock slots terms` - one
+    (slot byte, big-endian u16 pointer) triple per term - with every slot a u8 and every slot
+    indexing its own coefficient. `termFold_structure` carries `ConstTableSound` and the consts
+    prefix through the fold; `PG_termFold_structure_proof` is the named Prop's proof.
+
+    NO hypothesis on a row/bundle/root; no sorry; standard three axioms. -/
+
+namespace Midfall.Lowering.QvmEmit
+
+open Midfall
+open Midfall.Generator
+open Midfall.Generator.QuotientBuilder
+
+theorem constSlot_found_structure {s : QuotientProgramBuilder} {c : Word256}
+    {s' : QuotientProgramBuilder} {slot : Nat} (hcs : ConstTableSound s)
+    (h : constSlot s c = .ok (s', slot)) (hsome : constSlotOf s c = some slot) :
+    s' = s ∧ ∃ rest, s.consts.drop slot = c :: rest := by
+  unfold constSlot at h
+  rw [hsome] at h
+  obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+  exact ⟨rfl, hcs c slot hsome⟩
+
+theorem constSlotOf_grow (s : QuotientProgramBuilder) (c c0 : Word256) (slot : Nat) :
+    constSlotOf { s with consts := s.consts ++ [c], constSlots := s.constSlots ++ [(c, slot)] } c0
+      = (match constSlotOf s c0 with
+         | some x => some x
+         | none => if c == c0 then some slot else none) := by
+  unfold constSlotOf
+  rw [List.find?_append]
+  cases hf : List.find? (fun k : Word256 × Nat => k.1 == c0) s.constSlots with
+  | some x =>
+      simp only [hf, Option.or, Option.map]
+  | none =>
+      simp only [hf, Option.none_or, Option.map]
+      cases hc : (c == c0) with
+      | true =>
+          rw [List.find?_cons]
+          simp only [Prod.fst, hc, if_true]
+      | false =>
+          rw [List.find?_cons]
+          simp only [Prod.fst, hc, if_false, Bool.false_eq_true, List.find?]
+
+theorem constSlot_preserves_sound {s : QuotientProgramBuilder} {c : Word256}
+    {s' : QuotientProgramBuilder} {slot : Nat} (hcs : ConstTableSound s)
+    (h : constSlot s c = .ok (s', slot)) : ConstTableSound s' := by
+  unfold constSlot at h
+  cases hsome : constSlotOf s c with
+  | some found =>
+      rw [hsome] at h
+      obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+      exact hcs
+  | none =>
+      rw [hsome] at h
+      dsimp only at h
+      by_cases hmax : s.consts.length > 0xffff
+      · rw [if_pos hmax] at h; cases h
+      · rw [if_neg hmax] at h
+        obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+        intro c0 slot0 h0
+        rw [constSlotOf_grow] at h0
+        cases hf : constSlotOf s c0 with
+        | some x =>
+            rw [hf] at h0
+            simp only [Option.some.injEq] at h0
+            subst h0
+            have hd := hcs c0 x hf
+            obtain ⟨rest, hrest⟩ := hd
+            refine ⟨rest ++ [c], ?_⟩
+            have hlen : x < s.consts.length := by
+              by_contra hlt
+              have hnil : s.consts.drop x = [] := List.drop_eq_nil_of_le (by omega)
+              rw [hnil] at hrest
+              cases hrest
+            rw [List.drop_append, Nat.sub_eq_zero_of_le (Nat.le_of_lt hlen), List.drop_zero, hrest]
+            rfl
+        | none =>
+            rw [hf] at h0
+            simp only [Option.none_or, Option.map] at h0
+            by_cases hc : (c == c0) = true
+            · have hc' : c = c0 := by simpa using hc
+              subst hc'
+              rw [if_pos hc] at h0
+              simp only [Option.some.injEq] at h0
+              subst h0
+              exact ⟨[], by simp⟩
+            · rw [if_neg hc] at h0
+              cases h0
+
+
+
+theorem emitU16_bytes (s : QuotientProgramBuilder) (v : Nat) (s' : QuotientProgramBuilder)
+    (h : emitU16 s v = .ok s') : s'.bytes = s.bytes ++ [v / 256, v % 256] := by
+  unfold emitU16 at h
+  split at h
+  · cases h
+  · cases h
+    rfl
+
+theorem constSlot_consts_grow (s : QuotientProgramBuilder) (c : Word256)
+    (s' : QuotientProgramBuilder) (slot : Nat) (h : constSlot s c = .ok (s', slot)) :
+    ∃ extra, s'.consts = s.consts ++ extra := by
+  unfold constSlot at h
+  cases hf : constSlotOf s c with
+  | some found => rw [hf] at h; obtain ⟨rfl, rfl⟩ := Except.ok.inj h; exact ⟨[], by simp⟩
+  | none =>
+      rw [hf] at h
+      dsimp only at h
+      by_cases hmax : s.consts.length > 0xffff
+      · rw [if_pos hmax] at h; cases h
+      · rw [if_neg hmax] at h
+        obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+        exact ⟨[c], rfl⟩
+
+theorem termStep_structure (s : QuotientProgramBuilder) (cp : Word256 × Nat) (site : String)
+    (s' : QuotientProgramBuilder) (hcs : ConstTableSound s) (hptr : cp.2 ≤ 0xffff)
+    (h : termStep s cp site = .ok s') :
+    ∃ slot cextra, slot ≤ 255 ∧ s'.bytes = s.bytes ++ [slot, cp.2 / 256, cp.2 % 256] ∧
+      ConstTableSound s' ∧ (∃ rest, s'.consts.drop slot = cp.1 :: rest) ∧
+      s'.consts = s.consts ++ cextra := by
+  unfold termStep at h
+  obtain ⟨coeff, ptr⟩ := cp
+  obtain ⟨a, h1, h2⟩ := peel_bind h
+  rcases a with ⟨s1, slot⟩
+  dsimp only at h2
+  have hsnd := constSlot_preserves_sound hcs h1
+  have hdrop0 : ∃ rest, s1.consts.drop slot = coeff :: rest := by
+    unfold constSlot at h1
+    cases hf : constSlotOf s coeff with
+    | some _ => rw [hf] at h1; obtain ⟨rfl, rfl⟩ := Except.ok.inj h1; exact hcs coeff slot hf
+    | none =>
+        rw [hf] at h1
+        dsimp only at h1
+        by_cases hmax : s.consts.length > 0xffff
+        · rw [if_pos hmax] at h1; cases h1
+        · rw [if_neg hmax] at h1
+          obtain ⟨rfl, rfl⟩ := Except.ok.inj h1
+          exact ⟨[], by simp⟩
+  obtain ⟨cextra1, hconsts1⟩ := constSlot_consts_grow s coeff s1 slot h1
+  by_cases hslot : slot > 255
+  · rw [if_pos hslot] at h2; cases h2
+  · rw [if_neg hslot] at h2
+    obtain ⟨a2, h3, h4⟩ := peel_bind h2
+    have hb : a2.bytes = (pushByte s1 slot).bytes ++ [ptr / 256, ptr % 256] :=
+      emitU16_bytes (pushByte s1 slot) ptr a2 h3
+    have ha2 : a2 = s' := Except.ok.inj h4
+    rw [ha2] at h3 hb
+    have hcbytes : s'.consts = s1.consts := by
+      unfold emitU16 at h3
+      split at h3
+      · cases h3
+      · cases h3; rfl
+    have hcslots : s'.constSlots = s1.constSlots := by
+      unfold emitU16 at h3
+      split at h3
+      · cases h3
+      · cases h3; rfl
+    have hsnd' : ConstTableSound s' := by
+      intro c sl h0
+      have h0' : constSlotOf s1 c = some sl := by
+        unfold constSlotOf at h0 ⊢
+        simpa [hcslots] using h0
+      have hd := hsnd c sl h0'
+      simpa [hcbytes] using hd
+    have hdrop0' : ∃ rest, s'.consts.drop slot = coeff :: rest := by
+      obtain ⟨rest, hr⟩ := hdrop0
+      exact ⟨rest, by simpa [hcbytes] using hr⟩
+    refine ⟨slot, cextra1, by omega, ?_, hsnd', hdrop0', ?_⟩
+    · have hb1 : s1.bytes = s.bytes := Midfall.Lowering.QvmEmit.constSlot_bytes s coeff s1 slot h1
+      rw [hb]
+      simp [pushByte, appendBytes, hb1, List.append_assoc]
+    · have hconsts' : s'.consts = (pushByte s1 slot).consts := by
+        unfold emitU16 at h3
+        split at h3
+        · cases h3
+        · cases h3; rfl
+      rw [hconsts']
+      simpa [pushByte, appendBytes] using hconsts1
+
+theorem termFold_structure (s : QuotientProgramBuilder) (terms : List (Word256 × Nat)) (site : String)
+    (s' : QuotientProgramBuilder) (hcs : ConstTableSound s)
+    (hptr : ∀ p ∈ terms.map Prod.snd, p ≤ 0xffff)
+    (h : termFold s terms site = .ok s') :
+    ∃ slots, slots.length = terms.length ∧
+      s'.bytes = s.bytes ++ termBlock slots terms ∧
+      (∀ i slot, i < terms.length → slots.getD i 0 = slot → slot ≤ 255) ∧
+      (∀ i t slot, i < terms.length → terms.getD i (0, 0) = t →
+        slots.getD i 0 = slot → ∃ rest, s'.consts.drop slot = t.1 :: rest) ∧
+      ConstTableSound s' ∧ ∃ cextra, s'.consts = s.consts ++ cextra := by
+  unfold termFold at h
+  induction terms generalizing s with
+  | nil =>
+      simp [foldLeftM] at h
+      cases h
+      refine ⟨[], by simp [termBlock], by simp [termBlock], by simp, by simp, hcs, ⟨[], by simp⟩⟩
+  | cons cp rest ih =>
+      simp only [foldLeftM] at h
+      obtain ⟨a, h1, h2⟩ := peel_bind h
+      have h1' : termStep s cp site = .ok a := h1
+      have hptr0 : cp.2 ≤ 0xffff := by
+        have := hptr cp.2 (by simp)
+        simpa using this
+      obtain ⟨slot, cextra1, hslot, hbytes, hcs1, hdrop0, hconsts1⟩ :=
+        termStep_structure s cp site a hcs hptr0 h1'
+      have hptr' : ∀ p ∈ rest.map Prod.snd, p ≤ 0xffff := by
+        intro p hp; exact hptr p (by simp [hp])
+      obtain ⟨slots, hlen, hbytes', hslots, hconsts, hcs', cextra2, hconsts2⟩ :=
+        ih a hcs1 hptr' h2
+      refine ⟨slot :: slots, by simp [hlen], ?_, ?_, ?_, hcs', ?_⟩
+      · rw [hbytes', hbytes]
+        obtain ⟨coeff, ptr⟩ := cp
+        simp only [termBlock]
+        simp [List.append_assoc]
+      · intro i s0 hi hget
+        cases i with
+        | zero =>
+            simp only [List.getD_cons_zero] at hget
+            subst hget
+            exact hslot
+        | succ j => simp only [List.getD_cons_succ] at hget; exact hslots j s0 (by simpa using hi) hget
+      · intro i t s0 hi ht hget
+        cases i with
+        | zero =>
+            simp only [List.getD_cons_zero] at ht hget
+            subst ht; subst hget
+            obtain ⟨restc, hrc⟩ := hdrop0
+            have hlen0 : slot < a.consts.length := by
+              by_contra hlt
+              have hnil : a.consts.drop slot = [] := List.drop_eq_nil_of_le (by omega)
+              rw [hnil] at hrc; cases hrc
+            refine ⟨restc ++ cextra2, ?_⟩
+            rw [hconsts2, List.drop_append, Nat.sub_eq_zero_of_le (Nat.le_of_lt hlen0), List.drop_zero, hrc]
+            rfl
+        | succ j =>
+            simp only [List.getD_cons_succ] at ht hget
+            exact hconsts j t s0 (by simpa using hi) ht hget
+      · rw [hconsts2, hconsts1]
+        exact ⟨cextra1 ++ cextra2, by simp [List.append_assoc]⟩
+
+theorem PG_termFold_structure_proof : Midfall.Lowering.QvmEmit.PG_termFold_structure := by
+  intro terms s s' site hcs h hptr
+  obtain ⟨slots, hlen, hbytes, hslots, hconsts, _⟩ :=
+    termFold_structure s terms site s' hcs hptr h
+  exact ⟨slots, hlen, hbytes, hslots, hconsts⟩
+
+#print axioms Midfall.Lowering.QvmEmit.PG_termFold_structure_proof
+
+end Midfall.Lowering.QvmEmit
