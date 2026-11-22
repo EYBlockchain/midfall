@@ -40,6 +40,30 @@ the base case of SIM.10 obligation 2; the remaining `pcsReads`/`assertEmpty` wor
 `qsWire` induction over the q-eval tail and the cursor arithmetic, for which the buffer-tail
 hypothesis is the one stated in the SIM.10 section below.
 
+## SIM.10 pieces landed this session
+
+All PROVED in `TranscriptRows.lean`:
+* `bytesTake_whole` (line 533): reading the whole buffer is the identity.
+* `tmSqueezeChallenge_run` (line 541): `tmSqueezeChallenge.run` never fails.
+* `tmRead_run_ok` (line 548): a `tmRead` with a present, decodable repr succeeds, advances
+  `pos` by `width`, and leaves the buffer alone.
+* `tmRead_list_run` (line 566): the scalar read run — for any index list `idx` of the same
+  length as `qs`, with `t.buffer = pref ++ (qs.map frToRepr).flatten ++ rest`, `t.pos =
+  pref.size` and `p ≤ 2^256`, `idx.mapM (fun _ => tmRead hashableFr)` returns `qs`, with
+  `t'.pos = pref.size + 32 * qs.length` and the buffer unchanged. This is the q-eval wire
+  induction; it uses `bytesTake_append_right`, `bytesTake_whole` and `frOfRepr_frToRepr`.
+
+## `pcsReads_run_ok` — exact remaining assembly
+
+The two G1 reads and the three squeezes still need composing with `tmRead_list_run`. The
+statement needs one more hypothesis than the earlier note: `hwidth : ∀ Q, (g1.toCompressed Q).size
+= g1CompressedWidth` (from `G1CodecHeadlineLaws.compressedWidth`), because `tpRead`'s `bytesTake`
+uses the fixed width. The remaining proof is: (i) the two `bytesTake (pref ++ toCompressed Q ++
+rest) pref.size g1CompressedWidth = some (toCompressed Q)` facts (`bytesTake_append_right` +
+`bytesTake_whole` + `hwidth`), (ii) `tmRead_run_ok` twice, (iii) `tmRead_list_run` in the middle,
+(iv) the `StateT.run_bind` chain for `pcsReads`, (v) the final cursor arithmetic
+`pref.size + 48 + 32*nSets + 48 = t.buffer.size` for `assertEmpty`.
+
 ## The next SIM.10 lemma, stated exactly (not yet closed)
 
 `pcsReads_run_ok`: for `t : Transcript`, `qs : List (Fr p)`, `fCom pi : G₁`, with
