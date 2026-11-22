@@ -39,6 +39,7 @@ import Midfall.LoweringV3.QuotientRows
 import Midfall.LoweringV2.Blocks.VkLoading
 import Midfall.Yul.LoopRule
 import Midfall.Yul.Word
+import Midfall.LoweringV3.VkWindow
 import Midfall.Tools.ConeSorries
 import Midfall.Tools.Done
 
@@ -1373,3 +1374,403 @@ theorem exec_two_total_add_assigns_inv {funs : FunEnv (Bridge.Dialect c g)}
           cases h1 with
           | assignVal _ _ => cases hne' rfl
           | assignHalt he => exact (eval_add_var_lit_halt_false he).elim
+
+/-- The inner `VEnv` algebra of one instance step: the body's `instance_eval` update and the post
+block's `l_i_cptr` update collapse past each other. -/
+theorem instance_set_flat {V : VEnv (Bridge.Dialect c g)} {w w' lp lp' : U256} :
+    VEnv.set (VEnv.set (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp)
+        "instance_eval" w') "l_i_cptr" lp' =
+      VEnv.set (VEnv.set V "instance_eval" w') "l_i_cptr" lp' := by
+  rw [venv_set_comm (D := Bridge.Dialect c g) (V := VEnv.set V "instance_eval" w)
+      (x := "l_i_cptr") (y := "instance_eval") (by decide),
+    venv_set_set (D := Bridge.Dialect c g), venv_set_set (D := Bridge.Dialect c g)]
+
+/-- The instance loop's environment after one iteration, in the invariant's normal form: both
+in-place updates collapse past the loop's two bindings. -/
+theorem instance_env_flat {V : VEnv (Bridge.Dialect c g)} {e w w' mp lp mp' lp' : U256} :
+    VEnv.set (VEnv.set (VEnv.set (("instance_cptr_end", e) ::
+        ("instance_cptr", mp) ::
+        (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp))
+      "instance_eval" w') "instance_cptr" mp') "l_i_cptr" lp' =
+      ("instance_cptr_end", e) :: ("instance_cptr", mp') ::
+        VEnv.set (VEnv.set V "instance_eval" w') "l_i_cptr" lp' := by
+  have h1 : VEnv.set (("instance_cptr_end", e) ::
+      ("instance_cptr", mp) ::
+      (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp)) "instance_eval" w' =
+      ("instance_cptr_end", e) ::
+        VEnv.set (("instance_cptr", mp) ::
+          (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp)) "instance_eval" w' := rfl
+  have h2 : VEnv.set (("instance_cptr_end", e) ::
+      VEnv.set (("instance_cptr", mp) ::
+        (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp)) "instance_eval" w')
+      "instance_cptr" mp' =
+      ("instance_cptr_end", e) ::
+        VEnv.set (VEnv.set (("instance_cptr", mp) ::
+          (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp)) "instance_eval" w')
+          "instance_cptr" mp' := rfl
+  have h3 : VEnv.set (("instance_cptr_end", e) ::
+      VEnv.set (VEnv.set (("instance_cptr", mp) ::
+        (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp)) "instance_eval" w')
+        "instance_cptr" mp') "l_i_cptr" lp' =
+      ("instance_cptr_end", e) ::
+        VEnv.set (VEnv.set (VEnv.set (("instance_cptr", mp) ::
+          (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp)) "instance_eval" w')
+          "instance_cptr" mp') "l_i_cptr" lp' := rfl
+  have h4 : VEnv.set (VEnv.set (VEnv.set (("instance_cptr", mp) ::
+        (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp)) "instance_eval" w')
+        "instance_cptr" mp') "l_i_cptr" lp' =
+      ("instance_cptr", mp') ::
+        VEnv.set (VEnv.set (VEnv.set (VEnv.set V "instance_eval" w) "l_i_cptr" lp)
+          "instance_eval" w') "l_i_cptr" lp' := rfl
+  rw [h1, h2, h3, h4, instance_set_flat]
+
+theorem lag_instance_loop (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (hr : consts.lookup "r" = none) (k n m aI Lc : Nat) (cd : Bytes)
+    (hI : consts.lookup "INSTANCE_CPTR" = some aI)
+    (hIb : aI + 32 * n < 2 ^ 256) (hLb : Lc + 32 * n < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 18 1)
+      (fun V st => st.env.calldata = cd.data.toList ∧
+        VEnv.get V "l_i_cptr" = some (BitVec.ofNat 256 Lc) ∧
+        VEnv.get V "instance_eval" = some 0 ∧ (VEnv.get V "r").isSome)
+      (fun V st V' st' o => o = .normal ∧ SameUpToActive st st' ∧
+        ∃ rw, VEnv.get V "r" = some rw ∧
+          V' = VEnv.set (VEnv.set V "instance_eval"
+              (wSum rw (fun j => wMulmodAt (loadWord st.memory (Lc + 32 * j))
+                (cdWord cd (aI + 32 * j)) rw) n 0))
+            "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * n))) := by
+  rw [lag_instance_loop_form]
+  simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
+    Blocks.VkLoading.vkSite, hr, hI]
+  intro V st hpre
+  obtain ⟨hcd, hlic, hie0, hrsome⟩ := hpre
+  obtain ⟨rw, hrw⟩ := QuotientRows.isSome_elim hrsome
+  let P : Nat → U256 := fun j => wMulmodAt (loadWord st.memory (Lc + 32 * j))
+    (cdWord cd (aI + 32 * j)) rw
+  let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
+    fun V' st' o => o = .normal ∧ SameUpToActive st st' ∧
+      ∃ rw, VEnv.get V "r" = some rw ∧
+        V' = VEnv.set (VEnv.set V "instance_eval"
+            (wSum rw (fun j => wMulmodAt (loadWord st.memory (Lc + 32 * j))
+              (cdWord cd (aI + 32 * j)) rw) n 0))
+          "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * n))
+  change Midfall.Yul.WpTac.AllRuns funs V st
+    [Stmt.forLoop
+      [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number aI)))
+      , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+          [Expr.var "instance_cptr", Expr.lit (Literal.number (n * 32))])) ]
+      (Expr.builtin Op.lt [Expr.var "instance_cptr", Expr.var "instance_cptr_end"])
+      [ Stmt.assign ["instance_cptr"] (Expr.builtin Op.add
+          [Expr.var "instance_cptr", Expr.lit (Literal.number 32)])
+      , Stmt.assign ["l_i_cptr"] (Expr.builtin Op.add
+          [Expr.var "l_i_cptr", Expr.lit (Literal.number 32)]) ]
+      [Stmt.assign ["instance_eval"] (Expr.builtin Op.addmod
+        [Expr.var "instance_eval", Expr.builtin Op.mulmod
+          [Expr.builtin Op.mload [Expr.var "l_i_cptr"],
+            Expr.builtin Op.calldataload [Expr.var "instance_cptr"], Expr.var "r"],
+          Expr.var "r"])]] Q
+  let Inv : VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+    fun V' st' => ∃ j, j ≤ n ∧
+      V' = ("instance_cptr_end", BitVec.ofNat 256 (aI + 32 * n)) ::
+        ("instance_cptr", BitVec.ofNat 256 (aI + 32 * j)) ::
+        VEnv.set (VEnv.set V "instance_eval" (wSum rw P j 0))
+          "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * j)) ∧
+      VEnv.get V' "instance_cptr" = some (BitVec.ofNat 256 (aI + 32 * j)) ∧
+      VEnv.get V' "instance_cptr_end" = some (BitVec.ofNat 256 (aI + 32 * n)) ∧
+      VEnv.get V' "l_i_cptr" = some (BitVec.ofNat 256 (Lc + 32 * j)) ∧
+      VEnv.get V' "instance_eval" = some (wSum rw P j 0) ∧
+      VEnv.get V' "r" = some rw ∧ SameUpToActive st st'
+  let Qloop : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
+    fun Vend stend o => Q (restore V Vend) stend o
+  have hinit : wpSS (Bridge.Dialect c g) (Bopen c g) (Cnone _) 14
+      (hoist (Bridge.Dialect c g)
+        [Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number aI))),
+         Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+          [Expr.var "instance_cptr", Expr.lit (Literal.number (n * 32))]))] ::
+        funs)
+      V st
+      [Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number aI))),
+       Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+        [Expr.var "instance_cptr", Expr.lit (Literal.number (n * 32))]))]
+      (fun Vi sti oi =>
+        match oi with
+        | .normal => Inv Vi sti
+        | .halt => Q (restore V Vi) sti .halt
+        | _ => False) := by
+    refine ⟨rfl, ⟨⟨rfl, ⟨?_⟩⟩⟩⟩
+    show Inv (("instance_cptr_end", BitVec.ofNat 256 aI + BitVec.ofNat 256 (n * 32)) ::
+      ("instance_cptr", BitVec.ofNat 256 aI) :: V) st
+    rw [show BitVec.ofNat 256 aI + BitVec.ofNat 256 (n * 32) =
+        BitVec.ofNat 256 (aI + 32 * n) by
+      rw [← BitVec.ofNat_add]
+      congr 1
+      omega]
+    refine ⟨0, Nat.zero_le _, ?eq, ?g1, ?g2, ?g3, ?g4, ?g5, ?state⟩
+    · change ("instance_cptr_end", BitVec.ofNat 256 (aI + 32 * n)) ::
+          ("instance_cptr", BitVec.ofNat 256 aI) :: V =
+        ("instance_cptr_end", BitVec.ofNat 256 (aI + 32 * n)) ::
+          ("instance_cptr", BitVec.ofNat 256 aI) ::
+          VEnv.set (VEnv.set V "instance_eval" 0) "l_i_cptr" (BitVec.ofNat 256 Lc)
+      rw [venv_set_eq_self hie0, venv_set_eq_self hlic]
+    · rfl
+    · rfl
+    · rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+        (V := ("instance_cptr", BitVec.ofNat 256 aI) :: V) (x := "instance_cptr_end")
+        (y := "l_i_cptr") (v := BitVec.ofNat 256 (aI + 32 * n)) (by decide)]
+      rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "instance_cptr")
+        (y := "l_i_cptr") (v := BitVec.ofNat 256 aI) (by decide)]
+      exact hlic
+    · rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+        (V := ("instance_cptr", BitVec.ofNat 256 aI) :: V) (x := "instance_cptr_end")
+        (y := "instance_eval") (v := BitVec.ofNat 256 (aI + 32 * n)) (by decide)]
+      rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "instance_cptr")
+        (y := "instance_eval") (v := BitVec.ofNat 256 aI) (by decide)]
+      change VEnv.get V "instance_eval" = some 0
+      exact hie0
+    · rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+        (V := ("instance_cptr", BitVec.ofNat 256 aI) :: V) (x := "instance_cptr_end")
+        (y := "r") (v := BitVec.ofNat 256 (aI + 32 * n)) (by decide)]
+      rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "instance_cptr")
+        (y := "r") (v := BitVec.ofNat 256 aI) (by decide)]
+      exact hrw
+    · exact ⟨st.activeWords, rfl⟩
+  have hloop : ∀ Vi sti, Inv Vi sti →
+      ∀ V' st' o, ExecLoop (Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g)
+          [Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number aI))),
+           Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (n * 32))]))] :: funs)
+        Vi sti
+        (Expr.builtin Op.lt [Expr.var "instance_cptr", Expr.var "instance_cptr_end"])
+        [ Stmt.assign ["instance_cptr"] (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number 32)])
+        , Stmt.assign ["l_i_cptr"] (Expr.builtin Op.add
+            [Expr.var "l_i_cptr", Expr.lit (Literal.number 32)]) ]
+        [Stmt.assign ["instance_eval"] (Expr.builtin Op.addmod
+          [Expr.var "instance_eval", Expr.builtin Op.mulmod
+            [Expr.builtin Op.mload [Expr.var "l_i_cptr"],
+              Expr.builtin Op.calldataload [Expr.var "instance_cptr"], Expr.var "r"],
+            Expr.var "r"])]
+        V' st' o → Qloop V' st' o := by
+    refine LoopRule.allRuns_loop (Inv := Inv) (Q := Qloop) ?_
+    intro Vi sti hInv
+    simp only [Inv] at hInv
+    obtain ⟨j, hj, hV, hcpc, hcpe, hlicj, hiej, hrj, aw, hst⟩ := hInv
+    refine ⟨?condHalt, ?exit, ?iter⟩
+    · intro st1 hc
+      exact (eval_lt_halt_false hc).elim
+    · intro cv st1 hc hz
+      obtain ⟨xv, yv, hxget, hyget, hcv, hst1⟩ := eval_lt_vars_inv hc
+      have hxv : xv = BitVec.ofNat 256 (aI + 32 * j) :=
+        Option.some.inj (hxget.symm.trans hcpc)
+      have hyv : yv = BitVec.ofNat 256 (aI + 32 * n) :=
+        Option.some.inj (hyget.symm.trans hcpe)
+      rw [hxv, hyv] at hcv
+      have h0 : b2w ((BitVec.ofNat 256 (aI + 32 * j)).ult
+          (BitVec.ofNat 256 (aI + 32 * n))) = (0 : U256) := by
+        rw [← hcv]; exact hz
+      have hge : aI + 32 * n ≤ aI + 32 * j :=
+        LoopRule.lt_guard_false (by omega) hIb h0
+      have hjn : j = n := by
+        have hle : n ≤ j := by omega
+        exact Nat.le_antisymm hj hle
+      change Q (restore V Vi) st1 .normal
+      rw [hst1, hV, hjn]
+      simp only [Q]
+      refine ⟨trivial, ⟨aw, hst⟩, rw, hrw, ?_⟩
+      rw [restore_two_cons_length (D := Bridge.Dialect c g) (V := V)
+        (W := (VEnv.set V "instance_eval" (wSum rw P n 0)).set
+          "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * n)))
+        (y := "instance_cptr_end") (z := "instance_cptr")
+        (b := BitVec.ofNat 256 (aI + 32 * n)) (c := BitVec.ofNat 256 (aI + 32 * n))
+        (by simp only [venv_set_length (D := Bridge.Dialect c g)])]
+    · intro cv st1 hc hnz Vb stb ob hbody
+      obtain ⟨xv, yv, hxget, hyget, hcv, hst1⟩ := eval_lt_vars_inv hc
+      have hxv : xv = BitVec.ofNat 256 (aI + 32 * j) :=
+        Option.some.inj (hxget.symm.trans hcpc)
+      have hyv : yv = BitVec.ofNat 256 (aI + 32 * n) :=
+        Option.some.inj (hyget.symm.trans hcpe)
+      rw [hxv, hyv] at hcv
+      have h0 : b2w ((BitVec.ofNat 256 (aI + 32 * j)).ult
+          (BitVec.ofNat 256 (aI + 32 * n))) ≠ (0 : U256) := by
+        rw [← hcv]; exact hnz
+      have hlt : j < n := by
+        have := LoopRule.lt_guard_true (i := aI + 32 * j) (n := aI + 32 * n) (by omega) hIb h0
+        omega
+      obtain ⟨hob, v, st1b, heval, hVb, hstb⟩ :=
+        exec_one_total_assign_block_inv (funs := hoist (Bridge.Dialect c g)
+          [Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number aI))),
+           Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (n * 32))]))] :: funs)
+          (hne := fun st0 st1 hh => eval_addmod_instance_halt_false hh) hbody
+      subst hob
+      obtain ⟨iev, mv, rv, mp, cp, hie, hlicb, hcpcb, hrv, hmv, hcvadd, hsttouch⟩ :=
+        eval_addmod_instance_inv heval
+      subst hstb
+      subst hsttouch
+      subst hVb
+      intro Vp stp op hpost
+      obtain ⟨hop, a, b, hcpcVb, hlicVb, hVp, hstp⟩ :=
+        exec_two_total_add_assigns_inv (funs := hoist (Bridge.Dialect c g)
+          [Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number aI))),
+           Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (n * 32))]))] :: funs)
+          (V := VEnv.set Vi "instance_eval" v) (x := "instance_cptr") (y := "l_i_cptr")
+          (by decide) hpost
+      subst hop
+      subst hstp
+      subst hVp
+      have hcpcV : VEnv.get Vi "instance_cptr" = some a := by
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (V := Vi) (x := "instance_eval")
+          (y := "instance_cptr") (v := v) (by decide)] at hcpcVb
+        exact hcpcVb
+      have hlicV : VEnv.get Vi "l_i_cptr" = some b := by
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (V := Vi) (x := "instance_eval")
+          (y := "l_i_cptr") (v := v) (by decide)] at hlicVb
+        exact hlicVb
+      have ha : a = BitVec.ofNat 256 (aI + 32 * j) := Option.some.inj (hcpcV.symm.trans hcpc)
+      have hb : b = BitVec.ofNat 256 (Lc + 32 * j) := Option.some.inj (hlicV.symm.trans hlicj)
+      subst ha; subst hb
+      refine ⟨?_, ?_⟩
+      · intro _
+        have hmpt : mp.toNat = Lc + 32 * j := by
+          have hs : some mp = some (BitVec.ofNat 256 (Lc + 32 * j)) := by
+            rw [← hlicb]; exact hlicj
+          have h1 : mp = BitVec.ofNat 256 (Lc + 32 * j) := by cases hs; rfl
+          rw [h1]; exact ofNat_toNat (by omega)
+        have hcpt : cp.toNat = aI + 32 * j := by
+          have hs : some cp = some (BitVec.ofNat 256 (aI + 32 * j)) := by
+            rw [← hcpcb]; exact hcpc
+          have h1 : cp = BitVec.ofNat 256 (aI + 32 * j) := by cases hs; rfl
+          rw [h1]; exact ofNat_toNat (by omega)
+        rw [hV] at hlicj hiej hrj hcpc hcpe hie hrv
+        have hsti_mem : st1.memory = st.memory := by rw [hst1, hst]
+        have hsti_cd : st1.env.calldata = cd.data.toList := by rw [hst1, hst]; exact hcd
+        have hiev : iev = wSum rw P j 0 := Option.some.inj (hie.symm.trans hiej)
+        have hrvj : rv = rw := Option.some.inj (hrv.symm.trans hrj)
+        subst hiev
+        have hrvj' : rw = rv := hrvj.symm
+        subst hrvj'
+        have hval : v = wSum rw P (j + 1) 0 := by
+          rw [hcvadd, hmv, hmpt, hcpt, hsti_mem, hsti_cd,
+            Midfall.LoweringV3.VkWindow.wordFrom_cdWord]
+          change wAddmodAt (wSum rw P j 0)
+            (wMulmodAt (loadWord st.memory (Lc + 32 * j)) (cdWord cd (aI + 32 * j)) rw) rw =
+            wSum rw P (j + 1) 0
+          rfl
+        have henv : VEnv.set (VEnv.set (VEnv.set Vi "instance_eval" v)
+              "instance_cptr" (BitVec.ofNat 256 (aI + 32 * j) + BitVec.ofNat 256 32))
+              "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * j) + BitVec.ofNat 256 32) =
+            ("instance_cptr_end", BitVec.ofNat 256 (aI + 32 * n)) ::
+              ("instance_cptr", BitVec.ofNat 256 (aI + 32 * (j + 1))) ::
+              VEnv.set (VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+                "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * (j + 1))) := by
+          rw [hV, hval,
+            show BitVec.ofNat 256 (aI + 32 * j) + BitVec.ofNat 256 32 =
+              BitVec.ofNat 256 (aI + 32 * (j + 1)) by
+              rw [← BitVec.ofNat_add,
+                show aI + 32 * j + 32 = aI + 32 * (j + 1) by omega],
+            show BitVec.ofNat 256 (Lc + 32 * j) + BitVec.ofNat 256 32 =
+              BitVec.ofNat 256 (Lc + 32 * (j + 1)) by
+              rw [← BitVec.ofNat_add,
+                show Lc + 32 * j + 32 = Lc + 32 * (j + 1) by omega],
+            instance_env_flat (V := V)
+              (e := BitVec.ofNat 256 (aI + 32 * n)) (w := wSum rw P j 0)
+              (w' := wSum rw P (j + 1) 0)
+              (mp := BitVec.ofNat 256 (aI + 32 * j)) (lp := BitVec.ofNat 256 (Lc + 32 * j))
+              (mp' := BitVec.ofNat 256 (aI + 32 * (j + 1)))
+              (lp' := BitVec.ofNat 256 (Lc + 32 * (j + 1)))]
+        refine ⟨j + 1, Nat.succ_le_of_lt hlt, henv, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        · -- instance_cptr (the loop's own cursor)
+          rw [henv, venv_get_cons_ne (D := Bridge.Dialect c g)
+            (V := ("instance_cptr", BitVec.ofNat 256 (aI + 32 * (j + 1))) ::
+              VEnv.set (VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+                "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * (j + 1))))
+            (x := "instance_cptr_end") (y := "instance_cptr")
+            (v := BitVec.ofNat 256 (aI + 32 * n)) (by decide)]
+          rfl
+        · -- instance_cptr_end
+          rw [henv]
+          rfl
+        · -- l_i_cptr
+          rw [henv]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+            (V := ("instance_cptr", BitVec.ofNat 256 (aI + 32 * (j + 1))) ::
+              VEnv.set (VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+                "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * (j + 1))))
+            (x := "instance_cptr_end") (y := "l_i_cptr")
+            (v := BitVec.ofNat 256 (aI + 32 * n)) (by decide)]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+            (V := VEnv.set (VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+              "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * (j + 1))))
+            (x := "instance_cptr") (y := "l_i_cptr")
+            (v := BitVec.ofNat 256 (aI + 32 * (j + 1))) (by decide)]
+          exact venv_get_set_same (D := Bridge.Dialect c g)
+            (V := VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+            (x := "l_i_cptr") (v := BitVec.ofNat 256 Lc)
+            (w := BitVec.ofNat 256 (Lc + 32 * (j + 1))) (by
+              rw [venv_get_set_ne (D := Bridge.Dialect c g) (V := V)
+                (x := "instance_eval") (y := "l_i_cptr")
+                (v := wSum rw P (j + 1) 0) (by decide)]
+              exact hlic)
+        · -- instance_eval
+          rw [henv]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+            (V := ("instance_cptr", BitVec.ofNat 256 (aI + 32 * (j + 1))) ::
+              VEnv.set (VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+                "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * (j + 1))))
+            (x := "instance_cptr_end") (y := "instance_eval")
+            (v := BitVec.ofNat 256 (aI + 32 * n)) (by decide)]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+            (V := VEnv.set (VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+              "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * (j + 1))))
+            (x := "instance_cptr") (y := "instance_eval")
+            (v := BitVec.ofNat 256 (aI + 32 * (j + 1))) (by decide)]
+          rw [venv_get_set_ne (D := Bridge.Dialect c g)
+            (V := VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+            (x := "l_i_cptr") (y := "instance_eval")
+            (v := BitVec.ofNat 256 (Lc + 32 * (j + 1))) (by decide)]
+          exact venv_get_set_same (D := Bridge.Dialect c g) (V := V)
+            (x := "instance_eval") (v := 0) (w := wSum rw P (j + 1) 0) hie0
+        · -- r
+          rw [henv]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+            (V := ("instance_cptr", BitVec.ofNat 256 (aI + 32 * (j + 1))) ::
+              VEnv.set (VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+                "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * (j + 1))))
+            (x := "instance_cptr_end") (y := "r")
+            (v := BitVec.ofNat 256 (aI + 32 * n)) (by decide)]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+            (V := VEnv.set (VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+              "l_i_cptr" (BitVec.ofNat 256 (Lc + 32 * (j + 1))))
+            (x := "instance_cptr") (y := "r")
+            (v := BitVec.ofNat 256 (aI + 32 * (j + 1))) (by decide)]
+          rw [venv_get_set_ne (D := Bridge.Dialect c g)
+            (V := VEnv.set V "instance_eval" (wSum rw P (j + 1) 0))
+            (x := "l_i_cptr") (y := "r") (v := BitVec.ofNat 256 (Lc + 32 * (j + 1)))
+            (by decide)]
+          rw [venv_get_set_ne (D := Bridge.Dialect c g) (V := V) (x := "instance_eval")
+            (y := "r") (v := wSum rw P (j + 1) 0) (by decide)]
+          exact hrw
+        · exact ⟨(touchMemory st1 mp.toNat 32).activeWords, by rw [hst1, hst]; rfl⟩
+      · intro hop
+        exact absurd hop (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+  intro V' st' o hrun
+  cases hrun with
+  | seqCons hfor hrest =>
+      cases hrest with
+      | seqNil =>
+          cases hfor with
+          | forLoop hi hl =>
+              have hi' := wpSS_sound (Bridge.Dialect c g) (Bopen c g) (Cnone _)
+                (Bopen_sound c g) (Cnone_sound _) hinit _ _ _ hi
+              exact hloop _ _ hi' _ _ _ hl
+  | seqStop hfor hne =>
+      cases hfor with
+      | forLoop hi hl =>
+          have hi' := wpSS_sound (Bridge.Dialect c g) (Bopen c g) (Cnone _)
+            (Bopen_sound c g) (Cnone_sound _) hinit _ _ _ hi
+          exact hloop _ _ hi' _ _ _ hl
+      | forInitHalt hi =>
+          exact wpSS_sound (Bridge.Dialect c g) (Bopen c g) (Cnone _)
+            (Bopen_sound c g) (Cnone_sound _) hinit _ _ _ hi
+
