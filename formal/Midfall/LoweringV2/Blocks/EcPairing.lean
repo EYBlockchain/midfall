@@ -497,4 +497,38 @@ theorem bytesAppend_four_left (a b c d : Bytes) :
 #assert_axioms Midfall.LoweringV2.Blocks.EcPairing.bytesAppend_four_left
   [propext, Classical.choice, Quot.sound] native []
 
+
+/-- A `BitVec.ofNat 256` equality to 32 gives the Nat lower bound needed by the return read. -/
+theorem length_ge_of_bitvec_ofNat_eq {n : Nat}
+    (h : BitVec.ofNat 256 n = BitVec.ofNat 256 32) : 32 ≤ n := by
+  have h' := congrArg BitVec.toNat h
+  simp [BitVec.toNat_ofNat] at h'
+  have hle := Nat.mod_le n (2 ^ 256)
+  omega
+
+/-- The first `iszero` guard's BitVec length equality gives `32 ≤ returndata.length`. -/
+theorem length_ge_of_flag_guard_bv {resp : EVM.CallResponse} {n : Nat}
+    (h : b2w (decide ((resp.flag &&& b2w (decide (BitVec.ofNat 256 n = BitVec.ofNat 256 32))) = 0)) =
+      (0 : U256)) : 32 ≤ n := by
+  by_cases heq : BitVec.ofNat 256 n = BitVec.ofNat 256 32
+  · exact length_ge_of_bitvec_ofNat_eq heq
+  · have hb : b2w (decide (BitVec.ofNat 256 n = BitVec.ofNat 256 32)) = (0 : U256) := by
+      rw [decide_eq_false heq]; rfl
+    rw [hb] at h
+    simp [b2w] at h
+
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.length_ge_of_bitvec_ofNat_eq
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.length_ge_of_flag_guard_bv
+  [propext, Classical.choice, Quot.sound] native []
+
+
+/-- A bit-AND of two `0/1` words is `1` exactly when it is nonzero. -/
+theorem and_eq_one_of_ne_zero {a b : U256} (ha : a = 0 ∨ a = 1) (hb : b = 0 ∨ b = 1)
+    (h : a &&& b ≠ 0) : a &&& b = 1 := by
+  rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;> simp_all
+
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.and_eq_one_of_ne_zero
+  [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV2.Blocks.EcPairing
