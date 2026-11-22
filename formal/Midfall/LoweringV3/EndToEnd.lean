@@ -751,6 +751,59 @@ theorem read {T : Type} (h : Midfall.Halo2.Hashable T) :
         · cases hrun
           simp [Transcript.common, Array.toList_push]
 
+theorem read_logWidths {T : Type} (h : Midfall.Halo2.Hashable T) (t t' : Transcript) (v : T)
+    (hr : t.read h = .ok (v, t')) :
+    t'.log.toList.map (fun r => r.1) = t.log.toList.map (fun r => r.1) ++ [h.width] := by
+  unfold Transcript.read at hr
+  split at hr
+  · cases hr
+  · split at hr
+    · cases hr
+    · cases hr
+      simp [Transcript.common, Array.toList_push]
+
+theorem readN_go {T : Type} (h : Midfall.Halo2.Hashable T) :
+    ∀ (n : Nat) (t : Transcript) (acc : Array T) (t' : Transcript) (acc' : Array T),
+      Transcript.readN.go h t acc n = .ok (acc', t') →
+      t'.log.toList.map (fun r => r.1) =
+        t.log.toList.map (fun r => r.1) ++ List.replicate n h.width := by
+  intro n
+  induction n with
+  | zero =>
+      intro t acc t' acc' hr
+      rw [Transcript.readN.go.eq_1] at hr
+      cases hr
+      simp
+  | succ m ih =>
+      intro t acc t' acc' hr
+      rw [Transcript.readN.go.eq_2] at hr
+      -- hr is now a do-bind; reduce the do/let with simp only, then split the bind
+      simp only [Bind.bind, Except.bind] at hr
+      split at hr
+      · cases hr
+      · rename_i x hx
+        -- x : T × Transcript
+        obtain ⟨v, t2⟩ := x
+        -- hx : Transcript.read h t = ok (v,t2)
+        -- hr : readN.go h t2 (acc.push v) m = ok (acc',t')
+        have h1 : t2.log.toList.map (fun r => r.1) =
+            t.log.toList.map (fun r => r.1) ++ [h.width] :=
+          read_logWidths h t t2 v hx
+        have h2 := ih t2 (acc.push v) t' acc' hr
+        rw [h2, h1, List.replicate_succ, List.append_assoc]
+        simp
+
+
+theorem readN {T : Type} (h : Midfall.Halo2.Hashable T) (n : Nat) :
+    PresWidthSeq (List.replicate n h.width) (tmReadN h n) := by
+  intro s t' a hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmReadN_run_fields h st buf pos hash log n] at hrun
+      change Transcript.readN.go h (Transcript.mk st buf pos hash log) #[] n =
+        .ok (a, t') at hrun
+      exact readN_go h n (Transcript.mk st buf pos hash log) #[] t' a hrun
+
 theorem common {T : Type} (h : Midfall.Halo2.Hashable T) (input : T) :
     PresWidthSeq [] (tmCommon h input) := by
   intro s t' a hrun
@@ -768,6 +821,43 @@ theorem squeezeChallenge {p : ℕ} [Fact (Nat.Prime p)] :
       rw [tmSqueeze_run_fields st buf pos hash log] at hrun
       cases hrun
       simp [Transcript.squeezeChallenge, Transcript.squeeze]
+
+theorem listMapM {α β : Type} (l : List α) {f : α → TranscriptM β}
+    (wf : α → List Nat) (hf : ∀ a, PresWidthSeq (wf a) (f a)) :
+    PresWidthSeq ((l.map wf).flatten) (List.mapM f l) := by
+  induction l with
+  | nil => exact PresWidthSeq.pure _
+  | cons a t ih =>
+      rw [List.mapM_cons]
+      refine PresWidthSeq.bind (hf a) (fun b => ?_)
+      exact PresWidthSeq.fmap (fun bs => b :: bs) ih
+
+theorem listFoldlM {α β : Type} {f : β → α → TranscriptM β}
+    (wf : α → List Nat) (hf : ∀ b a, PresWidthSeq (wf a) (f b a)) :
+    ∀ (l : List α) (init : β),
+      PresWidthSeq ((l.map wf).flatten) (List.foldlM (init := init) f l) := by
+  intro l
+  induction l with
+  | nil => intro init; exact PresWidthSeq.pure _
+  | cons a t ih =>
+      intro init
+      rw [List.foldlM_cons]
+      refine PresWidthSeq.bind (hf init a) (fun b => ih b)
+
+theorem arrayFoldlM {α β : Type} {f : β → α → TranscriptM β}
+    (wf : α → List Nat) (hf : ∀ b a, PresWidthSeq (wf a) (f b a))
+    (init : β) (as : Array α) :
+    PresWidthSeq ((as.toList.map wf).flatten) (Array.foldlM (init := init) f as) := by
+  rw [← Array.foldlM_toList]
+  exact PresWidthSeq.listFoldlM wf hf as.toList init
+
+theorem arrayMapM {α β : Type} (as : Array α) {f : α → TranscriptM β}
+    (wf : α → List Nat) (hf : ∀ a, PresWidthSeq (wf a) (f a)) :
+    PresWidthSeq ((as.toList.map wf).flatten) (Array.mapM f as) := by
+  rw [Array.mapM_eq_foldlM]
+  have h := PresWidthSeq.arrayFoldlM (f := fun bs a => (fun x => bs.push x) <$> f a)
+    (wf := wf) (fun bs a => PresWidthSeq.fmap _ (hf a)) #[] as
+  simpa using h
 
 end PresWidthSeq
 
