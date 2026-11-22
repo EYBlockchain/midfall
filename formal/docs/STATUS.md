@@ -136,6 +136,12 @@ conjunct; the headline signature is unchanged.
 
 ## 4c. Parallel results merged (2026-11-22)
 
+- **A3R round 2** `f797065`: the additive PG-VKHEADER boundary helpers are landed
+  (`consts_lookup_EXPECTED_VK_LENGTH_V3`, `_CODEHASH_WORD_V3`, `copyInto_untouched`,
+  `payloadAgrees_constants_length : 7 ≤ constants.length`). `vk_blockProgS` remains OPEN and is
+  blocked on the frozen payload-window decision (PG-VKHEADER); no hypothesis was added.
+- **QVM lane** `0afd1ee`/`92d6694`: DQVM2 retirement executed; QIDENT landed the LIN7 interpreter
+  tie; LOOPPRE closed the `qvmLoopPre` contract. The fixed-segment proof continues.
 - **A3R** `f980410`: `vk_blockSim` PROVED (`VkClean.lean` §6, `rows.lean` cites it), using D-QVM1's
   `fit1_of_valid`/`fit2_of_valid` and the generated disjointness facts. Root 15 -> 14, sound
   7 -> 6, register 79 -> 78 / 14. `vk_blockProgS` remains; its universal/existence halves are
