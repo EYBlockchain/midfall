@@ -14,7 +14,7 @@ set_option autoImplicit false
 
 open Midfall Midfall.Generator Midfall.Lowering Midfall.Assumptions
 open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
-open Midfall.LoweringV3.QuotientRows Midfall.LoweringV3.LagrangeRows
+open Midfall.LoweringV2 Midfall.LoweringV3.QuotientRows Midfall.LoweringV3.LagrangeRows
 open Midfall.LoweringV3.BatchInvert Midfall.LoweringV3.PcsRows
 
 namespace Midfall.LoweringV3.ModexpGeneral
@@ -128,6 +128,67 @@ theorem mxMem_modexpOutput (mem : Nat → UInt8) (p : Nat) (x : U256)
   exact modexpInv_correct x.toNat hx0 hx
 
 
+
+/-! ## The honest modexp answer at address `5` -/
+
+/-- The `honestOf` fold at target `5` picks `modexpRelation`: the three other precompiles'
+addresses do not hit. -/
+theorem honestOf_modexp_find (product : PairingProduct) (req : YulSemantics.EVM.CallRequest)
+    (h : req.target = Midfall.Yul.modexpAddress) :
+    List.find? (fun r => Midfall.Yul.Bridge.hits r req)
+      (Midfall.Yul.honestRelations product) = some Midfall.Yul.modexpRelation := by
+  rw [Midfall.Yul.honestRelations]
+  rw [List.find?_cons_of_neg (by
+    simp [Midfall.Yul.Bridge.hits, accountKey, Midfall.Yul.g1AddRelation,
+      Midfall.Yul.g1AddAddress, Midfall.Yul.modexpAddress, h])]
+  rw [List.find?_cons_of_neg (by
+    simp [Midfall.Yul.Bridge.hits, accountKey, Midfall.Yul.g1MsmRelation,
+      Midfall.Yul.g1MsmAddress, Midfall.Yul.modexpAddress, h])]
+  rw [List.find?_cons_of_neg (by
+    simp [Midfall.Yul.Bridge.hits, accountKey, Midfall.Yul.pairingRelation,
+      Midfall.Yul.pairingAddress, Midfall.Yul.modexpAddress, h])]
+  rw [List.find?_cons_of_pos (by
+    simp [Midfall.Yul.Bridge.hits, accountKey, Midfall.Yul.modexpRelation,
+      Midfall.Yul.modexpAddress, h])]
+
+/-- **THE HONEST MODEXP RESPONSE**: a successful `callsOf` call at target `5` with a valid input
+returns exactly that input's `modexpOutput`. This is the `permissive` success inversion the
+staticcall step needs. -/
+theorem callsOf_modexp_returndata
+    {product : PairingProduct} {req : YulSemantics.EVM.CallRequest}
+    {st : EvmState} {resp : CallResponse} {out : Bytes}
+    (htarget : req.target = Midfall.Yul.modexpAddress)
+    (hvalid : modexpValidInput (ByteArray.mk req.input.toArray) = true)
+    (hout : modexpOutput (ByteArray.mk req.input.toArray) = some out)
+    (hcall : (callsOf product).Call req st resp) (hsucc : resp.success = true) :
+    resp.returndata = out.data.toList := by
+  rcases hcall with h | ⟨_, hf⟩
+  · unfold honestOf at h
+    rw [honestOf_modexp_find product req htarget] at h
+    simp only [Midfall.Yul.modexpRelation, ExternalCallRelation.respond, toYulReq,
+      hvalid, hout, htarget, Bool.not_true, ite_false, Option.map_some,
+      Option.some.injEq] at h
+    subst h
+    rfl
+  · exact absurd hf (by simp)
+
+/-- A successful `modexpOutput` implies the input is within the EIP-7823 limits, i.e. the
+precompile accepts it. (`modexpParse?` returns `none` exactly when the limits fail.) -/
+theorem modexpValidInput_of_output_some {input : Bytes} {out : Bytes}
+    (h : modexpOutput input = some out) : modexpValidInput input = true := by
+  by_contra hv
+  have hv' : modexpWithinLimits input = false := by
+    by_cases hh : modexpWithinLimits input = true
+    · exact absurd hh hv
+    · cases hc : modexpWithinLimits input <;> simp_all
+  unfold modexpOutput at h
+  have hparse : modexpParse? input = none := by
+    unfold modexpParse?
+    rw [if_neg (by rw [hv']; decide)]
+  rw [hparse] at h
+  cases h
+
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -170,5 +231,8 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms readBytes_six [propext, Classical.choice, Quot.sound]
 #assert_axioms mxMem_frame_byteArray [propext, Classical.choice, Quot.sound]
 #assert_axioms mxMem_modexpOutput [propext, Classical.choice, Quot.sound]
+#assert_axioms honestOf_modexp_find [propext, Classical.choice, Quot.sound]
+#assert_axioms callsOf_modexp_returndata [propext, Classical.choice, Quot.sound]
+#assert_axioms modexpValidInput_of_output_some [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3.ModexpGeneral
