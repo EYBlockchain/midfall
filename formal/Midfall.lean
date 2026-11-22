@@ -112,6 +112,7 @@ import Midfall.Lowering.QuotientInterp
 import Midfall.Lowering.QuotientLoopCompose
 import Midfall.Lowering.QuotientStackInv
 import Midfall.Lowering.QvmDepth
+import Midfall.Lowering.QvmCursor
 import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmWalk
