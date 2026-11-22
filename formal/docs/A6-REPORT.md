@@ -1,7 +1,7 @@
 # A6 / ROW.TP — worker report (transcriptParser, t/A6)
 
-**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `fefaaf9`** (the previous base was
-`92e3cd1`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
+**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `2c6789b`** (the previous base was
+`fefaaf9`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
 (`git log -1`). No push. `formal/baseline` and `/Users/julian/midfall` untouched; no
 frozen/vendor/QVM/Quotient edit.
 
@@ -98,6 +98,17 @@ What `snapshotAlgebraRun_total` still needs, in house vocabulary:
 3. `qs.length = R.nSets` and the tail split follow from the `readAlgebra` q-eval count; the
    parser's `nSets` is `R.plan.proofLayout.qEvals.itemCount`.
 
+This is the SAME project-level refinement the D1 lane names: `gap_readScheduleAgrees`
+(`Midfall/LoweringV3/EndToEnd.lean:674-685`) records that no theorem relates the WIDTH SEQUENCE
+of `Verifier.prepare` to the protocol plan, and that the smallest true bridge is
+`prepare_logSlots`. The D1 lane has now proved the reduction half
+`decodeRust_slots_eq_logWidths` (`EndToEnd.lean:650`: `ms.map Msg.slot` IS the log width list of a
+successful run). `decodeSlots_map_slot` here is the calldata-side slot shape; the parser-side
+width list of `snapshotAlgebraRun` — `prepare_logSlots`'s analogue — is NOT in the tree, and
+`snapshotAlgebraRun_total` needs both that width list and the existence of the run. This is why
+`xcript_total` is reported rather than sorried: its residual is a registered cross-lane blocker,
+not an A6 omission, and stating it as a `sorry` would grow the register.
+
 The existing wire toolbox the user pointed at — `msgWire` (`Native.lean:164`), the
 `mapM`/wire roundtrip (`list_mapM_roundtrip_snd`, `TranscriptLog.lean:1603`) and the recorded
 fold (`recorded_fold_of_mapM`, `TranscriptLog.lean:1686`) — is what the parser walk should
@@ -147,10 +158,10 @@ No row/bundle/root/`ValidV3` hypothesis was added; no false/vacuous statement wa
 
 ## Gates (printed)
 
-- `lake build`: `Build completed successfully (5840 jobs)`, exit 0.
+- `lake build`: `Build completed successfully (5841 jobs)`, exit 0.
 - `bash scripts/verify.sh --quick`: `verify.sh: ok (--quick)`, exit 0;
   `cone_sorries lowering_correct: 11`, `lowering_sound: 5`; both `assert_axioms … ok (4 named, 0 native)`.
-- `python3 scripts/check_orphans.py`: `ok: all 230 modules are reachable from Midfall.lean`.
+- `python3 scripts/check_orphans.py`: `ok: all 231 modules are reachable from Midfall.lean`.
 - `python3 scripts/lean_grep.py sorry Midfall/LoweringV3/TranscriptRows.lean`: five lines, the five
   named leaves.
 - KAT: not run (claimed neither way).
