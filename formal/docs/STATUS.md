@@ -1,27 +1,34 @@
 # STATUS - midfall
 
-**As of:** `1460013` (2026-11-21). **FULL GATE GREEN at `29be14f`:** `verify.sh: ok (full)`,
-EXIT=0, KAT 1640/118, root `lowering_correct` 17 leaves, register 84. The additive EXITSOUND
-per-op `WorldEq` table at `1460013` was checked with `verify.sh --quick` (green). Five parallel
-workers are on the non-QVM components; the QVM lane stays with its existing agent (midfall-c/d).
+**As of:** `fec9822` (2026-11-22). **FULL GATE GREEN at `29be14f`:** `verify.sh: ok (full)`,
+EXIT=0, KAT 1640/118. After the B1/GASFREE/EXITSOUND merges the combined tree reports
+`lowering_correct` **15** OPEN leaves, `lowering_sound` **7**, register **80 / 15 ROOT**,
+**0 REFUTED**, `assert_no_refuted_sorry: ok`; `verify.sh --quick` and `--report` are green.
+The QVM lane stays with its existing agent (midfall-c/d).
 
 ## 1. Verified - PROGRESS
 
-    root lowering_correct .... 17 OPEN sorried leaves (snapshotOf_prepareMsgs, q_blockProgS,
+    root lowering_correct .... 15 OPEN sorried leaves (snapshotOf_prepareMsgs, q_blockProgS,
                                q_blockSim, block_live, fp_*, gasFree_of_valid, lag_*, pcs_*,
-                               runBody_gas_oblivious, tp_*, twoOutcomes_of_exitDiscipline, vk_*)
-    root lowering_sound ...... 8 OPEN sorried leaves (the sim rows, prefix_sim, run_split,
-                               twoOutcomes_of_exitDiscipline, snapshotOf_prepareMsgs)
+                               tp_*, vk_*)
+    root lowering_sound ...... 7 OPEN sorried leaves (the sim rows, prefix_sim, run_split,
+                               snapshotOf_prepareMsgs)
     block rows ............... 1 INTEGRATED of 7 (traceReturn); 2 SORRY, 4 NONE
     exhibits ................. 2 PRESENT, 2 MISSING of 4
     ValidV3 at F1 ............ NOT INHABITED; blocking clause = generated (REFUTED at F1);
                                payload point half OPEN (B3)
     root lowering_correctW ... not reported (C0 not started)
     root generator_correct ... not reported (D2 not started)
-    register ................. 84 rows / 17 ROOT; 1 REFUTED (poseidon_valid), 1 VACUOUS
+    register ................. 80 rows / 15 ROOT; 0 REFUTED, 1 VACUOUS
     KAT ...................... 1640/118 pinned (last known; not run on this branch)
     frozen axioms ............ 5 named + 159 native_decide; roots are standard three + sorryAx,
                                native []
+
+**TOT.1.a / ST.10 (this session):** `runBody_gas_oblivious` (GASFREE) and
+`twoOutcomes_of_exitDiscipline` + `Run_worldEq_of_noWriters` (EXITSOUND) are PROVED; the root
+moved 17 -> 15 and sound 8 -> 7. The `Run_worldEq` proof is the 41-constructor `Step.stepWorld`
+induction over the `ScanClean`/`ScanCleanFuns` invariants; `twoOutcomes` uses it plus the exit
+classification. All standard three, no `sorryAx`/`native_decide`.
 
 **PREFIXLIVE (this session):** `Midfall.LoweringV3.prefix_live` is PROVED - cone 0, standard
 three - and the root cone moved 18 -> 17 (register 85 -> 84). The proof covers the three prefix
@@ -84,7 +91,7 @@ conjunct; the headline signature is unchanged.
    existing pins; a D.2 coherence change, not a silent absorption. Blocks B4.
 5. **R.6 re-hash** - PLAN-V3 marks it subsumed at ST.6; confirm it is closed.
 
-## 4b. Parallel workers (2026-11-21)
+## 4b. Parallel workers (2026-11-21/22)
 
 - **EXITSOUND** (`midfall-f`, `t/EXITSOUND`): `Run_worldEq_of_noWriters` Step induction, then
   `twoOutcomes_of_exitDiscipline`. Per-op/WorldEq table and `ScanClean` infrastructure landed at
