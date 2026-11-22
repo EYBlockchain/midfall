@@ -3,8 +3,10 @@
 --
 -- T3.11 (PLAN-V3, D-P71): **THE W14 EXECUTABLE EXHIBIT - RUN THE THEOREM'S PROGRAM BEFORE PROVING
 -- ABOUT IT.** A TEST, NEVER A PREMISE OF A PROOF. Nothing in this file may enter the cone of
--- 'lowering_equivalence_poseidon': there is no theorem here, no 'native_decide', no 'sorry', and the
--- only declarations are 'Bool' / 'IO Bool' gates that 'scripts/kat_gate.py' runs.
+-- 'lowering_equivalence_poseidon'. The Yul-side half is 'Bool' / 'IO Bool' gates that
+-- 'scripts/kat_gate.py' runs; the Lean-verifier half (REF.12, section 5) is two theorems proved by
+-- 'native_decide' over the same F1 bundle. 'native_decide' is permitted HERE and only here
+-- (Midfall/Instances), and no declaration below mentions the root or a block row. No 'sorry'.
 --
 -- WHAT IT ESTABLISHES, IN ONE LINE. The closed emitted program 'asmOf poseidonPv poseidonM 0 0' -
 -- the object OBJ.5 pins at 14,109 tokens and keccak '3149ae4f...bef176' - RUNS on the F1 bundle's
@@ -81,9 +83,11 @@
 --
 -- THE TWO NAMES Report.lean's '#exhibits' also asks for - 'fixture_leanAccepts_ok' and
 -- 'mutants_leanRejects_ok' - are the LEAN verifier's side of the exhibit ('LeanAccepts', i.e.
--- 'verifyMsgs' at the real pairing). They belong to REF.12 (needs the exported trapdoor and
--- 'SrsEncodes'), not to T3.11, and this card does not fake them: after this commit the report reads
--- 2 PRESENT, 2 MISSING.
+-- 'verifyMsgs' at the real pairing). They belong to REF.12 and are section 5 below: the F1 proof
+-- through the tree's 'verifyNative' at the public test-SRS trapdoor, and every mutant in
+-- 'mutations.json' through the same verifier, comparing Lean's verdict class with the Rust one.
+-- Both are THEOREMS proved by 'native_decide' at this fixture (the computation is far too slow for
+-- the 'kat_gate' interpreter); the theorem is the exhibit, so the report reads 4 PRESENT.
 --
 -- WHY THE FIXTURE ARRIVES BY IO. 'proof.bin' and 'calldata.bin' are BINARY, so 'include_str' refuses
 -- them; this is the same channel PoseidonCoherence (F.1) uses, with the same two-candidate path list
@@ -92,6 +96,7 @@
 
 import Midfall.Instances.PoseidonValid
 import Midfall.Instances.Bls12_381
+import Midfall.Instances.NativeReplay
 import Midfall.Instances.ObjectFingerprint
 import Midfall.Lowering.Calldata
 import Midfall.LoweringV2.HonestExec
@@ -104,7 +109,7 @@ namespace Midfall.Instances.PoseidonExhibit
 
 open Midfall Midfall.Generator Midfall.Instances Midfall.Instances.PoseidonValid
 open Midfall.Instances.PoseidonInputs Midfall.Instances.PoseidonV2 Midfall.Lowering
-open Midfall.LoweringV2 Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Yul Midfall.Yul.Bridge Midfall.Halo2 Midfall.Conformance
 open YulSemantics YulSemantics.EVM
 
 /-! ## 1. The dialect, the program, the frame -/
@@ -147,7 +152,8 @@ def exhibitLyt : EVM.Layout := { code := [], dataOffset := fun _ => 0, dataSize 
 /-- **THE ENTRY-LIKE FRAME**, built by the theorem's own 'initState' with 'mem₀ := fun _ => 0' -
     exactly the state 'entryFrame_inhabited' (Blocks.lean:865) produces for a selector-carrying
     calldata in a zero-value world. -/
-def entryState (cd : Bytes) : EvmState := initState exhibitW exhibitLyt keccak256 cd (fun _ => 0)
+def entryState (cd : Bytes) : EvmState :=
+  LoweringV2.initState exhibitW exhibitLyt keccak256 cd (fun _ => 0)
 
 /-- The halt the run left behind, or 'none' if it did not halt (stuck, out of fuel, or no result). -/
 def haltOf (cd : Bytes) : Option (HaltKind × List UInt8) :=
@@ -250,14 +256,17 @@ def mutantsOf (cd : Bytes) : List (String × Bytes × List UInt8) :=
 /-! ## 4. The gates -/
 
 /-- **GATE 1 - THE CALLDATA IS THE FIXTURE'S.** The Lean repack-then-encode reproduces 'calldata.bin'
-    byte for byte (4,484 bytes, keccak pinned), and it carries the 'verifyProof' selector the entry
-    frame demands. 34 ms. -/
+    byte for byte (4,484 bytes, keccak pinned), it carries the 'verifyProof' selector the entry
+    frame demands, and the proof it was built from IS the pure proof term the Lean-verifier
+    exhibits of section 5 run on ('trace.json' proof_hex, the tracked 'proof.bin'). 34 ms. -/
 def fixtureCalldata_isTheBundleBytes_ok : IO Bool := do
   let cd ← fixtureCdM
   let rust ← calldataBin
+  let π ← proofBin
   pure (cd.size == 4484 && rust.size == 4484 && cd.data.toList == rust.data.toList &&
     Midfall.keccak256 cd == 0x434221dcb184cdb7e1145de7fe684d1e777f04b035ddfea8fbeff75680505da3 &&
-    bytesTake cd 0 4 == some fnSigVerifyProof)
+    bytesTake cd 0 4 == some fnSigVerifyProof &&
+    π.size == 2640 && π.data.toList == NativeReplay.proofBytes.data.toList)
 #eval fixtureCalldata_isTheBundleBytes_ok -- expect true
 
 /-- **GATE 2 - THE FRAME IS THE THEOREM'S ENTRY FRAME, AS FAR AS A 'Bool' CAN SAY.** Selector
@@ -302,5 +311,173 @@ def mutants_revert_ok : IO Bool := do
   pure (ms.length == 8 && (ms.all fun (nm, m, sel) =>
     nm != "" && m != cd && m.size > 0 && revertsToSelector m sel && ! returnsAbiTrue m))
 #eval mutants_revert_ok -- expect true
+
+/-! ## 5. The Lean verifier's side (REF.12): the other two exhibits Report.lean reads -/
+
+/-- The F1 verifier parameters at the bundle's PUBLIC trapdoor (D-P63; REF.11/REF.12):
+    `ParamsVerifierKZG.ofParams (g2foldExp 1) (ofAdd s)`, with `s` read from params.json by
+    `NativeReplay.sTrapdoor`. `check_iff_g1` (REF.12, proved in D6_Render) is what makes the final
+    dual-MSM check at this term the scalar equation `s • left = right` in G₁z. -/
+def paramsAtTrapdoor : ParamsVerifierKZG G₁z G2fold :=
+  ParamsVerifierKZG.ofParams (g2foldExp 1) (Multiplicative.ofAdd NativeReplay.sTrapdoor)
+
+/-- `instances.json`'s public column as `verifyNative` takes it: F1 has one proof row, one public
+    column and one value. A parse failure yields `#[]`, and every gate below goes FALSE on it. -/
+def fixturePublicInstance : Array (Fr blsR) :=
+  match NativeReplay.instancesArr[0]? with
+  | some row => (row[0]?).getD #[]
+  | none => #[]
+
+/-- Lean's verdict class in the Rust taxonomy (`proofs/src/plonk/error.rs`): the four classes the
+    F1 corpus records plus catch-alls that match no recorded class. -/
+def leanVerdictClass : Except Fault Unit → String
+  | .ok () => "accept"
+  | .error (.error .opening) => "opening"
+  | .error (.error (.transcript .unexpectedEof)) => "transcript:UnexpectedEof"
+  | .error (.error (.transcript .notFound)) => "transcript_notFound"
+  | .error (.error (.transcript .other)) => "transcript:Other"
+  | .error (.error _) => "other-error"
+  | .error (.panic _) => "panic"
+
+/-- **THE FIXTURE ACCEPTANCE, AS A BOOL.** The tree's `verifyNative`, with no shims, at the real F1
+    key (`NativeReplay.vkF1`: the 27 commitments decoded through the computable codec), the
+    deployment environment (`NativeReplay.envReal`: `g1CodecC`, `poseidonFc`, `poseidonDelta`), the
+    parameters at the exported trapdoor, the parsed public instance and the F1 proof. The proof bytes
+    are `trace.json`'s `proof_hex`; gate 1 above pins those to the tracked `proof.bin`. -/
+def fixtureLeanAccepts : Bool :=
+  fixturePublicInstance.size == 1 && NativeReplay.proofBytes.size == 2640 &&
+    match NativeReplay.vkF1 with
+    | none => false
+    | some vk =>
+      match verifyNative (Gₜ := G₁z) NativeReplay.envReal Features.solidity paramsAtTrapdoor
+          vk fixturePublicInstance NativeReplay.proofBytes with
+      | .ok () => true
+      | .error _ => false
+
+/-- **EXHIBIT 3 OF 4 (REF.12): THE LEAN VERIFIER ACCEPTS THE F1 PROOF OUTRIGHT.** `verifyNative`
+    returns `.ok ()` on the tracked proof at the public test-SRS trapdoor. This is the Lean half of
+    the W14 pair whose Yul half is `fixture_returns_abiTrue_ok` (gate 4). Proved by `native_decide`
+    in `Midfall/Instances` (the card's own allowance, D-P71): the run is ~9 s in the VM, too slow for
+    the `kat_gate` interpreter, and the theorem is the stronger statement anyway. -/
+theorem fixture_leanAccepts_ok : fixtureLeanAccepts = true := by native_decide
+
+/-! ### The mutation corpus (REF.12) -/
+
+/-- One recorded mutant: the tag, the kind, the byte offset, the recorded length, the Rust error
+    class (`none` for the control) and the Rust verdict. -/
+structure Mutation where
+  tag : String
+  kind : String
+  byteOffset : Option Nat
+  len : Nat
+  errorClass : Option String
+  verdict : String
+
+/-- `mutations.json` (REF.11 schema 1), parsed from the tracked bundle. A parse failure leaves the
+    empty array, and the length gate below goes FALSE on it. -/
+def mutationsJson : JValue :=
+  match jParse (include_str "../../fixtures/conformance/poseidon-testsrs/mutations.json") with
+  | .ok j => j
+  | .error _ => Lean.Json.null
+
+def jsonNat? : JValue → Option Nat
+  | .num n => n.toString.toNat?
+  | _ => none
+
+def jsonString? : JValue → Option String
+  | .str s => some s
+  | _ => none
+
+def jsonField? (j : JValue) (k : String) : Option JValue :=
+  match j.getObjVal? k with
+  | .ok v => some v
+  | .error _ => none
+
+def parseMutation (j : JValue) : Option Mutation := do
+  let tag ← jsonString? (← jsonField? j "tag")
+  let kind ← jsonString? (← jsonField? j "kind")
+  let len ← jsonNat? (← jsonField? j "len")
+  let verdict ← jsonString? (← jsonField? j "verdict")
+  let byteOffset := Option.bind (← jsonField? j "byte_offset") jsonNat?
+  let errorClass := Option.bind (← jsonField? j "error") jsonString?
+  pure { tag, kind, byteOffset, len, errorClass, verdict }
+
+def mutationRecords : List Mutation :=
+  match mutationsJson.getObjVal? "mutants" with
+  | .ok (.arr a) => a.toList.filterMap parseMutation
+  | _ => []
+
+/-- The mutation recipe of `conformance_export.rs`: a single-bit flip is `byte ^= 1` at the read's
+    first byte; the structural set is a truncation to the recorded length, an appended zero byte,
+    and the empty proof. The unmutated control is the identity. -/
+def applyMutation (π : Bytes) (m : Mutation) : Bytes :=
+  match m.kind with
+  | "single_bit_flip" =>
+      match m.byteOffset with
+      | some o =>
+          ByteArray.mk (List.toArray
+            (π.data.toList.set o (UInt8.xor π.data.toList[o]! 1)))
+      | none => π
+  | "truncation" => ByteArray.mk (List.toArray (π.data.toList.take m.len))
+  | "trailing_byte" =>
+      ByteArray.mk (List.toArray (π.data.toList.take (m.len - 1) ++ [0]))
+  | _ => π
+
+def expectedVerdictClass (m : Mutation) : String :=
+  match m.errorClass with
+  | some e => e
+  | none => "accept"
+
+/-- One mutant through the tree's verifier: the mutated bytes really have the recorded length, and
+    Lean's verdict class is the Rust one. Any divergence reddens the gate. -/
+def mutationVerdictOk (vk : VerifyingKey (Fr blsR) G₁z) (π : Bytes) (m : Mutation) : Bool :=
+  let cand := applyMutation π m
+  cand.size == m.len &&
+    leanVerdictClass (verifyNative (Gₜ := G₁z) NativeReplay.envReal Features.solidity
+      paramsAtTrapdoor vk fixturePublicInstance cand) == expectedVerdictClass m
+
+/-- A chunk of the corpus, eight mutants at a time. The chunking is a proof-engineering device only:
+    `native_decide` per chunk keeps each tactic call well under the 60 s bound, and the exhibition
+    theorem below assembles the chunks. The chunk predicates are the SAME computation. -/
+def mutationChunkOk (k : Nat) : Bool :=
+  match NativeReplay.vkF1 with
+  | none => false
+  | some vk => (mutationRecords.drop k |>.take 8).all (mutationVerdictOk vk NativeReplay.proofBytes)
+
+theorem mutationRecords_length : mutationRecords.length = 77 := by native_decide
+
+theorem mutationChunk_0 : mutationChunkOk 0 = true := by native_decide
+theorem mutationChunk_8 : mutationChunkOk 8 = true := by native_decide
+theorem mutationChunk_16 : mutationChunkOk 16 = true := by native_decide
+theorem mutationChunk_24 : mutationChunkOk 24 = true := by native_decide
+theorem mutationChunk_32 : mutationChunkOk 32 = true := by native_decide
+theorem mutationChunk_40 : mutationChunkOk 40 = true := by native_decide
+theorem mutationChunk_48 : mutationChunkOk 48 = true := by native_decide
+theorem mutationChunk_56 : mutationChunkOk 56 = true := by native_decide
+theorem mutationChunk_64 : mutationChunkOk 64 = true := by native_decide
+theorem mutationChunk_72 : mutationChunkOk 72 = true := by native_decide
+
+/-- The whole corpus check, as one Bool: 77 records, and every chunk green. -/
+def mutantsLeanRejects : Bool :=
+  mutationRecords.length == 77 &&
+    mutationChunkOk 0 && mutationChunkOk 8 && mutationChunkOk 16 && mutationChunkOk 24 &&
+    mutationChunkOk 32 && mutationChunkOk 40 && mutationChunkOk 48 && mutationChunkOk 56 &&
+    mutationChunkOk 64 && mutationChunkOk 72
+
+/-- **EXHIBIT 4 OF 4 (REF.12): EVERY MUTANT OF THE F1 PROOF IS REJECTED WITH THE RUST CLASS.** The
+    corpus is `mutations.json`'s own 77 entries - one single-bit flip per transcript read plus the
+    truncation, trailing-byte, empty and unmutated control - and Lean's `verifyNative` class is
+    compared with the class the Rust verifier recorded for that same byte string. Proved by
+    `native_decide` in ten chunks, each under the 60 s tactic bound; the assembly is by rewriting the
+    ten proved chunk facts, so nothing is assumed. -/
+theorem mutants_leanRejects_ok : mutantsLeanRejects = true := by
+  rw [mutantsLeanRejects]
+  simp only [mutationRecords_length, mutationChunk_0, mutationChunk_8, mutationChunk_16,
+    mutationChunk_24, mutationChunk_32, mutationChunk_40, mutationChunk_48, mutationChunk_56,
+    mutationChunk_64, mutationChunk_72]
+  decide
+
+#print axioms fixture_leanAccepts_ok
+#print axioms mutants_leanRejects_ok
 
 end Midfall.Instances.PoseidonExhibit
