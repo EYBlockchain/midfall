@@ -1,7 +1,7 @@
 # A6 / ROW.TP — worker report (transcriptParser, t/A6)
 
-**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `b6e6d42`** (the previous base was
-`79f2de3`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
+**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `0770c28`** (the previous base was
+`b6e6d42`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
 (`git log -1`). No push. `formal/baseline` and `/Users/julian/midfall` untouched; no
 frozen/vendor/QVM/Quotient edit.
 
@@ -9,7 +9,7 @@ frozen/vendor/QVM/Quotient edit.
 
 `Rows.lean` is still untouched, so the ROOT cones are unchanged: `lowering_correct` **11**,
 `lowering_sound` **5**, both `assert_axioms` `ok (4 named, 0 native)`.
-`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (2406, 2421, 2448, 2461, 2493) — the
+`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (2485, 2500, 2527, 2540, 2572) — the
 five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT sorry**.
 `gen_sorry.sh` was not run (zero-sorry precondition not met; worker rule W9/DG.2).
 
@@ -111,6 +111,24 @@ theorem snapshotAlgebraRun_wire … (hslots : ms.map Msg.slot = plan.slots) :
 buffer tail), which is why `snapshotAlgebraRun_total` cannot be derived from `prepare_logSlots`
 alone; D1 and A6 need the same schedule walk, tracked once at widths and once at consumption.
 
+## Consumption algebra landed this session
+
+`wireMsgs_append`, and the `RunsAll` engine with its composition laws (all PROVED):
+
+| declaration | role |
+|---|---|
+| `wireMsgs_append` | `wireMsgs (ms₁ ++ ms₂) = wireMsgs ms₁ ++ wireMsgs ms₂` |
+| `RunsAll E m ms` | from the exact wired tail of `ms`, `m` succeeds, consumes all of `ms`, advances the cursor by the wire length, leaves the buffer |
+| `RunsAll.pure` / `.get` / `.lift_ok` | no-read atoms |
+| `RunsAll.bind` | the sequential composition law: `RunsAll m ms₁` + `∀ a, RunsAll (f a) ms₂` gives `RunsAll (m >>= f) (ms₁ ++ ms₂)` |
+| `RunsAll.common` / `.squeeze` | absorptions/squeezes consume nothing |
+
+This is the consumption/cursor counterpart of D1's `PresWidthSeq` (which has no closure layer yet).
+The residual is exactly the loop walk: each parser loop's `foldlM`/`mapM` must be flattened into
+an iterated `RunsAll.bind`, with its group counts and order supplied by `R.tpEvents`
+(`tp_events_slots`) and `tp_fromProtocol`/`tp_planFacts`, using `tmReadN_g1_wire`/`tmReadN_fr_wire`
+for each homogeneous group and `exists_split_g1_prefix`/`exists_split_of_slot_prefix` for the split.
+
 ## SIM.10 obligation 1 — exact residual (NOT landed)
 
 The only missing input to `snapshotXcriptRun_of_algebra` is `snapshotAlgebraRun` totality on
@@ -187,7 +205,7 @@ leaves below.
 
 ## The five remaining leaves — all blocked by an UNISSUED card
 
-1. **`g1walk_loop_sem`** (2387). Needs **ROW.TP.3's `common_uncompressed_g1` summary** (QUEUE 95h:
+1. **`g1walk_loop_sem`** (2466). Needs **ROW.TP.3's `common_uncompressed_g1` summary** (QUEUE 95h:
    "ISSUED BY ROW.TP (step 1): no card until ROW.TP merges") **and T3.5** (QUEUE row 78, "after
    T3.1", not run). Exact missing fact: an `EvalExpr` contract for the call
    `common_uncompressed_g1(buf_len, proof_cptr)` over the 13-statement helper body
@@ -197,20 +215,20 @@ leaves below.
    `g1WordsOk cd proof_cptr = true`, env/halted preserved and memory equal outside the 128-byte
    window. The loop then needs the `cdSlice` append/`bytesAt` layer (T3.5) to carry the window over
    `j` frames. Neither is in the tree.
-2. **`tp_computes`** (2414). Needs ROW.TP.3/4/5/2 (`common_word`, `transcript_init`, `squeeze_to`
+2. **`tp_computes`** (2493). Needs ROW.TP.3/4/5/2 (`common_word`, `transcript_init`, `squeeze_to`
    summaries; the three scalar loops; the `tpEvents` fold; the walk loop) — unissued. ROW.TP.6
    (this file) is now discharged and is no longer a blocker.
-3. **`tp_agrees`** (2443). Now decomposed by the PROVED `tp_agrees_of_agree`: five of the six
+3. **`tp_agrees`** (2522). Now decomposed by the PROVED `tp_agrees_of_agree`: five of the six
    `StageInv .transcript` conjuncts are exactly `TpPost`'s projections (`LeanRaw .transcript` and
    `Mirror .transcript` are definitional), so only `Agree` is left. `Agree` needs
    **SIM.10 `xcript_total`** (obligation 1 above) plus the `InvAt .transcript (padSnap x …)`
    assembly: the scalar slots are `XcriptSlots`, the G1 windows are `MirrorAt` + the
    decoder/encoder bridges (`decodeCalldata_slots` is the calldata-side half), and the quotient
    limbs/evals windows are the same read-schedule bridge. That is ROW.TP.8's own content.
-4. **`tp_poison`** (2456). Needs ROW.TP.4's three scalar loops and ROW.TP.2's walk loops
+4. **`tp_poison`** (2535). Needs ROW.TP.4's three scalar loops and ROW.TP.2's walk loops
    (end-normally/revert lemmas whose preconditions do not read the loops' computed values) —
    unissued.
-5. **`tp_blockProgS`** (2488). Needs every child above plus the walk-loop normal arm.
+5. **`tp_blockProgS`** (2567). Needs every child above plus the walk-loop normal arm.
 
 No row/bundle/root/`ValidV3` hypothesis was added; no false/vacuous statement was found.
 

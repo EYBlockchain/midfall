@@ -1273,6 +1273,85 @@ theorem exists_split_g1_prefix {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type}
   obtain ⟨Qs, hms₁, hlen⟩ := eq_map_g1_of_slots ms₁ n hpre
   exact ⟨Qs, ms₂, hlen, by rw [hsplit, hms₁], hpost⟩
 
+theorem wireMsgs_append (E : VerifierEnv p G₁ G₂ Gₜ)
+    (ms₁ ms₂ : List (Msg (Fr p) G₁)) :
+    wireMsgs E (ms₁ ++ ms₂) = wireMsgs E ms₁ ++ wireMsgs E ms₂ := by
+  induction ms₁ with
+  | nil => rw [List.nil_append, wireMsgs, bytes_empty_append_local]
+  | cons m ms ih => rw [List.cons_append, wireMsgs, ih, wireMsgs, ByteArray.append_assoc]
+
+/-- `RunsAll E m ms`: from the exact wired tail of `ms`, `m` succeeds, consumes all of `ms`,
+    advances the cursor by its wire length, and leaves the buffer alone. -/
+def RunsAll (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (m : TranscriptM α)
+    (ms : List (Msg (Fr p) G₁)) : Prop :=
+  ∀ (t : Transcript) (pref rest : Bytes),
+    t.buffer = pref ++ (wireMsgs E ms ++ rest) → t.pos = pref.size →
+    p ≤ 2 ^ 256 →
+    (∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q) →
+    (∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth) →
+    ∃ a t', m.run t = .ok (a, t') ∧ t'.buffer = t.buffer ∧
+      t'.pos = pref.size + (ms.map fun m => (msgWire E m).size).sum
+
+theorem RunsAll.pure (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (a : α) :
+    RunsAll E (pure a : TranscriptM α) [] := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨a, t, ?_, rfl, ?_⟩
+  · rfl
+  · rw [hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+
+theorem RunsAll.bind (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    {m : TranscriptM α} {f : α → TranscriptM β} {ms₁ ms₂ : List (Msg (Fr p) G₁)}
+    (hm : RunsAll E m ms₁) (hf : ∀ a, RunsAll E (f a) ms₂) :
+    RunsAll E (m >>= f) (ms₁ ++ ms₂) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  rw [wireMsgs_append] at hbuf
+  simp only [ByteArray.append_assoc] at hbuf
+  obtain ⟨a, t1, hrun1, hbuf1, hpos1⟩ :=
+    hm t pref (wireMsgs E ms₂ ++ rest) hbuf hpos hp henc hwidth
+  have hbuf1' : t1.buffer = (pref ++ wireMsgs E ms₁) ++ (wireMsgs E ms₂ ++ rest) := by
+    rw [hbuf1, hbuf, ← ByteArray.append_assoc]
+  have hpos1' : t1.pos = (pref ++ wireMsgs E ms₁).size := by
+    rw [hpos1, ByteArray.size_append, wireMsgs_size]
+  obtain ⟨b, t2, hrun2, hbuf2, hpos2⟩ :=
+    hf a t1 (pref ++ wireMsgs E ms₁) rest hbuf1' hpos1' hp henc hwidth
+  refine ⟨b, t2, ?_, hbuf2.trans hbuf1, ?_⟩
+  · simp only [StateT.run_bind]
+    rw [hrun1]
+    exact hrun2
+  · rw [hpos2, ByteArray.size_append, wireMsgs_size, List.map_append, List.sum_append]
+    omega
+
+theorem RunsAll.get (E : VerifierEnv p G₁ G₂ Gₜ) :
+    RunsAll E (StateT.get : TranscriptM Transcript) [] := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨t, t, ?_, rfl, ?_⟩
+  · rfl
+  · simp [hpos]
+
+theorem RunsAll.lift_ok (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (a : α) :
+    RunsAll E (StateT.lift (.ok a : Except Fault α)) [] := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨a, t, ?_, rfl, ?_⟩
+  · rfl
+  · rw [hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+
+theorem RunsAll.common (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type} (h : Midfall.Halo2.Hashable T)
+    (x : T) : RunsAll E (tmCommon h x) [] := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨(), t.common h x, ?_, rfl, ?_⟩
+  · unfold tmCommon
+    rfl
+  · rw [show (Transcript.common h t x).pos = t.pos from rfl, hpos, List.map_nil,
+      List.sum_nil, Nat.add_zero]
+
+theorem RunsAll.squeeze (E : VerifierEnv p G₁ G₂ Gₜ) :
+    RunsAll E (tmSqueezeChallenge (p := p)) [] := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨x, t', hrun, hpos', hbuf'⟩ := tmSqueezeChallenge_run_spec (p := p) t
+  refine ⟨x, t', hrun, hbuf', ?_⟩
+  rw [hpos', hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+
+
 /-- `transcriptOf` starts at cursor 0 with exactly `wireMsgs` in the buffer. -/
 theorem transcriptOf_buffer {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
