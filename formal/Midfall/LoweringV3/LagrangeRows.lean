@@ -556,6 +556,68 @@ theorem lag_denoms_loop_form (consts : Inline.Consts) (k n m : Nat) :
 theorem ofNat_toNat {n : Nat} (h : n < 2 ^ 256) : (BitVec.ofNat 256 n).toNat = n := by
   rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt h]
 
+/-! ## 6b. THE FIELD-WORD BRIDGE FOR T3.9.g -/
+
+theorem ofNat_p_ne_zero {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) :
+    (BitVec.ofNat 256 p : U256) ≠ 0 := by
+  intro h0
+  have h := congrArg BitVec.toNat h0
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp] at h
+  exact (Fact.out : Nat.Prime p).ne_zero h
+
+theorem wAddmodAt_toNat {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : U256) :
+    (wAddmodAt a b (BitVec.ofNat 256 p : U256)).toNat = (a.toNat + b.toNat) % p := by
+  rw [wAddmodAt, if_neg (ofNat_p_ne_zero hp), BitVec.toNat_ofNat,
+    BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp]
+  have hlt : (a.toNat + b.toNat) % p < 2 ^ 256 :=
+    Nat.lt_of_lt_of_le (Nat.mod_lt _ (Fact.out : Nat.Prime p).pos) (Nat.le_of_lt hp)
+  rw [Nat.mod_eq_of_lt hlt]
+
+theorem wMulmodAt_toNat {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : U256) :
+    (wMulmodAt a b (BitVec.ofNat 256 p : U256)).toNat = (a.toNat * b.toNat) % p := by
+  rw [wMulmodAt, if_neg (ofNat_p_ne_zero hp), BitVec.toNat_ofNat,
+    BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp]
+  have hlt : (a.toNat * b.toNat) % p < 2 ^ 256 :=
+    Nat.lt_of_lt_of_le (Nat.mod_lt _ (Fact.out : Nat.Prime p).pos) (Nat.le_of_lt hp)
+  rw [Nat.mod_eq_of_lt hlt]
+
+theorem frWord_add {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : Fr p) :
+    Midfall.Halo2.frWord (a + b) =
+      wAddmodAt (Midfall.Halo2.frWord a) (Midfall.Halo2.frWord b)
+        (BitVec.ofNat 256 p : U256) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Midfall.Halo2.frWord_toNat hp, wAddmodAt_toNat hp, ZMod.val_add,
+    Midfall.Halo2.frWord_toNat hp, Midfall.Halo2.frWord_toNat hp]
+
+theorem frWord_mul {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : Fr p) :
+    Midfall.Halo2.frWord (a * b) =
+      wMulmodAt (Midfall.Halo2.frWord a) (Midfall.Halo2.frWord b)
+        (BitVec.ofNat 256 p : U256) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Midfall.Halo2.frWord_toNat hp, wMulmodAt_toNat hp, ZMod.val_mul,
+    Midfall.Halo2.frWord_toNat hp, Midfall.Halo2.frWord_toNat hp]
+
+theorem frWord_sub {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256) (a b : Fr p) :
+    Midfall.Halo2.frWord (a - b) =
+      wAddmodAt (Midfall.Halo2.frWord a) ((BitVec.ofNat 256 p : U256) - Midfall.Halo2.frWord b)
+        (BitVec.ofNat 256 p : U256) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [Midfall.Halo2.frWord_toNat hp, wAddmodAt_toNat hp]
+  have hb : (Midfall.Halo2.frWord b).toNat < p := Midfall.Halo2.frWord_toNat_lt hp b
+  have hsub : ((BitVec.ofNat 256 p : U256) - Midfall.Halo2.frWord b).toNat =
+      p - (Midfall.Halo2.frWord b).toNat := by
+    rw [BitVec.toNat_sub, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp]
+    omega
+  rw [hsub, Midfall.Halo2.frWord_toNat hp]
+  rw [sub_eq_add_neg, ZMod.val_add, ZMod.neg_val]
+  split
+  · rename_i hb0
+    have hbz : (Midfall.Halo2.frWord b).toNat = 0 := by
+      rw [Midfall.Halo2.frWord_toNat hp b, hb0]
+      exact ZMod.val_zero
+    rw [hbz, Nat.sub_zero, Nat.add_zero, Nat.add_mod_right]
+  · rw [Midfall.Halo2.frWord_toNat hp]
+
 /-! ## 7. INVERSION HELPERS FOR THE SEMANTIC LOOP PROOFS (T3.9.b/d) -/
 
 theorem eval_var_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
