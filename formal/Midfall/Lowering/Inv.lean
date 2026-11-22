@@ -694,6 +694,14 @@ structure ChallengesGood (vk : VerifyingKey (Fr p) G₁) (S : Snapshot p G₁ G�
       = 0; Lean lIRange (Domain.lean:251-258) yields zeros silently and ACCEPTS.
       Completeness direction, and the reason lagrange_progress needs it. -/
   xNotRoot : S.alg.x ^ vk.domain.n ≠ 1
+  /-- **D-GATE5 (signed 2026-11-22).** The opening challenge is nonzero. This is the
+      minimal non-degeneracy clause that excludes the `x = 0` collapse proved by
+      `kzgPartitionBridge_false_at_x0`: at `x = 0` every `x * omega^r` is `0`, the
+      Halo2 `constructIntermediateSets` partition has one point set where the
+      generator's rotation-keyed partition has two, and `xNotRoot` alone admits it.
+      A uniformly sampled challenge is nonzero with overwhelming probability; the
+      contract's `x = 0` path cannot establish the generator's partition. -/
+  xNonzero : S.alg.x ≠ 0
 
 /-- The R-2 soundness twin, stated operationally rather than as a snapshot field:
     the contract computes the lookup helper identity with prefix and suffix products
