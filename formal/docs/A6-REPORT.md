@@ -9,7 +9,7 @@ frozen/vendor/QVM/Quotient edit.
 
 `Rows.lean` is still untouched, so the ROOT cones are unchanged: `lowering_correct` **11**,
 `lowering_sound` **5**, both `assert_axioms` `ok (4 named, 0 native)`.
-`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (2142, 2157, 2172, 2185, 2217) — the
+`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (2142, 2157, 2184, 2197, 2229) — the
 five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT sorry**.
 `gen_sorry.sh` was not run (zero-sorry precondition not met; worker rule W9/DG.2).
 
@@ -187,17 +187,17 @@ leaves below.
 2. **`tp_computes`** (2150). Needs ROW.TP.3/4/5/2 (`common_word`, `transcript_init`, `squeeze_to`
    summaries; the three scalar loops; the `tpEvents` fold; the walk loop) — unissued. ROW.TP.6
    (this file) is now discharged and is no longer a blocker.
-3. **`tp_agrees`** (2167). Now decomposed by the PROVED `tp_agrees_of_agree`: five of the six
+3. **`tp_agrees`** (2179). Now decomposed by the PROVED `tp_agrees_of_agree`: five of the six
    `StageInv .transcript` conjuncts are exactly `TpPost`'s projections (`LeanRaw .transcript` and
    `Mirror .transcript` are definitional), so only `Agree` is left. `Agree` needs
    **SIM.10 `xcript_total`** (obligation 1 above) plus the `InvAt .transcript (padSnap x …)`
    assembly: the scalar slots are `XcriptSlots`, the G1 windows are `MirrorAt` + the
    decoder/encoder bridges (`decodeCalldata_slots` is the calldata-side half), and the quotient
    limbs/evals windows are the same read-schedule bridge. That is ROW.TP.8's own content.
-4. **`tp_poison`** (2180). Needs ROW.TP.4's three scalar loops and ROW.TP.2's walk loops
+4. **`tp_poison`** (2192). Needs ROW.TP.4's three scalar loops and ROW.TP.2's walk loops
    (end-normally/revert lemmas whose preconditions do not read the loops' computed values) —
    unissued.
-5. **`tp_blockProgS`** (2212). Needs every child above plus the walk-loop normal arm.
+5. **`tp_blockProgS`** (2224). Needs every child above plus the walk-loop normal arm.
 
 No row/bundle/root/`ValidV3` hypothesis was added; no false/vacuous statement was found.
 
