@@ -513,33 +513,15 @@ theorem leanStageW_pairing_ok {R : Render p G₁ G₂ Gₜ} {H : Hash} {instW : 
         cases h
 
 /-- **LINK, soundness direction** (the widened `leanAccepts_of_final`). PROVED from the tree's
-    `snapshotOf_prepareMsgs` (itself a registered obligation). -/
+    PROVED replay fact `snapshotOf_prepareMsgs_ok` (the D-GATE1 item 3 retirement replaced the
+    old `snapshotOf_prepareMsgs` row; the old completeness-direction twin was outside every root
+    cone and went with it). -/
 theorem leanAcceptsAcc_of_final {R : Render p G₁ G₂ Gₜ} {H : Hash} {cd : Bytes}
     (h : LeanFinalAcc R H cd) : LeanAcceptsAcc R H cd := by
   obtain ⟨ms, instW, inst, ⟨hdec, hinst⟩, S, hS⟩ := h
   obtain ⟨hsnap, hchk⟩ := leanStageW_pairing_ok hS
   exact ⟨ms, instW, inst, hdec, hinst, S.c.dual,
-    (snapshotOf_prepareMsgs (Gₜ := Gₜ) R.E H R.vk inst ms none).1 S hsnap, hchk⟩
-
-/-- **LINK, completeness direction.** PROVED likewise. -/
-theorem leanFinalAcc_of_accepts {R : Render p G₁ G₂ Gₜ} {H : Hash} {cd : Bytes}
-    (h : LeanAcceptsAcc R H cd) : LeanFinalAcc R H cd := by
-  obtain ⟨ms, instW, inst, hdec, hinst, d, hd, hchk⟩ := h
-  have hboth := snapshotOf_prepareMsgs (Gₜ := Gₜ) R.E H R.vk inst ms none
-  have hok : (snapshotOf R.E H R.vk inst ms none).isOk = true := by
-    rw [hboth.2, hd]; rfl
-  cases hs : snapshotOf R.E H R.vk inst ms none with
-  | error e => rw [hs] at hok; cases hok
-  | ok S =>
-      have hg : d = S.c.dual := by
-        have h1 := hboth.1 S hs
-        rw [hd] at h1
-        exact Except.ok.inj h1
-      refine ⟨ms, instW, inst, ⟨hdec, hinst⟩, S, ?_⟩
-      unfold leanStageW
-      rw [hs]
-      have hc : accFinalCheck R H instW S.c.dual = true := by rw [← hg]; exact hchk
-      simp only [bind, Except.bind, hc, ite_true, pure, Except.pure]
+    snapshotOf_prepareMsgs_ok (Gₜ := Gₜ) R.E H R.vk inst ms none S hsnap, hchk⟩
 
 /-! ## §4. The evaluator body (a NEW row; closed dialect; not a slice of the verifier) -/
 
@@ -1026,8 +1008,7 @@ theorem lowering_correct_of_W (R : Render p G₁ G₂ Gₜ) (product : PairingPr
 #print axioms evalBodyShape_emptyBody_false
 #print axioms lowering_correct_of_W           -- sorryAx: lowering_correctW, model_quotientMode
 #print axioms leanStageW_noAcc
-#print axioms leanAcceptsAcc_of_final          -- sorryAx: the tree's snapshotOf_prepareMsgs
-#print axioms leanFinalAcc_of_accepts          -- sorryAx: the tree's snapshotOf_prepareMsgs
+#print axioms leanAcceptsAcc_of_final          -- standard three (the replay fact is proved)
 #print axioms evalRel_answers
 #print axioms accDecodes_of_leanAcceptsAcc
 

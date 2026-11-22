@@ -369,22 +369,348 @@ def Checkpoint.prefixNeeds : Checkpoint → String
   | .pcs => "snapshotOf"
   | .pairing => "snapshotOf"
 
-/-- Agreement with prepareMsgs. Two parts, because verifyAlgebraicConstraints maps
-    every multiPrepare Fault.error to Error.opening (R-8, Verifier.lean:1065-1066):
-    the ok case is a value equality and the error case can only be compared through
-    isOk. PROOF HOLE: the ok half is an unfolding of the composition plus a case
-    split on the collapse; the isOk half additionally needs that no phase this file
-    runs can fault where prepareMsgs succeeds, which is a claim that the Exec
-    refactor is a cut and not a reordering (rule R1), and that claim is exactly what
-    the D6 KATs and the conformance replay evidence, not a Lean proof. -/
-theorem snapshotOf_prepareMsgs (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+private theorem except_ok_bind {ε α β : Type} (a : α) (f : α → Except ε β) :
+    (do let x ← (Except.ok a : Except ε α); f x) = f a := rfl
+
+theorem snapshotTraceRun_parseTrace (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
-    (ms : List (Msg (Fr p) G₁)) (acc : Option (KzgAcc (Fr p) G₁ G₂ Gₜ)) :
-    ((∀ S, snapshotOf E H vk inst ms acc = .ok S →
-        prepareMsgs (Gₜ := Gₜ) E H Features.solidity vk inst ms = .ok S.c.dual) ∧
-      (snapshotOf E H vk inst ms acc).isOk =
-        (prepareMsgs (Gₜ := Gₜ) E H Features.solidity vk inst ms).isOk) := by
-  sorry
+    (ms : List (Msg (Fr p) G₁)) (s : SnapTrace p G₁) (t : Transcript)
+    (h : snapshotTraceRun E H vk inst ms = .ok (s, t)) :
+    (parseTrace (p := p) E.g1 Features.solidity vk (committedShape (G₁ := G₁))
+        (instanceShape inst)).run (transcriptOf E H ms) = .ok (s.trace, t) := by
+  unfold snapshotTraceRun snapshotTraceStep at h
+  simp only [StateT.run_bind, StateT.run_pure, bind, Except.bind, pure, Except.pure] at h
+  cases ht : (parseTrace (p := p) E.g1 Features.solidity vk (committedShape (G₁ := G₁))
+      (instanceShape inst)).run (transcriptOf E H ms) with
+  | error e => rw [ht] at h; cases h
+  | ok r =>
+      obtain ⟨tr, t1⟩ := r
+      rw [ht] at h
+      dsimp only at h
+      obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+      simpa using ht
+
+theorem snapshotAlgebraRun_readAlgebra (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (ms : List (Msg (Fr p) G₁)) (s2 : SnapAlgebra p G₁) (t2 : Transcript)
+    (h : snapshotAlgebraRun E H vk inst ms = .ok (s2, t2)) :
+    ∃ t1, snapshotTraceRun E H vk inst ms = .ok (s2.toSnapTrace, t1) ∧
+      (Verifier.readAlgebra (p := p) E.g1 Features.solidity vk
+        s2.trace.permutations s2.trace.lookups s2.trace.trashcans
+        (Option.getD (Option.map (fun r => r.size) ((committedShape (G₁ := G₁))[0]?)) 0)
+        (instanceShape inst).size (instanceShape inst)).run t1 = .ok (s2.alg, t2) := by
+  unfold snapshotAlgebraRun at h
+  simp only [StateT.run_bind, StateT.run_pure, bind, Except.bind, pure, Except.pure,
+    Features.solidity, reduceIte] at h
+  cases ht : snapshotTraceRun E H vk inst ms with
+  | error e => rw [ht] at h; cases h
+  | ok r =>
+      obtain ⟨snap1, t1⟩ := r
+      rw [ht] at h
+      dsimp only at h
+      by_cases he : (committedShape (G₁ := G₁)).isEmpty = true
+      · rw [if_pos he] at h
+        simp only [throw, bind, Except.bind] at h
+        cases h
+      · rw [if_neg he] at h
+        cases ha : (snapshotAlgebraStep (G₁ := G₁) E.g1 Features.solidity vk snap1.trace
+            (Option.getD (Option.map (fun r => r.size) ((committedShape (G₁ := G₁))[0]?)) 0)
+            (instanceShape inst).size (instanceShape inst) t1) with
+        | error e => simp only [Features.solidity] at ha; rw [ha] at h; cases h
+        | ok r =>
+            obtain ⟨s2', t2'⟩ := r
+            simp only [Features.solidity] at ha
+            rw [ha] at h
+            cases h
+            unfold snapshotAlgebraStep at ha
+            simp only [StateT.run_bind, StateT.run_pure, bind, Except.bind, pure, Except.pure] at ha
+            cases hr : (Verifier.readAlgebra (p := p) E.g1
+                ({ committedInstances := true, truncatedChallenges := true,
+                   outerFewerPointSets := false, outerSingleHCommitment := false } : Features) vk
+                snap1.trace.permutations snap1.trace.lookups snap1.trace.trashcans
+                (Option.getD (Option.map (fun r => r.size) ((committedShape (G₁ := G₁))[0]?)) 0)
+                (instanceShape inst).size (instanceShape inst)).run t1 with
+            | error e => rw [hr] at ha; cases ha
+            | ok rr =>
+                obtain ⟨alg, t2''⟩ := rr
+                rw [hr] at ha
+                simp only [pure, Except.pure] at ha
+                cases ha
+                exact ⟨t1, by simpa using ht, by simpa [Features.solidity] using hr⟩
+
+theorem snapshotLagrangeRun_algebra (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (ms : List (Msg (Fr p) G₁)) (s3 : SnapLagrange p G₁) (t : Transcript)
+    (h : snapshotLagrangeRun E H vk inst ms = .ok (s3, t)) :
+    ∃ s2, snapshotAlgebraRun E H vk inst ms = .ok (s2, t) ∧
+      snapshotLagrangeStep vk s2 = .ok s3 := by
+  unfold snapshotLagrangeRun at h
+  simp only [StateT.run_bind, StateT.run_pure, bind, Except.bind, pure, Except.pure] at h
+  cases ha : snapshotAlgebraRun E H vk inst ms with
+  | error e => rw [ha] at h; cases h
+  | ok r =>
+      obtain ⟨s2, t2⟩ := r
+      rw [ha] at h
+      dsimp only at h
+      cases hl : snapshotLagrangeStep vk s2 with
+      | error e => rw [hl] at h; cases h
+      | ok r =>
+          rw [hl] at h
+          dsimp only at h
+          obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+          exact ⟨s2, rfl, hl⟩
+
+theorem snapshotQueriesRun_lagrange (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (ms : List (Msg (Fr p) G₁)) (s4 : SnapQueries p G₁) (t : Transcript)
+    (h : snapshotQueriesRun E H vk inst ms = .ok (s4, t)) :
+    ∃ s3, snapshotLagrangeRun E H vk inst ms = .ok (s3, t) ∧
+      snapshotQueriesStep E.delta vk (committedShape (G₁ := G₁)) s3 = .ok s4 := by
+  unfold snapshotQueriesRun at h
+  simp only [StateT.run_bind, StateT.run_pure, bind, Except.bind, pure, Except.pure] at h
+  cases ha : snapshotLagrangeRun E H vk inst ms with
+  | error e => rw [ha] at h; cases h
+  | ok r =>
+      obtain ⟨s3, t2⟩ := r
+      rw [ha] at h
+      dsimp only at h
+      cases hq : snapshotQueriesStep E.delta vk (committedShape (G₁ := G₁)) s3 with
+      | error e => rw [hq] at h; cases h
+      | ok r =>
+          rw [hq] at h
+          dsimp only at h
+          obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+          exact ⟨s3, rfl, hq⟩
+
+theorem snapshotPcsRun_queries (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (ms : List (Msg (Fr p) G₁)) (s : SnapPcs p G₁ G₂ Gₜ) (t : Transcript)
+    (h : snapshotPcsRun E H vk inst ms = .ok (s, t)) :
+    ∃ s4 t2, snapshotQueriesRun E H vk inst ms = .ok (s4, t2) ∧
+      snapshotPcsStep E Features.solidity s4 t2 = .ok (s, t) := by
+  unfold snapshotPcsRun at h
+  simp only [StateT.run_bind, StateT.run_pure, bind, Except.bind, pure, Except.pure] at h
+  cases hq : snapshotQueriesRun E H vk inst ms with
+  | error e => rw [hq] at h; cases h
+  | ok r =>
+      obtain ⟨s4, t2⟩ := r
+      rw [hq] at h
+      dsimp only at h
+      exact ⟨s4, t2, rfl, h⟩
+
+theorem snapshotPcsStep_multiPrepare (E : VerifierEnv p G₁ G₂ Gₜ) (feat : Features)
+    (s4 : SnapQueries p G₁) (t2 : Transcript)
+    (s : SnapPcs p G₁ G₂ Gₜ) (t : Transcript)
+    (h : snapshotPcsStep E feat s4 t2 = .ok (s, t)) :
+    (Midfall.Halo2.multiPrepare (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field feat
+        E.fewerPointSetsRuntime s4.queries).run t2 = .ok (s.c.dual, t) := by
+  unfold snapshotPcsStep at h
+  simp only [StateT.run_bind, StateT.run_pure, bind, Except.bind, pure, Except.pure] at h
+  unfold Midfall.Halo2.multiPrepare
+  rw [StateT.run_bind]
+  cases ha : (phaseA (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field feat E.fewerPointSetsRuntime
+      s4.queries).run t2 with
+  | error e => rw [ha] at h; cases h
+  | ok ra =>
+      obtain ⟨a, t3⟩ := ra
+      rw [ha] at h
+      dsimp only at h
+      change StateT.run (do
+          let b ← phaseB E.g1 E.field feat a
+          let c ← phaseC (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field feat a b
+          pure c.dual) t3 = .ok (s.c.dual, t)
+      rw [StateT.run_bind]
+      cases hb : (phaseB E.g1 E.field feat a).run t3 with
+      | error e => rw [hb] at h; cases h
+      | ok rb =>
+          obtain ⟨b, t4⟩ := rb
+          rw [hb] at h
+          dsimp only at h
+          change StateT.run (do
+              let c ← phaseC (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field feat a b
+              pure c.dual) t4 = .ok (s.c.dual, t)
+          rw [StateT.run_bind]
+          cases hc : (phaseC (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field feat a b).run t4 with
+          | error e => rw [hc] at h; cases h
+          | ok rc =>
+              obtain ⟨c, t5⟩ := rc
+              rw [hc] at h
+              dsimp only at h ⊢
+              obtain ⟨rfl, rfl⟩ := Except.ok.inj h
+              rfl
+
+set_option maxHeartbeats 800000 in
+theorem snapshotPcsRun_prepare (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (ms : List (Msg (Fr p) G₁)) (s : SnapPcs p G₁ G₂ Gₜ) (t : Transcript)
+    (h : snapshotPcsRun E H vk inst ms = .ok (s, t)) :
+    (Verifier.prepare (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.delta Features.solidity
+        (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field Features.solidity
+          E.fewerPointSetsRuntime) vk
+        (([[1]] : List (List G₁)).map (fun r => r.toArray)).toArray
+        (([[inst.toList]] : List (List (List (Fr p)))).map
+          (fun row => (row.map (fun col => col.toArray)).toArray)).toArray).run
+      (transcriptOf E H ms) = .ok (s.c.dual, t) := by
+  obtain ⟨s4, t2, hq, hpcs⟩ := snapshotPcsRun_queries E H vk inst ms s t h
+  obtain ⟨s3, hl, hqstep⟩ := snapshotQueriesRun_lagrange E H vk inst ms s4 t2 hq
+  obtain ⟨s2, halg, hlag⟩ := snapshotLagrangeRun_algebra E H vk inst ms s3 t2 hl
+  obtain ⟨t1, htrace, hread⟩ := snapshotAlgebraRun_readAlgebra E H vk inst ms s2 t2 halg
+  have hparse := snapshotTraceRun_parseTrace E H vk inst ms s2.toSnapTrace t1 htrace
+  unfold snapshotQueriesStep at hqstep
+  simp only [bind, Except.bind, pure, Except.pure] at hqstep
+  cases hlin : (Verifier.linearize (p := p) (delta := E.delta) vk
+      (adviceCommitments := s3.trace.adviceCommitments)
+      (committedInstances := committedShape (G₁ := G₁))
+      (y := s3.trace.y) (beta := s3.trace.beta) (gamma := s3.trace.gamma)
+      (theta := s3.trace.theta) (trashChallenge := s3.trace.trashChallenge)
+      (challenges := s3.trace.challenges) s3.alg) with
+  | error e => rw [hlin] at hqstep; cases hqstep
+  | ok q =>
+      rw [hlin] at hqstep
+      dsimp only at hqstep
+      obtain ⟨rfl⟩ := Except.ok.inj hqstep
+      unfold Verifier.prepare
+      rw [StateT.run_bind]
+      have hcomm : (([[1]] : List (List G₁)).map (fun r => r.toArray)).toArray =
+          committedShape (G₁ := G₁) := rfl
+      have hinst : (([[inst.toList]] : List (List (List (Fr p)))).map
+          (fun row => (row.map (fun col => col.toArray)).toArray)).toArray =
+          instanceShape inst := by simp [instanceShape, Array.toArray_toList]
+      rw [hcomm, hinst]
+      rw [hparse]
+      unfold Verifier.verifyAlgebraicConstraints
+      rw [except_ok_bind]
+      dsimp only
+      simp only [Features.solidity, reduceIte]
+      have hfalse : (committedShape (G₁ := G₁)).isEmpty = false := rfl
+      rw [hfalse]
+      rw [if_neg (by decide : ¬((false : Bool) = true))]
+      rw [StateT.run_bind]
+      have hread' : StateT.run
+          (Verifier.readAlgebra E.g1
+            ({ committedInstances := true, truncatedChallenges := true,
+               outerFewerPointSets := false, outerSingleHCommitment := false } : Features) vk
+            s2.trace.permutations s2.trace.lookups s2.trace.trashcans
+            ((Option.map (fun r => r.size) ((committedShape (G₁ := G₁))[0]?)).getD 0)
+            (instanceShape inst).size (instanceShape inst)) t1 = .ok (s2.alg, t2) := by
+        simpa only [Features.solidity] using hread
+      rw [hread']
+      rw [except_ok_bind]
+      dsimp only
+      rw [StateT.run_bind]
+      rw [StateT.run_lift]
+      have htr : s3.trace = s2.trace := by
+        unfold snapshotLagrangeStep at hlag
+        simp only [bind, Except.bind, pure, Except.pure] at hlag
+        cases hl : lagrangeTriple vk s2.alg.x s2.alg.xn with
+        | error e => rw [hl] at hlag; cases hlag
+        | ok l =>
+            rw [hl] at hlag
+            simp only [pure, Except.pure] at hlag
+            rw [← Except.ok.inj hlag]
+      have hal : s3.alg = s2.alg := by
+        unfold snapshotLagrangeStep at hlag
+        simp only [bind, Except.bind, pure, Except.pure] at hlag
+        cases hl : lagrangeTriple vk s2.alg.x s2.alg.xn with
+        | error e => rw [hl] at hlag; cases hlag
+        | ok l =>
+            rw [hl] at hlag
+            simp only [pure, Except.pure] at hlag
+            rw [← Except.ok.inj hlag]
+      have hlin' : Verifier.linearize E.delta vk s2.trace.adviceCommitments committedShape
+          s2.trace.y s2.trace.beta s2.trace.gamma s2.trace.theta s2.trace.trashChallenge
+          s2.trace.challenges s2.alg = .ok q := by
+        rw [htr, hal] at hlin
+        exact hlin
+      rw [hlin']
+      simp only [pure, Except.pure]
+      rw [except_ok_bind]
+      rw [except_ok_bind]
+      dsimp only
+      rw [StateT.run_bind]
+      have hget : StateT.get.run t2 = (Except.ok (t2, t2) : Except Fault (Transcript × Transcript)) := rfl
+      rw [hget]
+      rw [except_ok_bind]
+      unfold Pcs.kzg
+      dsimp only
+      have hpcs' := snapshotPcsStep_multiPrepare E Features.solidity
+        { toSnapLagrange := s3, queries := q, lin := none } t2 s t hpcs
+      have hpcs'' : StateT.run (Midfall.Halo2.multiPrepare (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field
+          ({ committedInstances := true, truncatedChallenges := true,
+             outerFewerPointSets := false, outerSingleHCommitment := false } : Features)
+          E.fewerPointSetsRuntime q) t2 = .ok (s.c.dual, t) := by
+        simpa only [Features.solidity] using hpcs'
+      rw [hpcs'']
+      dsimp only
+      rw [StateT.run_bind]
+      rw [show (StateT.set t).run t2 =
+        (Except.ok ((), t) : Except Fault (PUnit × Transcript)) from rfl]
+      rw [except_ok_bind]
+      rw [show (StateT.pure (s.c.dual)).run t =
+        (Except.ok (s.c.dual, t) : Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) from rfl]
+
+/-- **THE REPLAY FACT (D-GATE1 item 3), PROVED.** The ok half of the retired
+    `snapshotOf_prepareMsgs`: whenever the snapshot pipeline succeeds on the same
+    transcript `prepareMsgs` runs, `prepareMsgs` succeeds with the snapshot's dual.
+    This is the whole fact both soundness links need (`leanAccepts_of_final`,
+    `leanAcceptsAcc_of_final`).
+
+    WHY ONLY THE OK HALF. `snapshotOf` additionally runs `lagrangeTriple` (and the
+    shape checks) after `readAlgebra`, while `prepareMsgs` does not; `lagrangeTriple`
+    panics when the key's domain does not return `bf + 2` Lagrange evaluations
+    (`Verifier.lean:252`). So the old conjunction's `isOk` equality is not a theorem
+    of this file at an arbitrary key. D-GATE1 retires that half on the D6 KAT and
+    conformance replay evidence (the deployed schedule does not hit the fault); the
+    completeness links that consumed `isOk` were outside every root cone and went
+    with the row. No axiom, no new hypothesis on a row, bundle, `ValidV3`, `ValidW`
+    or the root. -/
+theorem snapshotOf_prepareMsgs_ok (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (ms : List (Msg (Fr p) G₁)) (acc : Option (KzgAcc (Fr p) G₁ G₂ Gₜ))
+    (S : Snapshot p G₁ G₂ Gₜ)
+    (h : snapshotOf E H vk inst ms acc = .ok S) :
+    prepareMsgs (Gₜ := Gₜ) E H Features.solidity vk inst ms = .ok S.c.dual := by
+  unfold snapshotOf at h
+  cases hp : snapshotPcsRun E H vk inst ms with
+  | error e =>
+      rw [hp] at h
+      simp only [bind, Except.bind] at h
+      cases h
+  | ok r =>
+      obtain ⟨s5, t5⟩ := r
+      rw [hp] at h
+      rw [except_ok_bind] at h
+      dsimp only at h
+      cases he : t5.assertEmpty with
+      | error e =>
+          rw [he] at h
+          simp only [bind, Except.bind] at h
+          cases h
+      | ok u =>
+          rw [he] at h
+          simp only [bind, Except.bind, pure, Except.pure] at h
+          have hS : S = { toSnapPcs := s5, acc := acc } := by
+            exact (Except.ok.inj h).symm
+          subst hS
+          have hprep := snapshotPcsRun_prepare E H vk inst ms s5 t5 hp
+          unfold prepareMsgs
+          change (do
+            let r0 ← (Verifier.prepare (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.delta Features.solidity
+              (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field Features.solidity
+                E.fewerPointSetsRuntime) vk
+              (([[1]] : List (List G₁)).map (fun (r : List G₁) => r.toArray)).toArray
+              (([[inst.toList]] : List (List (List (Fr p)))).map
+                (fun (row : List (List (Fr p))) =>
+                  (row.map (fun (col : List (Fr p)) => col.toArray)).toArray)).toArray).run
+              (transcriptOf E H ms)
+            let u0 ← r0.2.assertEmpty
+            pure r0.1) = .ok s5.c.dual
+          rw [hprep]
+          rw [except_ok_bind]
+          dsimp only
+          rw [he]
+          simp only [bind, Except.bind, pure, Except.pure]
+
 
 /-! ### A literal witness snapshot
 

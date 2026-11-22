@@ -306,8 +306,10 @@ def msgMsgs : List (Msg (Fr 17) (Exp 17)) :=
   | none => []
 
 /-- snapshotOf agrees with prepareMsgs on a real accepting proof: same DualMSM, same
-    decision. This is the executable shadow of snapshotOf_prepareMsgs, which is a
-    registered hole. -/
+    decision. This is the executable shadow of the PROVED ok half
+    `snapshotOf_prepareMsgs_ok` (D-GATE1 item 3); the old row's `isOk` half is retired,
+    so this gate is also the conformance witness for the scheduling claim at a real
+    accepting proof. -/
 def snapshotAgreesWithPrepareMsgs_ok : Bool :=
   match snapshotOf msgE keccak256 n2Vk n2Inst msgMsgs none,
         prepareMsgs (Gₜ := Exp 17) msgE keccak256 Features.solidity n2Vk n2Inst

@@ -14,13 +14,14 @@
     PcsReads, pcsReads, SnapXcript, snapshotXcriptRun, Render.nSets, padSnap,
     LinFull, linearizeFull, linearize_eq_full, leanStage, LeanRaw, LeanFinal,
     leanStage_prefix (THE registered sorry), leanStage_pairing_ok, leanStage_pairing_of,
-    leanAccepts_of_final, leanFinal_of_accepts.
+    leanAccepts_of_final.
 
-  EIGHT PROVED LEMMAS AND ONE REGISTERED HOLE. 'decodeSlots_eq_raw', 'decodeCalldata_eq_raw',
-  'decodeCalldata_isSome_iff', 'linearize_eq_full', 'leanStage_pairing_ok', 'leanStage_pairing_of',
-  'leanAccepts_of_final' and 'leanFinal_of_accepts' are PROVED; the last two reach the tree through
-  the single registered sorry 'Midfall.Lowering.snapshotOf_prepareMsgs', which is the whole of
-  their cone ('#cone_sorries leanAccepts_of_final' prints that one name and nothing else).
+  SEVEN PROVED LEMMAS, ONE SIM.1 LEAF. 'decodeSlots_eq_raw', 'decodeCalldata_eq_raw',
+  'decodeCalldata_isSome_iff', 'linearize_eq_full', 'leanStage_pairing_ok', 'leanStage_pairing_of'
+  and 'leanAccepts_of_final' are PROVED; the last one reaches the tree through the PROVED replay
+  fact 'Midfall.Lowering.snapshotOf_prepareMsgs_ok' (D-GATE1 item 3 retired the old
+  'snapshotOf_prepareMsgs' row and its only completeness-direction consumer,
+  'leanFinal_of_accepts', which no root cone used).
   'leanStage_prefix' is the leaf SIM.1 was told to register: ALG, Lean-only, and NOT used by the
   glue (the scratch header records the same), so it sits outside the headline cone. SIM.9 removes it.
 
@@ -428,39 +429,10 @@ theorem leanAccepts_of_final {R : Render p G₁ G₂ Gₜ} {H : Hash} {cd : Byte
   obtain ⟨ms, instW, inst, ⟨hdec, hinst⟩, S, hS⟩ := h
   obtain ⟨hsnap, hcheck⟩ := leanStage_pairing_ok hS
   refine ⟨ms, instW, inst, hdec, hinst, ?_⟩
-  have hprep := (snapshotOf_prepareMsgs (Gₜ := Gₜ) R.E H R.vk inst ms none).1 S hsnap
+  have hprep := snapshotOf_prepareMsgs_ok (Gₜ := Gₜ) R.E H R.vk inst ms none S hsnap
   unfold verifyMsgs
   rw [hprep]
   simp only [bind, Except.bind, hcheck]
   rfl
-
-/-- **LINK, completeness direction.** -/
-theorem leanFinal_of_accepts {R : Render p G₁ G₂ Gₜ} {H : Hash} {cd : Bytes}
-    (h : Midfall.LoweringV2.LeanAccepts R H cd) : LeanFinal R H cd := by
-  obtain ⟨ms, instW, inst, hdec, hinst, hv⟩ := h
-  have hboth := snapshotOf_prepareMsgs (Gₜ := Gₜ) R.E H R.vk inst ms none
-  cases hp : prepareMsgs (Gₜ := Gₜ) R.E H Features.solidity R.vk inst ms with
-  | error e =>
-      unfold verifyMsgs at hv
-      rw [hp] at hv
-      cases hv
-  | ok g =>
-      have hok : (snapshotOf R.E H R.vk inst ms none).isOk = true := by
-        rw [hboth.2, hp]; rfl
-      cases hs : snapshotOf R.E H R.vk inst ms none with
-      | error e => rw [hs] at hok; cases hok
-      | ok S =>
-          have hg : g = S.c.dual := by
-            have h1 := hboth.1 S hs
-            rw [hp] at h1
-            exact Except.ok.inj h1
-          have hcheck : DualMSM.check S.c.dual R.params = true := by
-            unfold verifyMsgs at hv
-            rw [hp] at hv
-            by_cases hc : DualMSM.check g R.params = true
-            · rw [← hg]; exact hc
-            · simp only [bind, Except.bind, hc] at hv
-              cases hv
-          exact ⟨ms, instW, inst, ⟨hdec, hinst⟩, S, leanStage_pairing_of hs hcheck⟩
 
 end Midfall.Lowering.Stage

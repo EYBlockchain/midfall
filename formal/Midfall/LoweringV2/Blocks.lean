@@ -244,12 +244,16 @@ theorem prog_slices_decomp (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256)
 
     WHY THE SNAPSHOT FACTS ARE IN THE CONCLUSION. `Render.BlockContractsAt` is stated under
     `decodeCalldata = some` / `instOfWords? = some` / `snapshotOf = .ok`, and the headline only ever
-    has `LeanAccepts`. The bridge is `Snapshot.snapshotOf_prepareMsgs` (a REGISTERED sorry,
-    Snapshot.lean:387): its second conjunct turns `prepareMsgs = .ok` into `(snapshotOf).isOk`,
-    i.e. into the witness `Snap`, and its first conjunct plus the unfolding of `verifyMsgs` gives
-    the `DualMSM.check` clause that `BlockProgress` is gated on. Rather than add a second named hole
-    for that one-line transfer it is folded into this interface; the requirements table records it
-    as the reason this row is not free.
+    has `LeanAccepts`. The ok-value bridge is now the PROVED
+    `Snapshot.snapshotOf_prepareMsgs_ok` (D-GATE1 item 3 retired the old
+    `snapshotOf_prepareMsgs` row): on a successful snapshot it turns the `prepareMsgs = .ok` that
+    `LeanAccepts` carries into the same dual and, with the unfolding of `verifyMsgs`, the
+    `DualMSM.check` clause that `BlockProgress` is gated on. The old row's `isOk` equality is NOT
+    available as a lemma: `snapshotOf` runs `lagrangeTriple`, which `prepareMsgs` does not, so at an
+    arbitrary key the two `isOk` flags can differ. This row's remaining work therefore includes
+    deriving `snapshotOf = .ok` from the phase schedule / the D6 replay evidence, not from an
+    `isOk` transfer. The conclusion is unchanged and no hypothesis was added; the requirements
+    table still records this row as not free.
 
     WHY `Clean .start` IS NOT TRIVIAL. `Inv .start` is `st.halted == none && LocalsOk V &&
     bytesAt st g1IdentityMptr 128 == 0`, and `Frame` additionally asks for `VEnv.get V "vk" = some
