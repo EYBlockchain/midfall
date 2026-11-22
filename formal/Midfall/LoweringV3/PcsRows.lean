@@ -56,6 +56,7 @@ import Midfall.LoweringV2.Stages
 import Midfall.Lowering.GenAstPcs
 import Midfall.Yul.Word
 import Midfall.Yul.LoopRule
+import Midfall.LoweringV3.VkWindow
 import Midfall.Tools.Done
 set_option autoImplicit false
 
@@ -1293,6 +1294,56 @@ theorem readBytes_storeWord_32 (mem : Nat → UInt8) (p : Nat) (v : U256) :
     · omega
   rw [hstore, byteAt_eq_toUInt8, show 31 - i = 32 - 1 - i by omega, toUInt8_mod]
 
+theorem fold_byte_lt_aux (l : List UInt8) :
+    ∀ (n acc : Nat), acc < 256 ^ n →
+      l.foldl (fun (acc : Nat) (b : UInt8) => acc * 256 + b.toNat) acc < 256 ^ (n + l.length) := by
+  induction l with
+  | nil => intro n acc h; simpa using h
+  | cons b rest ih =>
+      intro n acc h
+      simp only [List.foldl_cons, List.length_cons]
+      have hb : b.toNat < 256 := UInt8.toNat_lt_size b
+      have hacc : acc * 256 + b.toNat < 256 ^ (n + 1) := by
+        rw [Nat.pow_succ]
+        nlinarith
+      have h' := ih (n + 1) (acc * 256 + b.toNat) hacc
+      rwa [show n + 1 + rest.length = n + (rest.length + 1) by omega] at h'
+
+theorem fold_byte_lt (l : List UInt8) :
+    l.foldl (fun (acc : Nat) (b : UInt8) => acc * 256 + b.toNat) 0 < 256 ^ l.length := by
+  have h := fold_byte_lt_aux l 0 0 (by norm_num)
+  simpa using h
+
+theorem bytesToNatBE_readBytes_32 (mem : Nat → UInt8) (p : Nat) :
+    bytesToNatBE (ByteArray.mk (readBytes mem p 32).toArray) = (loadWord mem p).toNat := by
+  unfold bytesToNatBE readBytes loadWord
+  rw [← Array.foldl_toList]
+  dsimp only
+  change List.foldl (fun (acc : Nat) (x : UInt8) => acc * 256 + x.toNat) 0
+    (List.map (fun i => mem (p + i)) (List.range 32)) =
+    BitVec.toNat (List.foldl (fun (acc : U256) (i : Nat) =>
+      acc <<< 8 ||| BitVec.ofNat 256 (mem (p + i)).toNat) 0 (List.range 32))
+  have hmap : List.foldl (fun (acc : Nat) (x : UInt8) => acc * 256 + x.toNat) 0
+      (List.map (fun i => mem (p + i)) (List.range 32)) =
+      (List.range 32).foldl (fun (acc : Nat) (i : Nat) =>
+        acc * 256 + (mem (p + i)).toNat) 0 := by
+    rw [List.foldl_map]
+  rw [hmap]
+  have hb : ∀ i, (mem (p + i)).toNat < 256 := fun i => UInt8.toNat_lt_size _
+  have h := Midfall.LoweringV3.VkWindow.fold_be_eq (fun i => (mem (p + i)).toNat) hb
+    (List.range 32) 0
+  have hload : (List.foldl (fun (acc : U256) (i : Nat) =>
+      acc <<< 8 ||| BitVec.ofNat 256 (mem (p + i)).toNat) 0 (List.range 32)) =
+      BitVec.ofNat 256 ((List.range 32).foldl
+        (fun (acc : Nat) (i : Nat) => acc * 256 + (mem (p + i)).toNat) 0) := by
+    simpa using h
+  rw [hload, BitVec.toNat_ofNat, Nat.mod_eq_of_lt]
+  have hlt := fold_byte_lt (List.map (fun i => mem (p + i)) (List.range 32))
+  rw [List.length_map, List.length_range] at hlt
+  rw [show 256 ^ 32 = 2 ^ 256 by norm_num [Nat.pow_succ]] at hlt
+  rw [hmap] at hlt
+  exact hlt
+
 #assert_axioms Midfall.LoweringV3.PcsRows.decode_exists [propext, Classical.choice, Quot.sound]
   native []
 #assert_axioms Midfall.LoweringV3.PcsRows.inline_loopBody_false
@@ -1308,6 +1359,8 @@ theorem readBytes_storeWord_32 (mem : Nat → UInt8) (p : Nat) (v : U256) :
 #assert_axioms Midfall.LoweringV3.PcsRows.pcs_loop_true
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.readBytes_storeWord_32
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.bytesToNatBE_readBytes_32
   [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.PcsRows
