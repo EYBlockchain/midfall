@@ -14,86 +14,75 @@ root **11 / sound 5**, register **75 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
                                pcs_blockSim, tp_blockSim)
     block rows ............... 1 INTEGRATED of 7 (traceReturn); 2 SORRY, 4 NONE
     exhibits ................. 4 PRESENT, 0 MISSING of 4
-    ValidV3 at F1 ............ NOT INHABITED; blocking clause = generated (REFUTED at F1);
-                               payload point half OPEN (B3)
-    root lowering_correctW ... not reported (C0 not started)
-    root generator_correct ... not reported (D2 not started)
+    ValidV3 at F1 ............ `poseidonRender` REFUTED (data defect); a re-sourced
+                               `f1GeneratedRender` has `generated` PROVED; full inhabitant in flight
+    root lowering_correctW ... C0 in flight (three CompositionW glue holes)
+    root generator_correct ... D2 in flight (certified statement port)
     register ................. 75 rows / 11 ROOT; 0 REFUTED, 1 VACUOUS
-    KAT ...................... 1648/119 (full gate)
+    KAT ...................... 1648/119 (full gate at d0bf226; quick since)
     axiom roots .............. standard three + sorryAx, native []
 
-**This session:** root 18 -> 12, sound 8 -> 5, register 85 -> 76, exhibits 2/4 -> 4/4, and the
-registered REFUTED row is gone. Proved/landed: `prefix_live`, `runBody_gas_oblivious`,
-`Run_worldEq_of_noWriters`, `twoOutcomes_of_exitDiscipline`, `vk_blockSim`, the two Poseidon
-exhibits, C1/WID.2 IVC KATs, the D-QVM1 `programFits` fit clause (VKFIT bounds), D-QVM2 retirement,
-`gasFree_of_valid` (programOk `GasFree` clause), PG-VKHEADER (`PayloadAgrees.constantsLength`),
-and the `snapshotOf_prepareMsgs` retirement.
+**This session (since `e7f3107`):** A3 complete (`vk_blockSim`/`vk_blockProgS`), A4's four
+lagrange loops (a/b/c/d/e) proved, A5's `bi_forward_loop` **and `bi_backward_loop`** proved, A9's
+both PCS truncation arms and the 32-byte store/read bridge proved, A6's `tp_events_slots` and
+`commonG1_lookup` proved, QVM's MODSHIFT block/fold shifts and the four compaction arm-value
+lemmas merged, and the B4 refutation/inhabitation split landed. All quick gates green; the full
+gate last ran at `d0bf226`.
 
-## 2. In flight
+## 2. In flight (13 lanes)
 
-- **A3 COMPLETE** (`127cfe7`): `vk_blockSim` and `vk_blockProgS` both PROVED; the vkLoading pair
-  is closed. Root 12 -> 11, register 76/12 -> 75/11.
-- **A4/lagrange** (`55862a0`): `LagrangeRows.lean` has **T3.9.a `lag_sq_loop`**, **T3.9.d
-  `lag_lblind_loop`** and **T3.9.e `lag_instance_loop`** PROVED, plus the semantic inversions and
-  no-halt lemmas for the second-pass body. T3.9.c is one block-state equation + window invariant
-  from green; T3.9.b guard-TRUE remains on the semantic route. A5/`batch_invert_summary` is the
-  row prerequisite.
-- **A5** (`0407d61`+): `BatchInvert.lean` forms, **`bi_forward_loop`**, associativity, the backward
-  algebra, `bwdMem`, cursor lemmas and the `newAll` spelling are merged. `bi_backward_loop` is now
-  one `("inv", …) ::` prefix-strip from green; `batch_invert_summary` follows.
-- **A6 transcriptParser** (`t/A6`): `tp_blockSim` glue, `inline_g1WalkLoop`, the PG-PARSER bridge,
-  and **`tp_events_slots`** are proved; five named TP leaves remain (`g1walk_loop_sem`,
-  `tp_computes`, `tp_agrees`, `tp_poison`, `tp_blockProgS`), with `tp_agrees` still waiting on
-  SIM.10 `xcript_total`. The branch is WIP (it would add non-ROOT rows).
-- **A9 PCS** (`ae33abe`): `decode_exists`, `pcsBlock2_inline`, the loop vocabulary, and **both
-  `pcs_loop_false` and `pcs_loop_true`** are merged (zero sorries). Confirmed the queue's A8/QVM
-  dependency is schedule-only; the `scalar_inv` summary is next.
-- **A4 continuation** (`midfall-g`, `t/A4`): T3.9.c/e and the b guard-TRUE semantic loop.
+- **A4/lagrange** (`t/A4`): T3.9.a/b/c/d/e PROVED; next `lag_agrees` at D-GATE2's corrected
+  exponent `omegaInv ^ numNegLagranges`, then T3.9.h and the lag row glue.
+- **A5/helpers** (`t/A5`): `bi_forward_loop` and `bi_backward_loop` PROVED; `batch_invert_summary`
+  needs the six-store modexp frame, the honest staticcall response and the tail (30-33). A9's
+  `readBytes_storeWord_32` is merged and is the bridge.
+- **A6/transcriptParser** (`t/A6`): `tp_blockSim` glue, `inline_g1WalkLoop`, the PG-PARSER bridge,
+  `tp_events_slots` and `commonG1_lookup` PROVED. Five TP leaves remain; the branch is working
+  SIM.10 `xcript_total` first, then ROW.TP.3/T3.5. WIP (would add non-ROOT rows).
+- **A9/PCS** (`t/A9`): both `pcs_loop_false` and `pcs_loop_true` merged; `scalar_inv` bridge in
+  flight (six-store modexp frame, fail/staticcall, read-back).
+- **A11/finalPairing** (`t/A11`): proving `fp_pairing_algebra`, `ec_pairing_contract`,
+  `fp_stmt_steps`, deriving `fpG2Slots` from `ValidV3` (`hR.env.nG2/sG2` + `hR.payload.g2Base/negSG2`),
+  then wiring both rows.
+- **A12/totality** (`t/A12`): per-block liveness from the proved vk/tr progress rows; the root
+  `block_live` stays the single registered hole until the other five progress rows land.
+- **QVM** (`t/MODELF`, `t/TERMFOLD`, other agent): fixed-segment/spill/validator lane.
+- **QVM compile-correctness** (`t/QVMIDGREEN`): LIN7/ROW decoder ties, MODSHIFT block/fold shifts,
+  four compaction arm-value lemmas merged. `PG_identity_emitterValue`/`compactionValue` remain;
+  `compactGo` induction in flight with the header shift as an internal-lemma hypothesis.
+- **QVM header** (`t/QVMHDR`): `modarith7Form_shift`; D-QVM3 signs one local heartbeat exception.
+- **B1/gates** (`t/B1N`): DG.3 closure manifest/gate at `bd27cd298a04fc1a` (4823 decls / 526
+  leaves), DG.7 CI on `formal/baseline` with `ubuntu-latest`, local negative control; OBJ.17/S.10.
+- **B4/F1 inhabitant** (`t/B4`): `ValidV3 f1GeneratedRender`; `generated` is proved, the five
+  payload point fields are the remaining half.
+- **B5/artifacts** (`t/B5`): byte-for-byte `.sol` gates with the local Rust toolchain and the
+  downloaded SRS; no hand-edited artifacts.
+- **C0/widening glue** (`t/C0`): `rejectsW_of_sims`, `completeAnyGasW_of_progs`,
+  `totalW_of_stages` through `blockSimW_iff_blockSim`.
+- **C1/F2** (`t/C1N`): IVC fixture export with the SRS, then the widened clause table.
+- **D1/end-to-end** (`t/D1`): `end_to_end : EndToEndV3 ...` from `lowering_correct`.
+- **D2/certified generator** (`t/D2`): CERT.0 statement port/rebase, CERT.1 suspects, CERT.3
+  constants, CERT.8 `generate` on the real F1 key.
 
-**Shortest path to the conditional e2e theorem:** A4/A5 -> A6/A9 -> A11 -> A12 -> A13 -> D1
-(`end_to_end`), with QVM `q_blockSim`/`q_blockProgS` in parallel. B4 (ValidV3 at F1), B5 and the
-M9/M10 C/D tracks are DONE/non-vacuity work, not prerequisites of `lowering_correct` itself.
-- **QVM** (`midfall-c/d`): D-QVM2 executed; `QInterpRefinesSegment` stated; QIDENT/BINDINV/PLSEG/
-  SPILL2/CURFACT landed. `q_blockSim`/`q_blockProgS` remain.
-- **QVM compile-correctness** (`t/QVMBUILD`): the 26/26 arm table and reduction are merged; then
-  `PG_identity_preFold` and `PG_termFold_structure` were PROVED and merged (`25459b2`/`3ff837d`).
-  The worker PROVED the old shape false (selector gap low byte `0x0a` collides with `FOLD_MAIN`);
-  **D-GATE3 target-aware repair landed** at f767d5f. The identity row is now true and reduced to
-  `PG_identity_emitterValue` + `PG_identity_compactionValue`; LIN7 and ROW decoder ties are proved,
-  MODARITH7 block/fold shifts are landed. The block-composition route is gated by the one
-  `modarith7Form_shift` header (flag-dependent, compiled join-point shape; not a timeout). The QVM
-  lane is split: `t/QVMIDGREEN` is on `PG_identity_compactionValue`, and a dedicated `t/QVMHDR`
-  worker has one focused attempt at the header (no read-only-file edits); PAIRWISE remains after. It owns `Qvm.lean`/`QvmShift`/`QvmEmit`; the
-  segment/spill/Quotient files stay with the QVM agent.
+## 3. Next READY / critical path
 
-## 3. Next READY
+The conditional e2e theorem stays: **A4/A5 -> lagrange rows -> A6/A9 -> A11 -> A12 -> A13 -> D1**,
+with QVM `q_blockSim`/`q_blockProgS` in parallel. B4/B5/C0/C1/D2 are DONE/non-vacuity and widening
+work, not prerequisites of `lowering_correct` itself.
 
-- **A3** to completion, then **A4/lagrange** (after A3), **A6/transcriptParser** (after A2/A3/A5),
-  **A9/PCS** (after A2/A8/B2), **A11/finalPairing**. The QVM row is the other track.
+## 4. Resolved this session (was "waiting on human")
 
-## 4. Waiting on human
-
-1. **DG.3 pinned zone** — sign the current five-root closure (4823 declarations / 526 external
-   leaves / `bd27cd298a04fc1a`) before it joins `Frozen.sha256`; the card's 972 is stale.
-2. **DG.7 CI** — permission to push/delete a throwaway branch on `origin`; the local
-   `gate_negctl.py` is not wired into `checks.sh`.
-3. **B5/OBJ.11** — cargo and authorization to re-export the tracked `.sol` fixtures; OBJ.10/
-   OBJ.12/T3.3 remain absent.
-4. **C1/WID.3/WID.4** — `cargo` is not on PATH and the `midnight-srs-2p19`/`-2p20` assets are
-   absent; the exporter is shared with B5/OBJ.11.
-5. **QVM** — the fixed-segment proof is the agent's lane; no human item unless the fold output
-   predicate needs a ruling.
-6. **PG-LAGAGREE / T3.9.g — SIGNED by D-GATE2; A4 correcting the exponent.** Its `hW` uses
-   `omegaInv ^ (numNegLagranges - 1)`; `PayloadAgrees.omegaInvToL`, `Protocol.lean:675` and
-   `Vk.lean:777-780` all give `omegaInv ^ numNegLagranges`. The rest of the conclusion is
-   consistent at the corrected exponent. A4's lag rows cannot close until this statement is
-   restated (one exponent, or a general `w0` parameter); do not edit `LagRel` silently.
-7. **A4/A5 order inversion.** `batch_invert_summary` (HLP.1.b/c) is a prerequisite of the lagrange
-   row, not a successor; the queue lists A5 after A4. The A4 loop tranche is render-free and can
-   proceed now (in flight on `t/A4`); the row integration needs A5 first.
-
-**Signed and landed this session:** D-QVM1 (address fit), D-QVM2 (fixed-segment restatement),
-D-GATE1 (PG-VKHEADER `constantsLength`, programOk `GasFree`, snapshot retirement).
+1. **DG.3** signed as **D-GATE4**: pin the measured closure (4823 declarations / 526 external
+   leaves / `bd27cd298a04fc1a`), not the stale 972. `B1` implements the manifest/gate.
+2. **DG.7** unblocked: CI targets `formal/baseline` on `ubuntu-latest`; the negative control is the
+   local `gate_negctl.py`, no throwaway branch on `origin`.
+3. **B5/C1** unblocked: Rust 1.98.1 is present under `~/.rustup/toolchains`; the SRS assets are
+   fetched by `proofs/solidity-verifier/scripts/ensure_srs_assets.sh` into `.srs` (2p19/2p20).
+4. **OBJ.17** signed under D-P60: the target is "fixture F1"; F2 is the IVC fixture.
+5. **D-QVM3** signed: one local `maxHeartbeats`/`maxRecDepth` exception for the `modarith7Form_shift`
+   header only; no global change, no statement change, no `VmReference` edit.
+6. **PG-LAGAGREE/T3.9.g** D-GATE2 corrected exponent is being proved by A4.
+7. **A4/A5 order inversion** recorded: `batch_invert_summary` is the lagrange prerequisite.
 
 ## 5. Last three merges
 
