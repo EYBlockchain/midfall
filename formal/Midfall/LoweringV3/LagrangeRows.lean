@@ -915,3 +915,461 @@ theorem lag_lblind_loop {c : ExternalCalls} {g : ExternalGas}
   from the tree; T3.9.h (the poisoned half) and the row's `success = 1` arm need it, and A5 is
   ordered AFTER A4. The loop work above does not depend on it.
 -/
+
+/-! ## 10. T3.9.e: THE INSTANCE POLYNOMIAL (semantic route additions) -/
+
+theorem restore_two_cons_length {D : YulSemantics.Dialect} [DecidableEq D.Value] {V W : VEnv D}
+    {y z : Ident} {b c : D.Value} (h : W.length = V.length) :
+    restore V ((y, b) :: (z, c) :: W) = W := by
+  simp only [restore, List.length_cons, h]
+  have h2 : List.length V + 1 + 1 - List.length V = 2 := by omega
+  rw [h2]
+  rfl
+
+theorem instance_env_step {V : VEnv (Bridge.Dialect c g)} {e mp lp v mp' lp' : U256} :
+    VEnv.set (VEnv.set (VEnv.set (("instance_cptr_end", e) ::
+        ("instance_cptr", mp) :: V) "instance_eval" v) "instance_cptr" mp') "l_i_cptr" lp' =
+      ("instance_cptr_end", e) :: ("instance_cptr", mp') ::
+        (VEnv.set V "instance_eval" v).set "l_i_cptr" lp' := by
+  simp only [VEnv.set, venv_set_set,
+    if_neg (by decide : ¬ (("instance_cptr_end" : String) = "instance_eval")),
+    if_neg (by decide : ¬ (("instance_cptr" : String) = "instance_eval")),
+    if_neg (by decide : ¬ (("instance_cptr_end" : String) = "instance_cptr")),
+    if_neg (by decide : ¬ (("instance_cptr_end" : String) = "l_i_cptr")),
+    if_neg (by decide : ¬ (("instance_cptr" : String) = "l_i_cptr")), ite_true]
+
+/-! ## 8b. T3.9.e: THE INSTANCE POLYNOMIAL -/
+
+/-- Statement 18 of the inner scope: the public-instance walk. PROVED by kernel reduction. -/
+theorem lag_instance_loop_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 18 1 =
+      [GenAst.yfor
+        [ GenAst.ylet "instance_cptr" (Blocks.VkLoading.vkSite "INSTANCE_CPTR" consts)
+        , GenAst.ylet "instance_cptr_end" (GenAst.yop EVM.Op.add
+            [GenAst.yvar "instance_cptr", GenAst.ylit (n * 32)]) ]
+        (GenAst.yop EVM.Op.lt [GenAst.yvar "instance_cptr", GenAst.yvar "instance_cptr_end"])
+        [ GenAst.yset "instance_cptr" (GenAst.yop EVM.Op.add
+            [GenAst.yvar "instance_cptr", GenAst.ylit 0x20])
+        , GenAst.yset "l_i_cptr" (GenAst.yop EVM.Op.add
+            [GenAst.yvar "l_i_cptr", GenAst.ylit 0x20]) ]
+        [GenAst.yset "instance_eval" (GenAst.yop EVM.Op.addmod
+          [GenAst.yvar "instance_eval",
+            GenAst.yop EVM.Op.mulmod
+              [GenAst.yop EVM.Op.mload [GenAst.yvar "l_i_cptr"],
+                GenAst.yop EVM.Op.calldataload [GenAst.yvar "instance_cptr"],
+                Blocks.VkLoading.vkSite "r" consts],
+            Blocks.VkLoading.vkSite "r" consts])]] := by
+  kernel_rfl
+
+
+/-! ## 7b. INVERSIONS FOR THE INSTANCE LOOP (T3.9.e) -/
+
+theorem list_length_one {α : Type} {l : List α} (h : l.length = 1) : ∃ a, l = [a] := by
+  cases l with
+  | nil => simp at h
+  | cons a t =>
+      cases t with
+      | nil => exact ⟨a, rfl⟩
+      | cons b t => simp at h
+
+/-- A pure comparison cannot halt: `stepOp lt` is always `.ok`. -/
+theorem eval_lt_halt_false {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x y : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.lt [Expr.var x, Expr.var y]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := Op.lt)
+    (fun a b st r hr => by
+      simp only [builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    h
+
+theorem eval_lt_vars_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x y : String} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.lt [Expr.var x, Expr.var y]) (.vals [cv] st')) :
+    ∃ xv yv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      cv = b2w (xv.ult yv) ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil htail =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hyv, rfl⟩ := eval_var_inv htail
+              obtain ⟨hxv, rfl⟩ := eval_var_inv hhead
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨_, _, hxv, hyv, rfl, rfl⟩
+
+theorem eval_mload_var_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : String} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mload [Expr.var x]) (.vals [cv] st')) :
+    ∃ p, VEnv.get V x = some p ∧ cv = loadWord st.memory p.toNat ∧
+      st' = touchMemory st p.toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil hhead =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨hp, rfl⟩ := eval_var_inv hhead
+          simp only [builtinWithExternal, stepOp, rd1] at hbi
+          cases hbi
+          exact ⟨_, hp, rfl, rfl⟩
+
+theorem eval_calldataload_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x : String} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.calldataload [Expr.var x]) (.vals [cv] st')) :
+    ∃ p, VEnv.get V x = some p ∧ cv = wordFrom st.env.calldata p.toNat ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil hhead =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨hp, rfl⟩ := eval_var_inv hhead
+          simp only [builtinWithExternal, stepOp, rd1] at hbi
+          cases hbi
+          exact ⟨_, hp, rfl, rfl⟩
+
+theorem eval_mulmod_mload_cdl_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {mv rv : U256} {st' : EvmState}
+    (hrv : VEnv.get V "r" = some rv)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod
+        [Expr.builtin Op.mload [Expr.var "l_i_cptr"],
+          Expr.builtin Op.calldataload [Expr.var "instance_cptr"], Expr.var "r"])
+      (.vals [mv] st')) :
+    ∃ mp cp, VEnv.get V "l_i_cptr" = some mp ∧
+      VEnv.get V "instance_cptr" = some cp ∧
+      mv = wMulmodAt (loadWord st.memory mp.toNat) (wordFrom st.env.calldata cp.toNat) rv ∧
+      st' = touchMemory st mp.toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hmload =>
+      cases hrest with
+      | argsCons hrest2 hcdl =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hv, rfl⟩ := eval_var_inv hr
+                  rw [hrv] at hv
+                  injection hv with hvr
+                  subst hvr
+                  obtain ⟨hcp, hget, hcv, hst⟩ := eval_calldataload_var_inv hcdl
+                  subst hst
+                  obtain ⟨hmp, hmpget, hmv, htouch⟩ := eval_mload_var_inv hmload
+                  simp only [builtinWithExternal, stepOp, ter, hcv, hmv] at hbi
+                  cases hbi
+                  exact ⟨_, _, hmpget, hget, rfl, htouch⟩
+
+theorem eval_addmod_instance_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.addmod
+        [Expr.var "instance_eval",
+          Expr.builtin Op.mulmod
+            [Expr.builtin Op.mload [Expr.var "l_i_cptr"],
+              Expr.builtin Op.calldataload [Expr.var "instance_cptr"], Expr.var "r"],
+          Expr.var "r"]) (.vals [cv] st')) :
+    ∃ iev mv rv mp cp, VEnv.get V "instance_eval" = some iev ∧
+      VEnv.get V "l_i_cptr" = some mp ∧ VEnv.get V "instance_cptr" = some cp ∧
+      VEnv.get V "r" = some rv ∧
+      mv = wMulmodAt (loadWord st.memory mp.toNat) (wordFrom st.env.calldata cp.toNat) rv ∧
+      cv = wAddmodAt iev mv rv ∧ st' = touchMemory st mp.toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hrest2 hmul =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hrv, rfl⟩ := eval_var_inv hr
+                  obtain ⟨mp, cp, hmm⟩ := eval_mulmod_mload_cdl_inv hrv hmul
+                  obtain ⟨hmp, hcp, hmv, hstm⟩ := hmm
+                  subst hstm
+                  obtain ⟨hiev, rfl⟩ := eval_var_inv hhead
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  exact ⟨_, _, _, _, _, hiev, hmp, hcp, hrv, hmv, rfl, rfl⟩
+
+theorem exec_exprStmt_inv {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {e : Expr EVM.Op}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.exprStmt e) V' st' .normal) :
+    V' = V ∧ ∃ st1, EvalExpr (Bridge.Dialect c g) funs V st e (.vals [] st1) ∧ st' = st1 := by
+  cases h with
+  | exprStmt he => exact ⟨rfl, _, he, rfl⟩
+
+theorem exec_assign_inv {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {x : String} {e : Expr EVM.Op}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.assign [x] e) V' st' .normal) :
+    ∃ v, EvalExpr (Bridge.Dialect c g) funs V st e (.vals [v] st') ∧ V' = VEnv.set V x v := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      exact ⟨v, he, rfl⟩
+
+theorem exec_block_inv {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {body : Block EVM.Op} {o : Outcome}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.block body) V' st' o) :
+    ∃ Vb stb, ExecStmts (Bridge.Dialect c g) (hoist (Bridge.Dialect c g) body :: funs)
+      V st body Vb stb o ∧ V' = restore V Vb ∧ st' = stb := by
+  cases h with
+  | block hb => exact ⟨_, _, hb, rfl, rfl⟩
+
+theorem eval_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : String} {k : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.add [Expr.var x, Expr.lit (Literal.number k)]) (.vals [cv] st')) :
+    ∃ a, VEnv.get V x = some a ∧ cv = a + BitVec.ofNat 256 k ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil hlit =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hk, rfl⟩ := eval_lit_inv hlit
+              obtain ⟨ha, rfl⟩ := eval_var_inv hhead
+              simp only [builtinWithExternal, stepOp, bin, hk] at hbi
+              cases hbi
+              exact ⟨_, ha, rfl, rfl⟩
+
+/-- A restore is the identity from any environment of the outer length: the set-chain form. -/
+theorem restore_set_any {D : YulSemantics.Dialect} [DecidableEq D.Value] {V W : VEnv D}
+    (h : W.length = V.length) (x : Ident) (a : D.Value) :
+    restore V (VEnv.set W x a) = VEnv.set W x a := by
+  simp [restore, venv_set_length, h]
+
+/-- A block whose single statement is an assignment: its value, its state, and the environment it
+leaves. The restoration is the identity because `VEnv.set` preserves length. -/
+theorem exec_one_assign_block_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x : String} {e : Expr EVM.Op}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.block [Stmt.assign [x] e]) V' st' .normal) :
+    ∃ v st1,
+      EvalExpr (Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [Stmt.assign [x] e] :: funs)
+        V st e (.vals [v] st1) ∧ V' = VEnv.set V x v ∧ st' = st1 := by
+  cases h with
+  | block hb =>
+      cases hb with
+      | seqCons hassign hrest =>
+          cases hrest with
+          | seqNil =>
+              obtain ⟨v, he, hset⟩ := exec_assign_inv hassign
+              exact ⟨v, _, he, by rw [hset, restore_set_same (D := Bridge.Dialect c g)], rfl⟩
+      | seqStop hassign hne => cases hne rfl
+
+theorem exec_two_add_assigns_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y : String}
+    (hyx : y ≠ x)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.block
+        [Stmt.assign [x] (Expr.builtin Op.add [Expr.var x, Expr.lit (Literal.number 32)]),
+         Stmt.assign [y] (Expr.builtin Op.add [Expr.var y, Expr.lit (Literal.number 32)])])
+      V' st' .normal) :
+    ∃ a b, VEnv.get V x = some a ∧ VEnv.get V y = some b ∧
+      V' = VEnv.set (VEnv.set V x (a + BitVec.ofNat 256 32)) y (b + BitVec.ofNat 256 32) ∧
+      st' = st := by
+  cases h with
+  | block hb =>
+      cases hb with
+      | seqCons h1 hrest =>
+          cases hrest with
+          | seqCons h2 hnil =>
+              cases hnil with
+              | seqNil =>
+                  obtain ⟨v1, he1, hV1⟩ := exec_assign_inv h1
+                  obtain ⟨a, ha, hv1, hst1⟩ := eval_add_var_lit_inv he1
+                  subst hv1
+                  subst hst1
+                  subst hV1
+                  obtain ⟨v2, he2, hV2⟩ := exec_assign_inv h2
+                  obtain ⟨b, hbV, hv2, hst2⟩ := eval_add_var_lit_inv he2
+                  rw [venv_get_set_ne (D := Bridge.Dialect c g) (V := V) (x := x) (y := y)
+                    (v := a + BitVec.ofNat 256 32) hyx] at hbV
+                  subst hv2
+                  subst hst2
+                  refine ⟨a, b, ha, hbV, ?_, rfl⟩
+                  rw [hV2]
+                  exact restore_set_any (D := Bridge.Dialect c g)
+                    (V := V) (W := VEnv.set V x (a + BitVec.ofNat 256 32))
+                    (by rw [venv_set_length (D := Bridge.Dialect c g)]) y _
+          | seqStop h2 hne => cases hne rfl
+      | seqStop h1 hne => cases hne rfl
+
+
+
+/-! ### 7c. TOTALLITY OF THE INSTANCE EXPRESSIONS (no halt, so the body/post end normally) -/
+
+theorem eval_args_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {es : List (Expr EVM.Op)} {st' : EvmState}
+    (hne : ∀ e ∈ es, ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False)
+    (h : EvalArgs (Bridge.Dialect c g) funs V st es (.halt st')) : False := by
+  induction es generalizing st with
+  | nil => cases h
+  | cons e rest ih =>
+      cases h with
+      | argsRestHalt h' =>
+          exact ih (fun e' he' => hne e' (List.mem_cons_of_mem _ he')) h'
+      | argsHeadHalt _ h' => exact hne e (by simp) _ _ h'
+
+theorem eval_mload_var_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mload [Expr.var x]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, rd1] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs =>
+      exact Midfall.LoweringV2.Blocks.TraceReturn.trArgs1_halt_inv hargs
+        (fun _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+
+theorem eval_calldataload_var_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.calldataload [Expr.var x]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, rd1] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs =>
+      exact Midfall.LoweringV2.Blocks.TraceReturn.trArgs1_halt_inv hargs
+        (fun _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+
+theorem eval_mulmod_mload_cdl_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod
+        [Expr.builtin Op.mload [Expr.var "l_i_cptr"],
+          Expr.builtin Op.calldataload [Expr.var "instance_cptr"], Expr.var "r"])
+      (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.builtin Op.mload [Expr.var "l_i_cptr"],
+      Expr.builtin Op.calldataload [Expr.var "instance_cptr"], Expr.var "r"],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl | rfl
+    · exact eval_mload_var_halt_false hh
+    · exact eval_calldataload_var_halt_false hh
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, ter] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs =>
+      exact eval_args_halt_false hne hargs
+
+theorem eval_addmod_instance_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.addmod
+        [Expr.var "instance_eval", Expr.builtin Op.mulmod
+          [Expr.builtin Op.mload [Expr.var "l_i_cptr"],
+            Expr.builtin Op.calldataload [Expr.var "instance_cptr"], Expr.var "r"],
+          Expr.var "r"]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.var "instance_eval", Expr.builtin Op.mulmod
+      [Expr.builtin Op.mload [Expr.var "l_i_cptr"],
+        Expr.builtin Op.calldataload [Expr.var "instance_cptr"], Expr.var "r"],
+      Expr.var "r"],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl | rfl
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+    · exact eval_mulmod_mload_cdl_halt_false hh
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, ter] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs =>
+      exact eval_args_halt_false hne hargs
+
+theorem eval_add_var_lit_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x : String} {k : Nat} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.add [Expr.var x, Expr.lit (Literal.number k)]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.var x, Expr.lit (Literal.number k)],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, bin] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs =>
+      exact eval_args_halt_false hne hargs
+
+theorem exec_one_total_assign_block_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x : String} {e : Expr EVM.Op}
+    {o : Outcome}
+    (hne : ∀ st0 st1, EvalExpr (Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) [Stmt.assign [x] e] :: funs) V st0 e (.halt st1) → False)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.block [Stmt.assign [x] e]) V' st' o) :
+    o = .normal ∧ ∃ v st1,
+      EvalExpr (Bridge.Dialect c g) (hoist (Bridge.Dialect c g) [Stmt.assign [x] e] :: funs)
+        V st e (.vals [v] st1) ∧ V' = VEnv.set V x v ∧ st' = st1 := by
+  cases h with
+  | block hb =>
+      cases hb with
+      | seqCons hassign hrest =>
+          cases hrest with
+          | seqNil =>
+              obtain ⟨v, he, hset⟩ := exec_assign_inv hassign
+              exact ⟨rfl, v, _, he, by rw [hset, restore_set_same (D := Bridge.Dialect c g)], rfl⟩
+      | seqStop hassign hne' =>
+          cases hassign with
+          | assignVal _ _ => cases hne' rfl
+          | assignHalt he => exact (hne _ _ he).elim
+
+theorem exec_two_total_add_assigns_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y : String} {o : Outcome}
+    (hyx : y ≠ x)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.block
+        [Stmt.assign [x] (Expr.builtin Op.add [Expr.var x, Expr.lit (Literal.number 32)]),
+         Stmt.assign [y] (Expr.builtin Op.add [Expr.var y, Expr.lit (Literal.number 32)])])
+      V' st' o) :
+    o = .normal ∧ ∃ a b, VEnv.get V x = some a ∧ VEnv.get V y = some b ∧
+      V' = VEnv.set (VEnv.set V x (a + BitVec.ofNat 256 32)) y (b + BitVec.ofNat 256 32) ∧
+      st' = st := by
+  cases h with
+  | block hb =>
+      cases hb with
+      | seqCons h1 hrest =>
+          cases hrest with
+          | seqCons h2 hnil =>
+              cases hnil with
+              | seqNil =>
+                  obtain ⟨v1, he1, hV1⟩ := exec_assign_inv h1
+                  obtain ⟨a, ha, hv1, hst1⟩ := eval_add_var_lit_inv he1
+                  subst hv1; subst hst1; subst hV1
+                  obtain ⟨v2, he2, hV2⟩ := exec_assign_inv h2
+                  obtain ⟨b, hbV, hv2, hst2⟩ := eval_add_var_lit_inv he2
+                  rw [venv_get_set_ne (D := Bridge.Dialect c g) (V := V) (x := x) (y := y)
+                    (v := a + BitVec.ofNat 256 32) hyx] at hbV
+                  subst hv2; subst hst2
+                  refine ⟨rfl, a, b, ha, hbV, ?_, rfl⟩
+                  rw [hV2]
+                  exact restore_set_any (D := Bridge.Dialect c g)
+                    (V := V) (W := VEnv.set V x (a + BitVec.ofNat 256 32))
+                    (by rw [venv_set_length (D := Bridge.Dialect c g)]) y _
+          | seqStop h2 hne' =>
+              cases h2 with
+              | assignVal _ _ => cases hne' rfl
+              | assignHalt he => exact (eval_add_var_lit_halt_false he).elim
+      | seqStop h1 hne' =>
+          cases h1 with
+          | assignVal _ _ => cases hne' rfl
+          | assignHalt he => exact (eval_add_var_lit_halt_false he).elim
