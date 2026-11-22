@@ -3165,6 +3165,22 @@ def gRots (L : Nat) : List Int :=
 theorem gRots_length (L : Nat) : (gRots L).length = L + 1 := by
   simp [gRots, List.length_map, List.length_range]
 
+theorem gRots_mem {L : Nat} {r : Int} :
+    r ∈ gRots L ↔ ∃ i, i ≤ L ∧ r = -((L : Nat) : Int) + (i : Int) := by
+  unfold gRots
+  rw [List.mem_map]
+  constructor
+  · rintro ⟨a, ha, rfl⟩
+    rw [List.mem_flatMap] at ha
+    obtain ⟨b, hb, hab⟩ := ha
+    rw [List.mem_range] at hb
+    have hba : a = ((b : Nat) : Int) := by simpa using hab
+    exact ⟨b, by omega, by rw [hba]⟩
+  · rintro ⟨i, hi, rfl⟩
+    refine ⟨((i : Nat) : Int), ?_, rfl⟩
+    rw [List.mem_flatMap]
+    exact ⟨i, by rw [List.mem_range]; omega, by simp⟩
+
 theorem gRots_get? (L i : Nat) :
     (gRots L)[i]? = if i ≤ L then some (-((L : Nat) : Int) + (i : Int)) else none := by
   by_cases hi : i ≤ L
@@ -3175,3 +3191,15 @@ theorem gRots_get? (L i : Nat) :
   · rw [if_neg hi]
     rw [List.getElem?_eq_none_iff, gRots_length]
     omega
+
+/-! **T3.9.g SNAPSHOT/INSTANCE GAP (discovered).** `l.instanceEval` is
+`instanceEvalOf vk s2.alg`, which selects one entry of `s2.alg.instanceEvals`; for a public
+column that entry is `computeInnerProduct col slice` (`Verifier.lean:893-920`). The evidence's
+`hW` is stated over a *separate* `inst : Array (Fr p)`. A link
+`s2.alg.instanceEvals.getD 0 #[] = inst` is necessary but NOT sufficient: the selected entry is
+an inner product of `inst` against the `lIS` slice, not `inst i`. The leaf therefore also needs
+the snapshot/query linkage (selected public query at rotation 0, its column is `inst`, and its
+`instanceEvals` entry is `computeInnerProduct inst (slice of lIS)`). This is a leaf premise,
+not a row hypothesis; the evidence statement omitted it. `hn : 1 ≤ numInstances` is also
+needed for the `i = m` inverse (`LagRel` only covers `i < n + m`); without it `l0` can differ
+from `L m` when `x - 1 ≠ 0`. -/
