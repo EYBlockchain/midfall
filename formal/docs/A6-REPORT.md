@@ -1,7 +1,7 @@
 # A6 / ROW.TP — worker report (transcriptParser, t/A6)
 
-**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `2c6789b`** (the previous base was
-`fefaaf9`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
+**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `79f2de3`** (the previous base was
+`2c6789b`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
 (`git log -1`). No push. `formal/baseline` and `/Users/julian/midfall` untouched; no
 frozen/vendor/QVM/Quotient edit.
 
@@ -9,7 +9,7 @@ frozen/vendor/QVM/Quotient edit.
 
 `Rows.lean` is still untouched, so the ROOT cones are unchanged: `lowering_correct` **11**,
 `lowering_sound` **5**, both `assert_axioms` `ok (4 named, 0 native)`.
-`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (1930, 1945, 1960, 1973, 2005) — the
+`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (2142, 2157, 2172, 2185, 2217) — the
 five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT sorry**.
 `gen_sorry.sh` was not run (zero-sorry precondition not met; worker rule W9/DG.2).
 
@@ -56,6 +56,46 @@ The `pcsReads_run_ok` proof is the assembly the earlier report outlined: the two
 squeezes (`tmSqueezeChallenge_run_spec`), the `StateT.run_bind` chain, and the final cursor
 arithmetic `pref.size + 48 + 32*nSets + 48 = t.buffer.size` using `wireOf_size` and
 `frToRepr_size`. It also returns buffer preservation, which is what `assertEmpty` consumes.
+
+## Parser-side read-schedule progress (D1's `prepare_logSlots` is NOT yet landed)
+
+D1 (`t/D1`, merged at `702aebd`/`79f2de3`) has proved the reduction
+`decodeRust_slots_eq_logWidths` and itemised the residual `prepare_logSlots`; it has NOT landed the
+width sequence. I did not duplicate it. The parser-side facts that do not depend on it are now
+PROVED in `TranscriptRows.lean`:
+
+| declaration | role |
+|---|---|
+| `wireMsgs` / `wireMsgs_eq_fold` / `wireMsgs_cons` / `wireMsgs_size` | the `msgWire` fold `transcriptOf` runs, with its byte length as the sum of the per-message wire lengths |
+| `transcriptOf_buffer` | `(transcriptOf E H ms).buffer = wireMsgs E ms` and `.pos = 0` |
+| `tmReadMsg` / `tmRead_msg_run` | one mixed message read from the wired tail: succeeds, advances by `msgWire`'s length, leaves the buffer |
+| **`tmRead_msgs_run`** | **the message-wire engine**: reading a whole `List (Msg …)` one message at a time from `pref ++ wireMsgs E ms ++ rest` succeeds, consumes the list in order, advances by the sum of wire lengths, and leaves the buffer |
+| **`decodeCalldata_slots`** | **the `Decoded` linkage**: `Decoded R cd ms instW inst` gives `ms.map Msg.slot = plan.slots` (via `decodeSlots_map_slot`) |
+
+These are exactly the buffer-tail/decode halves of `snapshotAlgebraRun_total`. The missing half is
+the monadic schedule walk itself: `parseTrace`/`readAlgebra` must be shown to *call the reads in
+the order of `ms`*. That is the parser-side counterpart of D1's residual, and its exact shared
+statement (for D1's common module, not yet in the tree) is:
+
+```
+/-- D1's `prepare_logSlots`, the width sequence of a successful `Verifier.prepare` run. -/
+theorem prepare_logSlots … (hrun : (prepare …).run t0 = .ok (d, t)) :
+  (t.log.toList.drop t0.log.size).map Prod.fst =
+    ((RepackedProofLayoutPlan.fromProofLayout L).slots.map WireSlot.slotWidth)
+```
+
+with the A6-side strengthening needed for totality (the `prepare_logSlots` analogue that also
+tracks success and the cursor):
+
+```
+theorem snapshotAlgebraRun_wire … (hslots : ms.map Msg.slot = plan.slots) :
+  ∃ s2 t2, snapshotAlgebraRun R.E H R.vk inst ms = .ok (s2, t2) ∧
+    t2.buffer = wireMsgs R.E ms ∧ t2.pos = (wireMsgs R.E ms).size
+```
+
+`snapshotAlgebraRun_wire` is strictly stronger than the width half (it includes the run and the
+buffer tail), which is why `snapshotAlgebraRun_total` cannot be derived from `prepare_logSlots`
+alone; D1 and A6 need the same schedule walk, tracked once at widths and once at consumption.
 
 ## SIM.10 obligation 1 — exact residual (NOT landed)
 
@@ -133,7 +173,7 @@ leaves below.
 
 ## The five remaining leaves — all blocked by an UNISSUED card
 
-1. **`g1walk_loop_sem`** (1911). Needs **ROW.TP.3's `common_uncompressed_g1` summary** (QUEUE 95h:
+1. **`g1walk_loop_sem`** (2123). Needs **ROW.TP.3's `common_uncompressed_g1` summary** (QUEUE 95h:
    "ISSUED BY ROW.TP (step 1): no card until ROW.TP merges") **and T3.5** (QUEUE row 78, "after
    T3.1", not run). Exact missing fact: an `EvalExpr` contract for the call
    `common_uncompressed_g1(buf_len, proof_cptr)` over the 13-statement helper body
@@ -143,16 +183,16 @@ leaves below.
    `g1WordsOk cd proof_cptr = true`, env/halted preserved and memory equal outside the 128-byte
    window. The loop then needs the `cdSlice` append/`bytesAt` layer (T3.5) to carry the window over
    `j` frames. Neither is in the tree.
-2. **`tp_computes`** (1938). Needs ROW.TP.3/4/5/2 (`common_word`, `transcript_init`, `squeeze_to`
+2. **`tp_computes`** (2150). Needs ROW.TP.3/4/5/2 (`common_word`, `transcript_init`, `squeeze_to`
    summaries; the three scalar loops; the `tpEvents` fold; the walk loop) — unissued. ROW.TP.6
    (this file) is now discharged and is no longer a blocker.
-3. **`tp_agrees`** (1955). Needs **SIM.10 `xcript_total`**, still absent (`grep -rn xcript_total
+3. **`tp_agrees`** (2167). Needs **SIM.10 `xcript_total`**, still absent (`grep -rn xcript_total
    formal/Midfall` prints only `WideningStages.lean` prose). ROW.TP.6 is now discharged; the
    `MirrorAt` half of `TpPost` maps to `StageInv`'s `Mirror .transcript` by `rfl`.
-4. **`tp_poison`** (1968). Needs ROW.TP.4's three scalar loops and ROW.TP.2's walk loops
+4. **`tp_poison`** (2180). Needs ROW.TP.4's three scalar loops and ROW.TP.2's walk loops
    (end-normally/revert lemmas whose preconditions do not read the loops' computed values) —
    unissued.
-5. **`tp_blockProgS`** (2000). Needs every child above plus the walk-loop normal arm.
+5. **`tp_blockProgS`** (2212). Needs every child above plus the walk-loop normal arm.
 
 No row/bundle/root/`ValidV3` hypothesis was added; no false/vacuous statement was found.
 

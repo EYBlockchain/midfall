@@ -841,6 +841,218 @@ theorem pcsReads_run_ok {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁
     simp only [ByteArray.size_append, hwidth fCom, hwidth pi, wireOf_size, hlen]
   · rw [hb7, hb6, hb5, hb4, hb3, hb2, hb1]
 
+/-- The wire encoding of a message list, in message order (the fold `transcriptOf` runs). -/
+def wireMsgs {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) : List (Msg (Fr p) G₁) → Bytes
+  | [] => Bytes.empty
+  | m :: ms => msgWire E m ++ wireMsgs E ms
+
+theorem bytes_append_empty_local (b : Bytes) : b ++ Bytes.empty = b := ByteArray.append_empty
+theorem bytes_empty_append_local (b : Bytes) : Bytes.empty ++ b = b := ByteArray.empty_append
+
+theorem foldl_wireMsgs_append {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (ms : List (Msg (Fr p) G₁)) (acc : Bytes) :
+    ms.foldl (fun acc m => acc ++ msgWire E m) acc =
+      acc ++ ms.foldl (fun acc m => acc ++ msgWire E m) Bytes.empty := by
+  induction ms generalizing acc with
+  | nil => rw [List.foldl_nil, List.foldl_nil, bytes_append_empty_local]
+  | cons m ms ih =>
+      rw [List.foldl_cons, List.foldl_cons, ih (acc ++ msgWire E m),
+        ih (Bytes.empty ++ msgWire E m), bytes_empty_append_local, ByteArray.append_assoc]
+
+/-- `wireMsgs` is the body `transcriptOf` folds. -/
+theorem wireMsgs_eq_fold {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (ms : List (Msg (Fr p) G₁)) :
+    wireMsgs E ms = ms.foldl (init := Bytes.empty) (fun acc m => acc ++ msgWire E m) := by
+  induction ms with
+  | nil => rfl
+  | cons m ms ih =>
+      rw [wireMsgs, List.foldl_cons, foldl_wireMsgs_append, ih, bytes_empty_append_local]
+
+theorem wireMsgs_cons {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (m : Msg (Fr p) G₁) (ms : List (Msg (Fr p) G₁)) :
+    wireMsgs E (m :: ms) = msgWire E m ++ wireMsgs E ms := rfl
+
+theorem wireMsgs_size {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (ms : List (Msg (Fr p) G₁)) :
+    (wireMsgs E ms).size = (ms.map fun m => (msgWire E m).size).sum := by
+  induction ms with
+  | nil => rfl
+  | cons m ms ih =>
+      rw [wireMsgs_cons, ByteArray.size_append, ih, List.map_cons, List.sum_cons]
+
+/-- Read one message and discard its value (only consumption matters). -/
+def tmReadMsg {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) : Msg (Fr p) G₁ → TranscriptM Unit
+  | .g1 _ => (tmRead (hashableG1 E.g1) : TranscriptM G₁) >>= fun _ => pure ()
+  | .fr _ => (tmRead (hashableFr (p := p)) : TranscriptM (Fr p)) >>= fun _ => pure ()
+
+/-- One message read from the wired tail. -/
+theorem tmRead_msg_run {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (t : Midfall.Halo2.Transcript) (pref : Bytes)
+    (m : Msg (Fr p) G₁) (rest : Bytes)
+    (hbuf : t.buffer = pref ++ msgWire E m ++ rest) (hpos : t.pos = pref.size)
+    (hp : p ≤ 2 ^ 256)
+    (henc : ∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth) :
+    ∃ t', (tmReadMsg E m).run t = .ok ((), t') ∧
+      t'.pos = pref.size + (msgWire E m).size ∧ t'.buffer = t.buffer := by
+  cases m with
+  | g1 Q =>
+      obtain ⟨t', hrun, hpos', hbuf'⟩ :=
+        tmRead_g1_run E.g1 t pref rest Q hbuf hpos henc hwidth
+      refine ⟨t', ?_, ?_, hbuf'⟩
+      · show ((tmRead (hashableG1 E.g1)) >>= fun _ => pure ()).run t = .ok ((), t')
+        simp only [StateT.run_bind, StateT.run_pure]
+        rw [hrun]
+        simp only [Except.bind, Except.pure, bind, pure]
+      · rw [hpos']
+        show pref.size + g1CompressedWidth = pref.size + (msgWire E (Msg.g1 Q)).size
+        simp only [msgWire]
+        rw [hwidth]
+  | fr x =>
+      have hbt : bytesTake t.buffer t.pos 32 = some (frToRepr (p := p) x) := by
+        rw [hbuf, hpos, ← Nat.add_zero (ByteArray.size pref), ByteArray.append_assoc]
+        simp only [msgWire]
+        rw [bytesTake_append_right pref (frToRepr (p := p) x ++ rest) 0 32 (by
+          rw [ByteArray.size_append, frToRepr_size]; omega)]
+        rw [bytesTake_append_left (frToRepr (p := p) x) rest 0 32 (by
+          rw [frToRepr_size])]
+        rw [← frToRepr_size x, bytesTake_whole]
+      obtain ⟨t', hrun, hpos', hbuf'⟩ :=
+        tmRead_run_ok (hashableFr (p := p)) t (frToRepr (p := p) x) x hbt
+          (by rw [hashableFr_readRepr?]; exact frOfRepr_frToRepr hp x)
+      refine ⟨t', ?_, ?_, hbuf'⟩
+      · show ((tmRead (hashableFr (p := p))) >>= fun _ => pure ()).run t = .ok ((), t')
+        simp only [StateT.run_bind, StateT.run_pure]
+        rw [hrun]
+        simp only [Except.bind, Except.pure, bind, pure]
+      · rw [hpos', hashableFr_width, hpos]
+        show pref.size + 32 = pref.size + (msgWire E (Msg.fr x)).size
+        simp only [msgWire]
+        rw [frToRepr_size]
+
+/-- **THE MESSAGE-WIRE ENGINE.** Reading a decoded message list one message at a time from
+    the exact wired tail succeeds, consumes the list in order, advances the cursor by the
+    wire length, and leaves the buffer alone. -/
+theorem tmRead_msgs_run {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (ms : List (Msg (Fr p) G₁)) (t : Midfall.Halo2.Transcript) (pref rest : Bytes),
+      t.buffer = pref ++ wireMsgs E ms ++ rest →
+      t.pos = pref.size → p ≤ 2 ^ 256 →
+      (∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q) →
+      (∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth) →
+      ∃ (us : List Unit) (t' : Midfall.Halo2.Transcript),
+        (ms.mapM (tmReadMsg E)).run t = .ok (us, t') ∧ us.length = ms.length ∧
+        t'.pos = pref.size + (ms.map fun m => (msgWire E m).size).sum ∧
+        t'.buffer = t.buffer := by
+  intro ms
+  induction ms with
+  | nil =>
+      intro t pref rest hbuf hpos hp henc hwidth
+      refine ⟨[], t, ?_, ?_, ?_, rfl⟩
+      · rfl
+      · rfl
+      · rw [hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+  | cons m ms ih =>
+      intro t pref rest hbuf hpos hp henc hwidth
+      have hbuf' : t.buffer = pref ++ msgWire E m ++ (wireMsgs E ms ++ rest) := by
+        rw [hbuf, wireMsgs_cons]
+        simp only [ByteArray.append_assoc]
+      obtain ⟨t1, hrun1, hpos1, hbuf1⟩ :=
+        tmRead_msg_run E t pref m (wireMsgs E ms ++ rest) hbuf' hpos hp henc hwidth
+      have hbuf1' : t1.buffer = (pref ++ msgWire E m) ++ wireMsgs E ms ++ rest := by
+        rw [hbuf1, hbuf']
+        simp only [ByteArray.append_assoc]
+      have hpos1' : t1.pos = (pref ++ msgWire E m).size := by
+        rw [hpos1, ByteArray.size_append]
+      obtain ⟨us, t2, hrun2, hlen, hpos2, hbuf2⟩ :=
+        ih t1 (pref ++ msgWire E m) rest hbuf1' hpos1' hp henc hwidth
+      refine ⟨() :: us, t2, ?_, ?_, ?_, hbuf2.trans hbuf1⟩
+      · simp only [List.mapM_cons, StateT.run_bind, StateT.run_pure]
+        rw [hrun1]
+        simp only [Except.bind, Except.pure, bind, pure]
+        rw [hrun2]
+      · simp only [List.length_cons, hlen]
+      · rw [hpos2, ByteArray.size_append, List.map_cons, List.sum_cons]
+        omega
+
+/-- `transcriptOf` starts at cursor 0 with exactly `wireMsgs` in the buffer. -/
+theorem transcriptOf_buffer {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (ms : List (Msg (Fr p) G₁)) :
+    (transcriptOf E H ms).buffer = wireMsgs E ms ∧ (transcriptOf E H ms).pos = 0 := by
+  refine ⟨?_, rfl⟩
+  unfold transcriptOf
+  rw [wireMsgs_eq_fold]
+  rfl
+
+/-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
+    slots: the calldata side of the read-schedule shape, independent of D1's
+    `prepare_logSlots`. -/
+theorem decodeCalldata_slots {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    {R : Render p G₁ G₂ Gₜ} {cd : Bytes} {ms : List (Msg (Fr p) G₁)}
+    {instW : Array Word256} {inst : Array (Fr p)}
+    (h : Decoded R cd ms instW inst) :
+    ms.map Msg.slot = (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots := by
+  obtain ⟨hdec, -⟩ := h
+  unfold decodeCalldata at hdec
+  simp at hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec
+  obtain ⟨⟨ms0, cur0⟩, hslots, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  simp only [Option.some.injEq, Prod.mk.injEq] at hdec
+  obtain ⟨hmseq, -⟩ := hdec
+  subst hmseq
+  exact decodeSlots_map_slot R.E.g1 cd _ _ ms0 cur0 hslots
+
 /-- **SIM.10 OBLIGATION 3, COMPOSED.** Once the algebra prefix succeeds on the exact wire
     tail, `pcsReads` and `assertEmpty` finish: the whole transcript-only run exists. The
     remaining input is obligation 1 (`snapshotAlgebraRun` on `transcriptOf E H ms`). -/
