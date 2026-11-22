@@ -29,21 +29,23 @@ both PCS truncation arms and the 32-byte store/read bridge proved, A6's `tp_even
 lemmas merged, and the B4 refutation/inhabitation split landed. All quick gates green; the full
 gate last ran at `d0bf226`.
 
-## 2. In flight (13 lanes)
+## 2. In flight (4-agent cap; critical path only)
 
-- **A4/lagrange** (`t/A4`): T3.9.a/b/c/d/e PROVED; next `lag_agrees` at D-GATE2's corrected
-  exponent `omegaInv ^ numNegLagranges`, then T3.9.h and the lag row glue.
-- **A5/helpers** (`t/A5`): `bi_forward_loop` and `bi_backward_loop` PROVED; `batch_invert_summary`
-  needs the six-store modexp frame, the honest staticcall response and the tail (30-33). A9's
-  `readBytes_storeWord_32` is merged and is the bridge.
-- **A6/transcriptParser** (`t/A6`): `tp_blockSim` glue, `inline_g1WalkLoop`, the PG-PARSER bridge,
-  `tp_events_slots` and `commonG1_lookup` PROVED. Five TP leaves remain; the branch is working
-  SIM.10 `xcript_total` first, then ROW.TP.3/T3.5. WIP (would add non-ROOT rows).
-- **A9/PCS** (`t/A9`): both `pcs_loop_false` and `pcs_loop_true` merged; `scalar_inv` bridge in
-  flight (six-store modexp frame, fail/staticcall, read-back).
-- **A11/finalPairing** (`t/A11`): proving `fp_pairing_algebra`, `ec_pairing_contract`,
-  `fp_stmt_steps`, deriving `fpG2Slots` from `ValidV3` (`hR.env.nG2/sG2` + `hR.payload.g2Base/negSG2`),
-  then wiring both rows.
+- **ACTIVE 1 — A5/helpers** (`t/A5`): `bi_forward_loop` and `bi_backward_loop` PROVED;
+  `batch_invert_summary` in flight.
+- **ACTIVE 2 — A6/transcriptParser** (`t/A6`): SIM.10 `xcript_total` first, then ROW.TP.3/T3.5.
+- **ACTIVE 3 — A9/PCS** (`t/A9`): six-store `modexpInvFrame` equality and the `scalar_inv`
+  summary.
+- **ACTIVE 4 — A11/finalPairing** (`t/A11`): the three groups + `fpG2Slots_of_valid`, then the two
+  rows.
+- **PAUSED until a slot frees** (in this order): A4 (`lag_agrees`/T3.9.h/rows; needs A5),
+  QVMHDR (`go_drop_ok`; the shift is already proved at `7225a47`), QVMGREEN (compaction),
+  A12 (per-block liveness), D1 (`end_to_end`), C0 (W glue), D2 (certified generator), B4
+  (F1 inhabitant), B3 (codec laws), B5 (artifacts), C1 (F2), B1 (gates), B6 (`Done`).
+- **A4/lagrange** (`t/A4`): T3.9.a/b/c/d/e PROVED; paused; `lag_agrees` at D-GATE2's corrected
+  exponent and T3.9.h remain.
+- **QVMHDR / QVMGREEN**: the MODARITH7 header is PROVED (`7225a47`); both paused, the existing
+  QVM agent keeps the `q_blockSim`/`q_blockProgS` lane.
 - **A12/totality** (`t/A12`): per-block liveness from the proved vk/tr progress rows; the root
   `block_live` stays the single registered hole until the other five progress rows land.
 - **QVM** (`t/MODELF`, `t/TERMFOLD`, other agent): fixed-segment/spill/validator lane.
