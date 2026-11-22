@@ -302,6 +302,85 @@ theorem exec_mstore_normal {c : ExternalCalls} {g : ExternalGas}
           | argsRestHalt h => exact (trArgs1_halt_inv h (fun _ hh => hval _ _ hh)).elim
           | argsHeadHalt _ h' => exact (haddr _ _ h').elim
 
+/-- **ONE `mstore` STEP, WITH ITS EXPECTED ADDRESS AND VALUE.** A normal run updates only the
+    memory to `storeWord st.memory aExp.toNat vExp`; the address and value expressions evaluate to
+    the expected words and leave the state alone. -/
+theorem exec_mstore_state {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) {V V1 : VEnv (Bridge.Dialect c g)}
+    {st st1 : EvmState} {addr val : Expr EVM.Op} {aExp vExp : U256}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.builtin EVM.Op.mstore [addr, val])) V1 st1 .normal)
+    (hval_st : ∀ (stV : EvmState) (v : U256),
+      EvalExpr (Bridge.Dialect c g) funs V st val (.vals [v] stV) → stV = st)
+    (haddr_st : ∀ (st0 stA : EvmState) (a : U256),
+      EvalExpr (Bridge.Dialect c g) funs V st0 addr (.vals [a] stA) → stA = st0)
+    (haddr_eq : ∀ (stA : EvmState) (a : U256),
+      EvalExpr (Bridge.Dialect c g) funs V st addr (.vals [a] stA) → a = aExp)
+    (hval_eq : ∀ (stV : EvmState) (v : U256),
+      EvalExpr (Bridge.Dialect c g) funs V st val (.vals [v] stV) → v = vExp) :
+    V1 = V ∧ st1.memory = storeWord st.memory aExp.toNat vExp ∧
+      st1.env = st.env ∧ st1.halted = st.halted := by
+  cases h with
+  | exprStmt he =>
+      cases he with
+      | builtinOk hargs hbi =>
+          cases hargs with
+          | argsCons hargsVal hargsAddr =>
+              cases hargsVal with
+              | argsCons hnil hval =>
+                  cases hnil with
+                  | argsNil =>
+                      have hvst := hval_st _ _ hval
+                      rw [hvst] at hargsAddr
+                      have ha := haddr_eq _ _ hargsAddr
+                      have hv := hval_eq _ _ hval
+                      subst ha
+                      subst hv
+                      have hast := haddr_st _ _ _ hargsAddr
+                      rw [hast] at hbi
+                      simp [Bridge.Dialect, builtinWithExternal, stepOp] at hbi
+                      subst st1
+                      exact ⟨rfl, rfl, rfl, rfl⟩
+
+theorem eval_lit_eq (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st' : EvmState} (n : Nat) {a : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (Literal.number n)) (.vals [a] st')) :
+    a = BitVec.ofNat 256 n ∧ st' = st := by
+  cases h
+  exact ⟨rfl, rfl⟩
+
+theorem eval_var_eq (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st' : EvmState} (x : String) (xv : U256) (hx : VEnv.get V x = some xv) {a : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.var x) (.vals [a] st')) :
+    a = xv ∧ st' = st := by
+  cases h with
+  | var hget =>
+      have ha : a = xv := Option.some.inj (hget.symm.trans hx)
+      exact ⟨ha, rfl⟩
+
+theorem eval_sub_var_lit (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st' : EvmState} (x : String) (n : Nat) (pv : U256) (hp : VEnv.get V x = some pv)
+    {a : U256} (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.sub [Expr.var x, Expr.lit (Literal.number n)]) (.vals [a] st')) :
+    a = pv - BitVec.ofNat 256 n ∧ st' = st := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hnil hhead =>
+          cases hnil with
+          | argsCons hnil2 htail =>
+              cases hnil2 with
+              | argsNil =>
+                  cases htail with
+                  | lit =>
+                      cases hhead with
+                      | var hget =>
+                          rename_i v
+                          have hv : v = pv := Option.some.inj (hget.symm.trans hp)
+                          subst hv
+                          simp [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+                          exact ⟨hbi.1.symm, hbi.2.symm⟩
+
 #assert_axioms Midfall.LoweringV3.ScalarInv.mxMem_frame
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.ScalarInv.fail_call_reverts
