@@ -1110,6 +1110,240 @@ theorem userPhasesOf_advice (meta_ : ConstraintSystemMeta) (L : ProofCalldataLay
       (List.zip meta_.numUserAdvices meta_.numUserChallenges) 0 ups h i ph s hph
       (by simpa using hs)
 
+/-- The two per-phase lists `fromConstraintSystem` builds both come from `remapping numPhase`, so
+    they have the same length. The final `if` is the I-6 fixed-eval check and the `match` is
+    `plan.validate`; both are gated off by the `Except.ok` result, so `p` is the record. -/
+theorem fromConstraintSystem_phase_lengths {F : Type} [BEq F] (feat : Features)
+    (cs : ConstraintSystem F) (nb : Nat) {p : ProtocolPlan}
+    (h : ProtocolPlan.fromConstraintSystem feat cs nb = .ok p) :
+    p.numUserAdvices.length = p.numUserChallenges.length := by
+  unfold ProtocolPlan.fromConstraintSystem at h
+  obtain ⟨csDegree, _, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  obtain ⟨lk, _, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  obtain ⟨⟨adv, advIdx⟩, hAdv, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  obtain ⟨⟨ch, chIdx⟩, hCh, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  obtain ⟨bl, _, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  dsimp only [] at h
+  split at h
+  all_goals try cases h
+  split at h
+  all_goals try cases h
+  rw [remapping_nums_length _ _ hAdv, remapping_nums_length _ _ hCh]
+
+/-- The same for the assembled meta. -/
+theorem ConstraintSystemMeta.new_phase_lengths {F : Type} [BEq F] (feat : Features)
+    (cs : ConstraintSystem F) (nb : Nat) {m : ConstraintSystemMeta}
+    (h : ConstraintSystemMeta.new feat cs nb = .ok m) :
+    m.numUserAdvices.length = m.numUserChallenges.length := by
+  unfold ConstraintSystemMeta.new at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨p, hp, h⟩ := except_bind_ok _ _ h
+  injection h with hm
+  rw [← hm]
+  exact fromConstraintSystem_phase_lengths feat cs nb hp
+
+/-- `sumNat` ignores the zero entries: the schedule's `!= 0` guards do not change a group sum. -/
+theorem sumNat_filter_ne_zero (l : List Nat) :
+    sumNat (l.filter (fun n => n != 0)) = sumNat l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+      by_cases hx : x = 0
+      · subst hx
+        simp [sumNat_cons, ih]
+      · have hx' : (x != 0) = true := by simp [hx]
+        simp [sumNat_cons, hx', ih]
+
+/-- A flatMap of `replicate` counts is one `replicate` of the sum. -/
+theorem flatMap_replicate_eq {α β : Type} (l : List α) (f : α → Nat) (x : β) :
+    l.flatMap (fun a => List.replicate (f a) x) =
+      List.replicate (sumNat (l.map f)) x := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+      rw [List.flatMap_cons, ih, List.map_cons, sumNat_cons]
+      simp only [List.replicate_append_replicate]
+
+/-- The per-lookup pair of walks as one `replicate`. -/
+theorem flatMap_lookups_replicate {β : Type} (l : List ProofLookupCommitmentsLayout) (x : β) :
+    l.flatMap (fun lk => List.replicate (lk.helpers.itemCount) x ++
+        List.replicate (lk.accumulator.itemCount) x) =
+      List.replicate (sumNat (l.map (fun lk =>
+        lk.helpers.itemCount + lk.accumulator.itemCount))) x := by
+  induction l with
+  | nil => rfl
+  | cons lk rest ih =>
+      rw [List.flatMap_cons, ih, List.map_cons, sumNat_cons]
+      simp only [List.replicate_append_replicate]
+
+/-- `g1Bytes` is 128, the width every G1 section uses. -/
+theorem generator_g1Bytes_eq : Midfall.Generator.g1Bytes = 128 := rfl
+
+/-- `wordBytes` is 32, the width every scalar section uses. -/
+theorem generator_wordBytes_eq : Midfall.Generator.wordBytes = 32 := rfl
+
+/-- The advice walks as one `replicate`: the phase table and the layout's advice sections are
+    aligned index for index, and each section's byte length is its item count times 128. -/
+theorem flatMap_advice_replicate (ups : List UserPhase) (adv : List ProofSection)
+    (hlen : ups.length = adv.length)
+    (hbytes : ∀ (i : Nat) (ph : UserPhase) (s : ProofSection), ups[i]? = some ph →
+      adv[i]? = some s → ph.adviceBytes = s.byteLen ∧ s.byteLen = s.itemCount * 128) :
+    ups.flatMap (fun ph => List.replicate (ph.adviceBytes / 128) WireSlot.g1) =
+      List.replicate (sumNat (adv.map (fun s => s.itemCount))) WireSlot.g1 := by
+  induction ups generalizing adv with
+  | nil =>
+      cases adv with
+      | nil => rfl
+      | cons s rest => simp at hlen
+  | cons ph rest ih =>
+      cases adv with
+      | nil => simp at hlen
+      | cons s advRest =>
+          rw [List.flatMap_cons, List.map_cons, sumNat_cons]
+          have h0 := hbytes 0 ph s (by simp) (by simp)
+          have hdiv : s.byteLen / 128 = s.itemCount := by
+            rw [h0.2, Nat.mul_div_cancel _ (by decide : 0 < 128)]
+          have hlen' : rest.length = advRest.length := by simpa using hlen
+          have hbytes' : ∀ (i : Nat) (ph : UserPhase) (s : ProofSection),
+              rest[i]? = some ph → advRest[i]? = some s →
+              ph.adviceBytes = s.byteLen ∧ s.byteLen = s.itemCount * 128 := by
+            intro i ph' s' hp hs
+            exact hbytes (i + 1) ph' s' (by simpa using hp) (by simpa using hs)
+          rw [h0.1, hdiv, ih advRest hlen' hbytes']
+          simp only [List.replicate_append_replicate]
+
+/-- `fromConstraintSystem`'s plan has `numLookups = lookupChunks.length` by construction. -/
+theorem fromConstraintSystem_numLookups {F : Type} [BEq F] (feat : Features)
+    (cs : ConstraintSystem F) (nb : Nat) {p : ProtocolPlan}
+    (h : ProtocolPlan.fromConstraintSystem feat cs nb = .ok p) :
+    p.numLookups = p.lookupChunks.length := by
+  unfold ProtocolPlan.fromConstraintSystem at h
+  obtain ⟨csDegree, _, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  obtain ⟨lk, _, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  obtain ⟨⟨adv, advIdx⟩, hAdv, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  obtain ⟨⟨ch, chIdx⟩, hCh, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  obtain ⟨bl, _, h⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h
+  dsimp only [] at h
+  split at h
+  all_goals try cases h
+  split at h
+  all_goals try cases h
+  rfl
+
+/-- `ConstraintSystemMeta.new` copies six fields from the protocol verbatim. -/
+theorem ConstraintSystemMeta.new_protocol_fields {F : Type} [BEq F] (feat : Features)
+    (cs : ConstraintSystem F) (nb : Nat) {m : ConstraintSystemMeta}
+    (h : ConstraintSystemMeta.new feat cs nb = .ok m) :
+    m.numLookups = m.protocol.numLookups ∧ m.lookupChunks = m.protocol.lookupChunks ∧
+      m.numPermutationZs = m.protocol.numPermutationZs ∧
+      m.numTrashcans = m.protocol.numTrashcans ∧
+      m.numUserAdvices = m.protocol.numUserAdvices ∧
+      m.numUserChallenges = m.protocol.numUserChallenges ∧
+      m.numQuotients = m.protocol.numQuotients := by
+  unfold ConstraintSystemMeta.new at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨p, hp, h⟩ := except_bind_ok _ _ h
+  injection h with hm
+  rw [← hm]
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- The protocol of a `ConstraintSystemMeta.new` result carries the phase lengths, so the meta's
+    two per-phase lists have equal length AND `numLookups = lookupChunks.length`. -/
+theorem ConstraintSystemMeta.new_numLookups {F : Type} [BEq F] (feat : Features)
+    (cs : ConstraintSystem F) (nb : Nat) {m : ConstraintSystemMeta}
+    (h : ConstraintSystemMeta.new feat cs nb = .ok m) :
+    m.numLookups = m.lookupChunks.length := by
+  unfold ConstraintSystemMeta.new at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨p, hp, h⟩ := except_bind_ok _ _ h
+  injection h with hm
+  rw [← hm]
+  exact fromConstraintSystem_numLookups feat cs nb hp
+
+/-- A `replicate` guard is vacuous: the zero case is the empty list. -/
+theorem tp_guard_replicate {α : Type} (n : Nat) (x : α) :
+    (if n != 0 then List.replicate n x else []) = List.replicate n x := by
+  by_cases h : n = 0
+  · subst h
+    simp
+  · have h' : (n != 0) = true := by simp [h]
+    rw [if_pos h']
+
+/-- A flatMap guard is vacuous when the guard is false only on the empty list. -/
+theorem tp_guard_flatMap {α β : Type} (n : Nat) (l : List α) (f : α → List β)
+    (h : n ≠ 0 ∨ l = []) :
+    (if n != 0 then l.flatMap f else []) = l.flatMap f := by
+  rcases h with h | rfl
+  · have h' : (n != 0) = true := by simp [h]
+    rw [if_pos h']
+  · simp
+
+/-- A flatMap/replicate guard is vacuous when the guard is false only on the empty list. -/
+theorem tp_guard_replicate_of_empty {α β : Type} (g : Nat) (l : List α) (f : α → Nat) (x : β)
+    (h : g ≠ 0 ∨ l = []) :
+    (if g != 0 then List.replicate (sumNat (l.map f)) x else []) =
+      List.replicate (sumNat (l.map f)) x := by
+  rcases h with h | rfl
+  · rw [if_pos (by simp [h])]
+  · simp [sumNat_nil]
+
+/-- The per-lookup walks with the raw `byteLen / 128` counts. -/
+theorem flatMap_lookups_byteLen {β : Type} (l : List ProofLookupCommitmentsLayout) (x : β)
+    (h : ∀ lk, lk ∈ l → lk.helpers.byteLen / 128 = lk.helpers.itemCount ∧
+      lk.accumulator.byteLen / 128 = lk.accumulator.itemCount) :
+    l.flatMap (fun lk => List.replicate (lk.helpers.byteLen / 128) x ++
+        List.replicate (lk.accumulator.byteLen / 128) x) =
+      List.replicate (sumNat (l.map (fun lk =>
+        lk.helpers.itemCount + lk.accumulator.itemCount))) x := by
+  induction l with
+  | nil => rfl
+  | cons lk rest ih =>
+      rw [List.flatMap_cons, List.map_cons, sumNat_cons]
+      have h0 := h lk (by simp)
+      rw [h0.1, h0.2, ih (fun x hx => h x (by simp [hx]))]
+      simp only [List.replicate_append_replicate]
+
+/-- The sum of the per-lookup `[helpers, accumulator]` pair list. -/
+theorem sumNat_flatMap_pair (l : List ProofLookupCommitmentsLayout) :
+    sumNat (l.flatMap (fun lk => [lk.helpers.itemCount, lk.accumulator.itemCount])) =
+      sumNat (l.map (fun lk => lk.helpers.itemCount + lk.accumulator.itemCount)) := by
+  induction l with
+  | nil => rfl
+  | cons lk rest ih =>
+      rw [List.flatMap_cons, List.map_cons, sumNat_append, ih]
+      have hpair : sumNat [lk.helpers.itemCount, lk.accumulator.itemCount] =
+          lk.helpers.itemCount + lk.accumulator.itemCount := by
+        rw [sumNat_cons, sumNat_cons, sumNat_nil]
+        omega
+      rw [hpair, sumNat_cons]
+
+/-- The sum of the trash group, present or absent. -/
+theorem sumNat_trash_if (g : List Nat) (n : Nat) :
+    sumNat (if n != 0 then g ++ [n] else g) = sumNat g + n := by
+  by_cases h : n = 0
+  · subst h
+    simp [sumNat_append, sumNat_cons, sumNat_nil]
+  · have h' : (n != 0) = true := by simp [h]
+    simp [h', sumNat_append, sumNat_cons, sumNat_nil]
+
+/-- The sum of a guarded cons. -/
+theorem sumNat_cons_guard (n : Nat) (l : List Nat) :
+    sumNat (if n != 0 then n :: l else l) = n + sumNat l := by
+  by_cases h : n = 0
+  · subst h
+    simp [sumNat_nil]
+  · have h' : (n != 0) = true := by simp [h]
+    simp [h', sumNat_cons]
+
+/-- The sum of the one-element trash group. -/
+theorem sumNat_guard_singleton (n : Nat) :
+    sumNat (if n != 0 then [n] else []) = n := by
+  by_cases h : n = 0
+  · subst h
+    simp [sumNat_nil]
+  · have h' : (n != 0) = true := by simp [h]
+    simp [h', sumNat_cons, sumNat_nil]
+
 /-! ## 5. THE NAMED LEAVES -/
 
 /-- Grouping two adjacent `replicate`s under an associative tail. -/
@@ -1171,21 +1405,142 @@ theorem tpEvents_filterMap_eq (numInstances : Nat) (userPhases : List UserPhase)
     `rawSlots` walks. LEAF ROW.TP.6 (ALG, list induction, no Yul). Evidence :706-715, statement
     verbatim with `R.Valid` -> `ValidV3 R`.
 
-    PG-PARSER IS NOW PROVED, NOT A GAP: `tp_planFacts` (the plan's meta and layout are the
-    generator's, and the model's parser facts are computed from them), `tp_fromProtocol` (every
-    section's count, width and byte length) and `userPhasesOf_advice` (the phase table index for
-    index) are all theorem of `ValidV3.generated` alone. WHAT IS LEFT, exactly: the two per-phase
-    lists `meta_.numUserAdvices` and `meta_.numUserChallenges` both come from
-    `ProtocolPlan.remapping numPhase` at the same `numPhase`, so they have equal length
-    (`remapping_nums_length` is proved); extracting that equation from
-    `ProtocolPlan.fromConstraintSystem` is the remaining peel, and then the `slots` sum algebra
-    (`flatMap_replicate_eq`-style) finishes the leaf. The F1 witness and the falsifier are
-    `docs/plans/V3-evidence/lean/soundness/GeneratorRowsWitness.lean:124,129`; the generic W12
-    pair is section 5 below. -/
+    **PROVED.** PG-PARSER is not a gap: `tp_planFacts` (the plan's meta and layout are the
+    generator's and the model's parser facts are computed from them), `tp_fromProtocol` (every
+    section's count, width and byte length), `userPhasesOf_advice` (the phase table index for
+    index), the `fromConstraintSystem`/`remapping` phase-length projection
+    (`fromConstraintSystem_phase_lengths`, `ConstraintSystemMeta.new_phase_lengths`), and the
+    schedule algebra (`tpEvents_filterMap_eq`, `flatMap_advice_replicate`,
+    `flatMap_lookups_byteLen`, `sumNat_filter_ne_zero`, `sumNat_trash_if`, the guard lemmas).
+    The F1 witness/falsifier pair is `tp_events_slots_witness_nonempty` /
+    `tp_events_slots_falsifier_not_every_event_reads_a_slot` (section 5 below). -/
 theorem tp_events_slots (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
     R.tpEvents.filterMap TEv.slot? =
       (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots := by
-  sorry
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hL, hc1, hc2, hc3, hc4, hc5, hc6,
+    hc7, hc8, hup, huser, hnInst, htrunc, hnLook, hnPerm, hnTrash, hLH⟩ := tp_planFacts hR
+  have hfacts := tp_fromProtocol hL
+  have hupAdv := userPhasesOf_advice meta_ L hup
+  have hnewProtocol := ConstraintSystemMeta.new_protocol_fields Features.solidity R.vk.cs
+    R.cfg.numCommittedInstances hraw
+  have hnewLook := ConstraintSystemMeta.new_numLookups Features.solidity R.vk.cs
+    R.cfg.numCommittedInstances hraw
+  have hnewLen := ConstraintSystemMeta.new_phase_lengths Features.solidity R.vk.cs
+    R.cfg.numCommittedInstances hraw
+  have hmetaLen : meta_.numUserAdvices.length = meta_.numUserChallenges.length := by
+    rw [hc7, hc8]
+    exact hnewLen
+  have hrawProtoLen :
+      rawMeta.protocol.numUserAdvices.length = rawMeta.protocol.numUserChallenges.length := by
+    rw [← hnewProtocol.2.2.2.2.1, ← hnewProtocol.2.2.2.2.2.1]
+    exact hnewLen
+  have hlenChallenges : meta_.numUserChallenges.length = meta_.protocol.numUserAdvices.length := by
+    rw [hc8, hnewProtocol.2.2.2.2.2.1, hc1]
+    exact hrawProtoLen.symm
+  have hupsLen : userPhases.length = L.advicePhases.length := by
+    rw [hupAdv.1, List.length_zip, hmetaLen, hlenChallenges, ← hfacts.adviceLen,
+      Nat.min_self]
+  -- the schedule's guards agree with the section counts
+  have hmetaLook : meta_.numLookups = meta_.protocol.numLookups := by
+    rw [hc2, hnewProtocol.1, hc1]
+  have hmetaPerm : meta_.numPermutationZs = meta_.protocol.numPermutationZs := by
+    rw [hc4, hnewProtocol.2.2.1, hc1]
+  have hmetaTrash : meta_.numTrashcans = meta_.protocol.numTrashcans := by
+    rw [hc5, hnewProtocol.2.2.2.1, hc1]
+  have hGuardLM : meta_.numLookups = L.lookupMultiplicities.itemCount := by
+    rw [hmetaLook, ← hfacts.lookupM]
+  have hGuardPerm : meta_.numPermutationZs = L.permutationProducts.itemCount := by
+    rw [hmetaPerm, ← hfacts.permZ]
+  have hGuardTrash : meta_.numTrashcans = L.trash.itemCount := by
+    rw [hmetaTrash, ← hfacts.trash]
+  -- the section widths
+  have hLMdiv : L.lookupMultiplicities.byteLen / 128 = L.lookupMultiplicities.itemCount := by
+    rw [hfacts.lookupMByte, generator_g1Bytes_eq,
+      Nat.mul_div_cancel _ (by decide : 0 < 128), ← hfacts.lookupM]
+  have hPermDiv : L.permutationProducts.byteLen / 128 =
+      L.permutationProducts.itemCount := by
+    rw [hfacts.permZByte, generator_g1Bytes_eq,
+      Nat.mul_div_cancel _ (by decide : 0 < 128), ← hfacts.permZ]
+  have hTrashDiv : L.trash.byteLen / 128 = L.trash.itemCount := by
+    rw [hfacts.trashByte, generator_g1Bytes_eq,
+      Nat.mul_div_cancel _ (by decide : 0 < 128), ← hfacts.trash]
+  have hQuotDiv : L.quotientLimbs.byteLen / 128 = L.quotientLimbs.itemCount := by
+    rw [hfacts.quotientByte, generator_g1Bytes_eq,
+      Nat.mul_div_cancel _ (by decide : 0 < 128), ← hfacts.quotient]
+  have hEvalsDiv : L.evals.byteLen / 32 = L.evals.itemCount := by
+    rw [hfacts.evalsByte, generator_wordBytes_eq,
+      Nat.mul_div_cancel _ (by decide : 0 < 32), ← hfacts.evals]
+  have hQEvalsDiv : L.qEvals.byteLen / 32 = L.qEvals.itemCount := by
+    rw [hfacts.qEvalsByte, generator_wordBytes_eq,
+      Nat.mul_div_cancel _ (by decide : 0 < 32), ← hfacts.qEvals]
+  have hAdvDiv : ∀ s, s ∈ L.advicePhases → s.byteLen / 128 = s.itemCount := by
+    intro s hs
+    rw [hfacts.adviceByteLen s hs, generator_g1Bytes_eq,
+      Nat.mul_div_cancel _ (by decide : 0 < 128)]
+  have hHelpDiv : ∀ lk, lk ∈ L.lookups →
+      lk.helpers.byteLen / 128 = lk.helpers.itemCount := by
+    intro lk hlk
+    rw [(hfacts.lookupsByte lk hlk).2.1, generator_g1Bytes_eq,
+      Nat.mul_div_cancel _ (by decide : 0 < 128)]
+  have hAccDiv : ∀ lk, lk ∈ L.lookups →
+      lk.accumulator.byteLen / 128 = lk.accumulator.itemCount := by
+    intro lk hlk
+    rw [(hfacts.lookupsByte lk hlk).2.2.2, hfacts.lookupsAcc lk hlk,
+      generator_g1Bytes_eq]
+  have hAccOne : ∀ lk, lk ∈ L.lookups → lk.accumulator.byteLen / 128 = 1 := by
+    intro lk hlk
+    rw [hAccDiv lk hlk, hfacts.lookupsAcc lk hlk]
+  -- the lookup guard is false only on the empty lookup list
+  have hmetaLookLen : meta_.numLookups = meta_.lookupChunks.length := by
+    rw [hc2, hc3]
+    exact hnewLook
+  have hGuardLook : lookupHPlusAccOf meta_ ≠ 0 ∨ L.lookups = [] := by
+    by_cases h0 : lookupHPlusAccOf meta_ = 0
+    · right
+      have hsum : meta_.lookupChunks.foldl (fun a b => a + b) 0 + meta_.numLookups = 0 := h0
+      have hnum : meta_.numLookups = 0 := by omega
+      have hnumRaw : rawMeta.numLookups = 0 := by rw [← hc2]; exact hnum
+      have hchunksRaw : rawMeta.lookupChunks = [] := by
+        apply List.eq_nil_of_length_eq_zero
+        rw [← hnewLook]
+        exact hnumRaw
+      have hlkLen : L.lookups.length = 0 := by
+        rw [hfacts.lookupsLen, hc1, ← hnewProtocol.2.1, hchunksRaw]
+        rfl
+      exact List.eq_nil_of_length_eq_zero hlkLen
+    · left
+      exact h0
+  -- the goal, rewritten to the schedule form
+  rw [Render.tpEvents]
+  simp only [Render.pv, planViewOf, planViewWithAccumulator, parserFactsOfPlan,
+    PlanView.numLookups, PlanView.numPermutationZs, PlanView.numTrashcans,
+    huser, hnInst, hnLook, hnPerm, hnTrash, htrunc, hLH, hmeta, hlay]
+  rw [tpEvents_filterMap_eq _ _ _ _ _ _ _ _ hAccOne]
+  rw [flatMap_advice_replicate userPhases L.advicePhases hupsLen (by
+    intro i ph s hp hs
+    exact ⟨hupAdv.2 i ph s hp hs, hfacts.adviceByteLen s (List.mem_of_getElem? hs)⟩)]
+  rw [hLMdiv, hPermDiv, hTrashDiv, hQuotDiv, hEvalsDiv, hQEvalsDiv]
+  rw [flatMap_lookups_byteLen L.lookups WireSlot.g1
+    (fun lk hlk => ⟨hHelpDiv lk hlk, hAccDiv lk hlk⟩)]
+  rw [hGuardLM, hGuardPerm, hGuardTrash]
+  rw [tp_guard_replicate, tp_guard_replicate, tp_guard_replicate]
+  rw [tp_guard_replicate_of_empty _ _ _ _ hGuardLook]
+  -- the RHS: the slot list and its group sums
+  rw [Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout,
+    Midfall.Generator.RepackedProofLayoutPlan.slots,
+    Midfall.Generator.RepackedProofLayoutPlan.prefixG1Count]
+  rw [show (ProofCalldataLayout.commitmentReadGroups L).foldl (fun acc n => acc + n) 0 =
+      sumNat (ProofCalldataLayout.commitmentReadGroups L) from rfl]
+  simp only [ProofCalldataLayout.commitmentReadGroups, sumNat_filter_ne_zero,
+    sumNat_append, sumNat_cons, sumNat_nil, sumNat_flatMap_pair, sumNat_guard_singleton,
+    sumNat_trash_if, sumNat_cons_guard, List.filter_append, List.filter_cons, List.filter_nil,
+    List.flatMap_append, List.flatMap_cons, List.flatMap_nil, List.append_nil,
+    List.nil_append, List.cons_append, List.map_append, List.map_cons, List.map_nil,
+    List.replicate_append_replicate, List.append_cancel_right_eq, List.replicate_inj]
+  constructor
+  · omega
+  · right
+    trivial
 
 /-- **THE WALK LOOP (all runs), ONE LEMMA FOR SIX SECTIONS.** Bound = `j`, the section's frame
     count. Every run reverts (a frame fails the range check), or ends normally having absorbed the
