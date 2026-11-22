@@ -40,6 +40,27 @@ Still proved from before: `inline_g1WalkLoop` (ROW.TP.1), `tp_slice`, `tp_blockS
 The helper body in `R.scope` is the INLINED body (the const table substitutes `BLS_P_HI` /
 `BLS_P_MINUS_ONE_LO`), so the summary's range-check bridge is over literals.
 
+## SIM.10 `xcript_total` — analysed, NOT landed (would need a new hole)
+
+The V3 statement is the evidence's at the V3 reading:
+`∃ x, snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x` from `Decoded`. `snapshotXcriptRun`
+is `snapshotAlgebraRun >>= pcsReads.run >>= assertEmpty`, so the proof is exactly three totality
+obligations, none of which is in the tree:
+
+1. `snapshotTraceRun` total on a `Decoded`: discharge `parseTrace`'s `invalidInstances` arms
+   (`committedShape = #[#[1]]` is nonempty because `Features.solidity.committedInstances = true`)
+   and the three `scatterIndexed` panics (`verifier.rs:118/134`, the key-shape/read-count
+   agreement with the layout).
+2. `pcsReads.run` total: each `tmRead`'s `bytesTake t.buffer t.pos width` and
+   `h.readRepr?` succeeds on the re-serialised decoded messages (the G1 reads use
+   `SimPins.compressedEnc`; the scalars use the round trip), and the q-eval run has
+   `nSets = L.qEvals.itemCount` words.
+3. `assertEmpty` after the reads: the cursor is exactly the buffer size.
+
+This is the card's own 2.5 h "strongest" programme (`PLAN-V3-cards.md:1173-1191`), whose
+`Stage.lean` prerequisite now exists but whose `parseTrace`/`readAlgebra` totality lemmas do not.
+Landing it half-done would add a sorried declaration, so it is reported rather than stated.
+
 ## The five remaining leaves — all blocked by an UNISSUED card
 
 1. **`g1walk_loop_sem`** (1553). Needs **ROW.TP.3's `common_uncompressed_g1` summary** (QUEUE 95h:
