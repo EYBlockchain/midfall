@@ -36,8 +36,12 @@ and the `snapshotOf_prepareMsgs` retirement.
 - **A4/lagrange** on `t/A4`: the render-free loop tranche (vocab + `lag_sq_loop`,
   `lag_denoms_loop`, `lag_lblind_loop`) is in flight. A5/`batch_invert_summary` is a prerequisite
   of the row, and `lag_agrees` is off by one (STATUS §4).
-- **QVM** (`midfall-c/d`): D-QVM2 executed; `QInterpRefinesSegment` stated; QIDENT/BINDINV/PLSEG
-  landed. `q_blockSim`/`q_blockProgS` remain.
+- **QVM** (`midfall-c/d`): D-QVM2 executed; `QInterpRefinesSegment` stated; QIDENT/BINDINV/PLSEG/
+  SPILL2/CURFACT landed. `q_blockSim`/`q_blockProgS` remain.
+- **QVM compile-correctness** (`midfall-h`, `t/QVMBUILD`): a separate worker on the four
+  `Qvm.lean`/`QvmFold` holes, starting with `qvm_compile_correct_identity` (the archetype measured
+  true at its smallest witness by P-QVM). It owns `Qvm.lean`/`QvmFold.lean` only; the segment/
+  spill/Quotient files stay with the QVM agent.
 
 ## 3. Next READY
 
