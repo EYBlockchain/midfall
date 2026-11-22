@@ -29,6 +29,7 @@ import Midfall.LoweringV3.Composition
 import Midfall.LoweringV3.QuotientRows
 import Midfall.LoweringV3.VkClean
 import Midfall.LoweringV2.Blocks.TraceReturn
+import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.Tools.ConeSorries
 set_option autoImplicit false
 
@@ -178,6 +179,23 @@ theorem fp_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (
     (hacc : LeanAccepts R H cd) (hcomp : CompleteSide R H cd) :
     BlockProgS R Partial.finalPairing H vkAddr product cd := by
   sorry
+
+/-- **THE MISSING `fpG2Slots` PREMISE, DERIVED FROM `ValidV3`.** FP.0 carried the two VK-header G2
+    clauses as an explicit premise because V2's `Valid` has no `VkSlotsAgree`; V3's `PayloadAgrees`
+    does (`g2Base`, `negSG2`), and `EnvAgrees.nG2` / `.sG2` are the prepared-form identifications
+    the invariants use. This is the bridge between them, and it adds no hypothesis: the payload's
+    `g₂` is `nG2Prepared⁻¹` because `nG2Prepared = g₂⁻¹`, and the `sG2` slot is already stated at
+    `sG2gen⁻¹`. -/
+theorem fpG2Slots_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    Midfall.LoweringV2.Blocks.FinalPairing.fpG2Slots R := by
+  refine ⟨?_, ?_⟩
+  · rw [hR.env.nG2, inv_inv]
+    exact hR.payload.g2Base
+  · rw [hR.env.sG2]
+    exact hR.payload.negSG2
+
+#assert_axioms Midfall.LoweringV3.fpG2Slots_of_valid
+  [propext, Classical.choice, Quot.sound] native []
 
 /-! ## 6. traceReturn - PROVED HERE (PL.H0 step 4's optional lift; SIM.7 owes nothing for this block) -/
 

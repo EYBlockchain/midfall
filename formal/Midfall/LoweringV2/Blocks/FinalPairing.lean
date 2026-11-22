@@ -115,6 +115,8 @@
   two statements exhibited; this card does not.
 -/
 import Midfall.LoweringV2.Blocks
+import Midfall.LoweringV2.Blocks.VkLoading
+import Midfall.Tools.Done
 
 namespace Midfall.LoweringV2.Blocks.FinalPairing
 
@@ -255,6 +257,14 @@ def fpG2Slots (R : Render p G₁ G₂ Gₜ) : Prop :=
 
 /-! ## 4. THE THREE NAMED LEMMA GROUPS -/
 
+/-- A `Decidable` witness as the Bool its `decideBool` produces, read both ways. The
+    `Midfall.Lowering.Accumulator` copy is not imported here, so the one-line case split is local. -/
+theorem fp_decideBool_true {α : Type} {a b : α} (d : Decidable (a = b)) :
+    decideBool d = true ↔ a = b := by
+  cases d with
+  | isTrue h => simp [decideBool, h]
+  | isFalse h => simp [decideBool, h]
+
 /-- **GROUP 1 OF 3 - `fp_pairing_algebra`. CLOSED BY P.1** (QUEUE.md "P.1 - Pairing-check algebra").
 
     THE USE SITE: `fp_finalPairing_contracts`, twice - soundness reads it forwards (a clean exit with
@@ -278,7 +288,14 @@ def fpG2Slots (R : Render p G₁ G₂ Gₜ) : Prop :=
 theorem fp_pairing_algebra (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (hh : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (Snap : Snapshot p G₁ G₂ Gₜ) :
     fpAnsBit R product Snap = true ↔ DualMSM.check Snap.c.dual R.params = true := by
-  sorry
+  unfold fpAnsBit fpFrame DualMSM.check
+  rw [hh.pairing2 (Snap.c.dual.right.eval) (Snap.c.dual.left.eval)
+    (R.params.nG2Prepared)⁻¹ (R.params.sG2Prepared)⁻¹]
+  rw [ofMul_inv, ofMul_inv]
+  rw [LinearMap.map_neg, LinearMap.map_neg]
+  rw [fp_decideBool_true]
+  rw [toMul_eq_one]
+  rw [← neg_add_rev, neg_eq_zero]
 
 /-- **GROUP 2 OF 3 - `ec_pairing_contract`. CLOSED BY T.4** (QUEUE.md "T.4 - `staticcall` stepping,
     accepted by `ec_pairing_contract`").
@@ -310,7 +327,18 @@ theorem fp_pairing_algebra (R : Render p G₁ G₂ Gₜ) (product : PairingProdu
     No loop: `ec_pairing` has no `for` (M0.1), so no fuel and no invariant.
 
     SIZE ESTIMATE: **no basis yet** (requirements table). The nearest samples in the tree are
-    `traceReturn_spec` and the `fail` selector equation, and neither steps a `staticcall`. -/
+    `traceReturn_spec` and the `fail` selector equation, and neither steps a `staticcall`.
+
+    **A11 FINDING - THE STATEMENT ABOVE IS FALSE (REVIEW-V3 RV-23), SO IT IS NOT A PROOF OBLIGATION.**
+    `fpPre` leaves `success` unconstrained. With `VEnv.get V "success" = some 3` and a yes answer,
+    the guard `iszero(3)` skips, the helper does not take its `leave`, the honest staticcall writes
+    word 1 to `success`, and the post demands `fpWord (fpInBit V && fpAnsBit ...) = 0` because
+    `fpInBit V = false`. The production helper also REVERTS on a no answer (`if iszero(ret) { fail }`
+    before `ret := 1`), so `fpPostHonest`'s revert-free normal arm is false for a check-false
+    snapshot. And the first conjunct quantifies over an arbitrary `c` while pinning the result to
+    `product`. The repair is the card's `ec_pairing_sem`: restate over the bytes in memory with the
+    `success ∈ {0,1}` premise. The two other FP groups ARE proved above; this one is left as the
+    recorded false statement, not weakened silently here. -/
 theorem ec_pairing_contract (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (hR : R.Valid) (hslots : fpG2Slots R)
     (hh : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
@@ -326,6 +354,221 @@ theorem ec_pairing_contract (R : Render p G₁ G₂ Gₜ) (product : PairingProd
             (fun V st => Clean R Checkpoint.pcs Snap H vkAddr cd V st)
             (fpPostHonest R product Snap H vkAddr cd)) := by
   sorry
+
+/-! ## 4b. THE FINALPAIRING SLICE AND THE `fail` WALK (T.5's interface)
+
+  The slice is two statements and its first statement is the guard. Everything below is stated at
+  the render's own inlined sites, so no constant table is assumed: the `fpVal` site is a literal
+  when the table binds the name and a variable otherwise, exactly as `TraceReturn.trErrExpr`. -/
+
+/-- The inlined constant site, in the two shapes the inliner can leave. -/
+def fpVal (consts : Inline.Consts) (name : String) : Expr EVM.Op :=
+  match consts.lookup name with
+  | some v => Expr.lit (.number v)
+  | none => Expr.var name
+
+/-- The slice text, at a symbolic constant table and an arbitrary (unused, because the arm is
+    no-accumulator) batch pointer. -/
+theorem fp_slice_raw (consts : Inline.Consts) (batch : Nat) :
+    Inline.inlineContractConstants consts
+      (Midfall.Lowering.GenAst.emitFinalPairingArms false batch) =
+      [Stmt.cond (Expr.builtin Op.iszero [fpVal consts "success"])
+          [Stmt.exprStmt (Expr.call "fail" [fpVal consts "ERR_PRECOMPILE_FAILED"])],
+        Stmt.assign ["success"] (Expr.call "ec_pairing"
+          [fpVal consts "success", fpVal consts "PAIRING_RHS_MPTR",
+           fpVal consts "PAIRING_LHS_MPTR"])] := rfl
+
+/-- **THE SLICE, READ OFF THE EMITTER.** The no-accumulator clause makes the batch arm vanish, and
+    `success` is filtered out of every constant table, so its site is the variable. -/
+theorem fp_slice (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) :
+    R.slice Partial.finalPairing =
+      [Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"])
+          [Stmt.exprStmt (Expr.call "fail" [fpVal R.consts "ERR_PRECOMPILE_FAILED"])],
+        Stmt.assign ["success"] (Expr.call "ec_pairing"
+          [Expr.var "success", fpVal R.consts "PAIRING_RHS_MPTR",
+           fpVal R.consts "PAIRING_LHS_MPTR"])] := by
+  have hacc : R.pv.hasAccumulator = false :=
+    Midfall.LoweringV2.Blocks.VkLoading.pv_hasAcc_false R hR
+  show Inline.inlineContractConstants R.consts
+    (Midfall.Lowering.GenAst.emitPartial R.pv Partial.finalPairing) = _
+  rw [Midfall.Lowering.GenAst.emitPartial, Midfall.Lowering.GenAst.emitFinalPairing, hacc]
+  rw [fp_slice_raw]
+  simp only [fpVal, TraceReturn.consts_succ_none]
+
+/-- `iszero(success)` never halts, whatever `success` is bound to. -/
+theorem fp_iszero_ne_halts {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st st₂ : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.var "success"]) (.halt st₂)) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var _ =>
+                  simp [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h => cases h
+      | argsHeadHalt _ h => cases h
+
+/-- On `success = 0`, `iszero(success)` evaluates to the literal 1 (nonzero), so the guard takes its
+    body. -/
+theorem fp_iszero_zero_val {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {r : EResult (Bridge.Dialect c g)}
+    (hs : VEnv.get V "success" = some (0 : U256))
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.var "success"]) r) : r = .vals [1] st := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var hget =>
+                  simp_all [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w]
+                  exact hbi.1.symm
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var hget => simp [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w] at hbi
+  | builtinArgsHalt hargs =>
+      exact (TraceReturn.trArgs1_halt_inv hargs
+        (fun st₁ hh => TraceReturn.trExprVar_ne_halts hh)).elim
+
+/-- The guard, fired: from `success = 0` a run of the conditional is a run of its body, in the
+    block's own function scope. -/
+theorem fp_guard_fire {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {body : Block EVM.Op} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (hs : VEnv.get V "success" = some (0 : U256))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"]) body) V' st' o) :
+    ∃ Vb, ExecStmts (Bridge.Dialect c g) (hoist (Bridge.Dialect c g) body :: funs)
+      V st body Vb st' o := by
+  cases h with
+  | ifTrue hc _ hb =>
+      have h0 := fp_iszero_zero_val hs hc
+      cases h0
+      cases hb with
+      | block hstmts => exact ⟨_, hstmts⟩
+  | ifFalse hc hz =>
+      have h0 := fp_iszero_zero_val hs hc
+      cases h0
+      have hz' : (1 : U256) = 0 := hz
+      exact absurd hz' (by decide)
+  | ifHalt hc => exact (fp_iszero_ne_halts hc).elim
+
+/-- **THE FAIL CALL, INVERTED AT AN ARBITRARY SELECTOR SITE.** The same four case-name iterations
+    as `TraceReturn.tr_fail_reverts`; only the non-halting selector fact is handed in. -/
+theorem fp_fail_expr {c : ExternalCalls} {g : ExternalGas}
+    {e : Expr EVM.Op}
+    {funs funs' : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {r : EResult (Bridge.Dialect c g)}
+    (hne : ∀ st₁ st₂, EvalExpr (Bridge.Dialect c g) funs V st₁ e (.halt st₂) → False)
+    (hlookup : lookupFun funs "fail" = some (TraceReturn.failFDecl, funs'))
+    (h : Step (Bridge.Dialect c g) funs V st
+        (Code.expr (Expr.call "fail" [e])) (Res.eres r)) :
+    ∃ st₂, r = .halt st₂ ∧ Reverted st₂ := by
+  cases h with
+  | callOk hargs hlookup' hlen hbody ho =>
+      rw [hlookup] at hlookup'
+      cases hlookup'
+      cases hbody with
+      | block hstmts =>
+          obtain ⟨ho', hrev⟩ := TraceReturn.tr_fail_body hstmts
+          cases ho with
+          | inl hn =>
+              exact absurd (hn.symm.trans ho')
+                (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+          | inr hl =>
+              exact absurd (hl.symm.trans ho')
+                (by decide : (Outcome.leave : Outcome) ≠ Outcome.halt)
+  | callHalt hargs hlookup' hlen hbody =>
+      rw [hlookup] at hlookup'
+      cases hlookup'
+      cases hbody with
+      | block hstmts =>
+          exact ⟨_, rfl, (TraceReturn.tr_fail_body hstmts).2⟩
+  | callArgsHalt hargs =>
+      exact (TraceReturn.trArgs1_halt_inv hargs (fun st₁ hh => hne st₁ _ hh)).elim
+
+/-- **THE FAIL CALL REVERTS**, at an arbitrary selector site. -/
+theorem fp_fail_reverts {c : ExternalCalls} {g : ExternalGas}
+    {e : Expr EVM.Op}
+    {funs funs' : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    (hne : ∀ st₁ st₂, EvalExpr (Bridge.Dialect c g) funs V st₁ e (.halt st₂) → False)
+    (hlookup : lookupFun funs "fail" = some (TraceReturn.failFDecl, funs'))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+        (Stmt.exprStmt (Expr.call "fail" [e])) V' st' o) :
+    o = .halt ∧ Reverted st' := by
+  cases h with
+  | exprStmt hex =>
+      obtain ⟨st₂, hr, hrev⟩ := fp_fail_expr hne hlookup hex
+      exact absurd hr (by simp)
+  | exprStmtHalt hex =>
+      obtain ⟨st₂, hr, hrev⟩ := fp_fail_expr hne hlookup hex
+      cases hr
+      exact ⟨rfl, hrev⟩
+
+/-- The inlined `ERR_PRECOMPILE_FAILED` site never halts: it is a literal or a variable, and an
+    unbound variable is stuck rather than halting. -/
+theorem fpErr_ne_halts {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    {R : Render p G₁ G₂ Gₜ} {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st st₂ : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (fpVal R.consts "ERR_PRECOMPILE_FAILED") (.halt st₂)) : False := by
+  unfold fpVal at h
+  split at h <;> cases h
+
+/-- A normal exit of the guard is impossible at `success = 0`: the guard always takes the fail arm,
+    and the fail call always reverts. -/
+theorem fp_guard_normal_impossible {R : Render p G₁ G₂ Gₜ} {c : ExternalCalls} {g : ExternalGas}
+    {funs funs' : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState}
+    (hfail : lookupFun (hoist (Bridge.Dialect c g)
+        [Stmt.exprStmt (Expr.call "fail" [fpVal R.consts "ERR_PRECOMPILE_FAILED"])] ::
+          funs) "fail" = some (TraceReturn.failFDecl, funs'))
+    (hs : VEnv.get V "success" = some (0 : U256))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"])
+        [Stmt.exprStmt (Expr.call "fail" [fpVal R.consts "ERR_PRECOMPILE_FAILED"])])
+      V' st' .normal) :
+    False := by
+  obtain ⟨Vb, hbody⟩ := fp_guard_fire hs h
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hbody with
+      ⟨V₂, st₂, h₂, _⟩ | ⟨h₂, hne⟩
+  · obtain ⟨ho, _⟩ := fp_fail_reverts
+      (e := fpVal R.consts "ERR_PRECOMPILE_FAILED")
+      (fun st₁ st₂ hh => fpErr_ne_halts hh) hfail h₂
+    exact absurd ho (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+  · exact absurd rfl hne
+
+#assert_axioms Midfall.LoweringV2.Blocks.FinalPairing.fp_slice
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.FinalPairing.fp_iszero_zero_val
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.FinalPairing.fp_guard_fire
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.FinalPairing.fp_fail_reverts
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.FinalPairing.fpErr_ne_halts
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.FinalPairing.fp_guard_normal_impossible
+  [propext, Classical.choice, Quot.sound] native []
 
 /-- **GROUP 3 OF 3 - `fp_stmt_steps`. CLOSED BY T.5** (QUEUE.md "T.5 - Arithmetic and memory, accepted
     by FinalPairing").
@@ -355,7 +598,37 @@ theorem fp_stmt_steps (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) (H : Hash) (v
         (fun V st => Frame R H vkAddr cd V st ∧ VEnv.get V "success" = some (0 : U256))
         (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨
           (o = .normal ∧ Poisoned R H vkAddr cd V' st')) := by
-  sorry
+  intro V st hpre V' st' o hrun
+  obtain ⟨_hframe, hsucc⟩ := hpre
+  rw [fp_slice R hR] at hrun
+  have hfail : lookupFun (R.scope c g) "fail" =
+      some (TraceReturn.failFDecl, R.scope c g) := TraceReturn.fail_lookup R
+  have hfail' : lookupFun (hoist (Bridge.Dialect c g)
+      [Stmt.exprStmt (Expr.call "fail" [fpVal R.consts "ERR_PRECOMPILE_FAILED"])] ::
+        R.scope c g) "fail" = some (TraceReturn.failFDecl, R.scope c g) := by
+    change lookupFun (R.scope c g) "fail" =
+      some (TraceReturn.failFDecl, R.scope c g)
+    exact hfail
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V₁, st₁, h₁, _⟩ | ⟨h₁, hne⟩
+  · exact (fp_guard_normal_impossible (R := R) hfail' hsucc h₁).elim
+  · obtain ⟨Vb, hbody⟩ := fp_guard_fire (funs := R.scope c g) hsucc h₁
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hbody with
+        ⟨V₂, st₂, h₂, _⟩ | ⟨h₂, _⟩
+    · obtain ⟨ho, _⟩ := fp_fail_reverts
+        (e := fpVal R.consts "ERR_PRECOMPILE_FAILED")
+        (funs := hoist (Bridge.Dialect c g)
+          [Stmt.exprStmt (Expr.call "fail" [fpVal R.consts "ERR_PRECOMPILE_FAILED"])] ::
+            R.scope c g)
+        (fun st₁ st₂ hh => fpErr_ne_halts hh) hfail' h₂
+      exact absurd ho (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+    · obtain ⟨ho, hrev⟩ := fp_fail_reverts
+        (e := fpVal R.consts "ERR_PRECOMPILE_FAILED")
+        (funs := hoist (Bridge.Dialect c g)
+          [Stmt.exprStmt (Expr.call "fail" [fpVal R.consts "ERR_PRECOMPILE_FAILED"])] ::
+            R.scope c g)
+        (fun st₁ st₂ hh => fpErr_ne_halts hh) hfail' h₂
+      exact Or.inl ⟨ho, hrev⟩
 
 /-! ## 5. THE CONTRACT, PROVED FROM THE THREE GROUPS (NO SORRY IN THIS SECTION) -/
 
@@ -481,5 +754,10 @@ theorem fp_blockProgress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct
     BlockProgress R Partial.finalPairing Snap H vkAddr product cd :=
   ((fp_finalPairing_contracts R product hR hslots) hpc H vkAddr cd ms instW inst Snap hdec hinst
     hsnap Partial.finalPairing rfl).2 hcodec hcg hdual
+
+#assert_axioms Midfall.LoweringV2.Blocks.FinalPairing.fp_pairing_algebra
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.FinalPairing.fp_stmt_steps
+  [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV2.Blocks.FinalPairing
