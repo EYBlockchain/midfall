@@ -573,7 +573,25 @@ theorem end_to_end_of_readSchedule (R : Render p G₁ G₂ Gₜ) (product : Pair
     exact end_to_end_backward R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
       inst π hn hside hrhs
 
-/-! ## 4. Gates on the proved pieces -/
+/-- **THE NAMED D1 BLOCKER.** `ValidV3` pins the plan to the generator
+    (`generated`), and `SupportedV2.layout` pins only the MEMORY map. Neither pins
+    the verifier's read order: `decodeRust` is a run of `Verifier.prepare`, while
+    `plan.slots` is the layout built from `ConstraintSystemMeta.new R.vk.cs`. A
+    proof needs a verifier-vs-protocol refinement (`prepare`'s log widths equal the
+    protocol's proof-read plan), which is not in the tree. This string is the
+    handoff; it is NOT a hypothesis on any theorem. -/
+def gap_readScheduleAgrees : String :=
+  "D1 blocker: readScheduleAgrees_of_validV3. ValidV3.generated pins R.plan to " ++
+    "generateAll, so plan.proofLayout is from ProtocolPlan.fromConstraintSystem on " ++
+    "R.vk.cs; but no theorem relates the WIDTH SEQUENCE of Verifier.prepare (hence " ++
+    "decodeRust) to that protocol plan. SupportedV2.layout is the memory-map check " ++
+    "only. Smallest true bridge: prepare_logSlots — for every successful " ++
+    "(prepare ...).run, the log widths are replicate prefixG1Count g1 ++ " ++
+    "replicate numEvals fr ++ [g1] ++ replicate numPointSets fr ++ [g1]. " ++
+    "With that, decodeRust = some ms gives ms.map Msg.slot = plan.slots and " ++
+    "end_to_end_of_readSchedule is end_to_end."
+
+
 
 #print axioms proofLen_eq_repackedLen_of_validV3
 #print axioms frOfWord?_frWord
