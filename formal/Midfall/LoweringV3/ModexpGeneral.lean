@@ -189,6 +189,31 @@ theorem modexpValidInput_of_output_some {input : Bytes} {out : Bytes}
   cases h
 
 
+
+/-! ## The 8-statement staticcall segment, with the inliner's gas lookup explicit -/
+
+/-- The segment 21–28 of the helper body, at EVERY table: the staticcall's gas argument is the
+inliner's lookup term `match consts.lookup "MODEXP_GAS" with …`. PROVED by kernel reduction; the
+caller rewrites it with `hgas`. -/
+theorem bi_staticcall_segment_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 21 8 =
+      [ GenAst.yset "ret" (GenAst.yop EVM.Op.staticcall
+          [ (match consts.lookup "MODEXP_GAS" with
+              | some v => Expr.lit (Literal.number v)
+              | none => Expr.var "MODEXP_GAS")
+          , GenAst.ylit 5, GenAst.yvar "gp_mptr", GenAst.ylit 192,
+            GenAst.yvar "gp_mptr", GenAst.ylit 32 ])
+      , GenAst.yset "ret" (GenAst.yop EVM.Op.and
+          [GenAst.yvar "ret", GenAst.yop EVM.Op.eq
+            [GenAst.yop EVM.Op.returndatasize [], GenAst.ylit 32]])
+      , GenAst.yset "precompile_failed" (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"])
+      , GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"]) [Stmt.leave]
+      , GenAst.ylet "all_inv" (GenAst.yop EVM.Op.mload [GenAst.yvar "gp_mptr"])
+      , GenAst.ylet "first_mptr" (GenAst.yvar "mptr_start")
+      , GenAst.ylet "second_mptr" (GenAst.yop EVM.Op.add [GenAst.yvar "first_mptr", GenAst.ylit 32])
+      , GenAst.yset "gp_mptr" (GenAst.yop EVM.Op.sub [GenAst.yvar "gp_mptr", GenAst.ylit 32]) ] := by
+  kernel_rfl
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -234,5 +259,6 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms honestOf_modexp_find [propext, Classical.choice, Quot.sound]
 #assert_axioms callsOf_modexp_returndata [propext, Classical.choice, Quot.sound]
 #assert_axioms modexpValidInput_of_output_some [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_staticcall_segment_form [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3.ModexpGeneral
