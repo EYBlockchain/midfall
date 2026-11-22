@@ -381,9 +381,113 @@ theorem eval_sub_var_lit (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.
                           simp [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
                           exact ⟨hbi.1.symm, hbi.2.symm⟩
 
+/-- **THE SIX FRAME STORES.** Each of the six `mstore`s writes one word of
+    `modexpInvFrame x`; the block leaves the environment and the halted flag alone and ends
+    normally, with memory `mxMemFr st.memory p.toNat x fv`. -/
+theorem modexpFrameStores_contract (funs : FunEnv (Bridge.Dialect c g)) (pv xv fv : U256)
+    (hbound : pv.toNat + 192 < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (GenAst.modexpFrameStores "p" (Expr.var "x") (Expr.var "FR_MODULUS")
+        Midfall.Generator.templateConstantsDefault)
+      (fun V st => VEnv.get V "p" = some pv ∧ VEnv.get V "x" = some xv ∧
+        VEnv.get V "FR_MODULUS" = some fv)
+      (fun V st V' st' o => o = .normal ∧ V' = V ∧
+        st'.memory = mxMemFr st.memory pv.toNat xv fv ∧
+        st'.env = st.env ∧ st'.halted = st.halted) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hp, hx, hfr⟩ := hpre
+  simp only [GenAst.modexpFrameStores, Midfall.Generator.templateConstantsDefault,
+    GenAst.yexpr, GenAst.yop, GenAst.yvar, GenAst.ylit] at hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨hV1, hmem1, henv1, hhalt1⟩ :=
+      exec_mstore_state (c := c) (g := g) funs h1
+        (fun stV v hv => (eval_lit_eq funs V (st := st) 32 hv).2)
+        (fun st0 stA a ha => (eval_add_var_lit funs V (st := st0) "p" 0 pv hp ha).2)
+        (fun stA a ha => (eval_add_var_lit funs V (st := st) "p" 0 pv hp ha).1)
+        (fun stV v hv => (eval_lit_eq funs V (st := st) 32 hv).1)
+    subst V1
+    rw [toNat_add_ofNat pv 0 (by omega)] at hmem1
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
+        ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · obtain ⟨hV2, hmem2, henv2, hhalt2⟩ :=
+        exec_mstore_state (c := c) (g := g) funs h2
+          (fun stV v hv => (eval_lit_eq funs V (st := st1) 32 hv).2)
+          (fun st0 stA a ha => (eval_add_var_lit funs V (st := st0) "p" 32 pv hp ha).2)
+          (fun stA a ha => (eval_add_var_lit funs V (st := st1) "p" 32 pv hp ha).1)
+          (fun stV v hv => (eval_lit_eq funs V (st := st1) 32 hv).1)
+      subst V2
+      rw [toNat_add_ofNat pv 32 (by omega)] at hmem2
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest2 with
+          ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
+      · obtain ⟨hV3, hmem3, henv3, hhalt3⟩ :=
+          exec_mstore_state (c := c) (g := g) funs h3
+            (fun stV v hv => (eval_lit_eq funs V (st := st2) 32 hv).2)
+            (fun st0 stA a ha => (eval_add_var_lit funs V (st := st0) "p" 64 pv hp ha).2)
+            (fun stA a ha => (eval_add_var_lit funs V (st := st2) "p" 64 pv hp ha).1)
+            (fun stV v hv => (eval_lit_eq funs V (st := st2) 32 hv).1)
+        subst V3
+        rw [toNat_add_ofNat pv 64 (by omega)] at hmem3
+        rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest3 with
+            ⟨V4, st4, h4, hrest4⟩ | ⟨h4, hne4⟩
+        · obtain ⟨hV4, hmem4, henv4, hhalt4⟩ :=
+            exec_mstore_state (c := c) (g := g) funs h4
+              (fun stV v hv => (eval_var_eq funs V (st := st3) "x" xv hx hv).2)
+              (fun st0 stA a ha => (eval_add_var_lit funs V (st := st0) "p" 96 pv hp ha).2)
+              (fun stA a ha => (eval_add_var_lit funs V (st := st3) "p" 96 pv hp ha).1)
+              (fun stV v hv => (eval_var_eq funs V (st := st3) "x" xv hx hv).1)
+          subst V4
+          rw [toNat_add_ofNat pv 96 (by omega)] at hmem4
+          rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest4 with
+              ⟨V5, st5, h5, hrest5⟩ | ⟨h5, hne5⟩
+          · obtain ⟨hV5, hmem5, henv5, hhalt5⟩ :=
+              exec_mstore_state (c := c) (g := g) funs h5
+                (fun stV v hv => (eval_sub_var_lit funs V (st := st4) "FR_MODULUS" 2 fv hfr hv).2)
+                (fun st0 stA a ha => (eval_add_var_lit funs V (st := st0) "p" 128 pv hp ha).2)
+                (fun stA a ha => (eval_add_var_lit funs V (st := st4) "p" 128 pv hp ha).1)
+                (fun stV v hv => (eval_sub_var_lit funs V (st := st4) "FR_MODULUS" 2 fv hfr hv).1)
+            subst V5
+            rw [toNat_add_ofNat pv 128 (by omega)] at hmem5
+            rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest5 with
+                ⟨V6, st6, h6, hrest6⟩ | ⟨h6, hne6⟩
+            · obtain ⟨hV6, hmem6, henv6, hhalt6⟩ :=
+                exec_mstore_state (c := c) (g := g) funs h6
+                  (fun stV v hv => (eval_var_eq funs V (st := st5) "FR_MODULUS" fv hfr hv).2)
+                  (fun st0 stA a ha => (eval_add_var_lit funs V (st := st0) "p" 160 pv hp ha).2)
+                  (fun stA a ha => (eval_add_var_lit funs V (st := st5) "p" 160 pv hp ha).1)
+                  (fun stV v hv => (eval_var_eq funs V (st := st5) "FR_MODULUS" fv hfr hv).1)
+              subst V6
+              rw [toNat_add_ofNat pv 160 (by omega)] at hmem6
+              cases hrest6
+              refine ⟨rfl, rfl, ?_, ?_, ?_⟩
+              · rw [hmem6, hmem5, hmem4, hmem3, hmem2, hmem1]
+                simp [mxMemFr]
+              · rw [henv6, henv5, henv4, henv3, henv2, henv1]
+              · rw [hhalt6, hhalt5, hhalt4, hhalt3, hhalt2, hhalt1]
+            · exact absurd (exec_mstore_normal funs h6
+                (fun s₁ s₂ hh => expr_add_var_lit_ne_halts funs V (st := s₁) (x := "p") (n := 160) hh)
+                (fun s₁ s₂ hh => trExprVar_ne_halts hh)) hne6
+          · exact absurd (exec_mstore_normal funs h5
+              (fun s₁ s₂ hh => expr_add_var_lit_ne_halts funs V (st := s₁) (x := "p") (n := 128) hh)
+              (fun s₁ s₂ hh => expr_sub_var_lit_ne_halts funs V (st := s₁) (x := "FR_MODULUS") (n := 2) hh)) hne5
+        · exact absurd (exec_mstore_normal funs h4
+            (fun s₁ s₂ hh => expr_add_var_lit_ne_halts funs V (st := s₁) (x := "p") (n := 96) hh)
+            (fun s₁ s₂ hh => trExprVar_ne_halts hh)) hne4
+      · exact absurd (exec_mstore_normal funs h3
+          (fun s₁ s₂ hh => expr_add_var_lit_ne_halts funs V (st := s₁) (x := "p") (n := 64) hh)
+          (fun s₁ s₂ hh => trExprLit_ne_halts hh)) hne3
+    · exact absurd (exec_mstore_normal funs h2
+        (fun s₁ s₂ hh => expr_add_var_lit_ne_halts funs V (st := s₁) (x := "p") (n := 32) hh)
+        (fun s₁ s₂ hh => trExprLit_ne_halts hh)) hne2
+  · exact absurd (exec_mstore_normal funs h1
+      (fun s₁ s₂ hh => expr_add_var_lit_ne_halts funs V (st := s₁) (x := "p") (n := 0) hh)
+      (fun s₁ s₂ hh => trExprLit_ne_halts hh)) hne1
+
 #assert_axioms Midfall.LoweringV3.ScalarInv.mxMem_frame
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.ScalarInv.fail_call_reverts
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.modexpFrameStores_contract
   [propext, Quot.sound] native []
 
 end Midfall.LoweringV3.ScalarInv
