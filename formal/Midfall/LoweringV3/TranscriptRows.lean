@@ -721,6 +721,58 @@ theorem tmRead_list_run {p : Nat} [Fact (Nat.Prime p)] :
         simp only [List.length_cons]
         omega
 
+/-- **THE DECODE SLOT SHAPE.** `decodeSlots` returns messages whose slots are exactly the
+    layout slots it walked: the calldata decoder and the transcript schedule read the same
+    list. This is the shape half of `readScheduleAgrees` at the `decodeCalldata` site. -/
+theorem decodeSlots_map_slot {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type} (c : G1Codec G₁)
+    (cd : Bytes) :
+    ∀ (slots : List WireSlot) (cur : Nat) (ms : List (Msg (Fr p) G₁)) (cur' : Nat),
+      decodeSlots (p := p) c cd slots cur = some (ms, cur') → ms.map Msg.slot = slots := by
+  intro slots
+  induction slots with
+  | nil =>
+      intro cur ms cur' h
+      simp only [decodeSlots, Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, -⟩ := h
+      rfl
+  | cons s rest ih =>
+      intro cur ms cur' h
+      cases s with
+      | g1 =>
+          unfold decodeSlots at h
+          simp only [guard] at h
+          by_cases hg : g1WordsOk cd cur = true
+          · rw [ite_eq_left hg] at h
+            simp at h
+            rw [Option.bind_eq_some_iff] at h
+            obtain ⟨b, _hb, h⟩ := h
+            rw [Option.bind_eq_some_iff] at h
+            obtain ⟨Q, _hq, h⟩ := h
+            rw [Option.bind_eq_some_iff] at h
+            obtain ⟨⟨ms0, cur0⟩, hrec, hpair⟩ := h
+            simp only [Option.some.injEq, Prod.mk.injEq] at hpair
+            obtain ⟨rfl, rfl⟩ := hpair
+            simp only [List.map_cons]
+            rw [ih (cur + g1EipWidth) ms0 cur0 hrec]
+            rfl
+          · rw [ite_eq_right (by simpa using hg)] at h
+            cases h
+      | fr =>
+          unfold decodeSlots at h
+          simp only [guard] at h
+          by_cases hlt : (cdWord cd cur).toNat < p
+          · rw [ite_eq_left hlt] at h
+            simp at h
+            rw [Option.bind_eq_some_iff] at h
+            obtain ⟨⟨ms0, cur0⟩, hrec, hpair⟩ := h
+            simp only [Option.some.injEq, Prod.mk.injEq] at hpair
+            obtain ⟨rfl, rfl⟩ := hpair
+            simp only [List.map_cons]
+            rw [ih (cur + 32) ms0 cur0 hrec]
+            rfl
+          · rw [ite_eq_right (by simpa using hlt)] at h
+            cases h
+
 /-- `assertEmpty` succeeds exactly when the cursor is at the buffer's end. -/
 theorem assertEmpty_run_ok (t : Midfall.Halo2.Transcript) (h : t.pos = t.buffer.size) :
     t.assertEmpty = .ok () := by
@@ -788,6 +840,39 @@ theorem pcsReads_run_ok {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁
   · rw [hp7, hbuf]
     simp only [ByteArray.size_append, hwidth fCom, hwidth pi, wireOf_size, hlen]
   · rw [hb7, hb6, hb5, hb4, hb3, hb2, hb1]
+
+/-- **SIM.10 OBLIGATION 3, COMPOSED.** Once the algebra prefix succeeds on the exact wire
+    tail, `pcsReads` and `assertEmpty` finish: the whole transcript-only run exists. The
+    remaining input is obligation 1 (`snapshotAlgebraRun` on `transcriptOf E H ms`). -/
+theorem snapshotXcriptRun_of_algebra {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (vk : VerifyingKey (Fr p) G₁)
+    (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) (nSets : Nat)
+    (s2 : SnapAlgebra p G₁) (t2 : Midfall.Halo2.Transcript)
+    (hAlg : snapshotAlgebraRun E H vk inst ms = .ok (s2, t2))
+    (pref : Bytes) (fCom pi : G₁) (qs : List (Fr p))
+    (hlen : qs.length = nSets)
+    (hbuf : t2.buffer = pref ++ E.g1.toCompressed fCom ++
+      wireOf (p := p) qs ++ E.g1.toCompressed pi)
+    (hpos : t2.pos = pref.size)
+    (henc : ∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth)
+    (hp : p ≤ 2 ^ 256) :
+    ∃ x, snapshotXcriptRun E H vk inst ms nSets = .ok x := by
+  unfold snapshotXcriptRun
+  simp only [StateT.run_bind, StateT.run_pure]
+  rw [hAlg]
+  simp only [Except.bind, Except.pure, bind, pure]
+  obtain ⟨r, t5, hrun, _hf, _hpi, _hq, hpos5, hbuf5⟩ :=
+    pcsReads_run_ok E.g1 E.field Features.solidity nSets t2 pref fCom pi qs hlen hbuf hpos
+      henc hwidth hp
+  rw [hrun]
+  simp only [Except.bind, Except.pure, bind, pure]
+  rw [assertEmpty_run_ok t5 (by rw [hbuf5, hpos5])]
+  exact ⟨_, rfl⟩
 
 /-! ## 4. ROW.TP.6'S BRIDGE — THE MODEL'S PARSER FACTS AND THE PLAN'S LAYOUT -/
 
