@@ -33,9 +33,13 @@ and the `snapshotOf_prepareMsgs` retirement.
 
 - **A3 COMPLETE** (`127cfe7`): `vk_blockSim` and `vk_blockProgS` both PROVED; the vkLoading pair
   is closed. Root 12 -> 11, register 76/12 -> 75/11.
-- **A4/lagrange** on `t/A4`: the render-free loop tranche (vocab + `lag_sq_loop`,
-  `lag_denoms_loop`, `lag_lblind_loop`) is in flight. A5/`batch_invert_summary` is a prerequisite
-  of the row, and `lag_agrees` is off by one (STATUS §4).
+- **A4/lagrange** (`bd0f295`): the green loop tranche is merged — `LagrangeRows.lean` (917 lines,
+  zero sorries) with `lag_sq_loop` (T3.9.a) and `lag_lblind_loop` (T3.9.d), window/inversion
+  helpers and the D-GATE2-corrected `lag_agrees` prose. The b-body guard-TRUE proof is parked on
+  `t/A4-bwip` (not merged): fuel 13 is needed and the joint `simp` exceeds 200k heartbeats, so the
+  semantic `allRuns_loop` route is next. A5/`batch_invert_summary` is a prerequisite of the row.
+- **A5** (`midfall-e`, `t/A5`): `batch_invert_summary` (HLP.1.b), `bi_forward_loop`, and the
+  missing `bi_backward_loop` (HLP.1.c) in `BatchInvert.lean`, importing `LagrangeRows`.
 - **QVM** (`midfall-c/d`): D-QVM2 executed; `QInterpRefinesSegment` stated; QIDENT/BINDINV/PLSEG/
   SPILL2/CURFACT landed. `q_blockSim`/`q_blockProgS` remain.
 - **QVM compile-correctness** (`midfall-h`, `t/QVMBUILD`): a separate worker on the four
