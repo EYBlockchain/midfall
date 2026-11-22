@@ -29,7 +29,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
   sorry delta with python3 scripts/lean_grep.py sorry FILE.
 - Never hand-edit SORRY.md.
 - Baseline: register 85 data rows / 18 ROOT (a main-tree reading of 86 is stale oleans, not a
-  contradiction); cones lowering_correct 18, lowering_sound 8; fingerprint 14,109 tokens /
+  contradiction); cones lowering_correct 15, lowering_sound 7 (measured at 558cf5b - the 18/8 figure was stale); fingerprint 14,109 tokens /
   0x3149ae4f...bef176; KAT 1640/118 (pin moved 1633->1640 by QSTREAM's 7 new gates).
 
 ## Hard bounds
@@ -86,6 +86,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
 - data is reserved for BINDERS where YulSemantics.Syntax is reachable; write
   { ev with <<data>> := ... } for field updates.
 - #cone_sorries needs import Midfall.Tools.ConeSorries.
+- **Lean 4.35.0 has NO `List.get?` and NO `List.join`.** `List.getD`, `getD_cons_zero` and `getD_cons_succ` do exist. **`rw` does NOT rewrite under `do`-`let` binders** - use `simp only` or an explicit `show`. **`Except.ok a >>= f` reduces only by defeq (`show`/`rfl`), not by `simp` or `rw [Except.bind]`.** **A new file in a shared namespace can collide with a sibling and only redden at ROOT build, never when typechecking the file alone** (`Calldata` already owns `except_bind_ok`) - use a per-file sub-namespace.
 
 ## Metric honesty
 - cone_sorries counts proof-term dependencies. A row whose proof is a bare sorry cites NOTHING, so
@@ -106,6 +107,7 @@ Read this whole file before starting. Card briefs reference it instead of restat
 - After ANY edit to a large file, run `git diff --stat` and `git diff` and confirm the changed hunks are
   ONLY yours. If a hunk is not yours, restore from HEAD with git show and re-apply; do not commit.
 - WIP-commit before the edit, so recovery costs nothing.
+- **THE TRUNCATION HAZARD IS NOT SIZE-DEPENDENT.** QIDENT truncated `Midfall.lean` (202 lines) and `QvmEmit.lean` (349 lines) by ranged-read-then-write-back - the same failure the >1500-line rule was written for, at a seventh of the size. **Never write back a ranged read, at ANY file size. Read the whole file or use a targeted edit.**
 - FOUR occurrences in 48 hours, all in files over 2000 lines: a read returns at most ~2000 lines
   and the write-back silently truncates the file. **For any file over ~1500 lines, patch with python
   or a bash heredoc against the file on disk. NEVER read-then-write a large file.** Verify with
