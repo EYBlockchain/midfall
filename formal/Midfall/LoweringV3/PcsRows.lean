@@ -47,11 +47,10 @@
   ROW.PCS.2 (`pcs_b2_sem`), the block SEM leaves 1/3/4/5/6 and the row glue are not stated here.
   Stating them without their proofs would add register rows that need their own W12 falsifiers, and
   `Rows.lean`'s two pcs leaves must not be moved onto unproved children. Section 4 proves the
-  block-2 inner-scope inliner facts (`inline_init`, `inline_post`, `inline_loopBody_false/true`) at
-  the shadow lists the block actually threads. The remaining pieces for `pcs_b2_sem` are exactly:
-  (a) the block-wrapper fuel alignment `inlineContractConstants consts (pcsBlock2Ast nb trunc) =
-  pcsBlock2Inline a1 aP nb trunc`, and (b) the loop's `AllRuns` contract over `pcsLoopBody`. Neither
-  is a premise; neither is a new hypothesis on a row.
+  block-2 inliner facts AND the full alignment `pcsBlock2_inline`: the slice is the literal
+  `pcsBlock2Inline a1 aP nb trunc`. The remaining piece for `pcs_b2_sem` is the loop's `AllRuns`
+  contract over `pcsLoopBody` (`wPowers`, the `p = aP + 32j` / `acc` / `writeWords` invariant). It
+  is not a premise and adds no hypothesis to a row.
 -/
 import Midfall.LoweringV2.Stages
 import Midfall.Lowering.GenAstPcs
@@ -321,11 +320,136 @@ theorem inline_post (consts : Inline.Consts) :
     List.map_cons, List.map_nil, Bool.false_or,
     (show Inline.shadowed ["x1", "acc", "p", "i"] "i" = true by decide)]
 
+/-! ### 4.1 Block 2: the inliner alignment (PROVED)
+
+  `pcs_b2_sem` is stated about `inlineContractConstants consts (pcsBlock2Ast nb trunc)`. This is
+  the literal five-statement block it denotes: the two prefix statements, then (when `nb > 1`) the
+  two scalar lets and the `for` whose init/post/body are `pcsInit`/`pcsPost`/`pcsLoopBody`. The
+  proof below threads the inliner's shadow list through the prefix, the loop init, the post block
+  and the body, then through the condition. It is the `inlineScan 64`/`inlineScan 63` alignment the
+  earlier header called open; it is now closed, with no fuel or heartbeat raise. -/
+
+/-- The block-2 emitter with its loop pieces named, for the inliner proof. -/
+def pcsBlock2AstV (nb : Nat) (trunc : Bool) : Block EVM.Op :=
+  [GenAst.ylet "x1" (GenAst.yop EVM.Op.mload [GenAst.yvar "X1_MPTR"]),
+   GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.yvar "X1_POWERS_MPTR", GenAst.ylit 1])] ++
+  (if nb > 1 then
+    [ GenAst.ylet "acc" (GenAst.ylit 1),
+      GenAst.ylet "p" (GenAst.yvar "X1_POWERS_MPTR"),
+      GenAst.yfor pcsInit
+        (GenAst.yop EVM.Op.lt [GenAst.yvar "i", GenAst.ylit (nb - 1)])
+        pcsPost
+        (pcsLoopBody trunc) ]
+    else [])
+
+/-- `pcsBlock2Ast` is the named-piece form, by `rfl`. -/
+theorem pcsBlock2Ast_eq (nb : Nat) (trunc : Bool) :
+    GenAstPcs.pcsBlock2Ast nb trunc = pcsBlock2AstV nb trunc := rfl
+
+/-- The literal block 2 after inlining: the two prefix statements and, when `nb > 1`, the loop. -/
+def pcsBlock2Inline (a1 aP nb : Nat) (trunc : Bool) : Block EVM.Op :=
+  [GenAst.ylet "x1" (GenAst.yop EVM.Op.mload [GenAst.ylit a1]),
+   GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.ylit aP, GenAst.ylit 1])] ++
+  (if nb > 1 then
+    [ GenAst.ylet "acc" (GenAst.ylit 1),
+      GenAst.ylet "p" (GenAst.ylit aP),
+      GenAst.yfor pcsInit
+        (GenAst.yop EVM.Op.lt [GenAst.yvar "i", GenAst.ylit (nb - 1)])
+        pcsPost
+        (pcsLoopBody trunc) ]
+    else [])
+
+/-- **BLOCK 2 INLINER ALIGNMENT**: the slice is the literal block at the three sites. -/
+theorem pcsBlock2_inline (consts : Inline.Consts) (hr : consts.lookup "r" = none)
+    (nb : Nat) (trunc : Bool) (a1 aP : Nat)
+    (h1 : consts.lookup "X1_MPTR" = some a1) (hP : consts.lookup "X1_POWERS_MPTR" = some aP) :
+    Inline.inlineContractConstants consts (GenAstPcs.pcsBlock2Ast nb trunc) =
+      pcsBlock2Inline a1 aP nb trunc := by
+  cases trunc
+  · rw [pcsBlock2Ast_eq]
+    rw [show Inline.inlineContractConstants consts (pcsBlock2AstV nb false) =
+        (Inline.inlineStep (Inline.inlineScan 63 consts) consts []
+          (pcsBlock2AstV nb false)).blks from rfl]
+    by_cases hnb : nb > 1
+    · simp only [pcsBlock2AstV, hnb, if_true, pcsBlock2Inline, GenAst.ylet, GenAst.ylit,
+        GenAst.yexpr, GenAst.yop, GenAst.yvar, GenAst.yset, GenAst.yfor, List.nil_append,
+        List.append_assoc, List.singleton_append, List.cons_append]
+      simp only [Inline.inlineStep, List.foldl_cons, List.foldl_nil, List.append_nil,
+        List.nil_append, List.append_assoc, List.singleton_append, List.cons_append,
+        Inline.inlineStmtStep.eq_3, Inline.inlineStmtStep.eq_9,
+        Inline.inlineStmtStep.eq_4, Inline.inlineStmtStep.eq_8,
+        Inline.inExpr.eq_2, Inline.inExpr.eq_3, Inline.inExpr.eq_5, inExpr_lit,
+        Inline.exprFuel, Inline.boundOf, h1, hP, hr, Option.map_some, Option.map_none,
+        List.map_cons, List.map_nil,
+        (show Inline.shadowed [] "X1_MPTR" = false by decide),
+        (show Inline.shadowed ["x1"] "X1_POWERS_MPTR" = false by decide),
+        (show Inline.shadowed ["x1", "acc"] "X1_POWERS_MPTR" = false by decide)]
+      rw [inline_init]
+      simp only [pcsInit, GenAst.ylet, GenAst.ylit, Inline.boundOf, List.flatMap_cons,
+        List.flatMap_nil, List.append_nil, List.nil_append, List.singleton_append,
+        List.cons_append]
+      rw [inline_post, inline_loopBody_false consts hr]
+      simp only [pcsInit, GenAst.ylet, GenAst.ylit, Inline.boundOf, List.flatMap_cons,
+        List.flatMap_nil, List.append_nil, List.nil_append, List.singleton_append,
+        List.cons_append, reduceIte, Bool.false_or, Bool.or_false,
+        Inline.inExpr.eq_2, inExpr_lit,
+        (show Inline.shadowed ["x1", "acc", "p", "i"] "i" = true by decide)]
+    · simp only [pcsBlock2AstV, hnb, if_false, pcsBlock2Inline, GenAst.ylet, GenAst.ylit,
+        GenAst.yexpr, GenAst.yop, GenAst.yvar, List.nil_append, List.append_assoc,
+        List.singleton_append, List.cons_append]
+      simp only [Inline.inlineStep, List.foldl_cons, List.foldl_nil, List.append_nil,
+        List.nil_append, List.append_assoc, List.singleton_append, List.cons_append,
+        Inline.inlineStmtStep.eq_3, Inline.inlineStmtStep.eq_9, Inline.inExpr.eq_2,
+        Inline.inExpr.eq_3, Inline.inExpr.eq_5, inExpr_lit, Inline.exprFuel, Inline.boundOf,
+        h1, hP, hr, Option.map_some, Option.map_none, List.map_cons, List.map_nil,
+        (show Inline.shadowed [] "X1_MPTR" = false by decide),
+        (show Inline.shadowed ["x1"] "X1_POWERS_MPTR" = false by decide)]
+  · rw [pcsBlock2Ast_eq]
+    rw [show Inline.inlineContractConstants consts (pcsBlock2AstV nb true) =
+        (Inline.inlineStep (Inline.inlineScan 63 consts) consts []
+          (pcsBlock2AstV nb true)).blks from rfl]
+    by_cases hnb : nb > 1
+    · simp only [pcsBlock2AstV, hnb, if_true, pcsBlock2Inline, GenAst.ylet, GenAst.ylit,
+        GenAst.yexpr, GenAst.yop, GenAst.yvar, GenAst.yset, GenAst.yfor, List.nil_append,
+        List.append_assoc, List.singleton_append, List.cons_append]
+      simp only [Inline.inlineStep, List.foldl_cons, List.foldl_nil, List.append_nil,
+        List.nil_append, List.append_assoc, List.singleton_append, List.cons_append,
+        Inline.inlineStmtStep.eq_3, Inline.inlineStmtStep.eq_9,
+        Inline.inlineStmtStep.eq_4, Inline.inlineStmtStep.eq_8,
+        Inline.inExpr.eq_2, Inline.inExpr.eq_3, Inline.inExpr.eq_5, inExpr_lit,
+        Inline.exprFuel, Inline.boundOf, h1, hP, hr, Option.map_some, Option.map_none,
+        List.map_cons, List.map_nil,
+        (show Inline.shadowed [] "X1_MPTR" = false by decide),
+        (show Inline.shadowed ["x1"] "X1_POWERS_MPTR" = false by decide),
+        (show Inline.shadowed ["x1", "acc"] "X1_POWERS_MPTR" = false by decide)]
+      rw [inline_init]
+      simp only [pcsInit, GenAst.ylet, GenAst.ylit, Inline.boundOf, List.flatMap_cons,
+        List.flatMap_nil, List.append_nil, List.nil_append, List.singleton_append,
+        List.cons_append]
+      rw [inline_post, inline_loopBody_true consts hr]
+      simp only [pcsInit, GenAst.ylet, GenAst.ylit, Inline.boundOf, List.flatMap_cons,
+        List.flatMap_nil, List.append_nil, List.nil_append, List.singleton_append,
+        List.cons_append, reduceIte, Bool.false_or, Bool.or_false,
+        Inline.inExpr.eq_2, inExpr_lit,
+        (show Inline.shadowed ["x1", "acc", "p", "i"] "i" = true by decide)]
+    · simp only [pcsBlock2AstV, hnb, if_false, pcsBlock2Inline, GenAst.ylet, GenAst.ylit,
+        GenAst.yexpr, GenAst.yop, GenAst.yvar, List.nil_append, List.append_assoc,
+        List.singleton_append, List.cons_append]
+      simp only [Inline.inlineStep, List.foldl_cons, List.foldl_nil, List.append_nil,
+        List.nil_append, List.append_assoc, List.singleton_append, List.cons_append,
+        Inline.inlineStmtStep.eq_3, Inline.inlineStmtStep.eq_9, Inline.inExpr.eq_2,
+        Inline.inExpr.eq_3, Inline.inExpr.eq_5, inExpr_lit, Inline.exprFuel, Inline.boundOf,
+        h1, hP, hr, Option.map_some, Option.map_none, List.map_cons, List.map_nil,
+        (show Inline.shadowed [] "X1_MPTR" = false by decide),
+        (show Inline.shadowed ["x1"] "X1_POWERS_MPTR" = false by decide)]
+
 #assert_axioms Midfall.LoweringV3.PcsRows.decode_exists [propext, Classical.choice, Quot.sound]
   native []
 #assert_axioms Midfall.LoweringV3.PcsRows.inline_loopBody_false
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.inline_loopBody_true
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.pcsBlock2_inline
   [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.PcsRows
