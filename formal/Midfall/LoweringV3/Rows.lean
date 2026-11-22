@@ -86,17 +86,21 @@ theorem vk_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
     `LeanAccepts`'s `Decoded`), and `vkS9_skipT` for S9/S13; `vk_clean_walkV3` supplies the
     `StageInv .vk` transfer.
 
-    WHAT REMAINS: the EXISTENCE half `StmtsContract` - exhibit one run of the 13-statement slice
-    from `StageInv .start`. It is not a premise gap: every guard and every value is already proved,
-    so the run is a forward `Step` construction (or `wpSS_exists_C` with a live existential
-    transformer; `wp_run` cannot start from the symbolic `V` because `VEnv.get` is stuck, so the
-    manual construction is the direct route). Once exhibited, `vk_all_normal` gives its post. -/
+    **THE EXISTENCE HALF IS ALSO PROVED** (`VkClean.vk_exists_run`): an explicit thirteen-statement
+    `ExecStmts` run from any `StageInv .start` boundary, built by `vk_step_s1` (the false guard eval
+    `vkGuard_eval_zero`), `vk_step_s2` (`extcodecopy`), six `vk_step_hdr` assigns,
+    `vk_step_gate` for S9/S13, and `vk_step_cdl`/`vk_step_cdsz` for S10-S12. The row is
+    `StmtsTotal = ⟨vk_exists_run, vk_all_normal⟩`; standard three, cone 0. -/
 theorem vk_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash) (vkAddr : U256) (cd : Bytes)
     (hacc : LeanAccepts R H cd) (hcomp : CompleteSide R H cd) :
     BlockProgS R Partial.vkLoading H vkAddr product cd := by
-  sorry
+  have hacc' := hacc
+  exact ⟨VkClean.vk_exists_run (c := callsOf product) R hR H vkAddr cd
+      (ExternalGas.ofFun fun _ => 0) hacc',
+    VkClean.vk_all_normal (c := callsOf product) R hR H vkAddr cd
+      (ExternalGas.ofFun fun _ => 0) hacc'⟩
 
 /-! ## 2. transcriptParser (owner ROW.TP, WP A6) -/
 
@@ -266,13 +270,15 @@ theorem prog_rows (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
 #assert_axioms Midfall.LoweringV3.vk_blockSim
   [propext, Classical.choice, Quot.sound] native []
 
-/- **WP VKPROG gate prints for the progress row.** The row is OPEN (PG-VKHEADER): `#check` shows the
-    statement is unchanged, `#print axioms` shows `sorryAx` is still the only thing behind it, and
-    `#cone_sorries` shows it is still a ROOT leaf. The named premise and its proved sufficiency are
-    `VkClean.pg_vkheader` / `VkClean.vk_hdr_word_read`, both cone 0 and standard three. -/
+/- **WP A3 gate prints for the progress row: PROVED.** `vk_blockProgS` is
+    `VkClean.vk_exists_run` (the explicit 13-statement run) paired with
+    `VkClean.vk_all_normal` (every run exits normal at `StageInv .vk`), at the progress dialect
+    `callsOf product` / `ExternalGas.ofFun 0`. Standard three, cone 0. -/
 #check @Midfall.LoweringV3.vk_blockProgS
 #print axioms Midfall.LoweringV3.vk_blockProgS
 #cone_sorries Midfall.LoweringV3.vk_blockProgS
+#assert_axioms Midfall.LoweringV3.vk_blockProgS
+  [propext, Classical.choice, Quot.sound] native []
 #print axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
 #assert_axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
   [propext, Classical.choice, Quot.sound] native []
