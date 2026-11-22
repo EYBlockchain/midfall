@@ -272,6 +272,51 @@ theorem restore_set_same {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : V
     {x : Ident} {a : D.Value} : restore V (VEnv.set V x a) = VEnv.set V x a := by
   simp [restore, venv_set_length]
 
+/-- Setting two DISTINCT variables commutes. PROVED by induction; the loop bodies of the Lagrange
+window set `l_blind` and `l_i_cptr`, and the invariant has to agree with both orders. -/
+theorem venv_set_comm {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D} {x y : Ident}
+    {a b : D.Value} (h : x ≠ y) :
+    VEnv.set (VEnv.set V x a) y b = VEnv.set (VEnv.set V y b) x a := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨z, u⟩ := p
+      by_cases hzx : z = x
+      · subst hzx
+        have hzy : ¬ (z = y) := fun h' => h h'
+        simp [VEnv.set, hzy]
+      · by_cases hzy : z = y
+        · subst hzy
+          have hzx' : ¬ (z = x) := fun h' => hzx h'
+          simp [VEnv.set, hzx']
+        · simp [VEnv.set, hzx, hzy, ih]
+
+/-- One iteration of the `l_blind` walk, environment half: the two in-place updates commute past
+the loop's own `l_i_cptr_end` binding and collapse. -/
+theorem lblind_env_step {V : VEnv (Bridge.Dialect c g)} {e w w' mp mp' : U256} :
+    VEnv.set (VEnv.set (("l_i_cptr_end", e) ::
+        (VEnv.set V "l_blind" w).set "l_i_cptr" mp) "l_blind" w') "l_i_cptr" mp' =
+      ("l_i_cptr_end", e) :: (VEnv.set V "l_blind" w').set "l_i_cptr" mp' := by
+  have h1 : VEnv.set (("l_i_cptr_end", e) ::
+      (VEnv.set V "l_blind" w).set "l_i_cptr" mp) "l_blind" w' =
+      ("l_i_cptr_end", e) :: VEnv.set ((VEnv.set V "l_blind" w).set "l_i_cptr" mp)
+        "l_blind" w' := by simp [VEnv.set]
+  have h2 : VEnv.set (("l_i_cptr_end", e) ::
+      VEnv.set ((VEnv.set V "l_blind" w).set "l_i_cptr" mp) "l_blind" w') "l_i_cptr" mp' =
+      ("l_i_cptr_end", e) :: VEnv.set (VEnv.set ((VEnv.set V "l_blind" w).set "l_i_cptr" mp)
+        "l_blind" w') "l_i_cptr" mp' := by simp [VEnv.set]
+  rw [h1, h2,
+    venv_set_comm (D := Bridge.Dialect c g) (V := VEnv.set V "l_blind" w)
+      (x := "l_i_cptr") (y := "l_blind") (by decide),
+    venv_set_set (D := Bridge.Dialect c g), venv_set_set (D := Bridge.Dialect c g)]
+
+/-- A scope that adds one binding and leaves the rest length-preserved exits by dropping that one
+binding: the general form of `restore_cons_set` the multi-target loops need. -/
+theorem restore_cons_length {D : YulSemantics.Dialect} [DecidableEq D.Value] {V W : VEnv D}
+    {y : Ident} {b : D.Value} (h : W.length = V.length) :
+    restore V ((y, b) :: W) = W := by
+  simp [restore, h]
+
 /-! ## 5. T3.9.a: THE SQUARING LOOP (first use of GEN.3's rule) -/
 
 /-- **LOOP 1** (statement 3, GenAst.lean:872-874): 'k' squarings. Bound = 'k'. LEAF T3.9.a.
@@ -704,3 +749,234 @@ theorem lag_lblind_loop_form (consts : Inline.Consts) (k n m : Nat) :
           [GenAst.yvar "l_blind", GenAst.yop EVM.Op.mload [GenAst.yvar "l_i_cptr"],
             Blocks.VkLoading.vkSite "r" consts])]] := by
   kernel_rfl
+
+/-- **LOOP 4** (statement 16, GenAst.lean:900-904): `l_blind`. Bound = `m - 2` (zero iterations when
+`m ≤ 2`; see PG-NEGLAG). LEAF T3.9.d. VERBATIM from the evidence (:533-546), with the two renames.
+The body executes `mload(l_i_cptr)`, so the state is preserved only up to `activeWords`
+(`SameUpToActive`; `st' = st` is false for `m ≥ 3`). -/
+theorem lag_lblind_loop {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (hr : consts.lookup "r" = none) (k n m D : Nat)
+    (hDn : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D) (hm : 2 ≤ m)
+    (hD : D + 32 * m < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 16 1)
+      (fun V _ => VEnv.get V "l_i_cptr" = some (BitVec.ofNat 256 (D + 64)) ∧
+        (VEnv.get V "l_blind").isSome ∧ (VEnv.get V "r").isSome)
+      (fun V st V' st' o => o = .normal ∧ SameUpToActive st st' ∧
+        ∃ lb rw, VEnv.get V "l_blind" = some lb ∧ VEnv.get V "r" = some rw ∧
+          V' = VEnv.set (VEnv.set V "l_blind"
+              (wSum rw (fun i => loadWord st.memory (D + 64 + 32 * i)) (m - 2) lb))
+            "l_i_cptr" (BitVec.ofNat 256 (D + 32 * m))) := by
+  rw [lag_lblind_loop_form]
+  simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
+    Blocks.VkLoading.vkSite, hr, hDn]
+  intro V st hpre
+  obtain ⟨hlic, hlbsome, hrsome⟩ := hpre
+  obtain ⟨lb, hlb⟩ := QuotientRows.isSome_elim hlbsome
+  obtain ⟨rw, hrw⟩ := QuotientRows.isSome_elim hrsome
+  let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
+    fun V' st' o => o = .normal ∧ SameUpToActive st st' ∧
+      ∃ lb rw, VEnv.get V "l_blind" = some lb ∧ VEnv.get V "r" = some rw ∧
+        V' = VEnv.set (VEnv.set V "l_blind"
+            (wSum rw (fun i => loadWord st.memory (D + 64 + 32 * i)) (m - 2) lb))
+          "l_i_cptr" (BitVec.ofNat 256 (D + 32 * m))
+  change Midfall.Yul.WpTac.AllRuns funs V st
+    [Stmt.forLoop
+      [Stmt.letDecl ["l_i_cptr_end"] (some (Expr.builtin Op.add
+        [Expr.lit (Literal.number D), Expr.lit (Literal.number (m * 32))]))]
+      (Expr.builtin Op.lt [Expr.var "l_i_cptr", Expr.var "l_i_cptr_end"])
+      [Stmt.assign ["l_i_cptr"] (Expr.builtin Op.add
+        [Expr.var "l_i_cptr", Expr.lit (Literal.number 32)])]
+      [Stmt.assign ["l_blind"] (Expr.builtin Op.addmod
+        [Expr.var "l_blind", Expr.builtin Op.mload [Expr.var "l_i_cptr"], Expr.var "r"])]] Q
+  let Inv : VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+    fun V' st' => ∃ j, j ≤ m - 2 ∧
+      V' = ("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+        VEnv.set (VEnv.set V "l_blind"
+          (wSum rw (fun i => loadWord st.memory (D + 64 + 32 * i)) j lb))
+          "l_i_cptr" (BitVec.ofNat 256 (D + 64 + 32 * j)) ∧
+      VEnv.get V' "l_i_cptr" = some (BitVec.ofNat 256 (D + 64 + 32 * j)) ∧
+      VEnv.get V' "l_i_cptr_end" = some (BitVec.ofNat 256 (D + 32 * m)) ∧
+      VEnv.get V' "l_blind" = some
+        (wSum rw (fun i => loadWord st.memory (D + 64 + 32 * i)) j lb) ∧
+      VEnv.get V' "r" = some rw ∧ SameUpToActive st st'
+  have hmain : Midfall.Yul.WpTac.AllRuns funs V st
+      [Stmt.forLoop
+        [Stmt.letDecl ["l_i_cptr_end"] (some (Expr.builtin Op.add
+          [Expr.lit (Literal.number D), Expr.lit (Literal.number (m * 32))]))]
+        (Expr.builtin Op.lt [Expr.var "l_i_cptr", Expr.var "l_i_cptr_end"])
+        [Stmt.assign ["l_i_cptr"] (Expr.builtin Op.add
+          [Expr.var "l_i_cptr", Expr.lit (Literal.number 32)])]
+        [Stmt.assign ["l_blind"] (Expr.builtin Op.addmod
+          [Expr.var "l_blind", Expr.builtin Op.mload [Expr.var "l_i_cptr"], Expr.var "r"])]] Q := by
+    refine allRuns_for_cons_wp (Bridge.Dialect c g) (Bopen c g) (Cnone _)
+      (Bopen_sound c g) (Cnone_sound _) (n := 20) Inv ?hinit ?hstep
+    · -- init: 'l_i_cptr_end := D + 32 m'
+      refine ⟨rfl, ⟨?_⟩⟩
+      show Inv (["l_i_cptr_end"].zip
+          [BitVec.ofNat 256 D + BitVec.ofNat 256 (m * 32)] ++ V) st
+      have hzip : (["l_i_cptr_end"].zip
+          [BitVec.ofNat 256 D + BitVec.ofNat 256 (m * 32)]) ++ V =
+          (("l_i_cptr_end", BitVec.ofNat 256 D + BitVec.ofNat 256 (m * 32)) :: V) := rfl
+      rw [hzip]
+      rw [show BitVec.ofNat 256 D + BitVec.ofNat 256 (m * 32) =
+          BitVec.ofNat 256 (D + 32 * m) by
+        rw [← BitVec.ofNat_add]
+        congr 1
+        omega]
+      refine ⟨0, by omega, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · -- the environment
+        change ("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) :: V =
+          ("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+            VEnv.set (VEnv.set V "l_blind" lb) "l_i_cptr" (BitVec.ofNat 256 (D + 64))
+        rw [venv_set_eq_self hlb, venv_set_eq_self hlic]
+      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr_end")
+          (y := "l_i_cptr") (v := BitVec.ofNat 256 (D + 32 * m)) (by decide)]
+        exact hlic
+      · rfl
+      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr_end")
+          (y := "l_blind") (v := BitVec.ofNat 256 (D + 32 * m)) (by decide)]
+        exact hlb
+      · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr_end")
+          (y := "r") (v := BitVec.ofNat 256 (D + 32 * m)) (by decide)]
+        exact hrw
+      · exact ⟨st.activeWords, rfl⟩
+    · -- one iteration
+      intro Vi sti hInv
+      simp only [Inv] at hInv
+      obtain ⟨j, hj, hV, hlicj, hliej, hlbj, hrj, aw, hst⟩ := hInv
+      subst hV
+      subst hst
+      unfold wpIter
+      simp only [wpE, wpA, hlicj, hliej]
+      refine ⟨?_, ?_⟩
+      · -- guard false: j = m - 2
+        intro hguard
+        have h0 : b2w ((BitVec.ofNat 256 (D + 64 + 32 * j)).ult
+            (BitVec.ofNat 256 (D + 32 * m))) = (0 : U256) := hguard
+        have hge : D + 32 * m ≤ D + 64 + 32 * j :=
+          LoopRule.lt_guard_false (by omega) hD h0
+        have hm2 : m - 2 + 2 = m := Nat.sub_add_cancel hm
+        have hjk : j = m - 2 := by
+          have hle2 : m - 2 ≤ j := by omega
+          exact Nat.le_antisymm hj hle2
+        refine ⟨?allRuns⟩
+        intro V' st' o hrun
+        cases hrun with
+        | seqNil =>
+            subst hjk
+            refine ⟨rfl, ⟨aw, rfl⟩, lb, rw, hlb, hrw, ?_⟩
+            rw [restore_cons_length (D := Bridge.Dialect c g) (V := V)
+              (W := (VEnv.set V "l_blind"
+                (wSum rw (fun i => loadWord st.memory (D + 64 + 32 * i)) (m - 2) lb)).set
+                "l_i_cptr" (BitVec.ofNat 256 (D + 64 + 32 * (m - 2))))
+              (y := "l_i_cptr_end") (b := BitVec.ofNat 256 (D + 32 * m)) (by
+                simp only [venv_set_length (D := Bridge.Dialect c g)])]
+            have hmm : 32 * (m - 2) + 64 = 32 * m := by
+              have h1 : m - 2 + 2 = m := Nat.sub_add_cancel hm
+              calc 32 * (m - 2) + 64 = 32 * (m - 2) + 32 * 2 := by norm_num
+                _ = 32 * ((m - 2) + 2) := by ring
+                _ = 32 * m := by rw [h1]
+            have hv : D + 64 + 32 * (m - 2) = D + 32 * m := by omega
+            rw [hv]
+      · -- guard true: j < m - 2, one mload and one addmod
+        intro hguard
+        have h0 : b2w ((BitVec.ofNat 256 (D + 64 + 32 * j)).ult
+            (BitVec.ofNat 256 (D + 32 * m))) ≠ (0 : U256) := hguard
+        have hm2 : m - 2 + 2 = m := Nat.sub_add_cancel hm
+        have hlt : j < m - 2 := by
+          have := LoopRule.lt_guard_true (i := D + 64 + 32 * j)
+            (n := D + 32 * m) (by omega) hD h0
+          omega
+        simp only [wpS, wpSS, wpE, wpA, Bopen, stepOp, bin, ter, hlicj, hlbj, hrj]
+        have hDj : D + 64 + 32 * j < 2 ^ 256 := by omega
+        rw [ofNat_toNat hDj]
+        set w0 : U256 := wSum rw (fun i => loadWord st.memory (D + 64 + 32 * i)) j lb with hw0
+        set v : U256 := if rw = 0 then 0 else BitVec.ofNat 256
+          ((BitVec.toNat w0 + BitVec.toNat (loadWord st.memory (D + 64 + 32 * j))) %
+            BitVec.toNat rw) with hv
+        have hv' : v = wAddmodAt w0 (loadWord st.memory (D + 64 + 32 * j)) rw := by
+          rw [hv]; rfl
+        set Venv : VEnv (Bridge.Dialect c g) :=
+          ("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+            (VEnv.set V "l_blind" w0).set "l_i_cptr"
+              (BitVec.ofNat 256 (D + 64 + 32 * j)) with hVenv
+        refine ⟨rfl, ?_⟩
+        have hsm : VEnv.setMany Venv ["l_blind"] [v] = VEnv.set Venv "l_blind" v := rfl
+        rw [hsm, restore_set_same (V := Venv) (x := "l_blind") (a := v)]
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (V := Venv) (x := "l_blind")
+          (y := "l_i_cptr") (v := v) (by decide)]
+        rw [show VEnv.get Venv "l_i_cptr" =
+            some (BitVec.ofNat 256 (D + 64 + 32 * j)) from hlicj]
+        dsimp only
+        refine ⟨rfl, ?_⟩
+        have hsm2 : VEnv.setMany (VEnv.set Venv "l_blind" v) ["l_i_cptr"]
+            [BitVec.ofNat 256 (D + 64 + 32 * j) + litValue (Literal.number 32)] =
+            VEnv.set (VEnv.set Venv "l_blind" v) "l_i_cptr"
+              (BitVec.ofNat 256 (D + 64 + 32 * j) + litValue (Literal.number 32)) := rfl
+        rw [hsm2, restore_set_same (V := VEnv.set Venv "l_blind" v) (x := "l_i_cptr")]
+        have hmp' : BitVec.ofNat 256 (D + 64 + 32 * j) + litValue (Literal.number 32) =
+            BitVec.ofNat 256 (D + 64 + 32 * (j + 1)) := by
+          rw [show litValue (Literal.number 32) = BitVec.ofNat 256 32 from rfl,
+            ← BitVec.ofNat_add]
+          congr 1
+        rw [hmp']
+        simp only [Inv]
+        refine ⟨j + 1, Nat.succ_le_of_lt hlt, ?eq, ?g1, ?g2, ?g3, ?g4, ?state⟩
+        · -- the environment equation: push the two in-place updates through the loop cons
+          rw [hVenv, lblind_env_step (V := V)
+            (e := BitVec.ofNat 256 (D + 32 * m)) (w := w0) (w' := v)
+            (mp := BitVec.ofNat 256 (D + 64 + 32 * j))
+            (mp' := BitVec.ofNat 256 (D + 64 + 32 * (j + 1))),
+            hv', hw0]
+          rfl
+        · -- l_i_cptr read back
+          rw [venv_get_set_same (D := Bridge.Dialect c g)
+            (V := VEnv.set (("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+              (VEnv.set V "l_blind" w0).set "l_i_cptr" (BitVec.ofNat 256 (D + 64 + 32 * j)))
+              "l_blind" v)
+            (x := "l_i_cptr") (v := BitVec.ofNat 256 (D + 64 + 32 * j))
+            (w := BitVec.ofNat 256 (D + 64 + 32 * (j + 1))) (by
+              rw [venv_get_set_ne (D := Bridge.Dialect c g)
+                (V := ("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+                  (VEnv.set V "l_blind" w0).set "l_i_cptr" (BitVec.ofNat 256 (D + 64 + 32 * j)))
+                (x := "l_blind") (y := "l_i_cptr")
+                (v := v) (by decide)]
+              exact hlicj)]
+        · -- l_i_cptr_end read back (the loop's own binding, at the cons head)
+          rw [venv_get_set_ne (D := Bridge.Dialect c g)
+            (V := VEnv.set (("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+              (VEnv.set V "l_blind" w0).set "l_i_cptr" (BitVec.ofNat 256 (D + 64 + 32 * j)))
+              "l_blind" v)
+            (x := "l_i_cptr") (y := "l_i_cptr_end") (v := BitVec.ofNat 256 (D + 64 + 32 * (j + 1)))
+            (by decide)]
+          rw [venv_get_set_ne (D := Bridge.Dialect c g)
+            (V := ("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+              (VEnv.set V "l_blind" w0).set "l_i_cptr" (BitVec.ofNat 256 (D + 64 + 32 * j)))
+            (x := "l_blind") (y := "l_i_cptr_end") (v := v) (by decide)]
+          rfl
+        · -- l_blind read back
+          rw [venv_get_set_ne (D := Bridge.Dialect c g)
+            (V := VEnv.set (("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+              (VEnv.set V "l_blind" w0).set "l_i_cptr" (BitVec.ofNat 256 (D + 64 + 32 * j)))
+              "l_blind" v)
+            (x := "l_i_cptr") (y := "l_blind") (v := BitVec.ofNat 256 (D + 64 + 32 * (j + 1)))
+            (by decide)]
+          rw [venv_get_set_same hlbj, hv', hw0]
+          rfl
+        · -- r read back
+          rw [venv_get_set_ne (D := Bridge.Dialect c g)
+            (V := VEnv.set (("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+              (VEnv.set V "l_blind" w0).set "l_i_cptr" (BitVec.ofNat 256 (D + 64 + 32 * j)))
+              "l_blind" v)
+            (x := "l_i_cptr") (y := "r") (v := BitVec.ofNat 256 (D + 64 + 32 * (j + 1)))
+            (by decide)]
+          rw [venv_get_set_ne (D := Bridge.Dialect c g)
+            (V := ("l_i_cptr_end", BitVec.ofNat 256 (D + 32 * m)) ::
+              (VEnv.set V "l_blind" w0).set "l_i_cptr" (BitVec.ofNat 256 (D + 64 + 32 * j)))
+            (x := "l_blind") (y := "r") (v := v) (by decide)]
+          exact hrj
+        · -- SameUpToActive
+          exact ⟨_, rfl⟩
+  intro V' st' o hrun
+  exact hmain V' st' o hrun
