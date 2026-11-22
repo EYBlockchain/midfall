@@ -71,6 +71,7 @@ PROVED in `TranscriptRows.lean`:
 | `tmReadMsg` / `tmRead_msg_run` | one mixed message read from the wired tail: succeeds, advances by `msgWire`'s length, leaves the buffer |
 | **`tmRead_msgs_run`** | **the message-wire engine**: reading a whole `List (Msg …)` one message at a time from `pref ++ wireMsgs E ms ++ rest` succeeds, consumes the list in order, advances by the sum of wire lengths, and leaves the buffer |
 | **`decodeCalldata_slots`** | **the `Decoded` linkage**: `Decoded R cd ms instW inst` gives `ms.map Msg.slot = plan.slots` (via `decodeSlots_map_slot`) |
+| **`tp_agrees_of_agree`** | `tp_agrees` minus `Agree`: the other five `StageInv .transcript` conjuncts are the `TpPost` projections |
 
 These are exactly the buffer-tail/decode halves of `snapshotAlgebraRun_total`. The missing half is
 the monadic schedule walk itself: `parseTrace`/`readAlgebra` must be shown to *call the reads in
@@ -186,9 +187,13 @@ leaves below.
 2. **`tp_computes`** (2150). Needs ROW.TP.3/4/5/2 (`common_word`, `transcript_init`, `squeeze_to`
    summaries; the three scalar loops; the `tpEvents` fold; the walk loop) — unissued. ROW.TP.6
    (this file) is now discharged and is no longer a blocker.
-3. **`tp_agrees`** (2167). Needs **SIM.10 `xcript_total`**, still absent (`grep -rn xcript_total
-   formal/Midfall` prints only `WideningStages.lean` prose). ROW.TP.6 is now discharged; the
-   `MirrorAt` half of `TpPost` maps to `StageInv`'s `Mirror .transcript` by `rfl`.
+3. **`tp_agrees`** (2167). Now decomposed by the PROVED `tp_agrees_of_agree`: five of the six
+   `StageInv .transcript` conjuncts are exactly `TpPost`'s projections (`LeanRaw .transcript` and
+   `Mirror .transcript` are definitional), so only `Agree` is left. `Agree` needs
+   **SIM.10 `xcript_total`** (obligation 1 above) plus the `InvAt .transcript (padSnap x …)`
+   assembly: the scalar slots are `XcriptSlots`, the G1 windows are `MirrorAt` + the
+   decoder/encoder bridges (`decodeCalldata_slots` is the calldata-side half), and the quotient
+   limbs/evals windows are the same read-schedule bridge. That is ROW.TP.8's own content.
 4. **`tp_poison`** (2180). Needs ROW.TP.4's three scalar loops and ROW.TP.2's walk loops
    (end-normally/revert lemmas whose preconditions do not read the loops' computed values) —
    unissued.

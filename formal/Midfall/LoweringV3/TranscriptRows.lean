@@ -2156,6 +2156,18 @@ theorem tp_computes (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
         (o = .normal ∧ TpPost R H vkAddr cd V' st')) := by
   sorry
 
+/-- **`tp_agrees` MINUS `Agree`.** Five of the six `StageInv .transcript` conjuncts are the
+    projections of `TpPost` (`LeanRaw .transcript` is `rawDecode … |>.isSome = true` and
+    `Mirror .transcript` is `MirrorAt`, both definitionally). Only `Agree` — the existence of
+    the Lean prefix for every decoding and `Inv` at it — is left. -/
+theorem tp_agrees_of_agree (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (h : TpPost R H vkAddr cd V st)
+    (hagree : Agree R H cd Checkpoint.transcript V st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st := by
+  obtain ⟨hframe, hsucc, hbase, hraw, hmirror, hslots⟩ := h
+  exact ⟨hframe, hsucc, hbase, hraw, hmirror, hagree⟩
+
 /-- **THE ALG LEAF.** `TpPost` is the staged boundary at `.transcript`: `Agree` follows from
     `xcript_total` (the Lean prefix exists), `MirrorAt` with `SimPins.eipRt` (the commitment
     windows hold `toEip` of the decoded points) and `XcriptSlots`. LEAF ROW.TP.8. No Yul.
