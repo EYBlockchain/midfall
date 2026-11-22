@@ -38,15 +38,16 @@ and the `snapshotOf_prepareMsgs` retirement.
   no-halt lemmas for the second-pass body. T3.9.c is one block-state equation + window invariant
   from green; T3.9.b guard-TRUE remains on the semantic route. A5/`batch_invert_summary` is the
   row prerequisite.
-- **A5** (`0407d61`): `BatchInvert.lean` forms, **`bi_forward_loop`**, associativity, the
-  backward algebra, `bwdMem` and the cursor lemmas are merged. `bi_backward_loop` is now only the
-  `Stop`/`SetMany`/`restore` bookkeeping; `batch_invert_summary` follows.
-- **A6 transcriptParser** (`t/A6`): `tp_blockSim` glue, `inline_g1WalkLoop`, and the PG-PARSER
-  bridge (`tp_planFacts`/`tp_fromProtocol`/`userPhasesOf_advice`/`tpEvents_filterMap_eq`) are green;
-  six named TP leaves remain (the branch is WIP — it would add six non-ROOT rows).
-- **A9 PCS** (`7034462`/`d40b6de`): `decode_exists`, `pcsBlock2_inline`, the loop vocabulary and
-  **`pcs_loop_false`** are merged (zero sorries). Confirmed the queue's A8/QVM dependency is
-  schedule-only; `pcs_loop_true` and the `scalar_inv` summary are next.
+- **A5** (`0407d61`+): `BatchInvert.lean` forms, **`bi_forward_loop`**, associativity, the backward
+  algebra, `bwdMem`, cursor lemmas and the `newAll` spelling are merged. `bi_backward_loop` is now
+  one `("inv", …) ::` prefix-strip from green; `batch_invert_summary` follows.
+- **A6 transcriptParser** (`t/A6`): `tp_blockSim` glue, `inline_g1WalkLoop`, the PG-PARSER bridge,
+  and **`tp_events_slots`** are proved; five named TP leaves remain (`g1walk_loop_sem`,
+  `tp_computes`, `tp_agrees`, `tp_poison`, `tp_blockProgS`), with `tp_agrees` still waiting on
+  SIM.10 `xcript_total`. The branch is WIP (it would add non-ROOT rows).
+- **A9 PCS** (`ae33abe`): `decode_exists`, `pcsBlock2_inline`, the loop vocabulary, and **both
+  `pcs_loop_false` and `pcs_loop_true`** are merged (zero sorries). Confirmed the queue's A8/QVM
+  dependency is schedule-only; the `scalar_inv` summary is next.
 - **A4 continuation** (`midfall-g`, `t/A4`): T3.9.c/e and the b guard-TRUE semantic loop.
 
 **Shortest path to the conditional e2e theorem:** A4/A5 -> A6/A9 -> A11 -> A12 -> A13 -> D1
