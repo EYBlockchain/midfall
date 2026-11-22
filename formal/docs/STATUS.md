@@ -38,14 +38,15 @@ and the `snapshotOf_prepareMsgs` retirement.
   helpers and the D-GATE2-corrected `lag_agrees` prose. The b-body guard-TRUE proof is parked on
   `t/A4-bwip` (not merged): fuel 13 is needed and the joint `simp` exceeds 200k heartbeats, so the
   semantic `allRuns_loop` route is next. A5/`batch_invert_summary` is a prerequisite of the row.
-- **A5** (`16fdfd7`): `BatchInvert.lean` vocabulary, both loop forms, forward-product algebra and
-  the read-over-window lemmas are merged (zero sorries). The worker found `bi_forward_loop` FALSE
-  as stated — the evidence pre omits the emitter statement-9 canonicality guard; the corrected
-  pre is recorded and is being proved (an arm lemma, not a row hypothesis). `batch_invert_summary`
-  needs the arbitrary-prime modexp byte-parse; both are in flight.
-- **A6 transcriptParser** (`midfall-f`, `t/A6`) and **A9 PCS** (`midfall-i`, `t/A9`): the next two
-  block-row components, each in a new `*Rows.lean`; A9 first reports whether the queue's A8
-  dependency is real or file-disjoint.
+- **A5** (`3046684`): `BatchInvert.lean` vocabulary/forms and **`bi_forward_loop` PROVED** with the
+  corrected statement-9 canonicality pre (the evidence's form was false without it). The backward
+  loop is blocked on the `wMulmodAt` associativity lemma; `batch_invert_summary` needs the
+  memory-level modexp bridge. In flight.
+- **A6 transcriptParser** (`t/A6`): `tp_blockSim` glue and `inline_g1WalkLoop` green, six named
+  TP leaves remain; the branch is WIP (not merged — it would add six non-ROOT rows).
+- **A9 PCS** (`8916dc0`): `decode_exists` and the PCS-local inliner/loop infrastructure merged
+  (zero sorries). Confirmed the queue's A8/QVM dependency is schedule-only; block 2 and the
+  `scalar_inv` summary are next.
 - **A4 continuation** (`midfall-g`, `t/A4`): T3.9.c/e and the b guard-TRUE semantic loop.
 
 **Shortest path to the conditional e2e theorem:** A4/A5 -> A6/A9 -> A11 -> A12 -> A13 -> D1
@@ -53,11 +54,12 @@ and the `snapshotOf_prepareMsgs` retirement.
 M9/M10 C/D tracks are DONE/non-vacuity work, not prerequisites of `lowering_correct` itself.
 - **QVM** (`midfall-c/d`): D-QVM2 executed; `QInterpRefinesSegment` stated; QIDENT/BINDINV/PLSEG/
   SPILL2/CURFACT landed. `q_blockSim`/`q_blockProgS` remain.
-- **QVM compile-correctness** (`midfall-h`, `t/QVMBUILD`): the 26/26 identity arm table and the
-  `qvm_compile_correct_identity_of_parts` reduction are merged at `71a79d7`; the row is reduced to
-  exactly `PG_identity_emitterValue`, `PG_identity_compactionValue`, `PG_identity_preFold`. The
-  worker is on those three facts. It owns `Qvm.lean`/`QvmShift`/`QvmEmit` only; the segment/spill/
-  Quotient files stay with the QVM agent.
+- **QVM compile-correctness** (`t/QVMBUILD`): the 26/26 arm table and reduction are merged; then
+  `PG_identity_preFold` and `PG_termFold_structure` were PROVED and merged (`25459b2`/`3ff837d`).
+  The worker then PROVED `qvm_compile_correct_identity` FALSE as stated (selector gap low byte
+  `0x0a` collides with `FOLD_MAIN` in `finalizedIdentitySegment`). **D-GATE3 is signed:** make the
+  segment target-aware (strip `FOLD_SELECTOR` by 4 / `FOLD_MAIN` by 1); that repair is in flight.
+  It owns `Qvm.lean`/`QvmShift`/`QvmEmit`; the segment/spill/Quotient files stay with the QVM agent.
 
 ## 3. Next READY
 
