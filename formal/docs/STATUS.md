@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `79f2de3` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
+**As of:** `b6e6d42` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
 EXIT=0, KAT 1648/119, `axiom_sweep: ok`, closure fingerprint 4823 declarations / 526 external
 leaves / `bd27cd298a04fc1a`. The later A3/QVM commits are quick-gate green. Current report:
 root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
@@ -22,6 +22,11 @@ root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
     KAT ...................... 1648/119 (full gate at d0bf226; quick since)
     axiom roots .............. standard three + sorryAx, native []
 
+**D-GATE5 (signed):** D1's `kzgPartitionBridge_false_at_x0` proves the unconditional KZG
+partition count false at challenge `x = 0` (generator 2 sets vs Halo2 1). `ChallengesGood` gains
+`xNonzero : S.alg.x ≠ 0`, exactly parallel to `xNotRoot`; `CompleteSide` already quantifies over it.
+This is a statement repair, not a row/`ValidV3`/root hypothesis; D1 is implementing the clause and
+regenerating the closure manifest/`Frozen.sha256`.
 **Merged at `4c920bd`:** A4 `lag_agrees_lLast_l0` + projections (202 lines), A5 output-word
 round trip, A9 `eval_add_var_lit` + six-store plumbing, D1's named `readScheduleAgrees`/
 `prepare_logSlots` gap.
@@ -73,9 +78,10 @@ gate last ran at `d0bf226`.
   (D-QVM3's exception was not needed); `go_drop_ok`/`runBlocks` remain.
 - **A9 (green on branch):** `bytesToNatBE_readBytes_32`/`fold_byte_lt` at `43da46c`; the six-store
   frame and `scalar_inv` summary remain.
-- **A4/lagrange** (`t/A4`): `lag_agrees_xn` and `LagrangeAlg` merged; the exact residual is the
-  `lLast`/`l0`/`lBlind`/instance projections plus the documented `hinst` leaf premise; T3.9.h and
-  the lag rows then follow.
+- **A4/lagrange** (`t/A4`): **`lag_agrees` and `lag_agrees_lBlind` PROVED** via the authorized
+  leaf premises (`hE`/`hval`/`hBlindW`/`hInstEval`); the remaining work is to discharge those
+  leaves where possible and T3.9.h/lag-row glue. `lBlind_fold` and `wAddmodAt_zero_left` are
+  merged.
 - **QVMHDR / QVMGREEN**: the MODARITH7 header is PROVED (`7225a47`); both paused, the existing
   QVM agent keeps the `q_blockSim`/`q_blockProgS` lane.
 - **A12/totality** (`t/A12`): per-block liveness from the proved vk/tr progress rows; the root
@@ -94,7 +100,9 @@ gate last ran at `d0bf226`.
 - **C0/widening glue** (`t/C0`): `rejectsW_of_sims`, `completeAnyGasW_of_progs`,
   `totalW_of_stages` through `blockSimW_iff_blockSim`.
 - **C1/F2** (`t/C1N`): IVC fixture export with the SRS, then the widened clause table.
-- **D1/end-to-end** (`t/D1`): both `EndToEndV3` directions and
+- **D1/end-to-end** (`t/D1`): `end_to_end_of_prepareLogSlots` is MERGED — the full `EndToEndV3`
+  signature conditional only on `PrepareLogSlots`. D-GATE5's `xNonzero` is being implemented; then
+  the four `PrepareLogSlots` sub-facts. Both `EndToEndV3` directions and
   `decodeRust_slots_eq_logWidths` are green. `prepare_logSlots` now has four explicit sub-facts:
   the `parseTrace`/`readAlgebra`/`multiPrepare` width sequences (`PresWidthSeq`), and the
   KZG-partition bridge
