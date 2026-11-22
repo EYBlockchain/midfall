@@ -3165,6 +3165,22 @@ def gRots (L : Nat) : List Int :=
 theorem gRots_length (L : Nat) : (gRots L).length = L + 1 := by
   simp [gRots, List.length_map, List.length_range]
 
+theorem gRots_mem {L : Nat} {r : Int} :
+    r ∈ gRots L ↔ ∃ i, i ≤ L ∧ r = -((L : Nat) : Int) + (i : Int) := by
+  unfold gRots
+  rw [List.mem_map]
+  constructor
+  · rintro ⟨a, ha, rfl⟩
+    rw [List.mem_flatMap] at ha
+    obtain ⟨b, hb, hab⟩ := ha
+    rw [List.mem_range] at hb
+    have hba : a = ((b : Nat) : Int) := by simpa using hab
+    exact ⟨b, by omega, by rw [hba]⟩
+  · rintro ⟨i, hi, rfl⟩
+    refine ⟨((i : Nat) : Int), ?_, rfl⟩
+    rw [List.mem_flatMap]
+    exact ⟨i, by rw [List.mem_range]; omega, by simp⟩
+
 theorem gRots_get? (L i : Nat) :
     (gRots L)[i]? = if i ≤ L then some (-((L : Nat) : Int) + (i : Int)) else none := by
   by_cases hi : i ≤ L
@@ -3175,3 +3191,189 @@ theorem gRots_get? (L i : Nat) :
   · rw [if_neg hi]
     rw [List.getElem?_eq_none_iff, gRots_length]
     omega
+
+/-! **T3.9.g SNAPSHOT/INSTANCE GAP (discovered).** `l.instanceEval` is
+`instanceEvalOf vk s2.alg`, which selects one entry of `s2.alg.instanceEvals`; for a public
+column that entry is `computeInnerProduct col slice` (`Verifier.lean:893-920`). The evidence's
+`hW` is stated over a *separate* `inst : Array (Fr p)`. A link
+`s2.alg.instanceEvals.getD 0 #[] = inst` is necessary but NOT sufficient: the selected entry is
+an inner product of `inst` against the `lIS` slice, not `inst i`. The leaf therefore also needs
+the snapshot/query linkage (selected public query at rotation 0, its column is `inst`, and its
+`instanceEvals` entry is `computeInnerProduct inst (slice of lIS)`). This is a leaf premise,
+not a row hypothesis; the evidence statement omitted it. `hn : 1 ≤ numInstances` is also
+needed for the `i = m` inverse (`LagRel` only covers `i < n + m`); without it `l0` can differ
+from `L m` when `x - 1 ≠ 0`. -/
+
+theorem wSum_eq_foldl (r : U256) (f : Nat → U256) (n : Nat) (acc : U256) :
+    wSum r f n acc = (List.range n).foldl (fun a i => wAddmodAt a (f i) r) acc := by
+  induction n generalizing acc with
+  | zero => rfl
+  | succ n ih =>
+      rw [wSum, ih, List.range_succ, List.foldl_append]
+      simp
+
+theorem frWord_foldl_add {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    (xs : List (Fr p)) (a : Fr p) :
+    Midfall.Halo2.frWord (xs.foldl (· + ·) a) =
+      xs.foldl (fun acc x => wAddmodAt acc (Midfall.Halo2.frWord x)
+        (BitVec.ofNat 256 p : U256)) (Midfall.Halo2.frWord a) := by
+  induction xs generalizing a with
+  | nil => rfl
+  | cons x xs ih =>
+      simp only [List.foldl_cons]
+      rw [ih (a + x), frWord_add hp]
+
+
+/-- The two value projections of `lag_agrees` (D-GATE2 exponent): `lLast` and `l0`.
+`hn` is the leaf premise `1 ≤ numInstances` (the `LagRel` inverse clause covers `i < n + m`);
+`hinst` is recorded for the eventual instance conjunct. -/
+theorem lag_agrees_lLast_l0 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hm : 2 ≤ R.pv.numNegLagranges) (hn : 1 ≤ R.pv.numInstances)
+    (s2 : SnapAlgebra p G₁) (l : SnapLagrange p G₁)
+    (hl : snapshotLagrangeStep (G₁ := G₁) R.vk s2 = .ok l)
+    (hxn : s2.alg.xn = s2.alg.x ^ (2 ^ R.pv.k))
+    (inst : Array (Fr p)) (W : LagWords)
+    (hinst : s2.alg.instanceEvals.getD 0 #[] = inst)
+    (hW : LagRel (BitVec.ofNat 256 p) (Midfall.Halo2.frWord s2.alg.x)
+      (Midfall.Halo2.frWord R.vk.domain.omega)
+      (Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges))
+      (Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹)) R.pv.k R.pv.numInstances
+      R.pv.numNegLagranges (fun j => Midfall.Halo2.frWord (inst.getD j 0)) W) :
+    W.lLast = Midfall.Halo2.frWord l.lagrange.lLast ∧
+      W.l0 = Midfall.Halo2.frWord l.lagrange.l0 := by
+  have hp : p < 2 ^ 256 := by
+    rw [hR.env.modulus]
+    norm_num [frModulusConstant]
+  -- Destruct the snapshot step and the triple.
+  obtain ⟨tri, htri, hltri, hlinst⟩ := snapshotLagrangeStep_ok (G := G₁) R.vk s2 hl
+  -- The blinding factors.
+  cases hbf : R.vk.cs.blindingFactors with
+  | error e =>
+      unfold lagrangeTriple at htri
+      rw [hbf] at htri
+      dsimp only [Bind.bind, Except.bind] at htri
+      simp at htri
+  | ok bf =>
+      have hneg : R.pv.numNegLagranges = bf + 1 := by
+        have h := hR.env.negLagranges
+        rw [hbf] at h
+        simp [Except.toOption] at h
+        exact h
+      obtain ⟨hsize, hLast, hBlind, h0⟩ :=
+        lagrangeTriple_ok (G := G₁) R.vk s2.alg.x s2.alg.xn hbf htri
+      -- `hW` at the same `m = bf+1`.
+      rw [hneg] at hW
+      obtain ⟨hxnW, inv, hinv, hWlast, hW0, hWblind, hWinst⟩ := hW
+      -- Fields and words.
+      let xF : Fr p := s2.alg.x
+      let xnF : Fr p := s2.alg.xn
+      let nInvF : Fr p := (((2 ^ R.vk.domain.k : ℕ) : Fr p))⁻¹
+      let ivF : Nat → Fr p := fun i => ((inv i).toNat : Fr p)
+      let rw : U256 := BitVec.ofNat 256 p
+      let w0 : U256 := frWord (R.vk.domain.omegaInv ^ (bf + 1))
+      let omF : Fr p := R.vk.domain.omega
+      let wiF : Fr p := R.vk.domain.omegaInv
+      have hxnW' : W.xn = frWord xnF := by
+        dsimp only [xnF, xF]
+        rw [hxnW, hxn]
+        exact wPow2_frWord hp s2.alg.x R.pv.k
+      -- The canonical word `inv i` and its field inverse.
+      have hivWord (i : Nat) (hi : i < R.pv.numInstances + (bf + 1)) :
+          inv i = frWord (ivF i) := by
+        exact (frWord_ofNat_toNat hp (w := inv i) (by
+          have h := (hinv i hi).2
+          rwa [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp] at h)).symm
+      have hivField (i : Nat) (hile : i ≤ bf + 1) :
+          ivF i * (s2.alg.x - (wiF ^ (bf + 1) * omF ^ i)) = 1 := by
+        dsimp only [wiF, omF]
+        have hiW : i < R.pv.numInstances + (bf + 1) := by omega
+        have hd : wAddmodAt (frWord s2.alg.x)
+            (BitVec.ofNat 256 p - omegaPows (BitVec.ofNat 256 p) (frWord R.vk.domain.omega)
+              (frWord (R.vk.domain.omegaInv ^ (bf + 1))) i)
+            (BitVec.ofNat 256 p) = frWord (s2.alg.x - (wiF ^ (bf + 1) * omF ^ i)) := by
+          rw [omegaPows_frWord hp omF (wiF ^ (bf + 1)) i]
+          rw [frWord_sub hp]
+        exact wMulmodAt_eq_one_field hp (hivWord i hiW) hd (hinv i hiW).1
+      have hivEq (i : Nat) (hile : i ≤ bf + 1) :
+          ivF i = (s2.alg.x - (wiF ^ (bf + 1) * omF ^ i))⁻¹ :=
+        eq_inv_of_mul_eq_one_left (hivField i hile)
+      -- Every denominator in the rotation list is non-zero.
+      have hdenAll : ∀ r ∈ gRots (bf + 1),
+          s2.alg.x - R.vk.domain.rotateOmega 1 (Rotation.value r) ≠ 0 := by
+        intro r hr
+        rw [gRots_mem] at hr
+        obtain ⟨i, hile, rfl⟩ := hr
+        rw [rotateOmega_neg_range (d := R.vk.domain) hile]
+        have hneq : s2.alg.x - (wiF ^ (bf + 1) * omF ^ i) ≠ 0 := by
+          intro hzero
+          have h := hivField i hile
+          rw [hzero, mul_zero] at h
+          exact zero_ne_one h
+        rwa [omegaInv_pow_mul_omega_pow (h := hR.env.omegaInvMul) (L := bf + 1) (i := i) hile] at hneq
+      -- The lIRange value at index `i`, at field level.
+      have hEval (i : Nat) (hile : i ≤ bf + 1) :
+          (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1))).toList[i]? =
+            some (ivF i * ((s2.alg.xn - 1) * nInvF) * (wiF ^ (bf + 1) * omF ^ i)) := by
+        have hget := lIRange_toList_get? R.vk.domain s2.alg.x s2.alg.xn (gRots (bf + 1)) i hdenAll
+        rw [hget, gRots_get? (bf + 1) i, if_pos hile]
+        simp only [Option.map_some]
+        congr 1
+        rw [rotateOmega_mul_neg_range (d := R.vk.domain) (v := (s2.alg.x -
+            R.vk.domain.rotateOmega 1 (Rotation.value (-((bf + 1 : Nat) : Int) + (i : Int))))⁻¹ *
+            ((s2.alg.xn - 1) * R.vk.domain.barycentricWeight))
+            (L := bf + 1) (i := i) hile]
+        rw [rotateOmega_neg_range (d := R.vk.domain) (L := bf + 1) (i := i) hile]
+        rw [hivEq i hile, hR.env.baryWeight]
+        rw [show wiF ^ (bf + 1) * omF ^ i = wiF ^ ((bf + 1) - i) from
+          omegaInv_pow_mul_omega_pow (h := hR.env.omegaInvMul) (L := bf + 1) (i := i) hile]
+      have hE0 : (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1)))[0]! =
+          ivF 0 * ((s2.alg.xn - 1) * nInvF) * (wiF ^ (bf + 1) * omF ^ 0) := by
+        have hsize' : (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1))).size = bf + 2 := by
+          simpa only [gRots] using hsize
+        have h0lt : 0 < (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1))).size := by omega
+        rw [getElem!_pos _ 0 h0lt]
+        rw [← Array.getElem_toList (h := by simpa using h0lt)]
+        obtain ⟨_, hval⟩ := List.getElem?_eq_some_iff.mp (hEval 0 (by omega))
+        exact hval
+      have hEL : (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1)))[bf + 1]! =
+          ivF (bf + 1) * ((s2.alg.xn - 1) * nInvF) * (wiF ^ (bf + 1) * omF ^ (bf + 1)) := by
+        have h0lt : bf + 1 < (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1))).size := by
+          have hsize' : (R.vk.domain.lIRange s2.alg.x s2.alg.xn (gRots (bf + 1))).size = bf + 2 := by
+            simpa only [gRots] using hsize
+          omega
+        rw [getElem!_pos _ (bf + 1) h0lt]
+        rw [← Array.getElem_toList (h := by simpa using h0lt)]
+        obtain ⟨_, hval⟩ := List.getElem?_eq_some_iff.mp (hEval (bf + 1) (by omega))
+        exact hval
+      refine ⟨?_, ?_⟩
+      · -- lLast
+        rw [hltri, hLast, hWlast]
+        dsimp only
+        rw [lagWord_eq_frWord hp (xnW := W.xn) (xnF := s2.alg.xn)
+          (nInvW := frWord nInvF) (nInvF := nInvF)
+          (invW := inv 0) (invF := ivF 0)
+          (omW := omegaPows (BitVec.ofNat 256 p) (frWord R.vk.domain.omega)
+            (frWord (R.vk.domain.omegaInv ^ (bf + 1))) 0)
+          (omF := wiF ^ (bf + 1) * omF ^ 0)
+          hxnW' rfl (hivWord 0 (by omega))
+          (omegaPows_frWord hp omF (wiF ^ (bf + 1)) 0)]
+        apply (frWord_inj hp).eq_iff.mpr
+        dsimp only [gRots] at hE0 ⊢
+        rw [hE0]
+        ring
+      · -- l0
+        rw [hltri, h0, hW0]
+        dsimp only
+        rw [lagWord_eq_frWord hp (xnW := W.xn) (xnF := s2.alg.xn)
+          (nInvW := frWord nInvF) (nInvF := nInvF)
+          (invW := inv (bf + 1)) (invF := ivF (bf + 1))
+          (omW := omegaPows (BitVec.ofNat 256 p) (frWord R.vk.domain.omega)
+            (frWord (R.vk.domain.omegaInv ^ (bf + 1))) (bf + 1))
+          (omF := wiF ^ (bf + 1) * omF ^ (bf + 1))
+          hxnW' rfl (hivWord (bf + 1) (by omega))
+          (omegaPows_frWord hp omF (wiF ^ (bf + 1)) (bf + 1))]
+        apply (frWord_inj hp).eq_iff.mpr
+        dsimp only [gRots] at hEL ⊢
+        rw [hEL]
+        ring
+
