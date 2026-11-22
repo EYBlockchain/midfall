@@ -56,7 +56,7 @@ and the `snapshotOf_prepareMsgs` retirement.
    absent; the exporter is shared with B5/OBJ.11.
 5. **QVM** — the fixed-segment proof is the agent's lane; no human item unless the fold output
    predicate needs a ruling.
-6. **PG-LAGAGREE / T3.9.g — `lag_agrees` is FALSE as written (off by one).** Its `hW` uses
+6. **PG-LAGAGREE / T3.9.g — SIGNED by D-GATE2; A4 correcting the exponent.** Its `hW` uses
    `omegaInv ^ (numNegLagranges - 1)`; `PayloadAgrees.omegaInvToL`, `Protocol.lean:675` and
    `Vk.lean:777-780` all give `omegaInv ^ numNegLagranges`. The rest of the conclusion is
    consistent at the corrected exponent. A4's lag rows cannot close until this statement is
