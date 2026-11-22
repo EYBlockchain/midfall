@@ -1,0 +1,85 @@
+-- |
+-- Midfall.LoweringV3.ModexpGeneral
+--
+-- The MEMORY-LEVEL half of the modexp bridge for `batch_invert_summary` (HLP.1.c): the 32-byte
+-- store/read frame is A9's `PcsRows.readBytes_storeWord_32`; here are the two fold facts that turn
+-- the six stored words into the precompile's frame values, and the `bytesToNatBE`/`loadWord`
+-- equality the staticcall step needs.
+import Midfall.LoweringV3.PcsRows
+import Midfall.LoweringV3.BatchInvert
+
+set_option autoImplicit false
+
+open Midfall Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV3.QuotientRows Midfall.LoweringV3.LagrangeRows
+open Midfall.LoweringV3.BatchInvert Midfall.LoweringV3.PcsRows
+
+namespace Midfall.LoweringV3.ModexpGeneral
+
+theorem shift_or_toNat {acc : U256} {b : UInt8} (h : acc.toNat < 2 ^ 248) :
+    ((acc <<< 8) ||| BitVec.ofNat 256 b.toNat).toNat = acc.toNat * 256 + b.toNat := by
+  have hb : b.toNat < 256 := b.toNat_lt
+  have hshift : (acc <<< 8).toNat = acc.toNat * 256 := by
+    rw [BitVec.toNat_shiftLeft, Nat.shiftLeft_eq]
+    rw [Nat.mod_eq_of_lt (by omega)]
+  have hor : (acc.toNat * 256) ||| b.toNat = acc.toNat * 256 + b.toNat := by
+    rw [show acc.toNat * 256 = acc.toNat <<< 8 from by rw [Nat.shiftLeft_eq]]
+    rw [← Nat.shiftLeft_add_eq_or_of_lt (i := 8) (b := b.toNat) (by omega) acc.toNat,
+      Nat.shiftLeft_eq]
+  rw [BitVec.toNat_or, hshift, BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
+  exact hor
+
+theorem foldl_shift_or_toNat (l : List UInt8) (acc : U256)
+    (hl : l.length ≤ 32) (h : acc.toNat < 256 ^ (32 - l.length)) :
+    (l.foldl (fun (acc : U256) (b : UInt8) => (acc <<< 8) ||| BitVec.ofNat 256 b.toNat) acc).toNat =
+      l.foldl (fun (acc : Nat) (b : UInt8) => acc * 256 + b.toNat) acc.toNat := by
+  induction l generalizing acc with
+  | nil => rfl
+  | cons b t ih =>
+      simp only [List.foldl_cons]
+      have hlen : (b :: t).length = t.length + 1 := rfl
+      rw [hlen] at h
+      have hlen2 : t.length ≤ 31 := by simp at hl; omega
+      have hexp : 32 - (t.length + 1) = 31 - t.length := by omega
+      rw [hexp] at h
+      have h248 : acc.toNat < 2 ^ 248 := by
+        have hle : (256 : Nat) ^ (31 - t.length) ≤ 2 ^ 248 := by
+          rw [show (2 : Nat) ^ 248 = 256 ^ 31 from by
+            rw [show (256 : Nat) = 2 ^ 8 from by decide, ← Nat.pow_mul]]
+          exact Nat.pow_le_pow_right (by decide) (by omega)
+        omega
+      have hstep : ((acc <<< 8) ||| BitVec.ofNat 256 b.toNat).toNat < 256 ^ (32 - t.length) := by
+        rw [shift_or_toNat h248]
+        have hb : b.toNat < 256 := b.toNat_lt
+        have hacc : acc.toNat + 1 ≤ (256 : Nat) ^ (31 - t.length) := by omega
+        calc acc.toNat * 256 + b.toNat < (acc.toNat + 1) * 256 := by omega
+          _ ≤ (256 : Nat) ^ (31 - t.length) * 256 := Nat.mul_le_mul_right 256 hacc
+          _ = (256 : Nat) ^ (32 - t.length) := by
+            rw [show 32 - t.length = (31 - t.length) + 1 by omega, Nat.pow_succ]
+      rw [show acc.toNat * 256 + b.toNat = ((acc <<< 8) ||| BitVec.ofNat 256 b.toNat).toNat
+        from (shift_or_toNat h248).symm]
+      exact ih (acc := (acc <<< 8) ||| BitVec.ofNat 256 b.toNat) (by omega) hstep
+
+
+theorem bytesToNatBE_readBytes (mem : Nat → UInt8) (p : Nat) :
+    bytesToNatBE (ByteArray.mk (readBytes mem p 32).toArray) = (loadWord mem p).toNat := by
+  have hlen : (readBytes mem p 32).length = 32 := by simp [readBytes]
+  rw [bytesToNatBE_toList]
+  show (ByteArray.mk (readBytes mem p 32).toArray).data.toList.foldl
+      (fun (acc : Nat) (x : UInt8) => acc * 256 + x.toNat) 0 = _
+  rw [show (ByteArray.mk (readBytes mem p 32).toArray).data.toList = readBytes mem p 32 from rfl]
+  have hword : (loadWord mem p).toNat =
+      ((readBytes mem p 32).foldl
+        (fun (acc : U256) (b : UInt8) => (acc <<< 8) ||| BitVec.ofNat 256 b.toNat) 0).toNat := by
+    unfold loadWord readBytes
+    rw [List.foldl_map]
+  rw [hword]
+  exact (foldl_shift_or_toNat (readBytes mem p 32) 0 (by omega)
+    (by rw [hlen]; norm_num)).symm
+
+#assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
+#assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
+#assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
+
+end Midfall.LoweringV3.ModexpGeneral
