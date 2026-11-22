@@ -3417,3 +3417,519 @@ def PG_stepNoRF_validated_slot2_modarith7_oor : Prop :=
 
 
 end Midfall.Lowering.QvmShift
+
+
+/-! ### Section 11: the MODARITH7 width agreement - the last arm of the P-QVMARMS table
+
+    P-QVMARMS' per-opcode table is `consumed` = `quotientOpLen` for every identity arm. Twenty-two
+    static arms are `Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees` (Qvm.lean section 7);
+    the two RUN arms are QvmWalk's `consumed_agrees_runAddMul*`; AFFINE_SUM is section 9's
+    `consumed_agrees_affineSum`; MODARITH7 was the one arm with NO width agreement anywhere in the
+    tree (QvmShift's `PG_stepNoRF_validated_shif2_modarith7_width` named the exact goal and left it
+    a Prop). This section proves it at index 0 - the shape the 22-arm theorem is stated in.
+
+    HOW. The arm calls `modarith7Form` at `idx + 1`; its consumed is `1 + len` and the form's len is
+    `cursor5 - (idx + 1)`. The form's five counted blocks each advance by a FIXED width (21, 23, 17,
+    3, 5 - `limbLinearForm_ok_mid`, `limbRowForm_ok_mid`, `limbPairwiseForm_ok_mid`, and the two
+    inline blocks), so `foldRangeIdxM_ok_advance` gives the form's cursor. The validator's
+    `quotientModarith7OpLen` computes the SAME cursor from the SAME five count bytes and returns
+    `cursor - idx`, so the two agree by arithmetic. `modAfterHeader_cursor` extracts the five counts
+    and the cursor from the form, and `modAfterHeader_opLen` proves the validator arithmetic
+    (`validatorAfterHeader`) from that extraction; the four header branches (cond x const flags) are
+    then four short applications. The header reads are `byteAt`/`readU16` on the interpreter side and
+    `byteAtPanic` on the validator side, bridged by `byteAt_iff_byteAtPanic`/`readU16_iff_readU16`.
+
+    NO hypothesis was added to a row, to `ValidV3`, a bundle or the root. No sorry, no
+    `native_decide`, no maxHeartbeats/maxRecDepth change. The statement is generic in the byte
+    stream, constant table, stack and memory (D-P71). -/
+
+namespace Midfall.Lowering.QvmArms
+
+open Midfall
+open Midfall.Generator
+open Midfall.Generator (QVMFault QuotientRefMemory QVMFr qvmFrAdd qvmFrMul qvmFrZero
+  IdentityStep qOpModarith7 qOpRunAddMulMemMemConstU8 qOpRunAddMulConstU8MemU16 qOpAffineSum
+  quotientVmLimbs quotientVmByteU16Bytes quotientVmPairwiseCoeffs)
+open Midfall.Generator.QuotientBuilder
+open Midfall.Generator.QuotientValidator
+open Midfall.Lowering
+
+def modLinBody (bytes : List Nat) (consts : List Word256) :
+    Nat → QVMFr × Nat × QuotientRefMemory →
+      Except QVMFault (QVMFr × Nat × QuotientRefMemory) :=
+  fun _ state => do
+    let (acc, cursor, mem) := state
+    let (v, len, mem') ← Midfall.Generator.limbLinearForm bytes consts mem cursor
+    .ok (qvmFrAdd acc v, cursor + len, mem')
+
+theorem modLinBody_advance (bytes : List Nat) (consts : List Word256) :
+    ∀ i s r, modLinBody bytes consts i s = .ok r → r.2.1 = s.2.1 + 21 := by
+  intro i s r hr
+  obtain ⟨acc, cursor, mem⟩ := s
+  obtain ⟨acc', cursor', mem'⟩ := r
+  unfold modLinBody at hr
+  obtain ⟨w, hw, hres⟩ := peel_bind hr
+  have hm := limbLinearForm_ok_mid hw
+  have h2 : cursor + w.2.1 = cursor' := by
+    simpa using congrArg (fun p : QVMFr × Nat × QuotientRefMemory => p.2.1)
+      (Except.ok.inj hres)
+  change cursor' = cursor + 21
+  omega
+
+def modRowBody (bytes : List Nat) (consts : List Word256) :
+    Nat → QVMFr × Nat × QuotientRefMemory →
+      Except QVMFault (QVMFr × Nat × QuotientRefMemory) :=
+  fun _ state => do
+    let (acc, cursor, mem) := state
+    let (v, len, mem') ← Midfall.Generator.limbRowForm bytes consts mem cursor
+    .ok (qvmFrAdd acc v, cursor + len, mem')
+
+theorem modRowBody_advance (bytes : List Nat) (consts : List Word256) :
+    ∀ i s r, modRowBody bytes consts i s = .ok r → r.2.1 = s.2.1 + 23 := by
+  intro i s r hr
+  obtain ⟨acc, cursor, mem⟩ := s
+  obtain ⟨acc', cursor', mem'⟩ := r
+  unfold modRowBody at hr
+  obtain ⟨w, hw, hres⟩ := peel_bind hr
+  have hm := limbRowForm_ok_mid hw
+  have h2 : cursor + w.2.1 = cursor' := by
+    simpa using congrArg (fun p : QVMFr × Nat × QuotientRefMemory => p.2.1)
+      (Except.ok.inj hres)
+  change cursor' = cursor + 23
+  omega
+
+def modPwBody (bytes : List Nat) (consts : List Word256) :
+    Nat → QVMFr × Nat × QuotientRefMemory →
+      Except QVMFault (QVMFr × Nat × QuotientRefMemory) :=
+  fun _ state => do
+    let (acc, cursor, mem) := state
+    let (v, len, mem') ← Midfall.Generator.limbPairwiseForm bytes consts mem cursor
+    .ok (qvmFrAdd acc v, cursor + len, mem')
+
+theorem modPwBody_advance (bytes : List Nat) (consts : List Word256) :
+    ∀ i s r, modPwBody bytes consts i s = .ok r → r.2.1 = s.2.1 + 17 := by
+  intro i s r hr
+  obtain ⟨acc, cursor, mem⟩ := s
+  obtain ⟨acc', cursor', mem'⟩ := r
+  unfold modPwBody at hr
+  obtain ⟨w, hw, hres⟩ := peel_bind hr
+  have hm : w.2.1 = 17 := by
+    have := limbPairwiseForm_ok_mid hw
+    have hq : quotientVmPairwiseCoeffs = 13 := rfl
+    omega
+  have h2 : cursor + w.2.1 = cursor' := by
+    simpa using congrArg (fun p : QVMFr × Nat × QuotientRefMemory => p.2.1)
+      (Except.ok.inj hres)
+  change cursor' = cursor + 17
+  omega
+
+def modMemBody (bytes : List Nat) (consts : List Word256) :
+    Nat → QVMFr × Nat × QuotientRefMemory →
+      Except QVMFault (QVMFr × Nat × QuotientRefMemory) :=
+  fun _ state => do
+    let (acc, cursor, mem) := state
+    let slot ← Midfall.Generator.byteAt bytes cursor
+    let ptr ← Midfall.Generator.readU16 bytes (cursor + 1)
+    let c ← Midfall.Generator.constAt consts slot cursor
+    let (v, mem') := mem.literal ptr
+    .ok (qvmFrAdd acc (qvmFrMul c v), cursor + 3, mem')
+
+theorem modMemBody_advance (bytes : List Nat) (consts : List Word256) :
+    ∀ i s r, modMemBody bytes consts i s = .ok r → r.2.1 = s.2.1 + 3 := by
+  intro i s r hr
+  obtain ⟨acc, cursor, mem⟩ := s
+  obtain ⟨acc', cursor', mem'⟩ := r
+  unfold modMemBody at hr
+  obtain ⟨slot, _, h1⟩ := peel_bind hr
+  obtain ⟨ptr, _, h2⟩ := peel_bind h1
+  obtain ⟨c, _, h3⟩ := peel_bind h2
+  have h4 : (qvmFrAdd acc (qvmFrMul c (mem.literal ptr).1), cursor + 3, (mem.literal ptr).2)
+      = (acc', cursor', mem') := Except.ok.inj h3
+  have h2' : cursor + 3 = cursor' := by
+    simpa using congrArg (fun p : QVMFr × Nat × QuotientRefMemory => p.2.1) h4
+  change cursor' = cursor + 3
+  omega
+
+def modProdBody (bytes : List Nat) (consts : List Word256) :
+    Nat → QVMFr × Nat × QuotientRefMemory →
+      Except QVMFault (QVMFr × Nat × QuotientRefMemory) :=
+  fun _ state => do
+    let (acc, cursor, mem) := state
+    let slot ← Midfall.Generator.byteAt bytes cursor
+    let lhs ← Midfall.Generator.readU16 bytes (cursor + 1)
+    let rhs ← Midfall.Generator.readU16 bytes (cursor + 3)
+    let c ← Midfall.Generator.constAt consts slot cursor
+    let (l, m1) := mem.literal lhs
+    let (r, m2) := m1.literal rhs
+    .ok (qvmFrAdd acc (qvmFrMul (qvmFrMul c l) r), cursor + 5, m2)
+
+theorem modProdBody_advance (bytes : List Nat) (consts : List Word256) :
+    ∀ i s r, modProdBody bytes consts i s = .ok r → r.2.1 = s.2.1 + 5 := by
+  intro i s r hr
+  obtain ⟨acc, cursor, mem⟩ := s
+  obtain ⟨acc', cursor', mem'⟩ := r
+  unfold modProdBody at hr
+  obtain ⟨slot, _, h1⟩ := peel_bind hr
+  obtain ⟨lhs, _, h2⟩ := peel_bind h1
+  obtain ⟨rhs, _, h3⟩ := peel_bind h2
+  obtain ⟨c, _, h4⟩ := peel_bind h3
+  have h5 : (qvmFrAdd acc (qvmFrMul (qvmFrMul c (mem.literal lhs).1)
+      ((mem.literal lhs).2.literal rhs).1), cursor + 5,
+      ((mem.literal lhs).2.literal rhs).2) = (acc', cursor', mem') := Except.ok.inj h4
+  have h2' : cursor + 5 = cursor' := by
+    simpa using congrArg (fun p : QVMFr × Nat × QuotientRefMemory => p.2.1) h5
+  change cursor' = cursor + 5
+  omega
+
+def modAfterHeader (bytes : List Nat) (consts : List Word256)
+    (baseIdx afterConst : Nat) (acc0 : QVMFr) (cond : Option Nat) (mem : QuotientRefMemory) :
+    Except QVMFault (QVMFr × Nat × QuotientRefMemory) := do
+  let linCount ← Midfall.Generator.byteAt bytes afterConst
+  let rowCount ← Midfall.Generator.byteAt bytes (afterConst + 1)
+  let pairwiseCount ← Midfall.Generator.byteAt bytes (afterConst + 2)
+  let memCount ← Midfall.Generator.byteAt bytes (afterConst + 3)
+  let productCount ← Midfall.Generator.byteAt bytes (afterConst + 4)
+  let cursor0 := afterConst + 5
+  let (acc1, cursor1, mem1) ← Midfall.Generator.foldRangeIdxM linCount (acc0, cursor0, mem)
+    (modLinBody bytes consts)
+  let (acc2, cursor2, mem2) ← Midfall.Generator.foldRangeIdxM rowCount (acc1, cursor1, mem1)
+    (modRowBody bytes consts)
+  let (acc3, cursor3, mem3) ← Midfall.Generator.foldRangeIdxM pairwiseCount (acc2, cursor2, mem2)
+    (modPwBody bytes consts)
+  let (acc4, cursor4, mem4) ← Midfall.Generator.foldRangeIdxM memCount (acc3, cursor3, mem3)
+    (modMemBody bytes consts)
+  let (acc5, cursor5, mem5) ← Midfall.Generator.foldRangeIdxM productCount (acc4, cursor4, mem4)
+    (modProdBody bytes consts)
+  let (acc6, mem6) ←
+    match cond with
+    | none => .ok (acc5, mem5)
+    | some ptr =>
+        let (v, m) := mem5.literal ptr
+        .ok (qvmFrMul acc5 v, m)
+  .ok (acc6, cursor5 - baseIdx, mem6)
+
+theorem modAfterHeader_cursor (bytes : List Nat) (consts : List Word256)
+    (baseIdx afterConst : Nat) (acc0 : QVMFr) (cond : Option Nat) (mem : QuotientRefMemory)
+    (v len m' : _)
+    (h : modAfterHeader bytes consts baseIdx afterConst acc0 cond mem = .ok (v, len, m')) :
+    ∃ lc rc pc mc xc c5,
+      Midfall.Generator.byteAt bytes afterConst = .ok lc ∧
+      Midfall.Generator.byteAt bytes (afterConst + 1) = .ok rc ∧
+      Midfall.Generator.byteAt bytes (afterConst + 2) = .ok pc ∧
+      Midfall.Generator.byteAt bytes (afterConst + 3) = .ok mc ∧
+      Midfall.Generator.byteAt bytes (afterConst + 4) = .ok xc ∧
+      len = c5 - baseIdx ∧
+      c5 = afterConst + 5 + 21 * lc + 23 * rc + 17 * pc + 3 * mc + 5 * xc := by
+  unfold modAfterHeader at h
+  obtain ⟨lc, hlc, h⟩ := peel_bind h
+  obtain ⟨rc, hrc, h⟩ := peel_bind h
+  obtain ⟨pc, hpc, h⟩ := peel_bind h
+  obtain ⟨mc, hmc, h⟩ := peel_bind h
+  obtain ⟨xc, hxc, h⟩ := peel_bind h
+  obtain ⟨a1, ha1, h⟩ := peel_bind h
+  rcases a1 with ⟨a1v, a1c, a1m⟩
+  have hc1 : a1c = afterConst + 5 + 21 * lc := by
+    have := foldRangeIdxM_ok_advance 21 lc (modLinBody bytes consts) acc0 (afterConst + 5) mem (a1v, a1c, a1m)
+      (fun i s r hr => modLinBody_advance bytes consts i s r hr) ha1
+    simpa using this
+  obtain ⟨a2, ha2, h⟩ := peel_bind h
+  rcases a2 with ⟨a2v, a2c, a2m⟩
+  have hc2 : a2c = a1c + 23 * rc := by
+    have := foldRangeIdxM_ok_advance 23 rc (modRowBody bytes consts) a1v a1c a1m (a2v, a2c, a2m)
+      (fun i s r hr => modRowBody_advance bytes consts i s r hr) ha2
+    simpa using this
+  obtain ⟨a3, ha3, h⟩ := peel_bind h
+  rcases a3 with ⟨a3v, a3c, a3m⟩
+  have hc3 : a3c = a2c + 17 * pc := by
+    have := foldRangeIdxM_ok_advance 17 pc (modPwBody bytes consts) a2v a2c a2m (a3v, a3c, a3m)
+      (fun i s r hr => modPwBody_advance bytes consts i s r hr) ha3
+    simpa using this
+  obtain ⟨a4, ha4, h⟩ := peel_bind h
+  rcases a4 with ⟨a4v, a4c, a4m⟩
+  have hc4 : a4c = a3c + 3 * mc := by
+    have := foldRangeIdxM_ok_advance 3 mc (modMemBody bytes consts) a3v a3c a3m (a4v, a4c, a4m)
+      (fun i s r hr => modMemBody_advance bytes consts i s r hr) ha4
+    simpa using this
+  obtain ⟨a5, ha5, h⟩ := peel_bind h
+  rcases a5 with ⟨a5v, a5c, a5m⟩
+  have hc5 : a5c = a4c + 5 * xc := by
+    have := foldRangeIdxM_ok_advance 5 xc (modProdBody bytes consts) a4v a4c a4m (a5v, a5c, a5m)
+      (fun i s r hr => modProdBody_advance bytes consts i s r hr) ha5
+    simpa using this
+  have hlen : len = a5c - baseIdx := by
+    cases cond with
+    | none =>
+        simp only at h
+        simpa using (congrArg (fun p : QVMFr × Nat × QuotientRefMemory => p.2.1) (Except.ok.inj h)).symm
+    | some ptr =>
+        simp only at h
+        simpa using (congrArg (fun p : QVMFr × Nat × QuotientRefMemory => p.2.1) (Except.ok.inj h)).symm
+  refine ⟨lc, rc, pc, mc, xc, a5c, hlc, hrc, hpc, hmc, hxc, hlen, ?_⟩
+  omega
+
+/-- The validator's arithmetic from `afterConst` onwards, isolated so the four header
+    branches can share one proof. -/
+def validatorAfterHeader (bytes : List Nat) (idx afterConst : Nat) : VResult Nat := do
+  let linCount ← Midfall.Generator.QuotientValidator.byteAtPanic bytes afterConst 3046
+  let rowCount ← Midfall.Generator.QuotientValidator.byteAtPanic bytes (afterConst + 1) 3047
+  let pairwiseCount ← Midfall.Generator.QuotientValidator.byteAtPanic bytes (afterConst + 2) 3048
+  let memCount ← Midfall.Generator.QuotientValidator.byteAtPanic bytes (afterConst + 3) 3049
+  let productCount ← Midfall.Generator.QuotientValidator.byteAtPanic bytes (afterConst + 4) 3050
+  let cursor := afterConst + 5
+  let cursor := cursor + linCount * quotientVmLimbs * (1 + quotientVmByteU16Bytes)
+  let cursor := cursor
+    + rowCount * (quotientVmByteU16Bytes + quotientVmLimbs * (1 + quotientVmByteU16Bytes))
+  let cursor := cursor
+    + pairwiseCount * (2 * quotientVmByteU16Bytes + quotientVmPairwiseCoeffs)
+  let cursor := cursor + memCount * (1 + quotientVmByteU16Bytes)
+  .ok (cursor + productCount * (1 + 2 * quotientVmByteU16Bytes) - idx)
+
+theorem modAfterHeader_opLen (bytes : List Nat) (idx afterConst : Nat) (consts : List Word256)
+    (acc0 : QVMFr) (cond : Option Nat) (mem : QuotientRefMemory) (v len m')
+    (hidx : idx + 1 ≤ afterConst)
+    (h : modAfterHeader bytes consts (idx + 1) afterConst acc0 cond mem = .ok (v, len, m')) :
+    validatorAfterHeader bytes idx afterConst = .ok (1 + len) := by
+  obtain ⟨lc, rc, pc, mc, xc, c5, hlc, hrc, hpc, hmc, hxc, hlen, hc5⟩ :=
+    modAfterHeader_cursor bytes consts (idx + 1) afterConst acc0 cond mem v len m' h
+  unfold validatorAfterHeader
+  rw [(byteAt_iff_byteAtPanic).mp hlc,
+      (byteAt_iff_byteAtPanic).mp hrc,
+      (byteAt_iff_byteAtPanic).mp hpc,
+      (byteAt_iff_byteAtPanic).mp hmc,
+      (byteAt_iff_byteAtPanic).mp hxc]
+  simp only [bind, Except.bind]
+  have hq : quotientVmLimbs = 7 := rfl
+  have hb : quotientVmByteU16Bytes = 2 := rfl
+  have hpc13 : quotientVmPairwiseCoeffs = 13 := rfl
+  rw [hq, hb, hpc13] at ⊢
+  simp only [Except.ok.injEq]
+  omega
+
+
+
+theorem modarith7Form_opLen (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (idx v len m')
+    (h : Midfall.Generator.modarith7Form bytes consts mem (idx + 1) = .ok (v, len, m')) :
+    Midfall.Generator.QuotientValidator.quotientModarith7OpLen bytes idx = .ok (1 + len) := by
+  unfold Midfall.Generator.modarith7Form at h
+  unfold Midfall.Generator.QuotientValidator.quotientModarith7OpLen
+  cases hflags : Midfall.Generator.byteAt bytes (idx + 1) with
+  | error e =>
+      rw [hflags] at h
+      simp only [bind, Except.bind] at h
+      cases h
+  | ok flags =>
+      rw [hflags] at h
+      rw [(byteAt_iff_byteAtPanic).mp hflags]
+      simp only [bind, Except.bind] at h ⊢
+      by_cases hok : modarith7FlagsOk flags = true
+      · rw [if_pos hok] at h
+        by_cases hc : (flags &&& qModarith7FlagCond != 0) = true
+        · rw [if_pos hc] at h ⊢
+          cases hcond : Midfall.Generator.readU16 bytes (idx + 2) with
+          | error e =>
+              rw [hcond] at h
+              simp only [bind, Except.bind] at h
+              cases h
+          | ok condPtr =>
+              rw [hcond] at h
+              simp only [bind, Except.bind] at h
+              by_cases hv : (flags &&& qModarith7FlagConst != 0) = true
+              · rw [if_pos hv] at h ⊢
+                cases hslot : Midfall.Generator.byteAt bytes (idx + 4) with
+                | error e =>
+                    rw [hslot] at h
+                    simp only [bind, Except.bind] at h
+                    cases h
+                | ok slot =>
+                    rw [hslot] at h
+                    simp only [bind, Except.bind] at h
+                    cases hconst : Midfall.Generator.constAt consts slot (idx + 4) with
+                    | error e =>
+                        rw [hconst] at h
+                        simp only [bind, Except.bind] at h
+                        cases h
+                    | ok c =>
+                        rw [hconst] at h
+                        simp only [bind, Except.bind] at h
+                        have hA : modAfterHeader bytes consts (idx + 1) (idx + 5) c
+                            (some condPtr) mem = .ok (v, len, m') := h
+                        exact modAfterHeader_opLen bytes idx (idx + 5) consts c (some condPtr) mem
+                          v len m' (by omega) hA
+              · rw [if_neg hv] at h ⊢
+                have hA : modAfterHeader bytes consts (idx + 1) (idx + 4) qvmFrZero
+                    (some condPtr) mem = .ok (v, len, m') := h
+                exact modAfterHeader_opLen bytes idx (idx + 4) consts qvmFrZero (some condPtr)
+                  mem v len m' (by omega) hA
+        · rw [if_neg hc] at h ⊢
+          by_cases hv : (flags &&& qModarith7FlagConst != 0) = true
+          · rw [if_pos hv] at h ⊢
+            cases hslot : Midfall.Generator.byteAt bytes (idx + 2) with
+            | error e =>
+                rw [hslot] at h
+                simp only [bind, Except.bind] at h
+                cases h
+            | ok slot =>
+                rw [hslot] at h
+                simp only [bind, Except.bind] at h
+                cases hconst : Midfall.Generator.constAt consts slot (idx + 2) with
+                | error e =>
+                    rw [hconst] at h
+                    simp only [bind, Except.bind] at h
+                    cases h
+                | ok c =>
+                    rw [hconst] at h
+                    simp only [bind, Except.bind] at h
+                    have hA : modAfterHeader bytes consts (idx + 1) (idx + 3) c none mem
+                        = .ok (v, len, m') := h
+                    exact modAfterHeader_opLen bytes idx (idx + 3) consts c none mem
+                      v len m' (by omega) hA
+          · rw [if_neg hv] at h ⊢
+            have hA : modAfterHeader bytes consts (idx + 1) (idx + 2) qvmFrZero none mem
+                = .ok (v, len, m') := h
+            exact modAfterHeader_opLen bytes idx (idx + 2) consts qvmFrZero none mem
+              v len m' (by omega) hA
+      · rw [if_neg hok] at h
+        cases h
+
+
+
+theorem consumed_agrees_modarith7 (rest : List Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep (qOpModarith7 :: rest) consts 0
+      qOpModarith7 stack mem = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen (qOpModarith7 :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+  simp (config := { decide := true }) only [reduceIte] at hstep
+  obtain ⟨v, hform, hres⟩ := peel_bind hstep
+  rcases v with ⟨vv, vl, vm⟩
+  have hstep' : step = { stack := vv :: stack, consumed := 1 + vl, hConsumed := by omega, mem := vm } :=
+    (Except.ok.inj hres).symm
+  rw [hstep']
+  show 1 + vl = len
+  have hval := modarith7Form_opLen (qOpModarith7 :: rest) consts mem 0 vv vl vm hform
+  unfold Midfall.Generator.QuotientValidator.quotientOpLen at hlen
+  rw [show Midfall.Generator.QuotientValidator.byteAtPanic
+      (qOpModarith7 :: rest) 0 3009 = .ok qOpModarith7 from rfl] at hlen
+  simp only [bind, Except.bind] at hlen
+  rw [if_neg (by decide : ¬ (qOpModarith7 == qOpRunAddMulMemMemConstU8) = true),
+      if_neg (by decide : ¬ (qOpModarith7 == qOpRunAddMulConstU8MemU16) = true),
+      if_neg (by decide : ¬ (qOpModarith7 == qOpAffineSum) = true),
+      if_pos (by decide : (qOpModarith7 == qOpModarith7) = true)] at hlen
+  rw [hval] at hlen
+  exact Except.ok.inj hlen
+
+/-! #### The single arm-table statement: all 26 identity arms -/
+
+/-- The 26 opcodes `evalQuotientIdentityStep` has an identity arm for (the five stream
+    opcodes and the unknown-opcode fallback are errors, not identity arms). -/
+def identityArm26 (op : Nat) : Prop :=
+  op = qOpPushConst ∨ op = qOpPushMemLiteral ∨ op = qOpPushMemToken ∨
+  op = qOpPushMemTokenOffset ∨ op = qOpPushMemU16 ∨ op = qOpAdd ∨ op = qOpMul ∨
+  op = qOpNeg ∨ op = qOpPushConstU8 ∨ op = qOpAddConstU8 ∨ op = qOpMulConstU8 ∨
+  op = qOpAddConst ∨ op = qOpMulConst ∨ op = qOpAddMemU16 ∨ op = qOpMulMemU16 ∨
+  op = qOpAddMulMemMem ∨ op = qOpPow5 ∨ op = qOpAddMulMemMemConstU8 ∨
+  op = qOpAddMulConstU8MemU16 ∨ op = qOpBilin7Pairwise ∨ op = qOpLin7 ∨
+  op = qOpBilin7Row ∨ op = qOpRunAddMulMemMemConstU8 ∨ op = qOpRunAddMulConstU8MemU16 ∨
+  op = qOpAffineSum ∨ op = qOpModarith7
+
+/-- **THE P-QVMARMS TABLE, COMPLETE: all 26 identity arms.** When the identity step
+    succeeds on an instruction whose opcode byte is at index 0 and the validator's walker
+    gives the same instruction a width, the `consumed` the step reports is that width.
+    This is the union of the 22 static arms (Qvm.lean section 7), the two RUN arms
+    (QvmWalk), AFFINE_SUM (section 9) and MODARITH7 (section 11). No arm is assumed and
+    no arm is missing; every branch cites a proved theorem. -/
+theorem evalQuotientIdentityStep_consumed_agrees_26
+    (op : Nat) (hop : identityArm26 op)
+    (rest : List Nat)
+    (consts : List Midfall.Word256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep (op :: rest) consts 0 op stack mem
+      = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen (op :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  rcases hop with
+    (h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h)
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.evalQuotientIdentityStep_consumed_agrees _
+      (by tauto) rest consts stack mem step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmWalk.consumed_agrees_runAddMulMemMemConstU8 rest consts stack mem
+      step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmWalk.consumed_agrees_runAddMulConstU8MemU16 rest consts stack mem
+      step len hstep hlen
+  · subst h
+    exact Midfall.Lowering.QvmShift.consumed_agrees_affineSum rest consts stack mem step len hstep hlen
+  · subst h
+    exact consumed_agrees_modarith7 rest consts stack mem step len hstep hlen
+
+#print axioms Midfall.Lowering.QvmArms.modarith7Form_opLen
+#print axioms Midfall.Lowering.QvmArms.consumed_agrees_modarith7
+#print axioms Midfall.Lowering.QvmArms.evalQuotientIdentityStep_consumed_agrees_26
+
+end Midfall.Lowering.QvmArms
