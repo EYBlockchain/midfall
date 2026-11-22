@@ -28,6 +28,24 @@ was broken:
 """
 import re
 import subprocess
+import os as _os
+import pathlib as _pathlib
+
+# --- self-sufficient toolchain env (orchestrator) ---
+# Worker shells start with an EMPTY process.env, so the pass-2 `lake env lean`
+# subprocess fails with "couldn't find value of ELAN_HOME" and kat_gate then
+# reports ~1300 of 1648 gates as "does not elaborate". Two cards (QFIX, WCURSOR)
+# lost their whole KAT verdict that way and had to claim neither-way. The gate
+# measures the tree, so it must not depend on how the caller started its shell.
+_home = _os.environ.get('HOME') or str(_pathlib.Path.home())
+_elan = _os.environ.get('ELAN_HOME') or str(_pathlib.Path(_home, '.elan'))
+if _pathlib.Path(_elan).is_dir():
+    _os.environ['ELAN_HOME'] = _elan
+    _bin = str(_pathlib.Path(_elan, 'bin'))
+    _pth = _os.environ.get('PATH', '')
+    if _bin not in _pth.split(_os.pathsep):
+        _os.environ['PATH'] = (_bin + _os.pathsep + _pth) if _pth else _bin
+# --------------------------------------------
 import sys
 import pathlib
 
