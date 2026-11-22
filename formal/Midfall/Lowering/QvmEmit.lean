@@ -342,7 +342,7 @@ def PG_identity_segment : Prop :=
     exprBounded e →
     (∀ c ∈ s₁.consts, c.toNat < qvmFrModulus) →
     compactQuotientRuns (s₁.bytes.drop s₀.bytes.length) = .ok cseg →
-    finalizedIdentitySegment cseg = some seg →
+    finalizedIdentitySegment t cseg = some seg →
     ∀ (ρ : Valuation),
       (Midfall.Generator.evalQuotientIdentity seg s₁.consts (memOfρ ρ (leafKeys e))).isOk
 
@@ -1249,31 +1249,36 @@ theorem foldIdentity_suffix (s : QuotientProgramBuilder) (t : QuotientTarget)
               simp [pushByte, appendBytes, List.append_assoc]
 
 theorem finalizedIdentitySegment_some_of_append_main (a : List Nat) :
-    ∃ body, finalizedIdentitySegment (a ++ [qOpFoldMain]) = some body := by
+    ∃ body, finalizedIdentitySegment QuotientTarget.main (a ++ [qOpFoldMain]) = some body := by
+  refine ⟨a, ?_⟩
   unfold finalizedIdentitySegment
+  dsimp only
   have hne : (a ++ [qOpFoldMain]).length ≠ 0 := by simp
   rw [if_neg (by simpa using hne)]
   have hlast : ((a ++ [qOpFoldMain]).getD ((a ++ [qOpFoldMain]).length - 1) 0 == qOpFoldMain) = true := by
     simp [List.length_append]
   rw [if_pos hlast]
-  exact ⟨a, by simp⟩
+  simp
 
-theorem finalizedIdentitySegment_some_of_append_selector (a : List Nat) (b1 b2 b3 : Nat) :
-    ∃ body, finalizedIdentitySegment (a ++ [qOpFoldSelector, b1, b2, b3]) = some body := by
+theorem finalizedIdentitySegment_some_of_append_selector (idx : Nat) (a : List Nat)
+    (b1 b2 b3 : Nat) :
+    ∃ body, finalizedIdentitySegment (QuotientTarget.selector idx)
+      (a ++ [qOpFoldSelector, b1, b2, b3]) = some body := by
+  refine ⟨a, ?_⟩
   unfold finalizedIdentitySegment
-  have hne : (a ++ [qOpFoldSelector, b1, b2, b3]).length ≠ 0 := by simp
-  rw [if_neg (by simpa using hne)]
-  by_cases hlast : ((a ++ [qOpFoldSelector, b1, b2, b3]).getD
-      ((a ++ [qOpFoldSelector, b1, b2, b3]).length - 1) 0 == qOpFoldMain) = true
-  · rw [if_pos hlast]
-    exact ⟨_, rfl⟩
-  · rw [if_neg hlast]
-    have hsel : (decide (4 ≤ (a ++ [qOpFoldSelector, b1, b2, b3]).length) &&
-        ((a ++ [qOpFoldSelector, b1, b2, b3]).getD
-          ((a ++ [qOpFoldSelector, b1, b2, b3]).length - 4) 0 == qOpFoldSelector)) = true := by
-      simp [List.length_append]
-    rw [if_pos hsel]
-    exact ⟨_, rfl⟩
+  dsimp only
+  have hsel : (decide (4 ≤ (a ++ [qOpFoldSelector, b1, b2, b3]).length) &&
+      ((a ++ [qOpFoldSelector, b1, b2, b3]).getD
+        ((a ++ [qOpFoldSelector, b1, b2, b3]).length - 4) 0 == qOpFoldSelector)) = true := by
+    simp [List.length_append]
+  rw [if_pos hsel]
+  simp
+
+/-- The trailing fold shape a target requires of the emitted bytes. -/
+def FoldSuffix (t : QuotientTarget) (extra : List Nat) : Prop :=
+  match t with
+  | .main => ∃ pre, extra = pre ++ [qOpFoldMain]
+  | .selector _ => ∃ pre b1 b2 b3, extra = pre ++ [qOpFoldSelector, b1, b2, b3]
 
 theorem emitExprTop_append (r : QuotientShapeRecognizers) (s : QuotientProgramBuilder)
     (e : QuotientExpr) (s' : QuotientProgramBuilder) (h : emitExprTop r s e = .ok s') :
@@ -1283,9 +1288,7 @@ theorem emitExprTop_append (r : QuotientShapeRecognizers) (s : QuotientProgramBu
 theorem identityExpr_suffix (r : QuotientShapeRecognizers) (s : QuotientProgramBuilder)
     (e : QuotientExpr) (t : QuotientTarget) (gap : Option Nat) (s' : QuotientProgramBuilder)
     (h : identityExpr r s e t gap = .ok s') :
-    ∃ (extra pre : List Nat), s'.bytes = s.bytes ++ extra ∧
-      (extra = pre ++ [qOpFoldMain] ∨
-        ∃ b1 b2 b3, extra = pre ++ [qOpFoldSelector, b1, b2, b3]) := by
+    ∃ extra, s'.bytes = s.bytes ++ extra ∧ FoldSuffix t extra := by
   unfold identityExpr at h
   dsimp only at h
   obtain ⟨s1, h1, h2⟩ := peel_bind h
@@ -1293,45 +1296,61 @@ theorem identityExpr_suffix (r : QuotientShapeRecognizers) (s : QuotientProgramB
   have ha := emitExprTop_append r { s with vars := [], stackDepth := 0 } e s1 h1
   obtain ⟨e1, he1⟩ := ha
   have he1' : s1.bytes = s.bytes ++ e1 := by simpa using he1
+  have hs' : s' = s2 := by
+    by_cases hd : s2.stackDepth != 0
+    · simp [hd] at h4; cases h4
+    · simp [hd] at h4
+      exact h4.symm
   rcases foldIdentity_suffix s1 t gap s2 h3 with hsuf | hsuf
   · obtain ⟨ht, hb⟩ := hsuf
     subst ht
     have hs2 : s2.bytes = s1.bytes ++ [qOpFoldMain] := hb
-    have hs' : s' = s2 := by
-      by_cases hd : s2.stackDepth != 0
-      · simp [hd] at h4; cases h4
-      · simp [hd] at h4
-        exact h4.symm
-    subst hs'
-    refine ⟨e1 ++ [qOpFoldMain], e1, ?_, Or.inl rfl⟩
-    rw [hs2, he1']
-    simp [List.append_assoc]
+    refine ⟨e1 ++ [qOpFoldMain], ?_, ?_⟩
+    · rw [hs', hs2, he1']; simp [List.append_assoc]
+    · exact ⟨e1, rfl⟩
   · obtain ⟨idx, g, b1, b2, b3, ht, hg, hb⟩ := hsuf
     subst ht
     have hs2 : s2.bytes = s1.bytes ++ [qOpFoldSelector, b1, b2, b3] := hb
-    have hs' : s' = s2 := by
-      by_cases hd : s2.stackDepth != 0
-      · simp [hd] at h4; cases h4
-      · simp [hd] at h4
-        exact h4.symm
-    subst hs'
-    refine ⟨e1 ++ [qOpFoldSelector, b1, b2, b3], e1, ?_,
-      Or.inr ⟨b1, b2, b3, rfl⟩⟩
-    rw [hs2, he1']
-    simp [List.append_assoc]
+    refine ⟨e1 ++ [qOpFoldSelector, b1, b2, b3], ?_, ?_⟩
+    · rw [hs', hs2, he1']; simp [List.append_assoc]
+    · exact ⟨e1, b1, b2, b3, rfl⟩
 
 theorem PG_identity_preFold_proof : Midfall.Lowering.PG_identity_preFold := by
   intro r s0 s1 e t gap h
-  obtain ⟨extra, pre, hextra, hsuf⟩ := identityExpr_suffix r s0 e t gap s1 h
+  obtain ⟨extra, hextra, hsuf⟩ := identityExpr_suffix r s0 e t gap s1 h
   have hdrop : s1.bytes.drop s0.bytes.length = extra := by
-    rw [hextra]
-    simp
+    rw [hextra]; simp
   rw [hdrop]
-  rcases hsuf with hsuf | hsuf
-  · obtain ⟨rfl⟩ := hsuf
-    exact finalizedIdentitySegment_some_of_append_main pre
-  · obtain ⟨b1, b2, b3, rfl⟩ := hsuf
-    exact finalizedIdentitySegment_some_of_append_selector pre b1 b2 b3
+  cases t with
+  | main =>
+      obtain ⟨pre, rfl⟩ := hsuf
+      exact finalizedIdentitySegment_some_of_append_main pre
+  | selector idx =>
+      obtain ⟨pre, b1, b2, b3, rfl⟩ := hsuf
+      exact finalizedIdentitySegment_some_of_append_selector idx pre b1 b2 b3
+
+/-- **THE CORRECTED ROW REDUCED TO TWO FACTS.** With D-GATE3's target-aware helper,
+    `qvm_compile_correct_identity` follows from `PG_identity_emitterValue` and
+    `PG_identity_compactionValue` alone: the third IDVALUE fact (`PG_identity_preFold`) is
+    PROVED above. This is the exact remaining goal state of the registered row. -/
+theorem qvm_compile_correct_identity_of_two_parts
+    (hemit : Midfall.Lowering.PG_identity_emitterValue)
+    (hcomp : Midfall.Lowering.PG_identity_compactionValue)
+    (r : QuotientShapeRecognizers) (hr : RecognizersSound r)
+    (s₀ s₁ : QuotientProgramBuilder) (e : QuotientExpr) (t : QuotientTarget) (gap : Option Nat)
+    (hb : exprBounded e)
+    (hidentity : identityExpr r s₀ e t gap = .ok s₁)
+    (hconsts : ∀ c ∈ s₁.consts, c.toNat < qvmFrModulus)
+    (cseg seg : List Nat)
+    (hcompact : compactQuotientRuns (s₁.bytes.drop s₀.bytes.length) = .ok cseg)
+    (hseg : finalizedIdentitySegment t cseg = some seg)
+    (ρ : Valuation) :
+    ∃ v mem', Midfall.Generator.evalQuotientIdentity seg s₁.consts (memOfρ ρ (leafKeys e)) =
+      .ok (v, mem') ∧ evalExprρ ρ e = .ok v :=
+  Midfall.Lowering.qvm_compile_correct_identity_of_parts hemit hcomp PG_identity_preFold_proof
+    r hr s₀ s₁ e t gap hb hidentity hconsts cseg seg hcompact hseg ρ
+
+#print axioms Midfall.Lowering.QvmEmit.qvm_compile_correct_identity_of_two_parts
 
 end Midfall.Lowering.QvmEmit
 

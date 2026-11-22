@@ -1296,7 +1296,7 @@ def rConsts (x : M QuotientProgramBuild) : List Word256 :=
   match x with | .ok b => b.consts | .error _ => []
 def rSegment (x : M QuotientProgramBuild) : List Nat :=
   match x with
-  | .ok b => (finalizedIdentitySegment (qvmBytesToNats b.bytes)).getD []
+  | .ok b => (finalizedIdentitySegment QuotientTarget.main (qvmBytesToNats b.bytes)).getD []
   | .error _ => []
 
 /-- Emit a whole stream through a given hook set and finalize: the dual-build pair. -/
@@ -1717,7 +1717,7 @@ def realHooks_endToEnd_ok : Bool :=
     | .error _ => false
     | .ok b =>
         let bytes := qvmBytesToNats b.bytes
-        match finalizedIdentitySegment bytes with
+        match finalizedIdentitySegment QuotientTarget.main bytes with
         | none => false
         | some seg => seg != [] && okIs (runProg seg b.consts) (oracle e) && validIsOk bytes
 

@@ -1476,13 +1476,23 @@ def finishBytes (s : QuotientProgramBuilder) : M (List Nat) :=
     QVC:228-245). A MODELLING HELPER, not a Rust item: the general segment walker is
     P-09d's. It is sound here because finish emits the fold last and compaction never
     rewrites a fold byte, so the fold occupies the final 1 byte (FOLD_MAIN) or the final 4
-    (FOLD_SELECTOR plus its u24). -/
-def finalizedIdentitySegment (bytes : List Nat) : Option (List Nat) :=
+    (FOLD_SELECTOR plus its u24).
+
+    D-GATE3: TARGET-AWARE. The old signature took only the bytes and tested the last byte
+    for FOLD_MAIN FIRST, so a selector fold whose low gap byte is 0x0a (= FOLD_MAIN) was
+    stripped by one byte instead of four. The target is available at every row call site;
+    the selector branch now strips exactly the four-byte selector fold and the main branch
+    exactly the one-byte main fold, so the two encodings cannot be confused. -/
+def finalizedIdentitySegment (target : QuotientTarget) (bytes : List Nat) : Option (List Nat) :=
   let n := bytes.length
-  if n == 0 then none
-  else if bytes.getD (n - 1) 0 == qOpFoldMain then some (bytes.take (n - 1))
-  else if n >= 4 && bytes.getD (n - 4) 0 == qOpFoldSelector then some (bytes.take (n - 4))
-  else none
+  match target with
+  | .main =>
+      if n == 0 then none
+      else if bytes.getD (n - 1) 0 == qOpFoldMain then some (bytes.take (n - 1))
+      else none
+  | .selector _ =>
+      if n >= 4 && bytes.getD (n - 4) 0 == qOpFoldSelector then some (bytes.take (n - 4))
+      else none
 
 /-- rust: QVM:1219-1222's Lean substitute. The stack high-water mark of one identity
     segment, measured by running P-09b's own step function and taking the maximum stack
@@ -1754,7 +1764,7 @@ def finishIdentity_executesAndAgrees_ok : Bool :=
     | .error _ => false
     | .ok build =>
         let bytes := qvmBytesToNats build.bytes
-        match finalizedIdentitySegment bytes with
+        match finalizedIdentitySegment QuotientTarget.main bytes with
         | none => false
         | some seg => seg != [] && okIs (runProg seg build.consts) (oracle e)
 
@@ -1977,7 +1987,7 @@ def compaction_preservesResult_multiIdentity_ok : Bool :=
             (List.zip steps deltas).all fun (e, seg) =>
               -- each identity's bytes end with its FOLD_MAIN, which the interpreter
               -- rejects by design (D-P20 item 1), so the segment is what gets run
-              match finalizedIdentitySegment seg with
+              match finalizedIdentitySegment QuotientTarget.main seg with
               | none => false
               | some expr => match compactQuotientRuns expr with
                 | .error _ => false
@@ -2196,7 +2206,7 @@ def finishMaxStack_agreesWithInterpreter_ok : Bool :=
         match finish s with
         | .error _ => false
         | .ok build =>
-            match finalizedIdentitySegment (qvmBytesToNats build.bytes) with
+            match finalizedIdentitySegment QuotientTarget.main (qvmBytesToNats build.bytes) with
             | none => false
             | some seg =>
                 match segmentMaxStack seg build.consts bMem with

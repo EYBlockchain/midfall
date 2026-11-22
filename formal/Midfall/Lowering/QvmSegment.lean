@@ -451,7 +451,7 @@ def PG_identity_segment_walk : Prop :=
     exprBounded e →
     (∀ c ∈ s₁.consts, c.toNat < qvmFrModulus) →
     compactQuotientRuns (s₁.bytes.drop s₀.bytes.length) = .ok cseg →
-    finalizedIdentitySegment cseg = some seg →
+    finalizedIdentitySegment t cseg = some seg →
     ∀ (ρ : Valuation),
       ∃ (P : Nat → List QVMFr → QuotientRefMemory → Prop),
         WalkInvariant seg s₁.consts P 0 [] (memOfρ ρ (leafKeys e))

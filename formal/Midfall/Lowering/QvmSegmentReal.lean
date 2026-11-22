@@ -98,7 +98,7 @@ def realPipeline : Bool × List Nat × List Word256 × Nat :=
       match compactQuotientRuns (s.bytes.drop (builderDefault.bytes.length)) with
       | .error _ => (false, [], [], 0)
       | .ok cseg =>
-          match finalizedIdentitySegment cseg with
+          match finalizedIdentitySegment QuotientTarget.main cseg with
           | none => (false, [], [], 0)
           | some seg => (true, seg, s.consts, s.stackDepth)
 
@@ -407,7 +407,7 @@ def certPipeline_ok : Bool :=
       match compactQuotientRuns s.bytes with
       | .error _ => false
       | .ok cseg =>
-          match finalizedIdentitySegment cseg with
+          match finalizedIdentitySegment QuotientTarget.main cseg with
           | none => false
           | some seg => seg == certSeg && s.consts == certConsts && s.stackDepth == 0
 
@@ -604,7 +604,7 @@ def runPipeline_ok : Bool :=
       | .error _ => false
       | .ok cseg =>
           cseg != s.bytes &&
-            match finalizedIdentitySegment cseg with
+            match finalizedIdentitySegment QuotientTarget.main cseg with
             | none => false
             | some seg => seg == runSeg && s.consts == runConsts && s.stackDepth == 0
 
@@ -744,7 +744,7 @@ def afPipeline_ok : Bool :=
       | .error _ => false
       | .ok cseg =>
           cseg != s.bytes &&
-            match finalizedIdentitySegment cseg with
+            match finalizedIdentitySegment QuotientTarget.main cseg with
             | none => false
             | some seg => seg == afSeg && s.consts == afConsts && s.stackDepth == 0
 
@@ -1429,7 +1429,7 @@ def PG_planItemSegment : Prop :=
       QuotientProgramItem.identity id ∈ plan.items ∧
       identityExpr r s₀ id.expr t gap = .ok s₁ ∧
       compactQuotientRuns (s₁.bytes.drop s₀.bytes.length) = .ok cseg ∧
-      finalizedIdentitySegment cseg = some (planSegment (qvmBytesToNats build.bytes) cursor exprEnd) ∧
+      finalizedIdentitySegment t cseg = some (planSegment (qvmBytesToNats build.bytes) cursor exprEnd) ∧
       (∀ c ∈ s₁.consts, c.toNat < qvmFrModulus) ∧
       build.consts = s₁.consts ++ tail
 

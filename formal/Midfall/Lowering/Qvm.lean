@@ -605,12 +605,16 @@ theorem exprBounded_iff (e : QuotientExpr) : exprBounded e ↔ exprBoundedBool e
 /-! ### 4. Per-identity compile correctness (design1 M6-2/M6-3, D-P20 claim 2) -/
 
 /-- D-P20 claim 2, and the per-identity form the plan calls qvm_compile_correct_identity.
-    PROOF HOLE (M6-2): the induction is over the emitter's fuel-bounded mutual block
-    (VmBuilder.lean:700-894, about 40 panic sites) against the interpreter's step
-    function, and needs the four peephole cases (pow5, modarith7, the limb family, the
-    run decomposition) discharged under 'hr'. Everything it QUANTIFIES over exists
-    today - that is what P-09c and P-09d bought - so this is a PROOF gap, not a
-    statement gap, which is exactly what D-P20's addendum says changed.
+    D-GATE3 (2026-11-22) MAKES THE STATEMENT TARGET-AWARE: `hseg` now reads
+    `finalizedIdentitySegment t cseg = some seg`, so a selector fold is stripped by four
+    bytes and a main fold by one. The pre-repair shape was FALSE (see
+    `qvm_compile_correct_identity_oldShape_is_false`); the witness's corrected segment
+    `[9, 0]` evaluates to the expression's value (`identityRefutation_corrected_conclusion`),
+    and the target-aware row is reduced to exactly two facts in QvmEmit:
+    `qvm_compile_correct_identity_of_two_parts` takes `PG_identity_emitterValue` and
+    `PG_identity_compactionValue` (the third, `PG_identity_preFold`, is PROVED). The
+    remaining work is the emitExpr value induction plus compaction value preservation, not
+    a statement repair.
     The conclusion is existential about the memory (attack.md's FIX): a sound
     recognizer may read a pointer outside leafKeys e, in which case the interpreter's
     derive conses onto the cache and the returned memory differs while the value is
@@ -624,7 +628,7 @@ theorem qvm_compile_correct_identity (r : QuotientShapeRecognizers)
     (hconsts : ∀ c ∈ s₁.consts, c.toNat < qvmFrModulus)
     (cseg seg : List Nat)
     (hcompact : compactQuotientRuns (s₁.bytes.drop s₀.bytes.length) = .ok cseg)
-    (hseg : finalizedIdentitySegment cseg = some seg)
+    (hseg : finalizedIdentitySegment t cseg = some seg)
     (ρ : Valuation) :
     ∃ v mem', Midfall.Generator.evalQuotientIdentity seg s₁.consts (memOfρ ρ (leafKeys e)) =
       .ok (v, mem') ∧ evalExprρ ρ e = .ok v := by
@@ -5227,38 +5231,42 @@ theorem seg_stride_transfer_of_extend (hext : PG_segleg_opLenExtend)
 #print axioms Midfall.Lowering.gap_take_vs_drop
 #print axioms Midfall.Lowering.seg_stride_transfer_of_extend
 
-/-! ### IDVALUE: the identity row's exact decomposition: what a proof of `qvm_compile_correct_identity` needs
+/-! ### IDVALUE: the identity row's exact decomposition (D-GATE3 target-aware form)
 
     P-QVMARMS diagnosed the six Qvm holes as one shared gap - the per-opcode agreement between
     `evalQuotientIdentityStep.consumed` and the validator's `quotientOpLen`. That table is now
     complete (QvmShift section 11 and `evalQuotientIdentityStep_consumed_agrees_26`), but it is
     NOT what `qvm_compile_correct_identity` is missing: that row's statement never mentions the
     validator or `quotientOpLen`. Its hypotheses are `identityExpr`, `compactQuotientRuns` and
-    `finalizedIdentitySegment`, and its conclusion is a VALUE equation. The width table is the
-    missing piece for `builder_segments_total`/`qvm_validated_noBoundsFault` (segment boundaries
-    and fault classes), not for this value equation.
+    `finalizedIdentitySegment`, and its conclusion is a VALUE equation.
+
+    D-GATE3 (signed 2026-11-22) makes `finalizedIdentitySegment` TARGET-AWARE. The old shape
+    tested the final byte for FOLD_MAIN before the four-byte selector fold, so a selector gap
+    whose low byte is 0x0a corrupted the segment; the evidence below keeps that refutation
+    against `finalizedIdentitySegmentLegacy` and the repaired helper strips by the target.
 
     The value equation decomposes into THREE named facts, and the reduction below is PROVED:
     the emitter's body evaluates to the expression (before compaction), compaction preserves the
-    value of a finalized segment, and the emitted body's fold is where
-    `finalizedIdentitySegment` expects it. Each is recorded as a `def : Prop` (the
-    `PG_qvmNoBounds_stepErrorIsReachable` precedent), not as a hypothesis on the row, a bundle
-    or `ValidV3`. -/
+    value of a finalized segment, and the emitted body's fold is where the target-aware
+    `finalizedIdentitySegment` expects it. Each is recorded as a `def : Prop`, not as a
+    hypothesis on the row, a bundle or `ValidV3`. -/
+
+/-- The PRE-REPAIR helper, kept only as the W12 falsifier target: last byte FOLD_MAIN first,
+    then the four-byte selector fold. `finalizedIdentitySegmentLegacyCounterexample` proves it
+    corrupts a selector segment. New code must not call this. -/
+def finalizedIdentitySegmentLegacy (bytes : List Nat) : Option (List Nat) :=
+  let n := bytes.length
+  if n == 0 then none
+  else if bytes.getD (n - 1) 0 == qOpFoldMain then some (bytes.take (n - 1))
+  else if n >= 4 && bytes.getD (n - 4) 0 == qOpFoldSelector then some (bytes.take (n - 4))
+  else none
 
 /-- The emitter-value fact, BEFORE compaction: the body `identityExpr` writes (its final fold
-    stripped by `finalizedIdentitySegment`) evaluates, under every valuation, to the
-    expression's denotation. This is the semantic induction over `emitExpr`'s peepholes
-    (pow5, MODARITH7, the limb family, the limb-decomposition residue split, the fused
-    product/add peepholes, the accumulator-leaf cases and the generic stack path) together
-    with the shape decoders' denotation tie. The interpreter-side LIN7 half is PROVED in
-    `QvmEmit.limbLinearForm_eq_denoteLin`; the builder half is `QvmEmit.PG_termFold_structure`
-    (now also PROVED), and the other three shape decoders have no tie at all yet.
-
-    **THIS FACT IS FALSE for the current `finalizedIdentitySegment`**, and so is the row:
-    `qvm_compile_correct_identity_is_false` below exhibits a selector-fold witness whose gap
-    low byte is `qOpFoldMain`, which the helper strips as a one-byte fold. The fact is kept as
-    the reduction's named hypothesis (it is the right shape once the statement is repaired),
-    but it cannot be discharged against the current helper. -/
+    stripped by the TARGET-AWARE `finalizedIdentitySegment t`) evaluates, under every valuation,
+    to the expression's denotation. This is the semantic induction over `emitExpr`'s peepholes
+    together with the shape decoders' denotation tie. The interpreter-side LIN7 half is PROVED
+    in `QvmEmit.limbLinearForm_eq_denoteLin`; the builder half is `QvmEmit.PG_termFold_structure`
+    (also PROVED), and the other three shape decoders have no value tie yet. -/
 def PG_identity_emitterValue : Prop :=
   ∀ (r : QuotientShapeRecognizers) (_hr : RecognizersSound r)
     (s₀ s₁ : QuotientProgramBuilder) (e : QuotientExpr) (t : QuotientTarget) (gap : Option Nat)
@@ -5266,7 +5274,7 @@ def PG_identity_emitterValue : Prop :=
     identityExpr r s₀ e t gap = .ok s₁ →
     exprBounded e →
     (∀ c ∈ s₁.consts, c.toNat < qvmFrModulus) →
-    finalizedIdentitySegment (s₁.bytes.drop s₀.bytes.length) = some body →
+    finalizedIdentitySegment t (s₁.bytes.drop s₀.bytes.length) = some body →
     ∀ ρ, ∃ v mem',
       Midfall.Generator.evalQuotientIdentity body s₁.consts (memOfρ ρ (leafKeys e))
         = .ok (v, mem') ∧ evalExprρ ρ e = .ok v
@@ -5274,34 +5282,30 @@ def PG_identity_emitterValue : Prop :=
 /-- Compaction preserves a finalized identity segment's VALUE: `compactQuotientRuns` may
     rewrite adjacent fused ops into RUN/AFFINE_SUM (or reorder a mixed run's linear block
     before its product block), but the interpreter reads the same terms and the same
-    accumulator order, so the value is unchanged. The memory is deliberately existential -
-    the same reason the row's memory is existential. -/
+    accumulator order, so the value is unchanged. The memory is deliberately existential. -/
 def PG_identity_compactionValue : Prop :=
-  ∀ (bytes cseg pre seg : List Nat),
+  ∀ (t : QuotientTarget) (bytes cseg pre seg : List Nat),
     compactQuotientRuns bytes = .ok cseg →
-    finalizedIdentitySegment bytes = some pre →
-    finalizedIdentitySegment cseg = some seg →
+    finalizedIdentitySegment t bytes = some pre →
+    finalizedIdentitySegment t cseg = some seg →
     ∀ (consts : List Word256) (mem : QuotientRefMemory) (v : QVMFr) (mem' : QuotientRefMemory),
       Midfall.Generator.evalQuotientIdentity pre consts mem = .ok (v, mem') →
       ∃ mem'', Midfall.Generator.evalQuotientIdentity seg consts mem = .ok (v, mem'')
 
 /-- `identityExpr` always ends with its fold instruction, so the emitted body has a
-    `finalizedIdentitySegment`. This is an APPEND-ONLY fact about the emitter: `emitExpr`
-    and the peepholes only append to `s.bytes`, and `foldIdentity` appends FOLD_MAIN or
-    FOLD_SELECTOR+u24 last. Nothing in the tree states that the emitter appends, which is
-    the only reason this is not proved here. -/
+    target-aware `finalizedIdentitySegment`. PROVED in `QvmEmit` from the emitter's
+    append-only property and `foldIdentity_suffix`. -/
 def PG_identity_preFold : Prop :=
   ∀ (r : QuotientShapeRecognizers) (s₀ s₁ : QuotientProgramBuilder) (e : QuotientExpr)
     (t : QuotientTarget) (gap : Option Nat),
     identityExpr r s₀ e t gap = .ok s₁ →
-    ∃ body, finalizedIdentitySegment (s₁.bytes.drop s₀.bytes.length) = some body
+    ∃ body, finalizedIdentitySegment t (s₁.bytes.drop s₀.bytes.length) = some body
 
-/-- **THE IDENTITY ROW'S PROVED DECOMPOSITION.** `qvm_compile_correct_identity` follows from
-    the three facts above - and from nothing else. The proof is the whole reduction: unfold
-    nothing, apply the emitter fact to the pre-compaction body, then transport its value
-    across compaction. The row itself is unchanged; this theorem carries the three facts as
-    hypotheses of ITS OWN (WORKER-RULES: never add a hypothesis to a row), so it can be cited
-    by the next card without touching the statement. -/
+/-- **THE IDENTITY ROW'S PROVED DECOMPOSITION (target-aware).** `qvm_compile_correct_identity`
+    follows from the three facts above - and from nothing else. The proof is the whole
+    reduction: apply the emitter fact to the pre-compaction body, then transport its value
+    across compaction. The row's statement carries no extra hypothesis; this theorem carries
+    the three facts as hypotheses of ITS OWN so it can be cited by the next card. -/
 theorem qvm_compile_correct_identity_of_parts
     (hemit : PG_identity_emitterValue) (hcomp : PG_identity_compactionValue)
     (hpre : PG_identity_preFold)
@@ -5312,7 +5316,7 @@ theorem qvm_compile_correct_identity_of_parts
     (hconsts : ∀ c ∈ s₁.consts, c.toNat < qvmFrModulus)
     (cseg seg : List Nat)
     (hcompact : compactQuotientRuns (s₁.bytes.drop s₀.bytes.length) = .ok cseg)
-    (hseg : finalizedIdentitySegment cseg = some seg)
+    (hseg : finalizedIdentitySegment t cseg = some seg)
     (ρ : Valuation) :
     ∃ v mem', Midfall.Generator.evalQuotientIdentity seg s₁.consts (memOfρ ρ (leafKeys e)) =
       .ok (v, mem') ∧ evalExprρ ρ e = .ok v := by
@@ -5320,38 +5324,29 @@ theorem qvm_compile_correct_identity_of_parts
   obtain ⟨v, mem', hv, hval⟩ :=
     hemit r hr s₀ s₁ e t gap body hidentity hb hconsts hbody ρ
   obtain ⟨mem'', hseg'⟩ :=
-    hcomp (s₁.bytes.drop s₀.bytes.length) cseg body seg hcompact hbody hseg
+    hcomp t (s₁.bytes.drop s₀.bytes.length) cseg body seg hcompact hbody hseg
       s₁.consts (memOfρ ρ (leafKeys e)) v mem' hv
   exact ⟨v, mem'', hseg', hval⟩
 
 #print axioms Midfall.Lowering.qvm_compile_correct_identity_of_parts
 
 
-/-! ### IDREFUTE: `qvm_compile_correct_identity` IS FALSE AS STATED
+/-! ### IDREFUTE: the PRE-REPAIR shape is false; the target-aware shape fixes the witness
 
-    The row quantifies `t : QuotientTarget` and `gap : Option Nat` freely, but
-    `finalizedIdentitySegment` (VmBuilder.lean:1480) identifies the trailing fold by its LAST
-    BYTE FIRST: `if bytes.getD (n-1) 0 == qOpFoldMain then take (n-1)`, and only then tests
-    `bytes.getD (n-4) == qOpFoldSelector`. A selector fold is the four bytes
-    `[FOLD_SELECTOR, idx, gap/256, gap%256]` (foldIdentity, VmBuilder.lean:909-926), so when
-    `gap % 256 = qOpFoldMain = 0x0a` the last-byte test fires and strips ONE byte instead of
-    four. The resulting `seg` still contains `FOLD_SELECTOR`, and `evalQuotientIdentity`
-    refuses it with `QVMFault.streamOpcodeInIdentity`.
+    The old helper identified the trailing fold by its LAST BYTE FIRST. A selector fold is the
+    four bytes `[FOLD_SELECTOR, idx, gap/256, gap%256]`, so when `gap % 256 = qOpFoldMain = 0x0a`
+    the last-byte test fired and stripped ONE byte instead of four; the resulting segment still
+    contained `FOLD_SELECTOR` and the interpreter returned `streamOpcodeInIdentity`.
 
-    THE WITNESS BELOW SATISFIES EVERY HYPOTHESIS: `identityExpr noShapeRecognizers` on
+    The witness is the smallest one: `identityExpr noShapeRecognizers` on
     `QuotientExpr.const 1` at `QuotientTarget.selector 0` with `gap = some 10` emits
-    `[9, 0, 11, 0, 0, 10]` (PUSH_CONST_U8 0, then FOLD_SELECTOR 0 0 10), the constant 1 is
-    canonical, compaction copies the six bytes (no affine-add op is present), and
-    `finalizedIdentitySegment` returns `[9, 0, 11, 0, 0]`. The interpreter then errors at the
-    FOLD_SELECTOR byte, so the existential conclusion is false for every valuation.
+    `[9, 0, 11, 0, 0, 10]`; the constant 1 is canonical, compaction copies the bytes (no
+    affine-add op), and the OLD helper returns `[9, 0, 11, 0, 0]`.
 
-    THIS IS A STATEMENT DEFECT, NOT A PROOF GAP, and it is the same failure mode as the
-    D-QVM2/SEGLEG findings: the model helper's arm order is load-bearing and was assumed.
-    The repair is a statement decision (human): either pass the identity's target to
-    `finalizedIdentitySegment` and strip by the target (unambiguous), or constrain the
-    selector gap so its low byte cannot equal FOLD_MAIN, or change the fold encoding. No
-    repair is applied here - the row's statement and hash are untouched. The proof is on
-    [propext, Classical.choice, Quot.sound]; no sorry, no native_decide. -/
+    D-GATE3's target-aware helper returns `[9, 0]` at the same witness, and that segment
+    evaluates to `1` (the expression's value). Both facts are PROVED below. The old-shape
+    refutation is kept as the W12 falsifier of the pre-repair text; it is NOT the registered
+    row, whose statement now uses the target-aware helper. -/
 
 /-- The six bytes the witness emits: `PUSH_CONST_U8 0` then `FOLD_SELECTOR 0 0 10`. -/
 def identityRefutationBytes : List Nat := [9, 0, 11, 0, 0, 10]
@@ -5397,8 +5392,14 @@ theorem identityRefutation_compacts :
     Nat.reduceBEq, Nat.reduceLT, reduceIte]
   rfl
 
-theorem identityRefutation_seg :
-    finalizedIdentitySegment identityRefutationBytes = some [9, 0, 11, 0, 0] := by rfl
+/-- THE OLD HELPER STILL CORRUPTS THE SELECTOR SEGMENT (the W12 falsifier). -/
+theorem identityRefutation_seg_legacy :
+    finalizedIdentitySegmentLegacy identityRefutationBytes = some [9, 0, 11, 0, 0] := by rfl
+
+/-- THE TARGET-AWARE HELPER STRIPS THE SELECTOR FOLD CORRECTLY. -/
+theorem identityRefutation_seg_target :
+    finalizedIdentitySegment (QuotientTarget.selector 0) identityRefutationBytes =
+      some [9, 0] := by rfl
 
 theorem identityRefutation_eval (mem : QuotientRefMemory) :
     Midfall.Generator.evalQuotientIdentity [9, 0, 11, 0, 0] [1] mem
@@ -5408,6 +5409,35 @@ theorem identityRefutation_eval (mem : QuotientRefMemory) :
     Midfall.Generator.constAt, Midfall.Generator.fqFromU256, List.getD, List.length,
     Nat.reduceAdd, Nat.reduceLT, reduceIte, bind, Except.bind]
   rfl
+
+/-- THE CORRECTED SEGMENT EVALUATES TO THE EXPRESSION'S VALUE. -/
+theorem identityRefutation_eval_target (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentity [9, 0] [1] mem = .ok (1, mem) := by
+  simp only [Midfall.Generator.evalQuotientIdentity, Midfall.Generator.evalQuotientIdentityLoop,
+    Midfall.Generator.evalQuotientIdentityLoop.go, Midfall.Generator.evalQuotientIdentityStep,
+    Midfall.Generator.constAt, Midfall.Generator.fqFromU256, List.getD, List.length,
+    Nat.reduceAdd, Nat.reduceLT, reduceIte, bind, Except.bind]
+  rfl
+
+/-- The corrected witness's expression value: the same 1 the corrected segment computes. -/
+theorem identityRefutation_expr_value (ρ : Valuation) :
+    evalExprρ ρ (QuotientExpr.const 1) = .ok 1 := by
+  unfold evalExprρ Midfall.Generator.fqFromU256
+  have h : 1 < qvmFrModulus := by decide
+  simp [h]
+
+/-- **THE CORRECTED ROW'S CONCLUSION HOLDS AT THE OLD COUNTEREXAMPLE.** The target-aware
+    segment `[9, 0]` evaluates to `1` and the expression denotes `1`; the collision that
+    refuted the old shape is gone. -/
+theorem identityRefutation_corrected_conclusion (ρ : Valuation) :
+    ∃ v mem', Midfall.Generator.evalQuotientIdentity [9, 0] identityRefutationS1.consts
+        (memOfρ ρ (leafKeys (QuotientExpr.const 1))) = .ok (v, mem') ∧
+      evalExprρ ρ (QuotientExpr.const 1) = .ok v := by
+  refine ⟨1, memOfρ ρ [], ?_, identityRefutation_expr_value ρ⟩
+  have hlk : leafKeys (QuotientExpr.const 1) = [] := by
+    simp [leafKeys, QuotientExpr.memLeaves]
+  rw [hlk]
+  simpa [identityRefutationS1] using identityRefutation_eval_target (memOfρ ρ [])
 
 theorem identityRefutation_hconsts :
     ∀ c ∈ identityRefutationS1.consts, c.toNat < qvmFrModulus := by
@@ -5424,11 +5454,11 @@ theorem identityRefutation_conclusion_fails (ρ : Valuation) :
   rw [identityRefutation_eval] at hv
   cases hv
 
-/-- **THE ROW IS FALSE.** Every hypothesis of `qvm_compile_correct_identity` is satisfied at
-    this selector-fold witness, and its existential conclusion is false for every valuation.
-    This theorem does not modify the row; it records the counterexample the row needs to be
-    restated against. -/
-theorem qvm_compile_correct_identity_is_false :
+/-- **THE PRE-REPAIR SHAPE IS FALSE.** Every hypothesis of the old row (with
+    `finalizedIdentitySegmentLegacy`) is satisfied at this selector-fold witness, and its
+    existential conclusion is false for every valuation. This is the W12 falsifier of the
+    pre-D-GATE3 text, kept as evidence; the registered row now uses the target-aware helper. -/
+theorem qvm_compile_correct_identity_oldShape_is_false :
     ∃ (s1 : QuotientProgramBuilder) (e : QuotientExpr) (t : QuotientTarget) (gap : Option Nat)
       (cseg seg : List Nat),
       identityExpr noShapeRecognizers builderDefault e t gap = .ok s1 ∧
@@ -5436,35 +5466,18 @@ theorem qvm_compile_correct_identity_is_false :
       exprBounded e ∧
       (∀ c ∈ s1.consts, c.toNat < qvmFrModulus) ∧
       compactQuotientRuns (s1.bytes.drop builderDefault.bytes.length) = .ok cseg ∧
-      finalizedIdentitySegment cseg = some seg ∧
+      finalizedIdentitySegmentLegacy cseg = some seg ∧
       ∀ ρ, ¬ ∃ v mem', Midfall.Generator.evalQuotientIdentity seg s1.consts
         (memOfρ ρ (leafKeys e)) = .ok (v, mem') := by
   refine ⟨identityRefutationS1, QuotientExpr.const 1, QuotientTarget.selector 0, some 10,
     identityRefutationBytes, [9, 0, 11, 0, 0], identityRefutation_emits,
     noShapeRecognizers_sound, ?_,
-    identityRefutation_hconsts, identityRefutation_compacts, identityRefutation_seg, ?_⟩
+    identityRefutation_hconsts, identityRefutation_compacts, identityRefutation_seg_legacy, ?_⟩
   · simp [exprBounded]
   · intro ρ
     exact identityRefutation_conclusion_fails ρ
 
-#print axioms Midfall.Lowering.qvm_compile_correct_identity_is_false
-
-
-/-- **`PG_identity_emitterValue` IS FALSE TOO**, for the same witness: the body
-    `finalizedIdentitySegment` returns still contains `FOLD_SELECTOR`, so the interpreter
-    errors and no `v` exists. This is the exact reason the first of the three IDVALUE facts
-    cannot be discharged against the current helper; the fact's shape is right for a repaired
-    statement, but its conclusion is refuted here. -/
-theorem PG_identity_emitterValue_is_false : ¬ PG_identity_emitterValue := by
-  intro h
-  have hbad := h noShapeRecognizers noShapeRecognizers_sound builderDefault
-    identityRefutationS1 (QuotientExpr.const 1) (QuotientTarget.selector 0) (some 10)
-    [9, 0, 11, 0, 0] identityRefutation_emits (by simp [exprBounded])
-    identityRefutation_hconsts identityRefutation_seg (fun _ _ => 0)
-  obtain ⟨v, mem', hv, _⟩ := hbad
-  exact identityRefutation_conclusion_fails (fun _ _ => 0) ⟨v, mem', hv⟩
-
-#print axioms Midfall.Lowering.PG_identity_emitterValue_is_false
+#print axioms Midfall.Lowering.qvm_compile_correct_identity_oldShape_is_false
 
 
 end Midfall.Lowering

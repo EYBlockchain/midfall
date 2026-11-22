@@ -1576,7 +1576,7 @@ def identitySegment_agreesWithBuilderStripper_ok : Bool :=
     | .error _ => false
     | .ok build =>
         let bytes := qvmBytesToNats build.bytes
-        match identitySegment bytes 0, finalizedIdentitySegment bytes with
+        match identitySegment bytes 0, finalizedIdentitySegment QuotientTarget.main bytes with
         | .ok (exprEnd, _), some seg => (bytes.take exprEnd) == seg && exprEnd == seg.length
         | _, _ => false
 
