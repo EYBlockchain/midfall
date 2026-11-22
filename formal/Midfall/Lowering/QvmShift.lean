@@ -4393,7 +4393,6 @@ theorem modAfterHeader_shift (bytes : List Nat) (consts : List Word256)
                                               have harith : idx + c5 - (idx + baseIdx) = c5 - baseIdx := by omega
                                               rw [harith]
 
-
 /-! #### Compaction value lemmas: the four RUN/AFFINE_SUM and fused-stat arms
 
     The local semantic facts the compaction proof consumes, independent of the MODARITH7
@@ -4513,5 +4512,159 @@ theorem value_affineSum (rest : List Nat) (consts : List Word256)
     exact ⟨lc, pc, acc, r, accA, accB, usedA, usedB, mA, mB, hlc, hpc, hstack, ha, hb, rfl, rfl, rfl⟩
   · rw [if_neg hz] at h; cases h
 
+/-! #### MODARITH7 form shift: the flag-dependent header (card QVMHDR)
+
+    WHAT WAS BLOCKING. `modarith7Form` inlines its post-header chain under the `unless`
+    guard's join points, so after the header is discharged the goal's tail is a `do` block
+    whose fold bodies are the interpreter's inline lambdas, while `modAfterHeader` (this
+    file) spells the same chain with the named `modLinBody`/... bodies. `rfl`/`change` on
+    that inline tail therefore hits a kernel-shape mismatch (measured): the two terms are
+    equal only after unfolding `modAfterHeader` *and* the five body definitions, and the
+    header's tuple destructuring sits in a `match` on the condition result, so a projection
+    re-statement is not even defeq.
+
+    THE BRIDGE. `modarith7FormExplicit` restates the form in the SAME do-notation (same
+    `unless`, same `let (cond, afterCond) ←`, same `let (acc0, afterConst) ←`) and calls
+    `modAfterHeader` at the end. Because the source shape is identical, the elaborated
+    join-point shape is identical, and `modarith7Form_eq_explicit` is a `rfl` bridge once
+    the tail and its five bodies are unfolded. Nothing is weakened: both sides are the same
+    computation.
+
+    THE SHIFT. `modarith7FormExplicit_shift` is the reader transport this file already uses
+    for every other form: flag byte, the two flag bits, the optional cond read, the optional
+    const read, then the four header branches end in `modAfterHeader_shift` at the exact
+    `afterConst` the branch computed. The form shift and the step congruence follow.
+    No hypothesis is added to a row, a bundle or the root; no sorry; no fixture. -/
+
+/-- `modarith7Form` with its post-header chain factored out as `modAfterHeader`, written in
+    the same do-notation so the elaborated join-point shape is identical. The bridge to
+    `modarith7Form` is definitional (`modarith7Form_eq_explicit`). -/
+def modarith7FormExplicit (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (idx : Nat) :
+    Except QVMFault (QVMFr × Nat × QuotientRefMemory) := do
+  let flags ← Midfall.Generator.byteAt bytes idx
+  unless modarith7FlagsOk flags do
+    throw (QVMFault.modarith7UnknownFlags flags idx)
+  let (cond, afterCond) ←
+    if flags &&& qModarith7FlagCond != 0 then
+      do let ptr ← Midfall.Generator.readU16 bytes (idx + 1); .ok (some ptr, idx + 3)
+    else .ok (none, idx + 1)
+  let (acc0, afterConst) ←
+    if flags &&& qModarith7FlagConst != 0 then
+      do let slot ← Midfall.Generator.byteAt bytes afterCond
+         let c ← Midfall.Generator.constAt consts slot afterCond
+         .ok (c, afterCond + 1)
+    else .ok (qvmFrZero, afterCond)
+  modAfterHeader bytes consts idx afterConst acc0 cond mem
+
+theorem modarith7Form_eq_explicit (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (idx : Nat) :
+    Midfall.Generator.modarith7Form bytes consts mem idx
+      = modarith7FormExplicit bytes consts mem idx := by
+  unfold Midfall.Generator.modarith7Form modarith7FormExplicit modAfterHeader
+  unfold modLinBody modRowBody modPwBody modMemBody modProdBody
+  rfl
+
+theorem modarith7FormExplicit_shift (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (idx k : Nat) :
+    modarith7FormExplicit bytes consts mem (idx + k)
+      = mapErr (shiftFault idx)
+        (modarith7FormExplicit (bytes.drop idx) consts mem k) := by
+  unfold modarith7FormExplicit
+  rw [byteAt_shift bytes idx k]
+  cases hflags : Midfall.Generator.byteAt (bytes.drop idx) k with
+  | error e => simp only [mapErr, bind, Except.bind]
+  | ok flags =>
+      rw [mapErr_ok]
+      simp only [mapErr, bind, Except.bind]
+      by_cases hok : modarith7FlagsOk flags = true
+      · simp only [if_pos hok]
+        by_cases hc : (flags &&& qModarith7FlagCond != 0) = true
+        · simp only [if_pos hc]
+          rw [show idx + k + 1 = idx + (k + 1) by omega,
+            readU16_shift bytes idx (k + 1)]
+          cases hcond : Midfall.Generator.readU16 (bytes.drop idx) (k + 1) with
+          | error e => simp only [mapErr, bind, Except.bind]
+          | ok ptr =>
+              rw [mapErr_ok]
+              simp only [mapErr, bind, Except.bind]
+              by_cases hv : (flags &&& qModarith7FlagConst != 0) = true
+              · simp only [if_pos hv]
+                rw [show idx + k + 3 = idx + (k + 3) by omega,
+                  byteAt_shift bytes idx (k + 3)]
+                cases hslot : Midfall.Generator.byteAt (bytes.drop idx) (k + 3) with
+                | error e => simp only [mapErr, bind, Except.bind]
+                | ok slot =>
+                    rw [mapErr_ok]
+                    simp only [mapErr, bind, Except.bind]
+                    rw [constAt_shift consts slot idx (k + 3)]
+                    cases hcst : Midfall.Generator.constAt consts slot (k + 3) with
+                    | error e => simp only [mapErr, bind, Except.bind]
+                    | ok c =>
+                        simp only [mapErr_ok]
+                        rw [show idx + (k + 3) + 1 = idx + (k + 3 + 1) by omega]
+                        exact modAfterHeader_shift bytes consts k (k + 3 + 1) c (some ptr) mem idx (by omega)
+              · simp only [if_neg hv]
+                rw [show idx + k + 3 = idx + (k + 3) by omega]
+                exact modAfterHeader_shift bytes consts k (k + 3) qvmFrZero (some ptr) mem idx (by omega)
+        · simp only [if_neg hc]
+          by_cases hv : (flags &&& qModarith7FlagConst != 0) = true
+          · simp only [if_pos hv]
+            rw [show idx + k + 1 = idx + (k + 1) by omega,
+              byteAt_shift bytes idx (k + 1)]
+            cases hslot : Midfall.Generator.byteAt (bytes.drop idx) (k + 1) with
+            | error e => simp only [mapErr, bind, Except.bind]
+            | ok slot =>
+                rw [mapErr_ok]
+                simp only [mapErr, bind, Except.bind]
+                rw [constAt_shift consts slot idx (k + 1)]
+                cases hcst : Midfall.Generator.constAt consts slot (k + 1) with
+                | error e => simp only [mapErr, bind, Except.bind]
+                | ok c =>
+                    simp only [mapErr_ok]
+                    rw [show idx + (k + 1) + 1 = idx + (k + 1 + 1) by omega]
+                    exact modAfterHeader_shift bytes consts k (k + 1 + 1) c none mem idx (by omega)
+          · simp only [if_neg hv]
+            rw [show idx + k + 1 = idx + (k + 1) by omega]
+            exact modAfterHeader_shift bytes consts k (k + 1) qvmFrZero none mem idx (by omega)
+      · simp only [if_neg hok]
+        change (Except.error (QVMFault.modarith7UnknownFlags flags (idx + k)) :
+            Except QVMFault (QVMFr × Nat × QuotientRefMemory))
+          = mapErr (shiftFault idx)
+              (Except.error (QVMFault.modarith7UnknownFlags flags k))
+        rfl
+
+theorem modarith7Form_shift (bytes : List Nat) (consts : List Word256)
+    (mem : QuotientRefMemory) (idx k : Nat) :
+    Midfall.Generator.modarith7Form bytes consts mem (idx + k)
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.modarith7Form (bytes.drop idx) consts mem k) := by
+  rw [modarith7Form_eq_explicit]
+  rw [modarith7Form_eq_explicit]
+  exact modarith7FormExplicit_shift bytes consts mem idx k
+
+/-- The MODARITH7 step congruence, the last of the 26 identity arms on the shift axis. -/
+theorem step_shift_modarith7 (bytes : List Nat) (idx : Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx qOpModarith7 stack mem
+      = mapErr (shiftFault idx)
+        (Midfall.Generator.evalQuotientIdentityStep (bytes.drop idx) consts 0
+          qOpModarith7 stack mem) := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := { decide := true }) only [reduceIte]
+  rw [modarith7Form_shift bytes consts mem idx 1]
+  simp only [← mapErr_bind]
+  simp only [mapErr_ok]
+
+/-- **PG_SHIF2 (i) DISCHARGED.** The MODARITH7 step congruence proves the shift Prop that
+    QvmShift section 9 named as the single missing fact behind both remaining families. -/
+theorem PG_stepNoRF_validated_shif2_modarith7_shift_proved :
+    Midfall.Lowering.QvmShift.PG_stepNoRF_validated_shif2_modarith7_shift :=
+  fun bytes idx consts stack mem => step_shift_modarith7 bytes idx consts stack mem
+
+#print axioms Midfall.Lowering.QvmArms.modarith7FormExplicit_shift
+#print axioms Midfall.Lowering.QvmArms.modarith7Form_shift
+#print axioms Midfall.Lowering.QvmArms.step_shift_modarith7
+#print axioms Midfall.Lowering.QvmArms.PG_stepNoRF_validated_shif2_modarith7_shift_proved
 
 end Midfall.Lowering.QvmArms
