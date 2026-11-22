@@ -689,3 +689,18 @@ theorem eval_lt_mptr_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.
               cases hbi
               exact ⟨_, _, hmp, hme, rfl, rfl⟩
 
+
+/-! ## 8. T3.9.d: THE BLIND SUM -/
+
+/-- Statement 16 of the inner scope: the `l_blind` walk. PROVED by kernel reduction. -/
+theorem lag_lblind_loop_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 16 1 =
+      [GenAst.yfor
+        [GenAst.ylet "l_i_cptr_end" (GenAst.yop EVM.Op.add
+          [Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts, GenAst.ylit (m * 32)])]
+        (GenAst.yop EVM.Op.lt [GenAst.yvar "l_i_cptr", GenAst.yvar "l_i_cptr_end"])
+        [GenAst.yset "l_i_cptr" (GenAst.yop EVM.Op.add [GenAst.yvar "l_i_cptr", GenAst.ylit 0x20])]
+        [GenAst.yset "l_blind" (GenAst.yop EVM.Op.addmod
+          [GenAst.yvar "l_blind", GenAst.yop EVM.Op.mload [GenAst.yvar "l_i_cptr"],
+            Blocks.VkLoading.vkSite "r" consts])]] := by
+  kernel_rfl
