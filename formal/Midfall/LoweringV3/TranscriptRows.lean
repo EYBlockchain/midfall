@@ -7,8 +7,8 @@
 -- QuotientRows.lean does for ROW.Q and LagrangeRows.lean does for T3.9.
 --
 -- WHAT THIS FILE IS, AND WHAT IT IS NOT. It lands the ROW.TP statements at the ONE row shape
--- (D-P74 item 2: 'BlockSim'/'BlockProgS' over 'StageInv'), the four-list schedule vocabulary the
--- SEM children are stated in ('TEv', 'tpWalk', 'tpEvents', 'TEv.slot?', 'Render.tpEvents',
+-- (D-P74 item 2: 'BlockSim'/'BlockProgS' over 'StageInv'), the schedule vocabulary the SEM
+-- children are stated in ('TEv', 'tpWalk', 'tpEvents', 'TEv.slot?', 'Render.tpEvents',
 -- 'XcriptSlots', 'TpPost'), the child ROW.TP.1 ('inline_g1WalkLoop', PROVED), the W12
 -- witness/falsifier pair each new hole needs, and the row glue 'tp_blockSim' which is PROVED from
 -- the three SEM/ALG leaves by the evidence's own twelve-line argument. 'tp_blockProgS' is the
@@ -41,7 +41,8 @@
 --     'tp_events_slots_falsifier_not_every_event_reads_a_slot' (the filterMap drops 'word', so the
 --     equality is a schedule-to-slot relation and not the identity).
 --   * g1walk_loop_sem - falsifier 'g1walk_loop_sem_falsifier_empty_block' (the empty block ends
---     normally without advancing the cursors, so the post is not vacuous).
+--     normally leaving zeroed memory, while the post demands 128 walk bytes of
+--     'cdSlice ByteArray.empty', so the post is not vacuous).
 --   * tp_computes - falsifier 'tp_computes_falsifier_empty_block' (the empty block's normal exit
 --     does not satisfy 'TpPost': 'success = 1' is not free).
 --   * tp_agrees - falsifier 'tp_agrees_falsifier_no_success' ('StageInv .transcript' demands
@@ -176,6 +177,18 @@ def TpPost (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
     MirrorAt R cd st ∧ XcriptSlots R H cd st
 
 /-! ## 3. ROW.TP.1 - THE WALK LOOP IS CONSTANT-FREE -/
+
+/-- **THE SLICE IS THE INLINED EMITTER OUTPUT.** The statement every SEM leaf starts from: the
+    parser's slice is `emitTranscriptParserAt` at the render's own eleven values, constants
+    inlined. PROVED by reduction (the evidence's rows assume this form; it is `lag_slice`'s
+    parser twin and the reason `tp_computes`' pre can be about `R.slice`). -/
+theorem tp_slice (R : Render p G₁ G₂ Gₜ) :
+    R.slice Partial.transcriptParser =
+      Inline.inlineContractConstants R.consts
+        (GenAst.emitTranscriptParserAt R.pv.numInstances R.pv.userPhases R.pv.numLookups
+          R.pv.numPermutationZs R.pv.lookupHPlusAcc R.pv.numTrashcans
+          R.pv.truncatedChallenges R.pv.proofLayout) := rfl
+
 
 /-- `shadowed` is monotone under appending on the right: if a name is owned by the enclosing
     binders, an inner binder added later cannot un-own it (the walk's shadow list is
@@ -770,6 +783,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockSim
 #cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockProgS
 
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_slice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.inline_g1WalkLoop [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_inExpr_eq_of_shadowed [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.inlineScan_single [propext, Classical.choice, Quot.sound] native []
