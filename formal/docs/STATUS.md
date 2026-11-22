@@ -33,15 +33,15 @@ and the `snapshotOf_prepareMsgs` retirement.
 
 - **A3 COMPLETE** (`127cfe7`): `vk_blockSim` and `vk_blockProgS` both PROVED; the vkLoading pair
   is closed. Root 12 -> 11, register 76/12 -> 75/11.
-- **A4/lagrange** (`bd0f295`): the green loop tranche is merged — `LagrangeRows.lean` (917 lines,
-  zero sorries) with `lag_sq_loop` (T3.9.a) and `lag_lblind_loop` (T3.9.d), window/inversion
-  helpers and the D-GATE2-corrected `lag_agrees` prose. The b-body guard-TRUE proof is parked on
-  `t/A4-bwip` (not merged): fuel 13 is needed and the joint `simp` exceeds 200k heartbeats, so the
-  semantic `allRuns_loop` route is next. A5/`batch_invert_summary` is a prerequisite of the row.
-- **A5** (`3046684`): `BatchInvert.lean` vocabulary/forms and **`bi_forward_loop` PROVED** with the
-  corrected statement-9 canonicality pre (the evidence's form was false without it). The backward
-  loop is blocked on the `wMulmodAt` associativity lemma; `batch_invert_summary` needs the
-  memory-level modexp bridge. In flight.
+- **A4/lagrange** (`55862a0`): `LagrangeRows.lean` has **T3.9.a `lag_sq_loop`**, **T3.9.d
+  `lag_lblind_loop`** and **T3.9.e `lag_instance_loop`** PROVED, plus the semantic inversions and
+  no-halt lemmas for the second-pass body. T3.9.c is one block-state equation + window invariant
+  from green; T3.9.b guard-TRUE remains on the semantic route. A5/`batch_invert_summary` is the
+  row prerequisite.
+- **A5** (`36f034f`): `BatchInvert.lean` vocabulary/forms, **`bi_forward_loop`**, the `wMulmodAt`
+  associativity, and the backward-pass algebra (`bwdAll`/`bwdInvVal`/`bwdEnv`) are merged. The
+  `bwdMem` store-chain arithmetic and `batch_invert_summary` (memory-level modexp bridge) are in
+  flight.
 - **A6 transcriptParser** (`t/A6`): `tp_blockSim` glue and `inline_g1WalkLoop` green, six named
   TP leaves remain; the branch is WIP (not merged — it would add six non-ROOT rows).
 - **A9 PCS** (`8916dc0`): `decode_exists` and the PCS-local inliner/loop infrastructure merged
