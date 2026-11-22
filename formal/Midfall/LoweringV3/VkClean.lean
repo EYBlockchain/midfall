@@ -937,4 +937,374 @@ theorem wrap_breaks_payload_clause :
 #print axioms Midfall.LoweringV3.VkClean.vk_cdl_val
 #print axioms Midfall.LoweringV3.VkClean.vk_add_site_val
 #cone_sorries Midfall.LoweringV3.VkClean.vkBody_clean_walk
+
+/-! ## 6. STAGEINV .vk FROM THE CLEAN WALK (D-QVM1's fit, consumed)
+
+  This is the reassembly sections 5 and 5b said was waiting on a bound. D-QVM1 signed the bound
+  (`programFits`) and `MemoryPairs.fit1_of_valid` / `fit2_of_valid` are its theorems, so the two
+  equations the walk stops on are no longer hypotheses:
+
+    (fit1) the copy destination `BitVec.ofNat 256 (ptrAddr vkMptr)` reads back the Nat address;
+    (fit2) the copy length `BitVec.ofNat 256 vk.len` reads back the Nat length.
+
+  With those, the walk's memory equation is a copy of the deployed runtime at exactly the window
+  `Inv .vk` reads, and section 2's `bytesAt_copyInto_window` turns it into the payload clause;
+  `bytesAt_copyInto_disjoint` plus `MemoryPairs.vkPins_disjoint_of_generated` keep the g1_identity
+  clause; the walk's third calldata equality plus `cdBound_of_valid` give the calldata-length
+  clause; and the three words `envelopeOk` wants are the walk's first two equalities plus
+  `abiHeadOk`'s own static facts. No hypothesis is added anywhere. -/
+
+/-- A word-level equation whose right side is a sum below `2 ^ 256` is a `Nat` equation when the
+    left side already fits. This is the single arithmetic step the calldata clause needs; `omega`
+    is not used because `2 ^ 256` is in the statement. -/
+theorem ofNat_eq_ofNat_add {L A B : Nat} (hL : L < 2 ^ 256) (hAB : A + B < 2 ^ 256)
+    (h : BitVec.ofNat 256 L = BitVec.ofNat 256 A + BitVec.ofNat 256 B) : L = A + B := by
+  have ht := congrArg BitVec.toNat h
+  simp only [BitVec.toNat_add, BitVec.toNat_ofNat] at ht
+  rw [Nat.mod_eq_of_lt hL,
+    Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt (Nat.le_add_right A B) hAB),
+    Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt (Nat.le_add_left B A) hAB),
+    Nat.mod_eq_of_lt hAB] at ht
+  exact ht
+
+/-- **THE CLEAN EXIT IS `StageInv .vk`.** Everything is read off the walk's conclusion plus
+    `ValidV3`; the only state facts used are env/halted/memory and the `r`/`vk` lookup transfer. -/
+theorem stageInv_vk_of_clean (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (H : Hash)
+    (vkAddr : U256) (cd : Bytes)
+    {V Vb : VEnv (Bridge.Dialect c g)} {st stb : EvmState}
+    (hbase : BaseInv R Checkpoint.start V st)
+    (hframe : Frame R H vkAddr cd V st)
+    (hraw : abiHeadOk R.plan.proofLayout cd = true)
+    (hsucc : VEnv.get Vb "success" = some (1 : U256))
+    (hr : VEnv.get Vb "r" = VEnv.get V "r")
+    (hvk : VEnv.get Vb "vk" = VEnv.get V "vk")
+    (henv : stb.env = st.env)
+    (hhalt : stb.halted = st.halted)
+    (hmem : stb.memory = copyInto st.memory
+      (BitVec.ofNat 256 (ptrAddr R.pv.memory.vkMptr)).toNat 1
+      (BitVec.ofNat 256 R.pv.vk.len).toNat (st.env.extCodeOf vkAddr))
+    (C1 : wordFrom st.env.calldata
+      (BitVec.ofNat 256 (R.pv.proofLayout.proofCptr - 32)).toNat =
+        BitVec.ofNat 256 R.pv.proofLayout.proofLen)
+    (C2 : wordFrom st.env.calldata (BitVec.ofNat 256 R.pv.proofLayout.proofEnd).toNat =
+        BitVec.ofNat 256 R.pv.numInstances)
+    (C3 : BitVec.ofNat 256 st.env.calldata.length =
+        BitVec.ofNat 256 (R.pv.proofLayout.proofEnd + 32) +
+          BitVec.ofNat 256 (R.pv.numInstances * 32)) :
+    StageInv R H vkAddr cd Checkpoint.vk Vb stb := by
+  -- the plan view is the no-accumulator view of the plan, so its layout IS the plan's
+  have hpv : R.pv = planViewOf R.plan R.model none := by
+    show planViewOf R.plan R.model R.cfg.accumulator = _
+    rw [hR.supported.noAcc]
+  have hpl : R.pv.proofLayout = R.plan.proofLayout := by rw [hpv]; rfl
+  -- the two row premises `ValidV3` carries: instance count and the calldata bound
+  have hnum : R.pv.numInstances = R.cfg.numInstances :=
+    (Midfall.LoweringV3.MemoryPairs.row_premises_of_generated R hR.generated hR.inputs.1
+      hR.supported.separateVk).1
+  have hbnd : R.pv.proofLayout.proofEnd + 32 + 32 * R.pv.numInstances < 2 ^ 256 := by
+    have h := cdBound_of_valid hR
+    rw [hpl, hnum]
+    exact h
+  -- the Frame transfer
+  have hfr : Frame R H vkAddr cd Vb stb := by
+    refine ⟨?_, ?_, ?_, hframe.vkHash, hframe.vkNonEmpty, ?_, ?_, hframe.cdSize⟩
+    · rw [henv]; exact hframe.calldata
+    · rw [henv]; exact hframe.keccak
+    · rw [henv]; exact hframe.vkCode
+    · obtain ⟨rv, hl, hg⟩ := hframe.r
+      exact ⟨rv, hl, by rw [hr]; exact hg⟩
+    · rw [hvk]; exact hframe.vk
+  -- the three `Inv .start` clauses the `.vk` clauses inherit
+  have hstart : ((st.halted == none) = true ∧ LocalsOk (p := p) V = true) ∧
+      (bytesAt st (ptrAddr R.pv.memory.g1IdentityMptr) 128 ==
+        Midfall.natToBytesBE 0 128) = true := by
+    have h := hbase
+    change Midfall.Lowering.InvAt (calls := c) (gas := g) R.E R.params Checkpoint.start R.pv
+      (witnessSnapshot (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) V st = true at h
+    simp only [Midfall.Lowering.InvAt] at h
+    rw [ite_eq_right (by decide : ¬ (Checkpoint.vk ≤ Checkpoint.start)),
+      ite_eq_right (by decide : ¬ (Checkpoint.transcript ≤ Checkpoint.start)),
+      ite_eq_right (by decide : ¬ (Checkpoint.lagrange ≤ Checkpoint.start)),
+      ite_eq_right (by decide : ¬ (Checkpoint.quotient ≤ Checkpoint.start)),
+      ite_eq_right (by decide : ¬ (Checkpoint.pcs ≤ Checkpoint.start)),
+      ite_eq_right (by decide : ¬ ((Checkpoint.start == Checkpoint.pairing) = true))] at h
+    simpa only [Bool.and_true, Bool.and_eq_true] using h
+  have hHaltB : (stb.halted == none) = true := by rw [hhalt]; exact hstart.1.1
+  have hLocB : LocalsOk (p := p) Vb = true := by
+    have hEq : LocalsOk (p := p) Vb = LocalsOk (p := p) V := by
+      unfold LocalsOk
+      rw [hr]
+    rw [hEq, hstart.1.2]
+  -- the memory equation, with the D-QVM1 fits
+  have hmem' : stb.memory = copyInto st.memory (ptrAddr R.pv.memory.vkMptr) 1 R.pv.vk.len
+      (st.env.extCodeOf vkAddr) := by
+    rw [hmem, Midfall.LoweringV3.MemoryPairs.fit1_of_valid hR,
+      Midfall.LoweringV3.MemoryPairs.fit2_of_valid hR]
+  -- the g1_identity window is disjoint from the copy, so it survives
+  have hgiEq : bytesAt stb (ptrAddr R.pv.memory.g1IdentityMptr) 128 =
+      bytesAt st (ptrAddr R.pv.memory.g1IdentityMptr) 128 := by
+    have hread : readBytes stb.memory (ptrAddr R.pv.memory.g1IdentityMptr) 128 =
+        readBytes st.memory (ptrAddr R.pv.memory.g1IdentityMptr) 128 := by
+      rw [hmem']
+      refine Midfall.LoweringV3.VkWindow.readBytes_copyInto_disjoint st.memory
+        (ptrAddr R.pv.memory.vkMptr) 1 R.pv.vk.len
+        (ptrAddr R.pv.memory.g1IdentityMptr) 128 (st.env.extCodeOf vkAddr) ?_
+      rcases Midfall.LoweringV3.MemoryPairs.vkPins_disjoint_of_generated hR.generated with
+        h | h
+      · exact Or.inr h
+      · exact Or.inl h
+    show ByteArray.mk (readBytes stb.memory (ptrAddr R.pv.memory.g1IdentityMptr) 128).toArray =
+      ByteArray.mk (readBytes st.memory (ptrAddr R.pv.memory.g1IdentityMptr) 128).toArray
+    rw [hread]
+  have hgiB : (bytesAt stb (ptrAddr R.pv.memory.g1IdentityMptr) 128 ==
+      Midfall.natToBytesBE 0 128) = true := by
+    rw [hgiEq]; exact hstart.2
+  -- the payload window: the copy's destination is the Nat address and the source is the runtime
+  have hvkPv : R.pv.vk = R.plan.vk := by rw [hpv]; rfl
+  have hpay : bytesAt stb (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes := by
+    have hread : readBytes stb.memory (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len =
+        ((st.env.extCodeOf vkAddr).drop 1).take R.pv.vk.len := by
+      rw [hmem']
+      have h3 : 1 + (ptrAddr R.pv.memory.vkMptr - ptrAddr R.pv.memory.vkMptr) +
+          R.pv.vk.len ≤ (st.env.extCodeOf vkAddr).length := by
+        rw [Nat.sub_self, hframe.vkCode,
+          Midfall.LoweringV3.VkWindow.runtimeBytes_length, hvkPv]
+        omega
+      simpa using Midfall.LoweringV3.VkWindow.readBytes_copyInto_window st.memory
+        (ptrAddr R.pv.memory.vkMptr) 1 R.pv.vk.len (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len
+        (st.env.extCodeOf vkAddr) (Nat.le_refl _) (Nat.le_refl _) h3
+    show ByteArray.mk (readBytes stb.memory (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len).toArray =
+      R.pv.vk.bytes
+    rw [hread, hframe.vkCode, hvkPv,
+      Midfall.LoweringV3.VkWindow.runtimeBytes_drop_one_take]
+  have hpayB : (bytesAt stb (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len == R.pv.vk.bytes) = true := by
+    rw [hpay]; simp
+  -- the calldata-length clause: the walk's third equality, read as a Nat equation
+  have hL_lt : st.env.calldata.length < 2 ^ 256 := by
+    rw [hframe.calldata]
+    rw [← Array.size_eq_length_toList (xs := cd.data)]
+    exact hframe.cdSize
+  have hcdlen : st.env.calldata.length =
+      R.pv.proofLayout.proofEnd + 32 + 32 * R.pv.numInstances := by
+    have hAB : (R.pv.proofLayout.proofEnd + 32) + R.pv.numInstances * 32 < 2 ^ 256 := by
+      have h := hbnd
+      rw [Nat.mul_comm 32 R.pv.numInstances] at h
+      simpa [Nat.add_assoc] using h
+    have h := ofNat_eq_ofNat_add hL_lt hAB C3
+    rw [Nat.mul_comm (R.pv.numInstances) 32] at h
+    simpa [Nat.add_assoc] using h
+  have hcdB : (stb.env.calldata.length ==
+      R.pv.proofLayout.proofEnd + 32 + 32 * R.pv.numInstances) = true := by
+    have hlen : stb.env.calldata.length =
+        R.pv.proofLayout.proofEnd + 32 + 32 * R.pv.numInstances := by
+      rw [henv]; exact hcdlen
+    rw [hlen]; simp
+  have haccB : (R.pv.hasAccumulator == false ||
+      (witnessSnapshot (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)).acc.isSome) = true := by
+    rw [pv_hasAccV3 R hR]
+    rfl
+  -- the `.vk` invariant: the three inherited clauses and the three `.vk` clauses
+  have hbase_vk : Midfall.Lowering.Inv (calls := c) (gas := g) R.E R.params Checkpoint.vk
+      R.pv (witnessSnapshot (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) Vb stb := by
+    show Midfall.Lowering.InvAt (calls := c) (gas := g) R.E R.params Checkpoint.vk R.pv
+      (witnessSnapshot (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) Vb stb = true
+    simp only [Midfall.Lowering.InvAt]
+    rw [ite_eq_left (by decide : Checkpoint.vk ≤ Checkpoint.vk),
+      ite_eq_right (by decide : ¬ (Checkpoint.transcript ≤ Checkpoint.vk)),
+      ite_eq_right (by decide : ¬ (Checkpoint.lagrange ≤ Checkpoint.vk)),
+      ite_eq_right (by decide : ¬ (Checkpoint.quotient ≤ Checkpoint.vk)),
+      ite_eq_right (by decide : ¬ (Checkpoint.pcs ≤ Checkpoint.vk)),
+      ite_eq_right (by decide : ¬ ((Checkpoint.vk == Checkpoint.pairing) = true))]
+    simp only [Bool.and_true]
+    rw [hHaltB, hLocB, hgiB, hpayB, hcdB, haccB]
+    rfl
+  -- `envelopeOk`: `abiHeadOk` was the `.start` raw clause; the three words are C1, C2 and C3
+  have hAbi' := hraw
+  simp only [abiHeadOk, Bool.and_eq_true] at hAbi'
+  have hcptrb : (R.plan.proofLayout.proofCptr == abiVerifyProofProofCptr) = true :=
+    hAbi'.1.1.2
+  have hendb : (R.plan.proofLayout.proofEnd ==
+      R.plan.proofLayout.proofCptr + R.plan.proofLayout.proofLen) = true := hAbi'.1.2
+  have hcptrLit : abiVerifyProofProofCptr = 0x64 := by
+    norm_num [abiVerifyProofProofCptr, abiSelectorBytes, abiVerifyProofHeadBytes,
+      abiVerifyProofHeadWords, Midfall.Generator.wordBytes]
+  have hcptr : R.plan.proofLayout.proofCptr = 0x64 := by
+    have h := hcptrb
+    rw [hcptrLit] at h
+    exact eq_of_beq h
+  have hend : R.plan.proofLayout.proofEnd =
+      R.plan.proofLayout.proofCptr + R.plan.proofLayout.proofLen := eq_of_beq hendb
+  have hpe_lt : R.pv.proofLayout.proofEnd < 2 ^ 256 :=
+    Nat.lt_of_le_of_lt (Nat.le_add_right _ _) (by simpa [Nat.add_assoc] using hbnd)
+  have hpl_lt : R.pv.proofLayout.proofLen < 2 ^ 256 := by
+    rw [hpl]
+    have h := hpe_lt
+    rw [hpl, hend, hcptr] at h
+    exact Nat.lt_of_le_of_lt (Nat.le_add_left _ _) h
+  have hfitCptr : (BitVec.ofNat 256 (R.pv.proofLayout.proofCptr - 32)).toNat =
+      R.pv.proofLayout.proofCptr - 32 := by
+    rw [hpl, hcptr, BitVec.toNat_ofNat]
+  have hfitEnd : (BitVec.ofNat 256 R.pv.proofLayout.proofEnd).toNat =
+      R.pv.proofLayout.proofEnd := by
+    rw [BitVec.toNat_ofNat]
+    exact Nat.mod_eq_of_lt hpe_lt
+  have hC1' : wordFrom st.env.calldata (R.pv.proofLayout.proofCptr - 32) =
+      BitVec.ofNat 256 R.pv.proofLayout.proofLen := by
+    rw [hfitCptr] at C1
+    exact C1
+  have hC1w : cdWord cd 0x44 = BitVec.ofNat 256 R.pv.proofLayout.proofLen := by
+    have h := hC1'
+    rw [hframe.calldata, Midfall.LoweringV3.VkWindow.wordFrom_cdWord] at h
+    have hidx : R.pv.proofLayout.proofCptr - 32 = 0x44 := by
+      rw [hpl, hcptr]
+    rwa [hidx] at h
+  have hC1nat : (cdWord cd 0x44).toNat = R.pv.proofLayout.proofLen := by
+    have h := congrArg BitVec.toNat hC1w
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hpl_lt] at h
+    exact h
+  have hfitEnd' : (BitVec.ofNat 256 R.pv.proofLayout.proofEnd).toNat =
+      R.pv.proofLayout.proofEnd := hfitEnd
+  have hC2' : wordFrom st.env.calldata R.pv.proofLayout.proofEnd =
+      BitVec.ofNat 256 R.pv.numInstances := by
+    rw [hfitEnd'] at C2
+    exact C2
+  have hC2w : cdWord cd R.pv.proofLayout.proofEnd =
+      BitVec.ofNat 256 R.pv.numInstances := by
+    have h := hC2'
+    rw [hframe.calldata, Midfall.LoweringV3.VkWindow.wordFrom_cdWord] at h
+    exact h
+  have h32n_lt : 32 * R.pv.numInstances < 2 ^ 256 :=
+    Nat.lt_of_le_of_lt (Nat.le_add_left _ _) hbnd
+  have hnum_lt : R.pv.numInstances < 2 ^ 256 :=
+    Nat.lt_of_le_of_lt (Nat.le_mul_of_pos_left R.pv.numInstances (by decide : 0 < 32)) h32n_lt
+  have hC2nat : (cdWord cd R.pv.proofLayout.proofEnd).toNat = R.pv.numInstances := by
+    have h := congrArg BitVec.toNat hC2w
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hnum_lt] at h
+    exact h
+  have hp1 : ((cdWord cd 0x44).toNat == R.plan.proofLayout.proofLen) = true := by
+    rw [hC1nat, hpl]; simp
+  have hC2natL : (cdWord cd R.plan.proofLayout.proofEnd).toNat = R.pv.numInstances := by
+    rw [← hpl]; exact hC2nat
+  have hp2 : ((cdWord cd R.plan.proofLayout.proofEnd).toNat == R.cfg.numInstances) = true := by
+    rw [hC2natL, hnum]; simp
+  have hp3 : (cd.size == R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances) = true := by
+    have hsize : cd.size = st.env.calldata.length := by
+      rw [hframe.calldata]
+      exact (Array.size_eq_length_toList (xs := cd.data)).symm
+    have hlen' : st.env.calldata.length =
+        R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances := by
+      have h := hcdlen
+      rw [hnum] at h
+      rw [← hpl]
+      exact h
+    rw [hsize, hlen']; simp
+  have henvOk : envelopeOk R.plan.proofLayout R.cfg.numInstances cd = true := by
+    simp only [envelopeOk]
+    rw [hraw, hp1, hp2, hp3]
+    rfl
+  refine ⟨hfr, hsucc, ?_, henvOk, trivial, ?_⟩
+  · show Midfall.Lowering.Inv (calls := c) (gas := g) R.E R.params Checkpoint.vk R.pv
+      (witnessSnapshot (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) Vb stb
+    exact hbase_vk
+  · intro ms instW inst hdec
+    exact ⟨witnessSnapshot (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ), rfl, hbase_vk⟩
+
+/-- **THE CLEAN HALF OF `BlockSim R .vkLoading`.** From `StageInv .start` every run either reverts
+    or exits normally at `StageInv .vk`; the walk is `vkBody_clean_walk`, the reassembly is
+    `stageInv_vk_of_clean`. -/
+theorem vk_clean_walkV3 (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (H : Hash) (vkAddr : U256) (cd : Bytes) (g : ExternalGas) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g)
+      (R.scope (permissive (callsOf product)) g) (R.slice Partial.vkLoading)
+      (fun V st => StageInv R H vkAddr cd Checkpoint.start V st)
+      (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨
+        (o = .normal ∧ StageInv R H vkAddr cd Checkpoint.vk V' st')) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hframe, hsucc, hbase, hraw, -, -⟩ := hpre
+  have hcode : vkCodehashArm R.model :=
+    (Midfall.LoweringV3.MemoryPairs.generated_model_facts hR.generated).2
+      hR.supported.separateVk
+  obtain ⟨hVK, hPL, hP1, hP2, hP3⟩ :=
+    Midfall.LoweringV3.VkWindow.vkTableV3 hR hcode
+  rw [vk_sliceV3 R hR] at hrun
+  have hfail : lookupFun (R.scope (permissive (callsOf product)) g) "fail" =
+      some (failFDecl, R.scope (permissive (callsOf product)) g) := fail_lookup R
+  rcases Step.stmts_cons_inv
+      (D := Bridge.Dialect (permissive (callsOf product)) g) hrun with
+    ⟨V₁, st₁, h₁, hnil⟩ | ⟨h₁, hne⟩
+  · cases hnil
+    cases h₁ with
+    | block hbody =>
+        rename_i Vb
+        have hfail' : lookupFun (hoist (Bridge.Dialect (permissive (callsOf product)) g)
+            (vkBody R.consts R.pv.numInstances R.pv.k R.pv.expectedHasAccumulatorWord
+              R.pv.expectedAccOffset R.pv.expectedNumAccLimbs R.pv.expectedNumAccLimbBits
+              R.pv.proofLayout.proofLen) ::
+              R.scope (permissive (callsOf product)) g) "fail" =
+            some (failFDecl, R.scope (permissive (callsOf product)) g) :=
+          vkBody_fail_lookup R _ _ _ _ _ _ _ hfail
+        rcases vkBody_clean_walk R vkAddr (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len
+            (R.pv.proofLayout.proofCptr - 32) R.pv.proofLayout.proofEnd
+            (R.pv.proofLayout.proofEnd + 32) hfail' hsucc hframe.vk hVK hPL hP1 hP2 hP3
+            hbody with hrev | hclean
+        · exact Or.inl hrev
+        · obtain ⟨-, hsucc', hr', hvk', hlen', henv', hhalt', hmem', C1, C2, C3⟩ := hclean
+          refine Or.inr ⟨rfl, ?_⟩
+          have hres : restore V Vb = Vb := by
+            show Vb.drop (Vb.length - V.length) = Vb
+            rw [hlen', Nat.sub_self, List.drop_zero]
+          rw [hres]
+          exact stageInv_vk_of_clean R hR H vkAddr cd hbase hframe hraw hsucc' hr' hvk'
+            henv' hhalt' hmem' C1 C2 C3
+  · cases h₁ with
+    | block hbody =>
+        rename_i Vb
+        have hfail' : lookupFun (hoist (Bridge.Dialect (permissive (callsOf product)) g)
+            (vkBody R.consts R.pv.numInstances R.pv.k R.pv.expectedHasAccumulatorWord
+              R.pv.expectedAccOffset R.pv.expectedNumAccLimbs R.pv.expectedNumAccLimbBits
+              R.pv.proofLayout.proofLen) ::
+              R.scope (permissive (callsOf product)) g) "fail" =
+            some (failFDecl, R.scope (permissive (callsOf product)) g) :=
+          vkBody_fail_lookup R _ _ _ _ _ _ _ hfail
+        rcases vkBody_clean_walk R vkAddr (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len
+            (R.pv.proofLayout.proofCptr - 32) R.pv.proofLayout.proofEnd
+            (R.pv.proofLayout.proofEnd + 32) hfail' hsucc hframe.vk hVK hPL hP1 hP2 hP3
+            hbody with hrev | hclean
+        · exact Or.inl hrev
+        · exact absurd hclean.1 hne
+
+/-- **CONJUNCT 2 OF `BlockSim R .vkLoading`, RESTATED FOR THE ROW.** `VkRow.vk_poison_walkV3`
+    already proves the stronger statement (every run halts reverted), so the conjunct is one
+    application; no `normal ∧ Poisoned` arm is needed. -/
+theorem vk_poison_walkV3' (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (H : Hash) (vkAddr : U256) (cd : Bytes) (g : ExternalGas) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g)
+      (R.scope (permissive (callsOf product)) g) (R.slice Partial.vkLoading)
+      (fun V st => Poisoned R H vkAddr cd V st)
+      (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨
+        (Partial.vkLoading ≠ .traceReturn ∧ o = .normal ∧ Poisoned R H vkAddr cd V' st')) := by
+  intro V st hpois V' st' o hrun
+  exact Or.inl (vk_poison_walkV3 R hR H vkAddr cd hpois hrun)
+
+/-- **THE `vkLoading` SIMULATION ROW, PROVED FOR EVERY RENDER.** The two conjuncts of `BlockSim`
+    over `StageInv`: the clean walk (`vk_clean_walkV3`) and the poisoned walk
+    (`vk_poison_walkV3'`). Standard three, no `sorryAx`, no `native_decide`; `D-QVM1`'s
+    `programFits` supplies the address and length fits the clean exit reads. -/
+theorem vk_blockSimV3 (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (H : Hash) (vkAddr : U256) (cd : Bytes) (g : ExternalGas) :
+    BlockSim R Partial.vkLoading H vkAddr (permissive (callsOf product)) g cd := by
+  refine ⟨?_, vk_poison_walkV3' R product hR H vkAddr cd g⟩
+  intro V st hpre V' st' o hrun
+  rcases vk_clean_walkV3 R product hR H vkAddr cd g V st hpre V' st' o hrun with hrev | hok
+  · exact Or.inl hrev
+  · exact Or.inr (Or.inl hok)
+
+#print axioms Midfall.LoweringV3.VkClean.ofNat_eq_ofNat_add
+#print axioms Midfall.LoweringV3.VkClean.stageInv_vk_of_clean
+#print axioms Midfall.LoweringV3.VkClean.vk_clean_walkV3
+#print axioms Midfall.LoweringV3.VkClean.vk_poison_walkV3'
+#print axioms Midfall.LoweringV3.VkClean.vk_blockSimV3
+#cone_sorries Midfall.LoweringV3.VkClean.vk_blockSimV3
+#assert_axioms Midfall.LoweringV3.VkClean.vk_blockSimV3
+  [propext, Classical.choice, Quot.sound] native []
 end Midfall.LoweringV3.VkClean

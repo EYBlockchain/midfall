@@ -27,6 +27,7 @@
 -/
 import Midfall.LoweringV3.Composition
 import Midfall.LoweringV3.QuotientRows
+import Midfall.LoweringV3.VkClean
 import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.Tools.ConeSorries
 set_option autoImplicit false
@@ -52,8 +53,8 @@ theorem vk_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
     (vkAddr : U256) (cd : Bytes) (g : ExternalGas) :
-    BlockSim R Partial.vkLoading H vkAddr (permissive (callsOf product)) g cd := by
-  sorry
+    BlockSim R Partial.vkLoading H vkAddr (permissive (callsOf product)) g cd :=
+  VkClean.vk_blockSimV3 R product hR H vkAddr cd g
 
 /-- **LEAF (GEN.1, WP A3): the vkLoading progress row.** Evidence `GeneratorRows.lean:1103`. -/
 theorem vk_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
