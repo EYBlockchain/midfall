@@ -3377,3 +3377,83 @@ theorem lag_agrees_lLast_l0 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
         rw [hEL]
         ring
 
+
+theorem wAddmodAt_zero_left {a r : U256} (ha : a.toNat < r.toNat) (hr : r ≠ 0) :
+    wAddmodAt 0 a r = a := by
+  apply BitVec.eq_of_toNat_eq
+  unfold wAddmodAt
+  rw [if_neg hr, BitVec.toNat_ofNat]
+  change (0 + a.toNat) % r.toNat % 2 ^ 256 = a.toNat
+  rw [Nat.zero_add, Nat.mod_eq_of_lt ha, Nat.mod_eq_of_lt a.isLt]
+
+/-- Fold over `(l.drop 1).take n`, without dependent index proofs in the statement. -/
+theorem foldl_drop_take_eq {α β : Type} [Inhabited α] (l : List α) (g : β → α → β) (b : β) :
+    ∀ n, 1 + n ≤ l.length →
+      ((l.drop 1).take n).foldl g b =
+        (List.range n).foldl (fun acc j => g acc (l[1 + j]!)) b := by
+  intro n
+  induction n generalizing b with
+  | zero => intro h; rfl
+  | succ n ih =>
+      intro h
+      have h1 : 1 + n ≤ l.length := by omega
+      rw [List.take_succ]
+      have hlast : ((l.drop 1)[n]?).toList = [l[1 + n]'(by omega)] := by
+        rw [List.getElem?_drop, List.getElem?_eq_getElem (by omega)]
+        rfl
+      rw [hlast, List.foldl_append, ih b h1, List.range_succ, List.foldl_append]
+      simp only [List.foldl_cons, List.foldl_nil]
+      rw [getElem!_pos l (1 + n) (by omega)]
+
+/-- Split the first element off a `range` fold. -/
+theorem foldl_range_succ {β : Type} (f : Nat → β → β) (n : Nat) (acc : β) :
+    (List.range (n + 1)).foldl (fun a j => f j a) acc =
+      (List.range n).foldl (fun a j => f (j + 1) a) (f 0 acc) := by
+  rw [List.range_succ_eq_map, List.foldl_cons, List.foldl_map]
+
+theorem lBlind_fold {p : ℕ} [Fact (Nat.Prime p)] (hp : p < 2 ^ 256)
+    (l : List (Fr p)) (Lw : Nat → U256) (bf : Nat)
+    (hlen : l.length = bf + 2)
+    (hbf : 1 ≤ bf)
+    (hval : ∀ i, i ≤ bf + 1 → frWord (l[i]!) = Lw i) :
+    frWord (((l.drop 1).take bf).foldl (· + ·) 0) =
+      wSum (BitVec.ofNat 256 p : U256) (fun i => Lw (2 + i)) (bf - 1) (Lw 1) := by
+  rw [frWord_foldl_add hp, wSum_eq_foldl]
+  have hz : frWord (0 : Fr p) = (0 : U256) := by
+    apply BitVec.eq_of_toNat_eq
+    rw [frWord_toNat hp, ZMod.val_zero]
+    rfl
+  rw [hz]
+  rw [foldl_drop_take_eq l (fun acc x => wAddmodAt acc (frWord x) (BitVec.ofNat 256 p : U256)) 0 bf (by omega)]
+  rw [show bf = (bf - 1) + 1 by omega, foldl_range_succ]
+  rw [wAddmodAt_zero_left (a := frWord (l[1]!)) (r := (BitVec.ofNat 256 p : U256)) (by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp]
+    exact frWord_toNat_lt hp (l[1]!)) (ofNat_p_ne_zero hp)]
+  rw [hval 1 (by omega)]
+  rw [show bf - 1 + 1 - 1 = bf - 1 by omega]
+  have hfoldmap : ∀ (ff : Nat → U256) (gg : U256 → U256 → U256) (acc : U256),
+      (List.range (bf - 1)).foldl (fun a j => gg a (ff j)) acc =
+        ((List.range (bf - 1)).map ff).foldl gg acc := by
+    intro ff gg acc
+    rw [List.foldl_map]
+  rw [hfoldmap (fun j => frWord (l[1 + (j + 1)]!)) (fun a x => wAddmodAt a x (BitVec.ofNat 256 p)) (Lw 1)]
+  rw [hfoldmap (fun j => Lw (2 + j)) (fun a x => wAddmodAt a x (BitVec.ofNat 256 p)) (Lw 1)]
+  have hmap : (List.range (bf - 1)).map (fun j => frWord (l[1 + (j + 1)]!)) =
+      (List.range (bf - 1)).map (fun j => Lw (2 + j)) := by
+    apply List.map_congr_left
+    intro j hj
+    rw [List.mem_range] at hj
+    have hidx : 1 + (j + 1) = 2 + j := by omega
+    rw [hidx]
+    exact hval (2 + j) (by omega)
+  rw [hmap]
+
+
+
+/-! **T3.9.g lBlind residual (measured).** `lBlind_fold` is proved for an ABSTRACT list
+`l` and value function `Lw`. Instantiating it at the concrete
+`(R.vk.domain.lIRange ...).toList` in `lag_agrees_lLast_l0` drives `whnf`/`isDefEq` over the
+large `lIRange` term past the default 200000 heartbeats (PG-LAG-HEARTBEAT class), even with
+`generalize`/`set`. The next step is to keep the list opaque (a leaf premise
+`hE : lE = (lIRange ...).toList`) or add the lBlind relation as a leaf premise, rather than
+unfolding `lIRange` inside the theorem. Do NOT raise `maxHeartbeats`. -/
