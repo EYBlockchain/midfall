@@ -101,13 +101,14 @@ abbrev CD (F C : Type) : Type := CommitmentData F (CommitmentReference F C)
     signature. The Rust groups with comm == query.get_commitment(), i.e.
     PartialEq on CommitmentReference, whose OnePiece arm is std::ptr::eq
     (query.rs:125): grouping is by *allocation*, not by value. Lean has no
-    addresses, so that relation is not expressible here. Passing it in keeps
-    the divergence visible and local: Exec/Kzg/MultiOpen instantiates it with
-    CommitmentReference.beq (value equality), which agrees with the Rust
-    exactly when no two distinct allocations in the query set hold equal
-    commitments. That hypothesis is docs/REVIEW.md R-7; the conformance corpus
-    must contain a query set with a repeated commitment so the answer is
-    measured rather than assumed.
+    addresses, so D-P61 (docs/design.md:2183-2196, card REF.1) gave one-piece
+    commitments a `CommitSlot` and `Exec/Kzg/MultiOpen` instantiates this with
+    `kzgCommitBeq`, which compares the slot (and, for Linear, the points and
+    scalars with the labels ignored). That is the Rust relation; value equality
+    is the old pre-D-P61 reading and is kept only as the falsifier below. The
+    fixture's six identity fixed-column commitments are the case that
+    distinguishes them: `fixtureShape_groups_ok` pins the slot reading and
+    `fixtureShape_old_rejects_ok` pins the value reading's rejection.
 
     Panic sites, all of them .unwrap() on a lookup the construction just
     populated: :96 (point index), :103 (commitment to set), :107 (set index),

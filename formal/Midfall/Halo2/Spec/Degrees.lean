@@ -442,18 +442,19 @@ def CircuitIndex.degX (idx : CircuitIndex (Fr p)) : Nat :=
     (poly/kzg/utils.rs:55 with query.rs:117-133). At CircuitIndex level there are
     no commitments - the index describes the circuit, not a proof - so the
     IDENTITY of each polynomial is named by which column or argument it is.
-    This is the value-equality reading of docs/REVIEW.md R-7, the same one
-    Exec/Kzg/MultiOpen instantiates with `kzgCommitBeq`; whether the Rust is
-    relying on pointer identity instead is R-7's open question and is flagged in
-    this package's report, because it changes the counts below and not just the
-    layout. The logUp constructors carry the argument index because each batched
-    argument has its own m, its own helpers and its own accumulator
-    (plonk/verifier.rs:161, :189, :426), so they must not be merged across
-    arguments. The `Linear` commitment of the linearization query
-    (plonk/linearization/verifier.rs:110-117) is ONE shape, not a bag of its
-    terms: `PartialEq` never compares a `OnePiece` with a `Linear`
-    (query.rs:124-131), so the linearization group is disjoint from every
-    single-column group, which is what `linearization` encodes. -/
+    This is the slot reading of D-P61 (docs/design.md:2183-2196), the same one
+    Exec/Kzg/MultiOpen instantiates with `kzgCommitBeq`: one-piece commitments
+    compare by allocation slot, the slot below is derived injectively from the
+    ShapeCom, and the linearization is its own slot. R-7's old value-equality
+    reading is retired; the falsifier that keeps it from coming back is in
+    Exec/Kzg/Utils.lean (`fixtureShape_old_rejects_ok`). The logUp constructors
+    carry the argument index because each batched argument has its own m, its own
+    helpers and its own accumulator (plonk/verifier.rs:161, :189, :426), so they
+    must not be merged across arguments. The `Linear` commitment of the
+    linearization query (plonk/linearization/verifier.rs:110-117) is ONE shape,
+    not a bag of its terms: `PartialEq` never compares a `OnePiece` with a
+    `Linear` (query.rs:124-131), so the linearization group is disjoint from
+    every single-column group, which is what `linearization` encodes. -/
 inductive ShapeCom where
   /-- Advice column `i` (plonk/verifier.rs:584-594). -/
   | advice (i : Nat)

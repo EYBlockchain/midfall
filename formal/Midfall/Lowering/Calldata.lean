@@ -72,9 +72,12 @@ variable {p : ℕ} [Fact (Nat.Prime p)]
 /-! ### 1. The wire slots -/
 
 /-- One slot of the repacked proof: a padded G1 block or a 32-byte scalar word.
-    The two-way split is what calldata.rs's walk alternates over, and it is what
-    the transcript read schedule produces (hashableG1 width 128, hashableFr
-    width 32), so the same type names both sides of repack_spec_wire. -/
+    The two-way split is what calldata.rs's walk alternates over. The transcript
+    READS a G1 at 48 bytes (`hashableG1.width = g1CompressedWidth`,
+    Exec/Transcript.lean:65-69) but ABSORBS its 128-byte EIP-2537 form
+    (`toEip`, Common/Codec.lean:89-90); the repacked slot is the 128-byte
+    contract block that `push_g1` writes. The scalar slot is the same 32 bytes in
+    both walks, with the wire order LE and the contract order BE. -/
 inductive WireSlot
   /-- rust: CD:61-87 (push_g1) - one 48-byte compressed commitment widened to 128. -/
   | g1

@@ -1735,6 +1735,13 @@ empirical rather than argued.
   **Scope widened by Exec/Poly:** the same pointer identity also decides whether
   `Error::DuplicatedQuery` fires at all (utils.rs:55-58 tests membership of the
   same commitment), so R-7 is not only about grouping - it is on the error path
+  **RESOLVED D-P61** (`docs/design.md:2183-2196`, card REF.1). One-piece
+  commitments carry a `CommitSlot`; `kzgCommitBeq` / `CommitmentReference.beq`
+  compare slots, so the port matches `std::ptr::eq`'s observable relation. The
+  fixture's six identity fixed-column commitments are the witness
+  (`Exec/Kzg/Utils.lean:fixtureShape_groups_ok`), and
+  `fixtureShape_old_rejects_ok` keeps the old value-equality reading from coming
+  back. The historical text above is kept unchanged.
 ### R-51 External statement review: six findings, all verified, four applied
 
 A read-only review of the normative plan against the current Lean interfaces produced six
