@@ -40,6 +40,14 @@ and the `snapshotOf_prepareMsgs` retirement.
   semantic `allRuns_loop` route is next. A5/`batch_invert_summary` is a prerequisite of the row.
 - **A5** (`midfall-e`, `t/A5`): `batch_invert_summary` (HLP.1.b), `bi_forward_loop`, and the
   missing `bi_backward_loop` (HLP.1.c) in `BatchInvert.lean`, importing `LagrangeRows`.
+- **A6 transcriptParser** (`midfall-f`, `t/A6`) and **A9 PCS** (`midfall-i`, `t/A9`): the next two
+  block-row components, each in a new `*Rows.lean`; A9 first reports whether the queue's A8
+  dependency is real or file-disjoint.
+- **A4 continuation** (`midfall-g`, `t/A4`): T3.9.c/e and the b guard-TRUE semantic loop.
+
+**Shortest path to the conditional e2e theorem:** A4/A5 -> A6/A9 -> A11 -> A12 -> A13 -> D1
+(`end_to_end`), with QVM `q_blockSim`/`q_blockProgS` in parallel. B4 (ValidV3 at F1), B5 and the
+M9/M10 C/D tracks are DONE/non-vacuity work, not prerequisites of `lowering_correct` itself.
 - **QVM** (`midfall-c/d`): D-QVM2 executed; `QInterpRefinesSegment` stated; QIDENT/BINDINV/PLSEG/
   SPILL2/CURFACT landed. `q_blockSim`/`q_blockProgS` remain.
 - **QVM compile-correctness** (`midfall-h`, `t/QVMBUILD`): the 26/26 identity arm table and the
