@@ -79,8 +79,10 @@ conjunct; the headline signature is unchanged.
 
 ## 4. Waiting on human (exact asks)
 
-1. **PG-VKHEADER — SIGNED by D-GATE1; in flight on `t/A3R`.** Add `11 ≤ vk.constants.length`
-   to `PayloadAgrees`. (Original ask follows.) `PayloadAgrees` pins the payload
+1. **PG-VKHEADER — LANDED (`8b72779`).** `PayloadAgrees.constantsLength : 11 ≤
+   vk.constants.length` with the fixture witness and a verified `Frozen.sha256`; the six
+   header-window equations are proved. `vk_blockProgS` is now the mechanical universal/existence
+   `StmtsTotal` pair and is in flight on `t/A3R`. (Original ask retained below.) `PayloadAgrees` pins the payload
    WORD `constants.getD i`; the S3–S8 VK-header checks read the copied MEMORY word
    `mload(vkMptr + 32*i)` for `i ∈ {1,2,7,8,9,10}`, which equals the pinned word only if
    `11 ≤ R.pv.vk.constants.length` (and the copy window is 32*i+32 ≤ vk.len). With seven
@@ -94,8 +96,9 @@ conjunct; the headline signature is unchanged.
    flags exclude the three renderers that print `gas()`, but no program clause says the AST is
    gas-free. Choose (a) a frozen `programOk` conjunct `gasFree : GasFree (R.prog 0 0)` (a
    `decide`-per-render check), or (b) an emitter structural library (one induction per emitter).
-3. **`snapshotOf_prepareMsgs` — SIGNED by D-GATE1; in flight on `t/SNAPSHOT`.** Retire the
-   row on the D6 replay evidence. (Original ask follows.) Accept the D6 KAT/replay gate as
+3. **`snapshotOf_prepareMsgs` — RETIRED (`d0bf226`).** The row is deleted; the proved ok-half
+   replacement is `snapshotOf_prepareMsgs_ok`, and the two root consumers cite it. Root
+   13 -> 12, sound 6 -> 5, register 77/13 -> 76/12. (Original ask retained below.) Accept the D6 KAT/replay gate as
    the evidence and retire the row, or port `prepare`'s schedule onto the phase records.
 4. **DG.3 pinned zone** — the card's 972 declarations is stale; the current five-root closure is
    4823 declarations / 526 external leaves / digest `5d8c45843135d536`. Sign the zone before it
@@ -169,6 +172,8 @@ conjunct; the headline signature is unchanged.
 
 ## 5. Last three merges
 
-- `f980410` A3 - `vk_blockSim` proved; root 14, sound 6, register 78/14
+- `d0bf226` SNAPSHOT - `snapshotOf_prepareMsgs` retired; root 12, sound 5, register 76/12
+- `8b72779` PG-VKHEADER - frozen `PayloadAgrees.constantsLength` + header plumbing
+- `2488d3b` GASFREE - `programOk GasFree` clause; root 13, register 77/13
 - `308edf8` C1/WID.2 - IVC fixture KATs; KAT 1648/119
 - `e66fc58` EXHIBITS - both missing exhibits; 4/4 PRESENT
