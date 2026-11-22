@@ -7,6 +7,8 @@
 --
 -- AXIOMS. Standard three or fewer; no 'sorryAx', no 'native_decide'.
 import Midfall.Halo2.Exec.Arith
+import Midfall.Halo2.Exec.Domain
+import Midfall.Halo2.Exec.Verifier
 import Mathlib.Data.Nat.Digits.Defs
 import Mathlib.Tactic
 
@@ -289,6 +291,33 @@ theorem batchInvert_toList (xs : List F) :
     (batchInvert xs.toArray).1.toList = biInv xs := by
   rw [batchInvert_fst]
 
+lemma biInv_map {α : Type} (f : α → F) (xs : List α) :
+    biInv (xs.map f) = xs.map (fun x => if f x = 0 then 0 else (f x)⁻¹) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => simp [biInv, ih]
+
+/-- `lIRange` entrywise, when no denominator vanishes: the batch inverse is the inverse
+of each `x - ω^r`, and the rotation is applied last. -/
+theorem lIRange_toList_of_ne_zero (d : EvaluationDomain F) (x xn : F) (rots : List Int)
+    (h : ∀ r ∈ rots, x - d.rotateOmega 1 (Rotation.value r) ≠ 0) :
+    (d.lIRange x xn rots).toList =
+      rots.map (fun r => d.rotateOmega
+        ((x - d.rotateOmega 1 (Rotation.value r))⁻¹ * ((xn - 1) * d.barycentricWeight))
+        (Rotation.value r)) := by
+  unfold EvaluationDomain.lIRange
+  dsimp only
+  rw [batchInvert_toList]
+  have hbi : biInv (rots.map (fun r => x - d.rotateOmega 1 (Rotation.value r))) =
+      rots.map (fun r => (x - d.rotateOmega 1 (Rotation.value r))⁻¹) := by
+    rw [biInv_map]
+    apply List.map_congr_left
+    intro r hr
+    rw [if_neg (h r hr)]
+  rw [hbi]
+  rw [List.zipWith_map_left]
+  rw [List.zipWith_self]
+
 theorem biInv_get? (xs : List F) (i : Nat) :
     (biInv xs)[i]? = (xs[i]?).map (fun x => if x = 0 then 0 else x⁻¹) := by
   induction xs generalizing i with
@@ -297,5 +326,40 @@ theorem biInv_get? (xs : List F) (i : Nat) :
       cases i with
       | zero => simp [biInv]
       | succ i => simp [biInv, ih]
+
+
+lemma flatMap_pure {α β : Type} (l : List α) (f : α → β) :
+    List.flatMap (fun a => pure (f a)) l = l.map f := by
+  induction l with
+  | nil => rfl
+  | cons a l ih =>
+      simp only [List.flatMap, List.flatten_cons, List.map_cons]
+      change [f a] ++ (List.map (fun a => [f a]) l).flatten = f a :: List.map f l
+      rw [show (List.map (fun a => [f a]) l).flatten = List.flatMap (fun a => [f a]) l from rfl]
+      have ih' : List.flatMap (fun a => [f a]) l = l.map f := ih
+      rw [ih']
+      rfl
+
+/-- The three projections `lagrangeTriple` writes, over the concrete rotation list. -/
+theorem lagrangeTriple_ok {p : ℕ} [Fact (Nat.Prime p)] {G : Type}
+    (vk : VerifyingKey (Fr p) G) (x xn : Fr p)
+    {bf : Nat} (hbf : vk.cs.blindingFactors = .ok bf) {tri : LagrangeTriple (Fr p)}
+    (h : lagrangeTriple vk x xn = .ok tri) :
+    let rots : List Int := List.map (fun i => -((bf + 1 : Nat) : Int) + (i : Int))
+      (List.flatMap (fun a => pure ((a : Nat) : Int)) (List.range (bf + 2)))
+    let E := vk.domain.lIRange x xn rots
+    E.size = bf + 2 ∧ tri.lLast = E[0]! ∧
+      tri.lBlind = ((E.toList.drop 1).take bf).foldl (init := 0) (· + ·) ∧
+      tri.l0 = E[bf + 1]! := by
+  unfold lagrangeTriple at h
+  rw [hbf] at h
+  dsimp only [Bind.bind, Except.bind] at h
+  split at h
+  · rename_i hsize
+    injection h with htri
+    subst htri
+    dsimp only
+    exact ⟨beq_iff_eq.mp hsize, rfl, rfl, rfl⟩
+  · simp at h
 
 end Midfall.Halo2
