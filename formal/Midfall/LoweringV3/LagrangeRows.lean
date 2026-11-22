@@ -2449,3 +2449,141 @@ theorem lag_second_pass_loop (funs : FunEnv (Bridge.Dialect c g)) (consts : Inli
           exact wpSS_sound (Bridge.Dialect c g) (Bopen c g) (Cnone _)
             (Bopen_sound c g) (Cnone_sound _) hinit _ _ _ hi
 
+
+/-! ## 11. T3.9.b: THE DENOMINATOR LOOP (semantic route) -/
+
+theorem eval_sub_r_pow_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"]) (.vals [cv] st')) :
+    ∃ rv pw, VEnv.get V "r" = some rv ∧ VEnv.get V "pow_of_omega" = some pw ∧
+      cv = rv - pw ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hr =>
+      cases hrest with
+      | argsCons hnil hpw =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hpwv, rfl⟩ := eval_var_inv hpw
+              obtain ⟨hrv, rfl⟩ := eval_var_inv hr
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨_, _, hrv, hpwv, rfl, rfl⟩
+
+theorem eval_addmod_denom_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {cv rv : U256} {st' : EvmState}
+    (hrv : VEnv.get V "r" = some rv)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.addmod
+        [Expr.var "x", Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"],
+          Expr.var "r"]) (.vals [cv] st')) :
+    ∃ xv pw, VEnv.get V "x" = some xv ∧ VEnv.get V "pow_of_omega" = some pw ∧
+      cv = wAddmodAt xv (rv - pw) rv ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hrest with
+      | argsCons hrest2 hsub =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hv, rfl⟩ := eval_var_inv hr
+                  rw [hrv] at hv
+                  injection hv with hvr
+                  subst hvr
+                  obtain ⟨sr, sp, hsr, hsp, hsubv, hstsub⟩ :=
+                    eval_sub_r_pow_inv hsub
+                  have hsr_eq : sr = rv := Option.some.inj (hsr.symm.trans hrv)
+                  subst hsr_eq
+                  subst hstsub
+                  obtain ⟨hxv, rfl⟩ := eval_var_inv hx
+                  simp only [builtinWithExternal, stepOp, ter, hsubv] at hbi
+                  cases hbi
+                  exact ⟨_, _, hxv, hsp, rfl, rfl⟩
+
+theorem eval_mstore_denom_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {rv : U256} {st' : EvmState}
+    (hrv : VEnv.get V "r" = some rv)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mstore
+        [Expr.var "mptr", Expr.builtin Op.addmod
+          [Expr.var "x", Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"],
+            Expr.var "r"]]) (.vals [] st')) :
+    ∃ xv mp pw, VEnv.get V "x" = some xv ∧ VEnv.get V "mptr" = some mp ∧
+      VEnv.get V "pow_of_omega" = some pw ∧
+      st' = { touchMemory st mp.toNat 32 with
+        memory := storeWord st.memory mp.toNat (wAddmodAt xv (rv - pw) rv) } := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hmp =>
+      cases hrest with
+      | argsCons hnil hadd =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hmpv, rfl⟩ := eval_var_inv hmp
+              obtain ⟨xv, pw, hxv, hpw, hvadd, hstadd⟩ :=
+                eval_addmod_denom_inv hrv hadd
+              subst hstadd
+              simp only [builtinWithExternal, stepOp, hvadd] at hbi
+              cases hbi
+              exact ⟨_, _, _, hxv, hmpv, hpw, rfl⟩
+
+theorem eval_sub_r_pow_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.var "r", Expr.var "pow_of_omega"],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl <;> exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, bin] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
+
+theorem eval_addmod_denom_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.addmod
+        [Expr.var "x", Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"],
+          Expr.var "r"]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.var "x", Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"],
+      Expr.var "r"],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl | rfl
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+    · exact eval_sub_r_pow_halt_false hh
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp, ter] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
+
+theorem eval_mstore_denom_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mstore
+        [Expr.var "mptr", Expr.builtin Op.addmod
+          [Expr.var "x", Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"],
+            Expr.var "r"]]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.var "mptr", Expr.builtin Op.addmod
+      [Expr.var "x", Expr.builtin Op.sub [Expr.var "r", Expr.var "pow_of_omega"],
+        Expr.var "r"]],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+    · exact eval_addmod_denom_halt_false hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [builtinWithExternal, stepOp] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
