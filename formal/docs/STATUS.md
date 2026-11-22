@@ -182,3 +182,29 @@ The first three are the compiler-correctness tranche; (1) is the only one that s
 mathematical gap (the emitter/compaction values). (2)–(7) are inductions/compositions over
 already-landed per-arm facts. (8) is the external agent's lane; (9)–(10) follow the row and
 widening integrations.
+
+## 7. Lane snapshot
+
+At `formal/baseline` `913f19a` (quick-gated; full-gate kernel checks green, KAT replay running):
+
+- **A4 — PAUSED.** `lag_agrees` + `lag_agrees_lBlind` proved; `lagList`/`hE` discharged.
+  `hval`/`hInstEval`, T3.9.h and the lag rows wait on A5's `batch_invert_summary` and the
+  snapshot/query linkage.
+- **A5 — staticcall walk tail lets** (`a3d1438`): `mload`/`first_mptr`/`second_mptr`/`gp_mptr`
+  from the bundle pre; the head/guard composition and `BatchInvertPost` remain.
+- **A6 — parser schedule.** SIM.10 obligation 2 and `tp_agrees_of_agree` are green;
+  `snapshotAlgebraRun_wire`/`xcript_total` need the shared `PresWidthSeq` bridge.
+- **A9 — scalar-inv/PCS.** `exec_mstore_state`, `mxMemFr`/literal bridge and the staticcall
+  guard contract are green; the six-step `StmtsContractAll` and `emitScalarInvAt` summary remain.
+- **A11 — finalPairing.** `EcPairing` helper/frame, product lemma and length/bit-AND guards are
+  green; the `wp_run` normal leaf then G1/G2 wire, `.pcs → .pairing`, `fp_blockSim`/`fp_blockProgS`.
+- **D1 — end-to-end.** `end_to_end_of_prepareLogSlots` is merged; D-GATE5 `xNonzero` and the
+  `PresWidthSeq`/KZG query-map bridge are in flight. `runBody_mono` is the other shared leaf.
+- **D2 — certified generator.** CERT.0 resumed under D-CERT1 (33 + 8 named obligations); the
+  module port, `CertMeasure`, CERT.1 probes and the real-key generation are the deliverables.
+- **Port-fidelity audit** (`t/PORTFIDELITY`): F1–F10 in `PORT-AUDIT.md`; D-GATE6 rotation
+  distinctness and D-GATE7 VK phase-length interface signed; then the calldata codec component
+  (`calldata_roundtrip`, `calldata_canonical`, `repack_spec_of_decodeRust`).
+
+Register **73/11**, root **11/5**; the D2 CERT leaves will grow the register when merged, but not
+the `lowering_correct` cone. No row, bundle, `ValidV3` or root hypothesis was added by any lane.
