@@ -42,10 +42,11 @@ and the `snapshotOf_prepareMsgs` retirement.
   missing `bi_backward_loop` (HLP.1.c) in `BatchInvert.lean`, importing `LagrangeRows`.
 - **QVM** (`midfall-c/d`): D-QVM2 executed; `QInterpRefinesSegment` stated; QIDENT/BINDINV/PLSEG/
   SPILL2/CURFACT landed. `q_blockSim`/`q_blockProgS` remain.
-- **QVM compile-correctness** (`midfall-h`, `t/QVMBUILD`): a separate worker on the four
-  `Qvm.lean`/`QvmFold` holes, starting with `qvm_compile_correct_identity` (the archetype measured
-  true at its smallest witness by P-QVM). It owns `Qvm.lean`/`QvmFold.lean` only; the segment/
-  spill/Quotient files stay with the QVM agent.
+- **QVM compile-correctness** (`midfall-h`, `t/QVMBUILD`): the 26/26 identity arm table and the
+  `qvm_compile_correct_identity_of_parts` reduction are merged at `71a79d7`; the row is reduced to
+  exactly `PG_identity_emitterValue`, `PG_identity_compactionValue`, `PG_identity_preFold`. The
+  worker is on those three facts. It owns `Qvm.lean`/`QvmShift`/`QvmEmit` only; the segment/spill/
+  Quotient files stay with the QVM agent.
 
 ## 3. Next READY
 
