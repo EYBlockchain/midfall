@@ -2889,3 +2889,30 @@ global option, no statement change, no `sorry`/`native_decide`, and no edit to t
 chain (`modAfterHeader_shift`, the five body shifts, the fold shifts) is already landed and is not
 re-proved. If the local exception still does not close the header, the worker reports the exact
 `change`/`rfl` goal state and the smallest read-only refactor; it does not perform the refactor.
+
+## D-CERT1 — **Approved: the certified statement carries the current `programOk` obligations**
+
+> **Status: APPROVED.** Signed 2026-11-22 in the OpenCode session after the D2 probe measured that
+> the scratch `GeneratorCertified.lean` covers 9 of the current tree's 14 `programOk` conjuncts.
+
+**Decision.** CERT.0 is ported against the CURRENT `ValidV3`, not the earlier object clause set.
+The eight uncovered conjuncts — `hasMultiPointSet`, `transcriptRegionOk`, `g1IdentityFloor`,
+`negLagrangesFloor`, `permCommMatchRepaired`, `GasCallOk`, `GasFree`, `programFits` — become named
+CERT obligations with their own owners (D3/D4), alongside the 33 scratch lemmas. No clause is
+dropped, no `ValidV3` clause is weakened, and no generator statement assumes a `ValidV3` it is
+supposed to produce. The certified theorem still has input-only hypotheses (`Generates`,
+`SupportedInput`); the extra obligations are OUTPUT-side lemmas, exactly like the 33.
+
+## D-B4 — **Approved: F1's non-vacuity witness is a re-sourced render, not a weakened `ValidV3`**
+
+> **Status: APPROVED.** Signed 2026-11-22 after the B4 probe measured that the raw `poseidonRender`
+> is refutable (`generated`, and `f1_plan_isNotTheGeneratorsPlan`) and that the re-sourced
+> `f1GeneratedRender` still carries placeholder `R.vk` commitments, so `payload.fixedComms` and
+> `payload.permutationComms` are FALSE there.
+
+**Decision.** B4 does NOT weaken `ValidV3` and does NOT substitute a fixture into the root. The
+non-vacuity witness is a render whose `plan`/`qblocks`/`model` come from `generateAll` on the
+filled payload AND whose `vk` carries the real decoded fixed/permutation commitments, with the
+pairing-generator tie (`bls12_381Pairing.g₁ = g1zGen`, `g₂ = g2foldExp 1`) and the `s·G₂` decode
+from `params.json` supplied by B3. Until those land, B4 keeps the existing refutations and lands
+only green partial clauses; it does not claim `ValidV3 f1GeneratedRender`.
