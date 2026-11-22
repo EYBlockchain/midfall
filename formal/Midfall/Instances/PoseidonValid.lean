@@ -64,7 +64,7 @@
                                    five point fields (`g1Base`, `g2Base`, `negSG2`, `fixedComms`,
                                    `permutationComms`) are OPEN - `toEip` is noncomputable at the
                                    placeholder codec, exactly the card's "point half OPEN". NOT a
-                                   PROVED cell: eight of thirteen fields is a half, and it is
+                                   PROVED cell: eight of fourteen fields is a half, and it is
                                    reported as a half.
     7  supported        PROVED     REPAIRED AND DISCHARGED BY R.7 (D-P59). The field
                                    `wf.permutationCommitmentsMatch` compared the VK's sigma commitments
@@ -685,7 +685,7 @@ theorem poseidonValid_program : programOk poseidonRender :=
     `recon1_payload_digest_ok`). The five that remain OPEN - `g1Base`, `g2Base`, `negSG2`,
     `fixedComms`, `permutationComms` - compare payload bytes with `toEip` of a group element, and
     `toEip` is noncomputable at the placeholder codec (`g1CodecZ`), so they are neither proved nor
-    refuted here: `payload` STAYS HALF, eight of thirteen fields.
+    refuted here: `payload` STAYS HALF, eight of fourteen fields.
 
     Each conjunct is verbatim the corresponding field type at `R := poseidonRender`; the `show` is
     the kernel transferring from the render to D.1's and D.2's computable terms, and
@@ -760,6 +760,18 @@ theorem poseidonValid_payload_scalars_are_fields (P : PayloadAgrees poseidonRend
       (payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.numAccLimbBits).toNat) =
       accWordsOfEncoding poseidonRender.cfg.accumulator :=
   ⟨P.digest, P.numInstances, P.k, P.nInv, P.omega, P.omegaInv, P.omegaInvToL, P.accWords⟩
+
+/-- **D-GATE1's NEW `PayloadAgrees` FIELD, BY COMPUTATION.** The parsed artifact payload carries 35
+    constants, so the eleven-header window (`vkHeaderTemplateSlotsDefault` slots 0-10) is present
+    with room to spare. `native_decide` is in `Instances/`, as D-P71 requires; the render's own
+    view is the same object by `rfl` (`poseidonRender_plan_isD1`). -/
+theorem poseidon_payload_constantsLength : 11 ≤ poseidonPv.vk.constants.length := by
+  native_decide
+
+theorem poseidonRender_payload_constantsLength :
+    11 ≤ poseidonRender.pv.vk.constants.length := by
+  show 11 ≤ poseidonPv.vk.constants.length
+  exact poseidon_payload_constantsLength
 
 /-- **THE DECIDABLE HALF OF `ValidV3 poseidonRender`, IN ONE DECLARATION (OBJ.9's deliverable).**
     Five of the seven clauses - `inputs`, `program`, `noWriters`, `env`, `supported` - plus the

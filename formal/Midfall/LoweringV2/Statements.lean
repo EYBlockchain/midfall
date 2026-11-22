@@ -357,6 +357,15 @@ structure PayloadAgrees (R : Render p G₁ G₂ Gₜ) : Prop where
   /-- Same for the permutation (sigma) commitments, the last payload section. -/
   permutationComms : R.pv.vk.permutationComms.map g1WordsBytes =
     R.vk.permutation.commitments.toList.map R.E.g1.toEip
+  /-- **D-GATE1 (PG-VKHEADER): the payload carries the eleven header constants.** Slots 0-10 are
+      `vkHeaderTemplateSlotsDefault`; VkLoading S3-S8 reads slots 1 and 7-10 out of the memory the
+      S2 `extcodecopy` wrote, and `PayloadAgrees`' word equations reach that memory only when the
+      serialization's constant section covers them (`VkClean.wordFrom_foldl_chunks`). The eleven
+      scalars are what `generateVk` writes (`headerWords := vk0.constants.length`); a payload with
+      seven constants and no commitments is 224 bytes, so the copy ends before slot 7 and the
+      header checks read unpinned memory. This is the minimal clause that makes the S3-S8 window
+      reads follow (`VkClean.vk_hdr_word_read`). -/
+  constantsLength : 11 ≤ R.pv.vk.constants.length
   /- **`delta` IS DROPPED (card step 3).** The 18-clause text pinned the emitted `frDelta` literal
       against `R.E.delta`; the single text does not, because `generated` already pins `R.E.delta`
       against the program: OBJ.7's gate 9 (`GeneratedKats.generateAll_falsifierDeltaAndOmega_ok`)

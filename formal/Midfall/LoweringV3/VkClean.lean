@@ -1434,7 +1434,15 @@ theorem payloadWord_slot7_zero_of_length_seven (pv : PlanView)
     and `PayloadAgrees` is a word-level equation, not a byte-window one. The minimal repair is
     one conjunct on the payload clause (`11 ≤ R.pv.vk.constants.length`, or the window equation
     above); `PayloadAgrees` is frozen, so it is a signed statement change. Per D-P71 no
-    hypothesis is attached to the row and the leaf stays OPEN. -/
+    hypothesis is attached to the row and the leaf stays OPEN.
+
+    **UPDATE - D-GATE1 SIGNED AND LANDED (2026-11-22).** `PayloadAgrees` now carries
+    `constantsLength : 11 ≤ R.pv.vk.constants.length` in both the frozen `LoweringV2` structure
+    (re-hashed) and its `LoweringV3` copy. §8's `pg_vkheader_of_valid` is the projection and
+    `vk_hdr_word_read_of_valid` is the header-window equation with both arm hypotheses discharged;
+    `MemoryPairs.vkMptr_shape_of_generated` supplies the pointer shape. The narrative above is kept
+    as the record of why the clause was needed; the row's remaining work is the total walk and the
+    existence run, not a premise. -/
 theorem payloadAgrees_constants_length {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
     (h : PayloadAgrees R) : 7 ≤ R.pv.vk.constants.length := by
   by_contra hlt
@@ -1484,15 +1492,21 @@ theorem payloadAgrees_constants_length {R : Render p G₁ G₂ Gₜ} (hR : Valid
   planner's pointer and is a hypothesis of an ARM lemma, never of the row). D-P71: generic in the
   render; nothing added to 'ValidV3', to a row, to a bundle or to the root. -/
 
-/-- **PG-VKHEADER - THE NAMED MISSING PREMISE OF 'vk_blockProgS'.** Eleven header constants: the
-    eleven scalars of 'vkHeaderTemplateSlotsDefault' (slots 0-10), which is what a real
-    deployment's payload carries and what 'generateVk' writes with 'headerWords :=
-    vk0.constants.length'. It is NOT a theorem of 'ValidV3': 'generated' takes 'R.plan.vk' as an
-    INPUT to 'generateAll' ('Statements.lean:3375'), and 'PayloadAgrees' forces only seven
-    ('payloadAgrees_constants_length', section 7). The repair is one conjunct on the frozen payload
-    clause; 'vk_hdr_word_read' below proves that conjunct SUFFICIENT. -/
+/-- **PG-VKHEADER - WAS THE NAMED MISSING PREMISE; D-GATE1 LANDED IT AS A CLAUSE.** Eleven header
+    constants: the eleven scalars of 'vkHeaderTemplateSlotsDefault' (slots 0-10), which is what a
+    real deployment's payload carries and what 'generateVk' writes with 'headerWords :=
+    vk0.constants.length'. Before D-GATE1 it was NOT a theorem of 'ValidV3' ('generated' takes
+    'R.plan.vk' as an INPUT to 'generateAll', and 'PayloadAgrees' forced only seven -
+    'payloadAgrees_constants_length', section 7). D-GATE1 (design.md) added exactly
+    'PayloadAgrees.constantsLength : 11 ≤ R.pv.vk.constants.length'; 'pg_vkheader_of_valid' above is
+    its projection and 'vk_hdr_word_read' below proves the conjunct SUFFICIENT. -/
 def pg_vkheader (R : Render p G₁ G₂ Gₜ) : Prop :=
   11 ≤ R.pv.vk.constants.length
+
+/-- **D-GATE1: the new `PayloadAgrees` conjunct is the missing premise.** The row can now read
+    `pg_vkheader` straight off `ValidV3.payload`; no hypothesis is added to the row. -/
+theorem pg_vkheader_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) : pg_vkheader R :=
+  hR.payload.constantsLength
 
 /-- Two byte lists whose zero-padded reads agree on a 32-byte window read the same word: the
     'wordFrom' face of 'Midfall.Yul.Word.loadWord_congr', with the two offsets separate because a
@@ -1750,6 +1764,19 @@ theorem vk_hdr_word_read (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
   rw [hb, wordFrom_foldl_chunks _ _ hlt]
   rw [List.append_assoc, getD_map_append R.pv.vk.constants _ i hlt2]
   rfl
+
+/-- **THE HEADER WORD, WITH NO ARM HYPOTHESIS.** D-GATE1's `PayloadAgrees.constantsLength` supplies
+    the eleven-constant window and `MemoryPairs.vkMptr_shape_of_generated` supplies the `Nat`-built
+    pointer shape; this is `vk_hdr_word_read` with both discharged, ready for the `vkLoading` walk. -/
+theorem vk_hdr_word_read_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (st stb : EvmState) (vkAddr : U256)
+    (hcode : st.env.extCodeOf vkAddr = R.plan.vk.runtimeBytes.data.toList)
+    (hmem : stb.memory = copyInto st.memory (ptrAddr R.pv.memory.vkMptr) 1 R.pv.vk.len
+      (st.env.extCodeOf vkAddr))
+    (i : Nat) (hi : i ≤ vkHeaderTemplateSlotsDefault.numAccLimbBits) :
+    loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr i)) = payloadWord R.pv i :=
+  vk_hdr_word_read R hR (Midfall.LoweringV3.MemoryPairs.vkMptr_shape_of_generated hR.generated)
+    st stb vkAddr hcode hmem (pg_vkheader_of_valid hR) i hi
 
 #print axioms Midfall.LoweringV3.VkClean.wordFrom_congr
 #print axioms Midfall.LoweringV3.VkClean.wordFrom_append_head

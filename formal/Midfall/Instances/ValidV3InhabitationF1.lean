@@ -328,7 +328,7 @@ theorem f1_generated_obstruction_at_F1 : ¬ GeneratedBy poseidonRender :=
   * **`ValidV3 poseidonRender` is NOT inhabited and this file does not inhabit it.**
     `poseidonRender_notValid` stands, proved, routing through `generated` alone.
   * **`generated` is the sole REFUTED clause but NOT the sole blocker.** Even with S1-S7 resolved,
-    `ValidV3 poseidonRender` needs `PayloadAgrees`, and five of its thirteen fields (`g1Base`,
+    `ValidV3 poseidonRender` needs `PayloadAgrees`, and five of its fourteen fields (`g1Base`,
     `g2Base`, `negSG2`, `fixedComms`, `permutationComms`) are OPEN at the placeholder codec -
     `poseidonValid_payload_scalars` lands the eight scalar ones and only those
     (`PoseidonValid.lean:696-749`). That half is **B3's** ticket (REF.9, REF.10, ST.14, ST.17), not

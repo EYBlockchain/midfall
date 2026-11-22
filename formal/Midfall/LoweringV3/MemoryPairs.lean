@@ -466,6 +466,155 @@ theorem newFromVk_memory {F : Type} [BEq F] (feat : Features) (field : FieldCtx 
     (try (split at h10)) <;> (try (split at h10))
   all_goals (try (cases h10))
   all_goals (exact ⟨meta_, vkMptr, config, he⟩)
+
+/-! ### The VK pointer's own shape, out of `metaDataForStableStaticLayout`
+
+  `vk_hdr_word_read` needs `ptrAddr (Ptr.add vkMptr i) = ptrAddr vkMptr + 32 * i`, and that is
+  false for a `Value.identifier` pointer (`asUsizeNat` maps every identifier to 0). The planner
+  never stores one: `metaDataForStableStaticLayout` starts at `ptrMemory (valueFromNat start)` and
+  every rebind is `ptrMemory (valueFromNat planned)`. The fold is only three iterations, and the
+  invariant below carries the shape (and the link between the returned tuple's pointer and the
+  fold state's pointer) through it. -/
+
+/-- The fold state of `metaDataForStableStaticLayout`: `(result, current pointer)`. -/
+abbrev MetaState :=
+  Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr
+
+/-- The fold invariant: the current pointer is a `Nat`-built memory pointer, and whenever the
+    result is already fixed its pointer is the current one. -/
+def MetaShape (st : MetaState) : Prop :=
+  (∃ n, st.2 = ptrMemory (valueFromNat n)) ∧
+    (∀ r, st.1 = some r → r.1 = st.2)
+
+theorem foldlM_metaShape {α : Type} {l : List Nat} {step : α → Nat → Except Fault α}
+    {P : α → Prop} (hstep : ∀ a i b, step a i = .ok b → P a → P b) {a} (ha : P a) :
+    ∀ b, l.foldlM step a = .ok b → P b := by
+  induction l generalizing a with
+  | nil =>
+      intro b h
+      simp only [List.foldlM_nil] at h
+      cases h; exact ha
+  | cons x xs ih =>
+      intro b h
+      simp only [List.foldlM_cons, Bind.bind, Except.bind] at h
+      split at h
+      · cases h
+      · rename_i a' ha'
+        exact ih (hstep a x a' ha' ha) b h
+
+/-- One iteration preserves `MetaShape`. -/
+theorem metaStep_metaShape {Plan : Type} (feat : Features) (env : VkBuildEnv Plan)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey)
+    (st : MetaState) (i : Nat) (st' : MetaState)
+    (h : (fun st (_ : Nat) => do
+      if st.1.isSome then Except.ok st else do
+        let vkMptr := st.2
+        let (metaOut, dat, memory) ← metaDataForVk feat env meta_ numInstances vk vkMptr
+        let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
+        let cur ← Value.asUsize vkMptr.value
+        if planned == cur then
+          Except.ok (some (vkMptr, metaOut, dat, memory), vkMptr)
+        else
+          Except.ok (none, ptrMemory (valueFromNat planned))) st i = .ok st') :
+    MetaShape st → MetaShape st' := by
+  intro hinv
+  simp only at h
+  by_cases hs : st.1.isSome
+  · rw [ite_eq_left hs] at h
+    cases h
+    exact hinv
+  · rw [ite_eq_right hs] at h
+    simp only [Bind.bind, Except.bind] at h
+    split at h
+    · cases h
+    · rename_i md hmd
+      split at h
+      · cases h
+      · rename_i planned hpl
+        split at h
+        · cases h
+        · rename_i cur hcur
+          split at h
+          · have hb : st' = (some (st.2, md.1, md.2.1, md.2.2), st.2) :=
+              (Except.ok.inj h).symm
+            subst hb
+            refine ⟨hinv.1, ?_⟩
+            intro r hr
+            have hrr : r = (st.2, md.1, md.2.1, md.2.2) := by
+              simpa using hr.symm
+            rw [hrr]
+          · have hb : st' = (none, ptrMemory (valueFromNat planned)) :=
+              (Except.ok.inj h).symm
+            subst hb
+            exact ⟨⟨planned, rfl⟩, by intro r hr; cases hr⟩
+
+/-- `metaDataForStableStaticLayout` returns a `Nat`-built memory pointer. -/
+theorem metaDataForStableStaticLayout_shape {Plan : Type} (feat : Features)
+    (env : VkBuildEnv Plan) (meta_ : ConstraintSystemMeta) (numInstances : Nat)
+    (vk : Halo2VerifyingKey) (r : Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout)
+    (h : metaDataForStableStaticLayout feat env meta_ numInstances vk = .ok r) :
+    ∃ n, r.1 = ptrMemory (valueFromNat n) := by
+  unfold metaDataForStableStaticLayout at h
+  simp only [Bind.bind, Except.bind] at h
+  split at h
+  · cases h
+  · rename_i start hstart
+    split at h
+    · cases h
+    · rename_i st' hst'
+      have hinv := foldlM_metaShape (P := MetaShape)
+        (step := (fun (st : MetaState) (_ : Nat) => do
+          if st.1.isSome then Except.ok st else do
+            let vkMptr := st.2
+            let (metaOut, dat, memory) ← metaDataForVk feat env meta_ numInstances vk vkMptr
+            let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
+            let cur ← Value.asUsize vkMptr.value
+            if planned == cur then
+              Except.ok (some (vkMptr, metaOut, dat, memory), vkMptr)
+            else
+              Except.ok (none, ptrMemory (valueFromNat planned))))
+        (fun a i b hab ha => metaStep_metaShape feat env meta_ numInstances vk a i b hab ha)
+        (a := (none, ptrMemory (valueFromNat start)))
+        ⟨⟨start, rfl⟩, by intro r hr; cases hr⟩ st' hst'
+      split at h
+      · cases h
+        obtain ⟨n, hn⟩ := hinv.1
+        exact ⟨n, (hinv.2 _ (by assumption)).trans hn⟩
+      · cases h
+
+/-- The same for `newFromVk`: its plan's `vkMptr` is a `Nat`-built memory pointer. -/
+theorem newFromVk_memory_ptr {F : Type} [BEq F] (feat : Features) (field : FieldCtx F)
+    (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding) (payload : Halo2VerifyingKey)
+    (plan : LoweringPlan Unit Unit)
+    (h : newFromVk feat field cs rawMeta numInstances accEncoding payload = .ok plan) :
+    ∃ (meta_ : ConstraintSystemMeta) (vkMptr : Ptr)
+      (config : VerifierMemoryLayoutConfig) (vkBase : Nat),
+      vkMptr = ptrMemory (valueFromNat vkBase) ∧
+        plan.memory = VerifierMemoryLayout.new meta_ payload vkMptr config := by
+  simp only [newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨q, hq, h1⟩ := (match_ok_iff _ _).mp h
+  obtain ⟨vkBase, hvk⟩ := metaDataForStableStaticLayout_shape feat (envOf field cs) rawMeta numInstances payload q hq
+  obtain ⟨proofLayout, _, h2⟩ := (match_ok_iff _ _).mp h1
+  obtain ⟨qplan, _, h3⟩ := (match_ok_iff _ _).mp h2
+  obtain ⟨build, _, h4⟩ := (match_ok_iff _ _).mp h3
+  obtain ⟨nativeWords, _, h5⟩ := (match_ok_iff _ _).mp h4
+  obtain ⟨pcsReq, _, h6⟩ := (match_ok_iff _ _).mp h5
+  obtain ⟨accTerms, _, h7⟩ := (match_ok_iff _ _).mp h6
+  obtain ⟨memory, hmem, h8⟩ := (match_ok_iff _ _).mp h7
+  obtain ⟨opModel, _, h9⟩ := (match_ok_iff _ _).mp h8
+  obtain ⟨trip, _, h10⟩ := (match_ok_iff _ _).mp h9
+  have hex : ∃ (meta_ : ConstraintSystemMeta) (config : VerifierMemoryLayoutConfig),
+      memory = VerifierMemoryLayout.new meta_ payload q.1 config := by
+    simp only [memoryLayoutFor, Bind.bind, Except.bind, envOf] at hmem
+    obtain ⟨t, _, hmem2⟩ := (match_ok_iff _ _).mp hmem
+    exact ⟨q.2.1, _, (Except.ok.inj hmem2).symm⟩
+  obtain ⟨meta_, config, he⟩ := hex
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (exact ⟨meta_, q.1, config, vkBase, hvk, he⟩)
+
 /-- STEP 1: the plan equation out of the generated clause. -/
 theorem plan_of_generated {R : Render p G₁ G₂ Gₜ} (h : Midfall.LoweringV3.GeneratedBy R) :
     ∃ (rawMeta : ConstraintSystemMeta) (plan : LoweringPlan Unit Unit),
@@ -502,6 +651,25 @@ theorem plan_memory_eq_new {R : Render p G₁ G₂ Gₜ}
   have hpv : R.pv.memory = R.plan.memory := rfl
   have hpvk : R.pv.vk = R.plan.vk := rfl
   exact ⟨meta_, vkMptr, config, by rw [hpv, hp, he, hpvk]⟩
+
+
+/-- **THE VK POINTER IS A `Nat`-BUILT MEMORY POINTER, FROM `generated`.** This is what lets
+    `VkClean.vk_hdr_word_read` turn `ptrAddr (Ptr.add vkMptr i)` into `ptrAddr vkMptr + 32 * i`;
+    a `Value.identifier` pointer would fail that equation (`asUsizeNat` maps it to 0). -/
+theorem vkMptr_shape_of_generated {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) :
+    ∃ n : Nat, ptrValue R.pv.memory.vkMptr = Value.integer (n : Int) := by
+  obtain ⟨rawMeta, plan, hraw, hpl, hp⟩ := plan_of_generated h
+  obtain ⟨meta_, vkMptr, config, vkBase, hvk, he⟩ :=
+    newFromVk_memory_ptr Features.solidity (frFieldCtx R.E.delta) R.vk.cs rawMeta
+      R.cfg.numInstances R.cfg.accumulator R.plan.vk plan hpl
+  refine ⟨vkBase, ?_⟩
+  have hmem : R.pv.memory = VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config := by
+    have hpv : R.pv.memory = R.plan.memory := rfl
+    have hpvk : R.pv.vk = R.plan.vk := rfl
+    rw [hpv, hp, he, hpvk]
+  rw [hmem, new_vkMptr, hvk]
+  rfl
 
 theorem vkPins_disjoint_of_generated {R : Render p G₁ G₂ Gₜ}
     (h : Midfall.LoweringV3.GeneratedBy R) :

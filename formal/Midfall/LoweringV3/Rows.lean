@@ -61,39 +61,28 @@ theorem vk_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
 
 /-- **LEAF (GEN.1, WP A3): the vkLoading progress row.** Evidence `GeneratorRows.lean:1103`.
 
-    **OPEN - PG-VKHEADER.** `BlockProgS` has no revert arm, so every run under `LeanAccepts`
-    must exit normally at `StageInv .vk`. The S1 guard and the calldata checks are ready
-    (`VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3` / `_CODEHASH_WORD_V3`, and `envelopeOk`
-    from `Decoded`), but the six VK-header cross-checks read memory offsets
-    `vkMptr + 32*i`, `i ∈ {1,2,7,8,9,10}`, after a copy of only `vk.len` bytes. `PayloadAgrees`
-    pins `constants.getD i` but forces only `7 ≤ constants.length`
-    (`VkClean.payloadAgrees_constants_length`); with seven constants and no commitments
-    `vk.len = 224` and slots 7-10 are past the copy and unpinned by `Inv .start`. The exact
-    goal state is recorded in `VkClean.lean` section 7 (PG-VKHEADER): the missing clause is
-    `11 ≤ R.pv.vk.constants.length`, or the serialized-payload window equation. `PayloadAgrees`
-    is frozen, so the repair is a signed statement change; no hypothesis was added to the row.
+    **D-GATE1 LANDED; THE ROW STILL NEEDS THE TWO-HALF WALK.** `BlockProgS` has no revert arm, so
+    every run under `LeanAccepts` must exit normally at `StageInv .vk`. The signed PG-VKHEADER
+    repair is in the frozen clause now: `PayloadAgrees.constantsLength : 11 ≤ R.pv.vk.constants.length`
+    (D-GATE1, `design.md`), and `VkClean.pg_vkheader_of_valid` reads it off `ValidV3`. With it,
+    `VkClean.vk_hdr_word_read_of_valid` proves, for every header slot `i ≤ numAccLimbBits`,
 
-     **WP VKPROG (this box): the gap is now NAMED and its SUFFICIENCY is PROVED.** The premise is
-     `VkClean.pg_vkheader R := 11 ≤ R.pv.vk.constants.length`, and `VkClean.vk_hdr_word_read` proves
-     that under it, for every header slot `i ≤ numAccLimbBits`,
+      loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr i)) = payloadWord R.pv i
 
-       loadWord stb.memory (ptrAddr (Ptr.add R.pv.memory.vkMptr i)) = payloadWord R.pv i
+    at exactly the copy state the section-4 walk leaves (`hmem` is `stageInv_vk_of_clean`'s copy
+    equation with D-QVM1's fits applied, `hcode` is `Frame.vkCode`); `MemoryPairs.vkMptr_shape_of_generated`
+    supplies the `Nat`-built pointer shape the address equation needs. The two progress pins at
+    `ValidV3` are `VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3` / `_CODEHASH_WORD_V3`.
 
-     at exactly the state the section-4 walk leaves (`hmem` is `stageInv_vk_of_clean`'s copy equation
-     with D-QVM1's fits applied, `hcode` is `Frame.vkCode`). Since `PayloadAgrees` pins each
-     `payloadWord R.pv i` to the literal `vk_sliceV3` puts in the body, that equation is what makes
-     all six header guards PASS - the only thing `vk_blockSim` did not already have. What remains for
-     the row once the conjunct is signed is mechanical: `StmtsTotal = StmtsContract ∧
-     StmtsContractAll`, so (a) exhibit one run of the 13-statement slice from `StageInv .start` - S1
-     passes by `VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3` / `_CODEHASH_WORD_V3` with `Frame.vkCode`
-     / `vkHash` / `vkNonEmpty`, the six header checks by `vk_hdr_word_read`, the three calldata checks
-     by the `abiHeadOk` clause `StageInv .start` already carries plus `Frame.calldata` - and (b)
-     transfer every run to that one and feed it to `VkClean.vk_clean_walkV3` with `stageInv_vk_of_clean`.
-     Note which hypotheses the guards actually need: every obligation above is discharged from
-     `StageInv .start`, `Frame` and `ValidV3` alone, so on the evidence assembled here `LeanAccepts`
-     and `CompleteSide` do no work at `.vkLoading`. That is an observation about the premises the
-     guards consume, not a completed walk - the walk is the mechanical part left to the next box. D-P71: no hypothesis added to the row, to
-     `ValidV3`, to a bundle or to the root. -/
+    WHAT REMAINS (mechanical, not a premise gap): `StmtsTotal = StmtsContract ∧ StmtsContractAll`.
+    (a) Exhibit one run of the 13-statement slice from `StageInv .start`: S1 passes from
+    `Frame.vkCode`/`vkHash`/`vkNonEmpty` plus the two pins and `projectedCodeHash`; the six header
+    checks from `vk_hdr_word_read_of_valid` plus `PayloadAgrees`; the three calldata checks from
+    `envelopeOk` (forced by `LeanAccepts`'s `Decoded`) and `Frame.calldata`; every `iszero(success)`
+    guard skips because the chain stays 1. (b) Transfer every run: the same guard facts rule out the
+    revert arm of `VkClean.vk_clean_walkV3`, and `stageInv_vk_of_clean` gives `StageInv .vk`. No
+    hypothesis is added to the row; `hacc`/`hcomp` are not consumed by the guards (every obligation
+    is a fact of `StageInv .start`, `Frame` and `ValidV3`). -/
 theorem vk_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash) (vkAddr : U256) (cd : Bytes)
