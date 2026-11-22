@@ -79,7 +79,8 @@ conjunct; the headline signature is unchanged.
 
 ## 4. Waiting on human (exact asks)
 
-1. **PG-VKHEADER — blocks `vk_blockProgS`, then A3 and A4+.** `PayloadAgrees` pins the payload
+1. **PG-VKHEADER — SIGNED by D-GATE1; in flight on `t/A3R`.** Add `11 ≤ vk.constants.length`
+   to `PayloadAgrees`. (Original ask follows.) `PayloadAgrees` pins the payload
    WORD `constants.getD i`; the S3–S8 VK-header checks read the copied MEMORY word
    `mload(vkMptr + 32*i)` for `i ∈ {1,2,7,8,9,10}`, which equals the pinned word only if
    `11 ≤ R.pv.vk.constants.length` (and the copy window is 32*i+32 ≤ vk.len). With seven
@@ -87,11 +88,13 @@ conjunct; the headline signature is unchanged.
    nonzero slot-7 word is admissible. The worker proved the boundary lemmas and left the exact
    goal state in `VkClean.lean`/`Rows.lean`; the minimal repair is a frozen `PayloadAgrees`
    conjunct `11 ≤ vk.constants.length` (or the byte-window equation). No hypothesis was added.
-2. **`gasFree_of_valid` — blocks TOT.1.** `GasCallOk` is strictly weaker than `GasFree`; the
+2. **`gasFree_of_valid` — SIGNED by D-GATE1; in flight on `t/GASFREE`.** Add the
+   `programOk` `GasFree` clause. (Original ask follows.) `GasCallOk` is strictly weaker than `GasFree`; the
    flags exclude the three renderers that print `gas()`, but no program clause says the AST is
    gas-free. Choose (a) a frozen `programOk` conjunct `gasFree : GasFree (R.prog 0 0)` (a
    `decide`-per-render check), or (b) an emitter structural library (one induction per emitter).
-3. **`snapshotOf_prepareMsgs` — blocks 1 ROOT row of both roots.** Accept the D6 KAT/replay gate as
+3. **`snapshotOf_prepareMsgs` — SIGNED by D-GATE1; in flight on `t/SNAPSHOT`.** Retire the
+   row on the D6 replay evidence. (Original ask follows.) Accept the D6 KAT/replay gate as
    the evidence and retire the row, or port `prepare`'s schedule onto the phase records.
 4. **DG.3 pinned zone** — the card's 972 declarations is stale; the current five-root closure is
    4823 declarations / 526 external leaves / digest `5d8c45843135d536`. Sign the zone before it
