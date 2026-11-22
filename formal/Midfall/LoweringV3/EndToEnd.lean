@@ -730,6 +730,51 @@ theorem end_to_end_of_prepareLogSlots (R : Render p G₁ G₂ Gₜ) (product : P
   end_to_end_of_readSchedule R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
     inst π hn hside (readScheduleAgrees_of_prepareLogSlots R h inst π)
 
+/-! ## 5. W12 FALSIFIER: the KZG partition count is NOT a function of the
+    rotation shape at x = 0. -/
+
+section X0Falsifier
+local instance : Fact (Nat.Prime 17) := ⟨by decide⟩
+
+def x0EqNatRef : CommitmentReference (Fr 17) Nat → CommitmentReference (Fr 17) Nat → Bool :=
+  CommitmentReference.beq
+
+/-- One verifier query; `slot` is the allocation identity compared by
+    `CommitmentReference.beq`, so distinct slots are distinct commitments. -/
+def x0Vq (point : Fr 17) (commitment slot eval : Nat) : VerifierQuery (Fr 17) Nat :=
+  VerifierQuery.new point .noLabel (.anon slot) commitment (Nat.cast eval)
+
+/-- One generator query with a distinct `EcPoint` and rotation. -/
+def x0Gq (off rotation : Nat) : Midfall.Generator.Query :=
+  Midfall.Generator.Query.new
+    (Midfall.Generator.EcPoint.new (ptrMemory (valueFromNat off)))
+    (Int.ofNat rotation)
+    (Midfall.Generator.Word.fromPtr (ptrMemory (valueFromNat (off + 0x10))))
+
+/-- **THE FALSIFIER.** Two distinct commitments opened at rotations `{0,1}`.
+    At `x = 3` the Halo2 partition has 2 point sets and the generator partition has
+    2; at `x = 0` every `x * omega^r` is `0`, the Halo2 partition has ONE point set,
+    while the generator's rotation-keyed partition still has TWO. So the
+    unconditional `qEvalSets.size = intermediateSets.pointSets.length` bridge is
+    FALSE. `ChallengesGood` only says `x^n ≠ 1`, which x = 0 satisfies, so
+    `CompleteSide` does not exclude this path: the exact missing clause is a
+    challenge-nonzero / rotation-distinctness pin. PROVED by computation; W12. -/
+theorem kzgPartitionBridge_false_at_x0 :
+    (match Midfall.Halo2.constructIntermediateSets (F := Fr 17) (C := Nat) x0EqNatRef
+        #[x0Vq 0 5 1 1, x0Vq 0 7 2 2] with
+     | .ok r => r.2.size
+     | .error _ => 99) = 1 ∧
+    (match Midfall.Halo2.constructIntermediateSets (F := Fr 17) (C := Nat) x0EqNatRef
+        #[x0Vq 3 5 1 1, x0Vq 6 7 2 2] with
+     | .ok r => r.2.size
+     | .error _ => 99) = 2 ∧
+    (match Midfall.Generator.constructIntermediateSetsImpl [x0Gq 0x100 0, x0Gq 0x200 1] with
+     | .ok s => s.pointSets.length
+     | .error _ => 99) = 2 := by
+  decide
+
+end X0Falsifier
+
 /-- **THE NAMED D1 BLOCKER.** `ValidV3` pins the plan to the generator
     (`generated`), and `SupportedV2.layout` pins only the MEMORY map. Neither pins
     the verifier's read order: `decodeRust` is a run of `Verifier.prepare`, while
@@ -774,6 +819,8 @@ def gap_readScheduleAgrees : String :=
 open Midfall.Tools.Done in
 #assert_axioms Midfall.LoweringV3.end_to_end_of_readSchedule
   [propext, Classical.choice, Quot.sound, sorryAx] native []
+
+#print axioms Midfall.LoweringV3.kzgPartitionBridge_false_at_x0
 
 #check @readScheduleAgrees_of_prepareLogSlots
 #check @end_to_end_of_prepareLogSlots
