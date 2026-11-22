@@ -210,6 +210,7 @@ import Midfall.LoweringV3.MemoryPairs
 import Midfall.LoweringV3.VkWindow
 import Midfall.LoweringV3.VkClean
 import Midfall.LoweringV3.GeneratorTheorem
+import Midfall.LoweringV3.EndToEnd
 import Midfall.Instances.StatementsV3Deploy
 import Midfall.Instances.StatementsV3Falsifiers
 import Midfall.Instances.PoseidonExhibit
