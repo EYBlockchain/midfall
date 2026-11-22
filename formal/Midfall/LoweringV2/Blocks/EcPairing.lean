@@ -455,4 +455,45 @@ theorem product_of_honest_staticcall (product : PairingProduct)
 #assert_axioms Midfall.LoweringV2.Blocks.EcPairing.product_of_honest_staticcall
   [propext, Classical.choice, Quot.sound] native []
 
+
+/-- `iszero (resp.flag &&& b2w (decide (len = 32))) = 0` forces a successful response. -/
+theorem success_of_flag_guard {resp : EVM.CallResponse} {len : Nat}
+    (h : b2w (decide ((resp.flag &&& b2w (decide (len = 32))) = 0)) = (0 : U256)) :
+    resp.success = true := by
+  cases hs : resp.success with
+  | true => rfl
+  | false => simp [CallResponse.flag, hs, b2w] at h
+
+/-- `iszero (1 &&& b2w (decide (m = 1))) = 0` forces `m = 1`. -/
+theorem load_of_and_guard {x m : U256} (hx : x = 1)
+    (h : b2w (decide ((x &&& b2w (decide (m = 1))) = 0)) = (0 : U256)) : m = 1 := by
+  subst hx
+  by_cases hm : m = 1
+  · exact hm
+  · have hb : b2w (decide (m = 1)) = (0 : U256) := by
+      rw [decide_eq_false hm]; rfl
+    rw [hb] at h
+    simp [b2w] at h
+
+/-- The two-pair frame as the explicit left-nested append. -/
+theorem pairingFrame_two (a b c d : Bytes) :
+    pairingFrame [(a, b), (c, d)] =
+      bytesAppend (bytesAppend (bytesAppend a b) c) d := by
+  simp [pairingFrame, bytesAppend, Bytes.empty]
+
+/-- The four-read order (`a ++ (b ++ (c ++ d))`) is the frame's left-nested order. -/
+theorem bytesAppend_four_left (a b c d : Bytes) :
+    bytesAppend a (bytesAppend b (bytesAppend c d)) =
+      bytesAppend (bytesAppend (bytesAppend a b) c) d := by
+  rw [bytesAppend_assoc, bytesAppend_assoc]
+
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.success_of_flag_guard
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.load_of_and_guard
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.pairingFrame_two
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.bytesAppend_four_left
+  [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV2.Blocks.EcPairing
