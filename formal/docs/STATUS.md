@@ -208,3 +208,22 @@ At `formal/baseline` `913f19a` (quick-gated; full-gate kernel checks green, KAT 
 
 Register **73/11**, root **11/5**; the D2 CERT leaves will grow the register when merged, but not
 the `lowering_correct` cone. No row, bundle, `ValidV3` or root hypothesis was added by any lane.
+
+## 8. Integration notes (D-GATE5/6/7, CERT.0, calldata)
+
+- **D1** has committed `9645f6d` — `ChallengesGood.xNonzero` (D-GATE5). The `Closure.manifest` /
+  `Frozen.sha256` refresh is staged; merge only together with the gate update. D1 is now on the
+  `PresWidthSeq`/KZG query-map bridge.
+- **Audit** has D-GATE6 (rotation-distinctness) and D-GATE7 (VK phase lengths) edits in flight across
+  `VerifyingKey.lean`/`CurveSurface.lean`/`PoseidonValid.lean`/`Kzg`/`Degrees`; it will commit each
+  finding separately. Its F1 bridge is the same query-map bridge D1 is proving; do not duplicate.
+- **D2** has `Midfall/Generator/Certified.lean` and `Instances/CertMeasure.lean` staged with the
+  `gen_sorry.sh`/`kat_gate.py` changes; CERT.0 is the target, with the 33+8 named obligations.
+- **Calldata:** `calldata_roundtrip` is an independent encode/decode proof, but
+  `repack_spec_of_decodeRust` is **not** independent — `decodeRust` is defined from `prepare`'s
+  transcript log, while `decodeWire` parses the slot schedule, so the bridge needs the same
+  `PresWidthSeq`/`PrepareLogSlots` work. The calldata lane is therefore queued behind D1/A6 rather
+  than treated as a shortcut.
+- **D-GATE5/6/7 are statement repairs**, all signed: no row, bundle, `ValidV3` or root hypothesis was
+  added. The closure manifest will be regenerated once after the three repairs merge; until then the
+  only valid global gate is `verify.sh --quick` (KAT replay deferred).
