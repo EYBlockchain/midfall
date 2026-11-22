@@ -4392,4 +4392,126 @@ theorem modAfterHeader_shift (bytes : List Nat) (consts : List Word256)
                                               simp only [mapBoth, mapErr, bind, Except.bind]
                                               have harith : idx + c5 - (idx + baseIdx) = c5 - baseIdx := by omega
                                               rw [harith]
+
+
+/-! #### Compaction value lemmas: the four RUN/AFFINE_SUM and fused-stat arms
+
+    The local semantic facts the compaction proof consumes, independent of the MODARITH7
+    header: a fused add-mul instruction is `acc + affine{Product,Linear}Term`, the RUN arm is
+    a `foldRangeIdxM` over `runFoldP`/`runFoldL` from `(acc,0,mem)`, and AFFINE_SUM is the
+    linear fold followed by the product fold. The statements characterise the resulting
+    stack head, the accumulator, the used cursor, the returned memory and `consumed` from
+    the actual successful step, so the scan induction can cite them without unfolding the
+    step again. -/
+
+theorem value_addMulMemMemConstU8 (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) (step : IdentityStep)
+    (h : Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+      qOpAddMulMemMemConstU8 stack mem = .ok step) :
+    ∃ (acc : QVMFr) (rest : List QVMFr) (term : QVMFr) (len : Nat)
+      (m' : QuotientRefMemory),
+      stack = acc :: rest ∧
+      Midfall.Generator.affineProductTerm bytes consts mem (idx + 1) = .ok (term, len, m') ∧
+      step.stack = qvmFrAdd acc term :: rest ∧
+      step.consumed = 1 + len ∧ step.mem = m' := by
+  unfold Midfall.Generator.evalQuotientIdentityStep at h
+  simp (config := { decide := true }) only [reduceIte] at h
+  obtain ⟨p, hp, h⟩ := peel_bind h
+  obtain ⟨acc, rest⟩ := p
+  have hstack : stack = acc :: rest := by
+    cases stack with
+    | nil => simp [Midfall.Generator.popStack] at hp
+    | cons v vs => simpa [Midfall.Generator.popStack] using hp
+  obtain ⟨t, ht, h⟩ := peel_bind h
+  obtain ⟨term, len, m'⟩ := t
+  cases h
+  exact ⟨acc, rest, term, len, m', hstack, ht, rfl, rfl, rfl⟩
+
+theorem value_addMulConstU8MemU16 (bytes : List Nat) (consts : List Word256) (idx : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory) (step : IdentityStep)
+    (h : Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+      qOpAddMulConstU8MemU16 stack mem = .ok step) :
+    ∃ (acc : QVMFr) (rest : List QVMFr) (term : QVMFr) (len : Nat)
+      (m' : QuotientRefMemory),
+      stack = acc :: rest ∧
+      Midfall.Generator.affineLinearTerm bytes consts mem (idx + 1) = .ok (term, len, m') ∧
+      step.stack = qvmFrAdd acc term :: rest ∧
+      step.consumed = 1 + len ∧ step.mem = m' := by
+  unfold Midfall.Generator.evalQuotientIdentityStep at h
+  simp (config := { decide := true }) only [reduceIte] at h
+  obtain ⟨p, hp, h⟩ := peel_bind h
+  obtain ⟨acc, rest⟩ := p
+  have hstack : stack = acc :: rest := by
+    cases stack with
+    | nil => simp [Midfall.Generator.popStack] at hp
+    | cons v vs => simpa [Midfall.Generator.popStack] using hp
+  obtain ⟨t, ht, h⟩ := peel_bind h
+  obtain ⟨term, len, m'⟩ := t
+  cases h
+  exact ⟨acc, rest, term, len, m', hstack, ht, rfl, rfl, rfl⟩
+
+theorem value_runAddMulMemMemConstU8 (rest : List Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) (step : IdentityStep)
+    (h : Midfall.Generator.evalQuotientIdentityStep (qOpRunAddMulMemMemConstU8 :: rest)
+      consts 0 qOpRunAddMulMemMemConstU8 stack mem = .ok step) :
+    ∃ (n : Nat) (acc : QVMFr) (r : List QVMFr) (used : Nat) (m' : QuotientRefMemory),
+      Midfall.Generator.readU16 (qOpRunAddMulMemMemConstU8 :: rest) 1 = .ok n ∧
+      stack = acc :: r ∧
+      Midfall.Generator.foldRangeIdxM n (acc, 0, mem) (runFoldP (qOpRunAddMulMemMemConstU8 :: rest) consts 3)
+        = .ok (step.stack.headD 0, used, m') ∧
+      step.stack = step.stack.headD 0 :: r ∧
+      step.consumed = 3 + used ∧ step.mem = m' := by
+  unfold Midfall.Generator.evalQuotientIdentityStep at h
+  simp (config := { decide := true }) only [reduceIte] at h
+  obtain ⟨n, hn, h⟩ := peel_bind h
+  by_cases hz : n = 0
+  · rw [if_neg (by simp [hz])] at h; cases h
+  · rw [if_pos (by simp [hz])] at h
+    obtain ⟨p, hp, h⟩ := peel_bind h
+    obtain ⟨acc, r⟩ := p
+    have hstack : stack = acc :: r := by
+      cases stack with
+      | nil => simp [Midfall.Generator.popStack] at hp
+      | cons v vs => simpa [Midfall.Generator.popStack] using hp
+    obtain ⟨t, ht, h⟩ := peel_bind h
+    obtain ⟨acc', used, m'⟩ := t
+    cases h
+    exact ⟨n, acc, r, used, m', hn, hstack, ht, rfl, rfl, rfl⟩
+
+theorem value_affineSum (rest : List Nat) (consts : List Word256)
+    (stack : List QVMFr) (mem : QuotientRefMemory) (step : IdentityStep)
+    (h : Midfall.Generator.evalQuotientIdentityStep (qOpAffineSum :: rest)
+      consts 0 qOpAffineSum stack mem = .ok step) :
+    ∃ (lc pc : Nat) (acc : QVMFr) (r : List QVMFr) (accA accB : QVMFr)
+      (usedA usedB : Nat) (mA mB : QuotientRefMemory),
+      Midfall.Generator.readU16 (qOpAffineSum :: rest) 1 = .ok lc ∧
+      Midfall.Generator.readU16 (qOpAffineSum :: rest) 3 = .ok pc ∧
+      stack = acc :: r ∧
+      Midfall.Generator.foldRangeIdxM lc (acc, 0, mem) (runFoldL (qOpAffineSum :: rest) consts 5)
+        = .ok (accA, usedA, mA) ∧
+      Midfall.Generator.foldRangeIdxM pc (accA, usedA, mA) (runFoldP (qOpAffineSum :: rest) consts 5)
+        = .ok (accB, usedB, mB) ∧
+      step.stack = accB :: r ∧
+      step.consumed = 5 + usedB ∧ step.mem = mB := by
+  unfold Midfall.Generator.evalQuotientIdentityStep at h
+  simp (config := { decide := true }) only [reduceIte] at h
+  obtain ⟨lc, hlc, h⟩ := peel_bind h
+  obtain ⟨pc, hpc, h⟩ := peel_bind h
+  by_cases hz : (lc != 0 && pc != 0) = true
+  · rw [if_pos hz] at h
+    obtain ⟨p, hp, h⟩ := peel_bind h
+    obtain ⟨acc, r⟩ := p
+    obtain ⟨a, ha, h⟩ := peel_bind h
+    obtain ⟨accA, usedA, mA⟩ := a
+    obtain ⟨b, hb, h⟩ := peel_bind h
+    obtain ⟨accB, usedB, mB⟩ := b
+    cases h
+    have hstack : stack = acc :: r := by
+      cases stack with
+      | nil => simp [Midfall.Generator.popStack] at hp
+      | cons v vs => simpa [Midfall.Generator.popStack] using hp
+    exact ⟨lc, pc, acc, r, accA, accB, usedA, usedB, mA, mB, hlc, hpc, hstack, ha, hb, rfl, rfl, rfl⟩
+  · rw [if_neg hz] at h; cases h
+
+
 end Midfall.Lowering.QvmArms
