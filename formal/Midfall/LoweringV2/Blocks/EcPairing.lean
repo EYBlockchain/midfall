@@ -531,4 +531,38 @@ theorem and_eq_one_of_ne_zero {a b : U256} (ha : a = 0 ∨ a = 1) (hb : b = 0 �
 #assert_axioms Midfall.LoweringV2.Blocks.EcPairing.and_eq_one_of_ne_zero
   [propext, Classical.choice, Quot.sound] native []
 
+
+/-- The second `and` result in the emitter's own pair form is `1`, from the BitVec guard. -/
+theorem hv1_eq_of_hand {c : ExternalCalls} {g : ExternalGas} {hvflag : U256} {len : Nat}
+    (hand : hvflag &&& b2w (decide (BitVec.ofNat 256 len = BitVec.ofNat 256 32)) = (1 : U256)) :
+    (("ret", (hvflag &&& b2w (decide (BitVec.ofNat 256 len =
+      (Bridge.Dialect c g).litValue (Literal.number 32))))).2 : U256) = 1 := by
+  have hlit : (Bridge.Dialect c g).litValue (Literal.number 32) = (32 : U256) := wlit_val 32
+  rw [hlit]
+  change hvflag &&& b2w (decide (BitVec.ofNat 256 len = 32)) = 1
+  exact hand
+
+/-- The four-copy read at an abstract `mem4`, given the defining equation. -/
+theorem readBytes_mem4_eq (mem4 : Nat → UInt8) (base : Nat → UInt8) (dst s1 s2 s3 s4 : Nat)
+    (hmem4 : mem4 = copyWithin
+      (copyWithin
+        (copyWithin
+          (copyWithin base dst s1 128) (dst + 128) s2 256)
+        (dst + 384) s3 128)
+      (dst + 512) s4 256)
+    (h1 : dst + 768 ≤ s1 ∨ s1 + 128 ≤ dst)
+    (h2 : dst + 768 ≤ s2 ∨ s2 + 256 ≤ dst)
+    (h3 : dst + 768 ≤ s3 ∨ s3 + 128 ≤ dst)
+    (h4 : dst + 768 ≤ s4 ∨ s4 + 256 ≤ dst) :
+    readBytes mem4 dst 768 =
+      readBytes base s1 128 ++ (readBytes base s2 256 ++
+        (readBytes base s3 128 ++ readBytes base s4 256)) := by
+  rw [hmem4]
+  exact readBytes_four_copyWithin base dst s1 s2 s3 s4 h1 h2 h3 h4
+
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.hv1_eq_of_hand
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.readBytes_mem4_eq
+  [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV2.Blocks.EcPairing
