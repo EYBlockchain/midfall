@@ -518,6 +518,195 @@ theorem modexpFrameStores_mxMem {c : ExternalCalls} {g : ExternalGas}
   refine ⟨ho, hV, ?_, henv, hhalt⟩
   rw [hmem, mxMemFr_blsR]
 
+theorem eval_lt_var_var (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st' : EvmState} (x y : String) (xv yv : U256)
+    (hx : VEnv.get V x = some xv) (hy : VEnv.get V y = some yv) {a : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.lt [Expr.var x, Expr.var y]) (.vals [a] st')) :
+    a = b2w (xv.ult yv) ∧ st' = st := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hrest hheadX =>
+          cases hrest with
+          | argsCons hrest2 hheadY =>
+              cases hrest2 with
+              | argsNil =>
+                  have hxv := eval_var_eq funs V x xv hx hheadX
+                  have hyv := eval_var_eq funs V y yv hy hheadY
+                  rw [hyv.2] at hheadX
+                  rw [hxv.2] at hbi
+                  rw [← hxv.1, ← hyv.1] at ⊢
+                  simp [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+                  exact ⟨hbi.1.symm, hbi.2.symm.trans hyv.2⟩
+theorem eval_iszero_lt_var_var (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st' : EvmState} (x y : String) (xv yv : U256)
+    (hx : VEnv.get V x = some xv) (hy : VEnv.get V y = some yv) {a : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.iszero [Expr.builtin EVM.Op.lt [Expr.var x, Expr.var y]])
+      (.vals [a] st')) :
+    a = b2w (b2w (xv.ult yv) = 0) ∧ st' = st := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hrest hhead =>
+          cases hrest with
+          | argsNil =>
+              obtain ⟨hlt, hst⟩ := eval_lt_var_var funs V x y xv yv hx hy hhead
+              have hst1 : _ = st := hst
+              rw [hst1] at hbi
+              simp [Bridge.Dialect, builtinWithExternal, stepOp, un] at hbi
+              refine ⟨?_, hbi.2.symm⟩
+              rw [← hbi.1, ← hlt]
+              rfl
+
+theorem eval_iszero_var (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    {st st' : EvmState} (x : String) (xv : U256) (hx : VEnv.get V x = some xv) {a : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.iszero [Expr.var x]) (.vals [a] st')) :
+    a = b2w (xv = 0) ∧ st' = st := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hrest hhead =>
+          cases hrest with
+          | argsNil =>
+              obtain ⟨hxv, hst⟩ := eval_var_eq funs V x xv hx hhead
+              rw [hst] at hbi
+              simp [Bridge.Dialect, builtinWithExternal, stepOp, un] at hbi
+              refine ⟨?_, hbi.2.symm⟩
+              rw [← hbi.1, ← hxv]
+              rfl
+
+theorem expr_lt_var_var_ne_halts (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) {st st' : EvmState} (x y : String) :
+    ¬ EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.lt [Expr.var x, Expr.var y]) (.halt st') := by
+  intro h
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hheadX =>
+          cases hrest with
+          | argsCons hrest2 hheadY =>
+              cases hrest2 with
+              | argsNil =>
+                  simp [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h =>
+          cases h with
+          | argsRestHalt h' => cases h'
+          | argsHeadHalt _ h' => exact trExprVar_ne_halts h'
+      | argsHeadHalt _ h' => exact trExprVar_ne_halts h'
+
+theorem expr_iszero_lt_var_var_ne_halts (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) {st st' : EvmState} (x y : String) :
+    ¬ EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.iszero [Expr.builtin EVM.Op.lt [Expr.var x, Expr.var y]])
+      (.halt st') := by
+  intro h
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hhead =>
+          cases hrest with
+          | argsNil =>
+              simp [Bridge.Dialect, builtinWithExternal, stepOp, un] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h => cases h
+      | argsHeadHalt _ h' => exact expr_lt_var_var_ne_halts funs V x y h'
+
+theorem expr_iszero_var_ne_halts (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) {st st' : EvmState} (x : String) :
+    ¬ EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.iszero [Expr.var x]) (.halt st') := by
+  intro h
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hhead =>
+          cases hrest with
+          | argsNil =>
+              simp [Bridge.Dialect, builtinWithExternal, stepOp, un] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h => cases h
+      | argsHeadHalt _ h' => exact trExprVar_ne_halts h'
+
+theorem guardLt_contract {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) {cenv : FunEnv (Bridge.Dialect c g)}
+    (xv fv sel : U256)
+    (hfail : lookupFun funs "fail" = some (failFDecl, cenv)) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.cond (Expr.builtin EVM.Op.iszero
+          [Expr.builtin EVM.Op.lt [Expr.var "x", Expr.var "FR_MODULUS"]])
+        [Stmt.exprStmt (Expr.call "fail" [Expr.var "ERR_NON_CANONICAL_SCALAR"])])
+      (fun V st => VEnv.get V "x" = some xv ∧ VEnv.get V "FR_MODULUS" = some fv ∧
+        VEnv.get V "ERR_NON_CANONICAL_SCALAR" = some sel)
+      (fun V st V' st' o =>
+        (o = .normal ∧ V' = V ∧ st'.memory = st.memory ∧ st'.env = st.env ∧
+          st'.halted = st.halted) ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+  refine StmtContractAll.cond ?_ ?_
+  · intro V st cv st₁ hpre heval
+    obtain ⟨hx, hfr, hsel⟩ := hpre
+    obtain ⟨hcv, hst⟩ := eval_iszero_lt_var_var funs V "x" "FR_MODULUS" xv fv hx hfr heval
+    constructor
+    · intro hzero
+      refine Or.inl ⟨rfl, rfl, ?_, ?_, ?_⟩
+      · rw [hst]
+      · rw [hst]
+      · rw [hst]
+    · intro hnz V' st' o hbody
+      cases hbody with
+      | block hb =>
+          have hfail' : lookupFun (hoist (Bridge.Dialect c g)
+              [Stmt.exprStmt (Expr.call "fail" [Expr.var "ERR_NON_CANONICAL_SCALAR"])] :: funs)
+              "fail" = some (failFDecl, cenv) := hfail
+          rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hb with
+              ⟨V1, st1, h1, hrest⟩ | ⟨h1, hne⟩
+          · exact absurd (fail_call_reverts hfail' h1).1 (by decide)
+          · exact Or.inr (fail_call_reverts hfail' h1)
+  · intro V st st₁ hpre heval
+    exact absurd heval (expr_iszero_lt_var_var_ne_halts funs V "x" "FR_MODULUS")
+
+theorem guardNonzero_contract {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) {cenv : FunEnv (Bridge.Dialect c g)}
+    (xv sel : U256)
+    (hfail : lookupFun funs "fail" = some (failFDecl, cenv)) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.cond (Expr.builtin EVM.Op.iszero [Expr.var "x"])
+        [Stmt.exprStmt (Expr.call "fail" [Expr.var "ERR_NON_CANONICAL_SCALAR"])])
+      (fun V st => VEnv.get V "x" = some xv ∧
+        VEnv.get V "ERR_NON_CANONICAL_SCALAR" = some sel)
+      (fun V st V' st' o =>
+        (o = .normal ∧ V' = V ∧ st'.memory = st.memory ∧ st'.env = st.env ∧
+          st'.halted = st.halted) ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+  refine StmtContractAll.cond ?_ ?_
+  · intro V st cv st₁ hpre heval
+    obtain ⟨hx, hsel⟩ := hpre
+    obtain ⟨hcv, hst⟩ := eval_iszero_var funs V "x" xv hx heval
+    constructor
+    · intro hzero
+      refine Or.inl ⟨rfl, rfl, ?_, ?_, ?_⟩
+      · rw [hst]
+      · rw [hst]
+      · rw [hst]
+    · intro hnz V' st' o hbody
+      cases hbody with
+      | block hb =>
+          have hfail' : lookupFun (hoist (Bridge.Dialect c g)
+              [Stmt.exprStmt (Expr.call "fail" [Expr.var "ERR_NON_CANONICAL_SCALAR"])] :: funs)
+              "fail" = some (failFDecl, cenv) := hfail
+          rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hb with
+              ⟨V1, st1, h1, hrest⟩ | ⟨h1, hne⟩
+          · exact absurd (fail_call_reverts hfail' h1).1 (by decide)
+          · exact Or.inr (fail_call_reverts hfail' h1)
+  · intro V st st₁ hpre heval
+    exact absurd heval (expr_iszero_var_ne_halts funs V "x")
+
+
 #assert_axioms Midfall.LoweringV3.ScalarInv.mxMem_frame
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.ScalarInv.fail_call_reverts
@@ -530,5 +719,21 @@ theorem modexpFrameStores_mxMem {c : ExternalCalls} {g : ExternalGas}
   [propext] native []
 #assert_axioms Midfall.LoweringV3.ScalarInv.modexpFrameStores_mxMem
   [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.eval_lt_var_var
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.eval_iszero_lt_var_var
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.eval_iszero_var
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.expr_lt_var_var_ne_halts
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.expr_iszero_lt_var_var_ne_halts
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.expr_iszero_var_ne_halts
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.guardLt_contract
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.guardNonzero_contract
+  [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.ScalarInv
