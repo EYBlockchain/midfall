@@ -3102,3 +3102,34 @@ theorem lag_denoms_loop (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Co
       | forInitHalt hi =>
           exact wpSS_sound (Bridge.Dialect c g) (Bopen c g) (Cnone _)
             (Bopen_sound c g) (Cnone_sound _) hinit _ _ _ hi
+
+/-! ## 11. T3.9.g: THE ALG LEAF, FIRST CONJUNCT -/
+
+/-- The `xn` projection of `lag_agrees`, with the D-GATE2-corrected `omegaInvToL` exponent
+(`numNegLagranges`, not `numNegLagranges - 1`). -/
+theorem lag_agrees_xn (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (s2 : SnapAlgebra p G₁) (hxn : s2.alg.xn = s2.alg.x ^ (2 ^ R.pv.k))
+    (W : LagWords)
+    (hW : LagRel (BitVec.ofNat 256 p) (Midfall.Halo2.frWord s2.alg.x)
+      (Midfall.Halo2.frWord R.vk.domain.omega)
+      (Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges))
+      (Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹)) R.pv.k R.pv.numInstances
+      R.pv.numNegLagranges (fun j => Midfall.Halo2.frWord (0 : Fr p)) W) :
+    W.xn = Midfall.Halo2.frWord s2.alg.xn := by
+  have hp : p < 2 ^ 256 := by
+    rw [hR.env.modulus]
+    norm_num [Midfall.Generator.frModulusConstant]
+  rw [hW.1, wPow2_frWord hp, hxn]
+
+/-! **T3.9.g STATUS (exact residual).** The render-free algebra is landed:
+`powVartime_eq_pow`, the entrywise `batchInvert` spec and `lIRange_toList_of_ne_zero`
+(`LagrangeAlg.lean`), the `frWord` ring bridge, `wPow2_frWord`, `omegaPows_frWord`,
+`rotateOmega_{neg,mul_neg}_range`, `lagWord_eq_frWord`, and `lag_agrees_xn` above.
+
+The remaining assembly is the three value projections (`lLast`, `lBlind`, `l0`) plus the
+instance conjunct, and it needs one premise the evidence statement omits: the `inst` array
+used by `hW` must be the row `instanceEvalOf` reads. Without a link such as
+`s2.alg.instanceEvals.getD 0 #[] = inst`, the last conjunct is FALSE (take `inst := 0` and a
+`snapshotLagrangeStep` whose selected `instanceEval` is nonzero). This is a missing LEAF
+premise (like `hl`/`hxn`), not a row hypothesis; the next lane must add it and document it.
+-/
