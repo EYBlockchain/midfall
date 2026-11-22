@@ -78,8 +78,74 @@ theorem bytesToNatBE_readBytes (mem : Nat → UInt8) (p : Nat) :
   exact (foldl_shift_or_toNat (readBytes mem p 32) 0 (by omega)
     (by rw [hlen]; norm_num)).symm
 
+theorem readBytes_append (mem : Nat → UInt8) (p n m : Nat) :
+    readBytes mem p (n + m) = readBytes mem p n ++ readBytes mem (p + n) m := by
+  unfold readBytes
+  rw [List.range_add, List.map_append, List.map_map]
+  congr 1
+  apply List.map_congr_left
+  intro x _
+  show mem (p + (n + x)) = mem (p + n + x)
+  rw [Nat.add_assoc]
+
+theorem readBytes_storeWord_disjoint (mem : Nat → UInt8) (p q n : Nat) (v : U256)
+    (h : q + n ≤ p ∨ p + 32 ≤ q) :
+    readBytes (storeWord mem p v) q n = readBytes mem q n := by
+  unfold readBytes
+  apply List.map_congr_left
+  intro i hi
+  have hi' : i < n := List.mem_range.mp hi
+  show storeWord mem p v (q + i) = mem (q + i)
+  unfold storeWord
+  rw [ite_eq_right]
+  rintro ⟨h1, h2⟩
+  rcases h with h | h <;> omega
+
+theorem bytesAppend_toList (a b : Bytes) :
+    (bytesAppend a b).data.toList = a.data.toList ++ b.data.toList := by
+  unfold bytesAppend
+  show (ByteArray.mk (a.data ++ b.data)).data.toList = _
+  simp
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
+#assert_axioms readBytes_append [propext, Classical.choice, Quot.sound]
+#assert_axioms readBytes_storeWord_disjoint [propext, Classical.choice, Quot.sound]
+#assert_axioms bytesAppend_toList [propext, Classical.choice, Quot.sound]
+theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256) :
+    readBytes (storeWord (storeWord (storeWord (storeWord (storeWord (storeWord mem p w0)
+      (p + 32) w1) (p + 64) w2) (p + 96) w3) (p + 128) w4) (p + 160) w5) p 192 =
+    (bytesNatBE w0.toNat 32).data.toList ++ (bytesNatBE w1.toNat 32).data.toList ++
+      (bytesNatBE w2.toNat 32).data.toList ++ (bytesNatBE w3.toNat 32).data.toList ++
+      (bytesNatBE w4.toNat 32).data.toList ++ (bytesNatBE w5.toNat 32).data.toList := by
+  simp only [show 192 = 32 + 32 + 32 + 32 + 32 + 32 by norm_num, readBytes_append]
+  simp only [show p + (32 + 32) = p + 64 by omega,
+    show p + (32 + 32 + 32) = p + 96 by omega,
+    show p + (32 + 32 + 32 + 32) = p + 128 by omega,
+    show p + (32 + 32 + 32 + 32 + 32) = p + 160 by omega]
+  rw [readBytes_storeWord_disjoint _ (p + 160) p 32 w5 (by omega),
+    readBytes_storeWord_disjoint _ (p + 128) p 32 w4 (by omega),
+    readBytes_storeWord_disjoint _ (p + 96) p 32 w3 (by omega),
+    readBytes_storeWord_disjoint _ (p + 64) p 32 w2 (by omega),
+    readBytes_storeWord_disjoint _ (p + 32) p 32 w1 (by omega),
+    readBytes_storeWord_32 _ p w0,
+    readBytes_storeWord_disjoint _ (p + 160) (p + 32) 32 w5 (by omega),
+    readBytes_storeWord_disjoint _ (p + 128) (p + 32) 32 w4 (by omega),
+    readBytes_storeWord_disjoint _ (p + 96) (p + 32) 32 w3 (by omega),
+    readBytes_storeWord_disjoint _ (p + 64) (p + 32) 32 w2 (by omega),
+    readBytes_storeWord_32 _ (p + 32) w1,
+    readBytes_storeWord_disjoint _ (p + 160) (p + 64) 32 w5 (by omega),
+    readBytes_storeWord_disjoint _ (p + 128) (p + 64) 32 w4 (by omega),
+    readBytes_storeWord_disjoint _ (p + 96) (p + 64) 32 w3 (by omega),
+    readBytes_storeWord_32 _ (p + 64) w2,
+    readBytes_storeWord_disjoint _ (p + 160) (p + 96) 32 w5 (by omega),
+    readBytes_storeWord_disjoint _ (p + 128) (p + 96) 32 w4 (by omega),
+    readBytes_storeWord_32 _ (p + 96) w3,
+    readBytes_storeWord_disjoint _ (p + 160) (p + 128) 32 w5 (by omega),
+    readBytes_storeWord_32 _ (p + 128) w4,
+    readBytes_storeWord_32 _ (p + 160) w5]
+
+#assert_axioms readBytes_six [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3.ModexpGeneral
