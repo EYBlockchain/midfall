@@ -94,9 +94,13 @@ gate last ran at `d0bf226`.
 - **C0/widening glue** (`t/C0`): `rejectsW_of_sims`, `completeAnyGasW_of_progs`,
   `totalW_of_stages` through `blockSimW_iff_blockSim`.
 - **C1/F2** (`t/C1N`): IVC fixture export with the SRS, then the widened clause table.
-- **D1/end-to-end** (`t/D1`): both directions of `EndToEndV3` proved in `EndToEnd.lean`; the one
-  missing premise is `readScheduleAgrees_of_validV3` (`decodeRust` message slots vs the generator's
-  repacked layout). This is the current D1 leaf.
+- **D1/end-to-end** (`t/D1`): both directions of `EndToEndV3` proved, and the message side of
+  `readScheduleAgrees` is now closed by `decodeRust_slots_eq_logWidths`. The only remaining premise
+  is `prepare_logSlots`: the static width sequence of `Verifier.prepare`,
+  `replicate prefixG1Count g1 ++ replicate numEvals fr ++ [g1] ++ replicate numPointSets fr ++ [g1]`,
+  tied to `(RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots`; it needs a
+  `PresWidthSeq` invariant over `prepare` plus `a.qEvalSets.size = R.plan.meta_.numPointSets`.
+  `runBody_mono` (ST.13) is the other shared leaf.
 - **D2/certified generator** (`t/D2`): CERT.0 statement port/rebase, CERT.1 suspects, CERT.3
   constants, CERT.8 `generate` on the real F1 key.
 
