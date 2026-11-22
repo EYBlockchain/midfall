@@ -1094,7 +1094,14 @@ theorem bwdGp_succ (s k j : Nat) : bwdGp s k (j + 1) = bwdGp s k j - 32 := by
   lemmas must be stated with a `let newAll : U256 := if rw = 0 then 0 else …` (the exact unfolded
   body) and the goal's `if` rewritten to `newAll` first; a plain `rw [hget1]` does not match, and
   `rw [show (if … 0 …) = newAll from rfl]` fails on the `0` vs `0#256` spelling in this pass.
-  Stating `newAll` with `0#256`/`rw = 0#256` is the next concrete step.
+  Stating `newAll` with `0#256`/`rw = 0#256` IS the fix for the `newAll` rewrite (measured: the
+  goal's `if` becomes `newAll` and the three `hget`s match). The next concrete blocker is the
+  `("inv", …)` binding: after the final `simp [VEnv.set, VEnv.setMany, touchMemory, hloadmptr,
+  hloadgp]` the outer match is `VEnv.get (("inv", <the fwdProd if>) :: (bwdEnv j).set "all_inv"
+  newAll) "inv"`, and neither `simp only [get_cons_self_inv]` nor `rw [get_cons_self_inv]` rewrites
+  it in this pass (the pair is the `List.zip` result printed as a cons, but the rewrite did not
+  fire). The fix is to reduce that binding with `show`/`rfl` on the exact cons, or to add
+  `VEnv.get`/`List.find?` back to the final `simp` and state the `hget`s unfolded.
 
   **PLAN FOR `bi_backward_loop` (HLP.1.c), the next leaf.** With `k = (e-a)/32` and
   `hae : a + 96 ≤ e` (so `3 ≤ k`), the loop is statement 29 and starts after the `sub(gp_mptr, 32)`:
