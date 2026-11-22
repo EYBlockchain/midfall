@@ -525,6 +525,20 @@ theorem commonG1_lookup (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : E
       decl.params = ["buf_len", "cptr"] ∧ decl.rets = ["ret"] := by
   exact ⟨_, rfl, rfl, rfl⟩
 
+/-- **THE TRANSCRIPT READ STEP (a SIM.10 prerequisite).** A read whose bytes are present and
+    whose repr decodes succeeds, advances the cursor by `width`, and leaves the buffer alone.
+    PROVED by unfolding `Transcript.read`. -/
+theorem transcript_read_ok {T : Type} (h : Midfall.Halo2.Hashable T) (t : Midfall.Halo2.Transcript)
+    (repr : Bytes) (v : T)
+    (hbt : bytesTake t.buffer t.pos h.width = some repr)
+    (hr : h.readRepr? repr = some v) :
+    ∃ t', t.read h = .ok (v, t') ∧ t'.pos = t.pos + h.width ∧ t'.buffer = t.buffer := by
+  unfold Transcript.read
+  rw [hbt]
+  dsimp only
+  rw [hr]
+  exact ⟨_, rfl, rfl, rfl⟩
+
 /-! ## 4. ROW.TP.6'S BRIDGE — THE MODEL'S PARSER FACTS AND THE PLAN'S LAYOUT -/
 
 /-- `metaDataForVk` rewrites only `numEvals`, `numDummyEvals` and `numPointSets`: the seven fields

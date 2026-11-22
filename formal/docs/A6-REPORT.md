@@ -9,7 +9,7 @@ frozen/vendor/QVM/Quotient edit.
 
 `Rows.lean` is still untouched, so the ROOT cones are unchanged: `lowering_correct` **11**,
 `lowering_sound` **5**, both `assert_axioms` `ok (4 named, 0 native)`.
-`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (1581, 1596, 1611, 1624, 1656) — the
+`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (1595, 1610, 1625, 1638, 1670) — the
 five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT sorry**.
 `gen_sorry.sh` was not run (zero-sorry precondition not met; worker rule W9/DG.2).
 
@@ -17,7 +17,7 @@ five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT
 
 | declaration | line | role |
 |---|---|---|
-| `tp_events_slots` | 1426 | the leaf; sorry-free |
+| `tp_events_slots` | 1440 | the leaf; sorry-free |
 | `tp_planFacts` | 706 | PG-PARSER bridge: plan meta/layout are the generator's, model parser facts are computed from them |
 | `tp_fromProtocol` / `TpLayoutFacts` | 946 / 916 | every section's count, width, byte length |
 | `userPhasesOf_advice` | 1098 | the phase table index for index |
@@ -32,7 +32,15 @@ Still proved from before: `inline_g1WalkLoop` (ROW.TP.1), `tp_slice`, `tp_blockS
 `tp_agrees`, `tp_computes`, `tp_poison`), the W12 falsifiers. Everything is on
 `[propext, Classical.choice, Quot.sound]`; no `native_decide`, no heartbeat/recursion raise.
 
-## New this session: ROW.TP.3's call resolution
+## New this session: SIM.10's first helper
+
+`transcript_read_ok` (line 533, PROVED): a `Transcript.read` whose `bytesTake` and `readRepr?`
+both succeed returns `.ok`, advances the cursor by `width`, and leaves the buffer alone. This is
+the base case of SIM.10 obligation 2; the remaining `pcsReads`/`assertEmpty` work is the
+`qsWire` induction over the q-eval tail and the cursor arithmetic, for which the buffer-tail
+hypothesis is the one stated in the SIM.10 section below.
+
+## ROW.TP.3's call resolution
 
 `commonG1_lookup` (line 523) is PROVED by `rfl`: `R.scope` resolves
 `common_uncompressed_g1` to the emitted helper with `params = ["buf_len", "cptr"]` and
@@ -47,14 +55,23 @@ The V3 statement is the evidence's at the V3 reading:
 is `snapshotAlgebraRun >>= pcsReads.run >>= assertEmpty`, so the proof is exactly three totality
 obligations, none of which is in the tree:
 
-1. `snapshotTraceRun` total on a `Decoded`: discharge `parseTrace`'s `invalidInstances` arms
-   (`committedShape = #[#[1]]` is nonempty because `Features.solidity.committedInstances = true`)
-   and the three `scatterIndexed` panics (`verifier.rs:118/134`, the key-shape/read-count
-   agreement with the layout).
+1. `snapshotTraceRun` total on a `Decoded`: the `invalidInstances` arms are already discharged
+   for EVERY render — `committedShape = #[#[1]]` is nonempty (`Features.solidity.committedInstances
+   = true`), every committed row has size 1, and the `zip` check compares COLUMN counts
+   (`c.size + i.size = 1 + 1 = 2 = vk.cs.numInstanceColumns`), so the public instance count is
+   free; the `scatterIndexed` panics are total on the filtered advice/challenge indices because
+   each index comes from `List.range vk.cs.numAdviceColumns`/`numChallenges`. What is left is the
+   TRANSCRIPT READ SCHEDULE: `parseTrace`'s `tmReadN`/`tmRead` calls must find, in
+   `transcriptOf E H ms`, the `msgWire` bytes of the decoded messages in the same order and with
+   the same counts. That is the Lean-side analogue of `tp_events_slots` and needs the
+   `vk.cs`↔layout bridge (the `newFromVk`/`fromProtocol` peeler already landed here as
+   `tp_planFacts`), plus `msgWire`/`bytesTake`/`readRepr?` lemmas.
 2. `pcsReads.run` total: each `tmRead`'s `bytesTake t.buffer t.pos width` and
    `h.readRepr?` succeeds on the re-serialised decoded messages (the G1 reads use
-   `SimPins.compressedEnc`; the scalars use the round trip), and the q-eval run has
-   `nSets = L.qEvals.itemCount` words.
+   `SimPins.compressedEnc`/`G1CodecHeadlineLaws.compressedEncoderFirst`; the scalars use
+   `frOfRepr_frToRepr`, which needs `p ≤ 2^256` from `ValidV3.env`), and the q-eval run has
+   `nSets = L.qEvals.itemCount` words. The `Transcript.read`/`StateT.run` layer for a buffer of
+   the exact `msgWire` tail is the first piece that can be built green in isolation.
 3. `assertEmpty` after the reads: the cursor is exactly the buffer size.
 
 This is the card's own 2.5 h "strongest" programme (`PLAN-V3-cards.md:1173-1191`), whose
