@@ -1244,6 +1244,55 @@ theorem pcs_loop_true (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Cons
       · rw [show (touchMemory sti (BitVec.toNat newp) 32).env = sti.env from rfl, henvg]
       · rw [show (touchMemory sti (BitVec.toNat newp) 32).halted = sti.halted from rfl, hhaltg]
 
+/-! ## 7. The `scalar_inv` frame bridge (start)
+
+  The first two memory-level facts the `scalar_inv` summary needs: a 32-byte `mstore` reads back
+  as the big-endian byte list `bytesNatBE v 32`, and the byte encoder's digit order is the word
+  reader's order. These are the store/read half of the bridge recorded in
+  `BatchInvert.lean:1055-1135`; the six-store `modexpInvFrame` equality, the `fail` effect and the
+  staticcall step are not landed yet, so this section adds no row. -/
+
+/-- `Nat.toUInt8` only sees the low byte. -/
+theorem toUInt8_mod (x : Nat) : Nat.toUInt8 x = Nat.toUInt8 (x % 256) := by
+  apply UInt8.toNat_inj.mp
+  unfold Nat.toUInt8
+  rw [UInt8.toNat_ofNat', UInt8.toNat_ofNat', Nat.mod_mod]
+
+/-- The EVM `byteAt` is the base-256 digit of the word's `Nat`. -/
+theorem byteAt_eq_toUInt8 (v : U256) (k : Nat) :
+    EVM.byteAt v k = Nat.toUInt8 (v.toNat / 256 ^ k) := by
+  unfold EVM.byteAt
+  rw [show 256 ^ k = 2 ^ (8 * k) by
+    rw [show (256 : Nat) = 2 ^ 8 by norm_num, ← Nat.pow_mul]]
+  rw [BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow]
+
+/-- Reversing a `range` is the complement-index map. -/
+theorem range_map_reverse {α : Type} (n : Nat) (f : Nat → α) :
+    (List.range n).reverse.map f = (List.range n).map (fun i => f (n - 1 - i)) := by
+  apply List.ext_getElem
+  · simp
+  · intro j hj hj'
+    rw [List.getElem_map, List.getElem_reverse, List.getElem_map, List.getElem_range,
+      List.getElem_range, List.length_range]
+
+/-- **THE 32-BYTE STORE/READ BRIDGE**: an `mstore` reads back as `bytesNatBE v 32`. -/
+theorem readBytes_storeWord_32 (mem : Nat → UInt8) (p : Nat) (v : U256) :
+    readBytes (storeWord mem p v) p 32 = (bytesNatBE v.toNat 32).data.toList := by
+  unfold readBytes bytesNatBE
+  dsimp only
+  rw [range_map_reverse]
+  show (List.range 32).map (fun i => storeWord mem p v (p + i)) =
+    (List.range 32).map (fun i => Nat.toUInt8 ((v.toNat / 256 ^ (32 - 1 - i)) % 256))
+  apply List.map_eq_map_iff.mpr
+  intro i hi
+  have hi' : i < 32 := List.mem_range.mp hi
+  have hstore : storeWord mem p v (p + i) = EVM.byteAt v (31 - i) := by
+    unfold storeWord
+    rw [if_pos]
+    · congr 1; omega
+    · omega
+  rw [hstore, byteAt_eq_toUInt8, show 31 - i = 32 - 1 - i by omega, toUInt8_mod]
+
 #assert_axioms Midfall.LoweringV3.PcsRows.decode_exists [propext, Classical.choice, Quot.sound]
   native []
 #assert_axioms Midfall.LoweringV3.PcsRows.inline_loopBody_false
@@ -1257,6 +1306,8 @@ theorem pcs_loop_true (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Cons
 #assert_axioms Midfall.LoweringV3.PcsRows.pcs_loop_false
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.pcs_loop_true
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.readBytes_storeWord_32
   [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.PcsRows
