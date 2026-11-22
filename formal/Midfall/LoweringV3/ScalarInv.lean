@@ -483,11 +483,52 @@ theorem modexpFrameStores_contract (funs : FunEnv (Bridge.Dialect c g)) (pv xv f
       (fun s₁ s₂ hh => expr_add_var_lit_ne_halts funs V (st := s₁) (x := "p") (n := 0) hh)
       (fun s₁ s₂ hh => trExprLit_ne_halts hh)) hne1
 
+/-- **THE `blsR` LITERAL BRIDGE**: subtracting the numeral 2 from `ofNat blsR` is the
+    `blsR - 2` word `mxMem` stores. Kernel reduction (`decide`), no native code. -/
+theorem ofNat_blsR_sub_two :
+    (BitVec.ofNat 256 Midfall.Yul.blsR - (2 : U256)) =
+      BitVec.ofNat 256 (Midfall.Yul.blsR - 2) := by
+  decide
+
+/-- **THE SIX STORES AT THE DEPLOYED MODULUS.** With `FR_MODULUS = blsR`, the frame block
+    writes exactly `mxMem`. -/
+theorem mxMemFr_blsR (mem : Nat → UInt8) (p : Nat) (x : U256) :
+    mxMemFr mem p x (BitVec.ofNat 256 Midfall.Yul.blsR) = mxMem mem p x := by
+  simp only [mxMemFr, mxMem]
+  rw [ofNat_blsR_sub_two]
+
+/-- **THE FRAME STORES, SPECIALISED TO `blsR`.** Same contract as
+    `modexpFrameStores_contract` with the post-state memory `mxMem`. -/
+theorem modexpFrameStores_mxMem {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (pv xv : U256)
+    (hbound : pv.toNat + 192 < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (GenAst.modexpFrameStores "p" (Expr.var "x") (Expr.var "FR_MODULUS")
+        Midfall.Generator.templateConstantsDefault)
+      (fun V st => VEnv.get V "p" = some pv ∧ VEnv.get V "x" = some xv ∧
+        VEnv.get V "FR_MODULUS" = some (BitVec.ofNat 256 Midfall.Yul.blsR))
+      (fun V st V' st' o => o = .normal ∧ V' = V ∧
+        st'.memory = mxMem st.memory pv.toNat xv ∧
+        st'.env = st.env ∧ st'.halted = st.halted) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hp, hx, hfr⟩ := hpre
+  have h := modexpFrameStores_contract funs pv xv (BitVec.ofNat 256 Midfall.Yul.blsR) hbound
+    V st ⟨hp, hx, hfr⟩ V' st' o hrun
+  obtain ⟨ho, hV, hmem, henv, hhalt⟩ := h
+  refine ⟨ho, hV, ?_, henv, hhalt⟩
+  rw [hmem, mxMemFr_blsR]
+
 #assert_axioms Midfall.LoweringV3.ScalarInv.mxMem_frame
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.ScalarInv.fail_call_reverts
   [propext, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.ScalarInv.modexpFrameStores_contract
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.ofNat_blsR_sub_two
+  [] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.mxMemFr_blsR
+  [propext] native []
+#assert_axioms Midfall.LoweringV3.ScalarInv.modexpFrameStores_mxMem
   [propext, Quot.sound] native []
 
 end Midfall.LoweringV3.ScalarInv
