@@ -681,7 +681,15 @@ def gap_readScheduleAgrees : String :=
     "remains. Smallest true bridge: prepare_logSlots — for every successful " ++
     "(prepare ...).run, the log widths are replicate prefixG1Count g1 ++ " ++
     "replicate numEvals fr ++ [g1] ++ replicate numPointSets fr ++ [g1]. " ++
-    "With that, decodeRust = some ms gives ms.map Msg.slot = plan.slots and " ++
+    "Sub-facts still to prove: (a) parseTrace appends replicate " ++
+    "nonQuotientCommitmentCount g1; (b) readAlgebra appends replicate " ++
+    "nbQuotient g1 ++ replicate evalReadCount fr; (c) multiPrepare appends " ++
+    "[g1] ++ replicate qEvalSetCount fr ++ [g1]; (d) qEvalSetCount = " ++
+    "R.plan.meta_.numPointSets and the counts match the protocol fields " ++
+    "(prefixG1Count + nbQuotient, numEvals, numPointSets). (d)'s qEval count " ++
+    "is the generator's intermediateSets.pointSets.length vs the verifier's " ++
+    "MultiOpen.phaseA qEvalSets.size. With prepare_logSlots, " ++
+    "decodeRust_slots_eq_logWidths gives ms.map Msg.slot = plan.slots and " ++
     "end_to_end_of_readSchedule is end_to_end."
 
 
