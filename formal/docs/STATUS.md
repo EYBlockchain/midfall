@@ -120,3 +120,39 @@ work, not prerequisites of `lowering_correct` itself.
 - `7349592` PLSEG - builder_segments_total still open; precise handoff
 - `d0bf226` SNAPSHOT - `snapshotOf_prepareMsgs` retired; root 12, sound 5, register 76/12
 - `8b72779` PG-VKHEADER - frozen `PayloadAgrees.constantsLength` + six header-window equations
+
+## 6. QVM — exact remaining milestones
+
+The QVM rows are `q_blockSim` (`LoweringV3/QuotientRows.lean:236`) and `q_blockProgS` (`:249`).
+They consume the following named facts, in dependency order:
+
+1. `qvm_compile_correct_identity` (`Lowering/Qvm.lean:635`) — reduced by
+   `qvm_compile_correct_identity_of_two_parts` to
+   `PG_identity_emitterValue` (`:5270`) + `PG_identity_compactionValue` (`:5286`);
+   `PG_identity_preFold` is PROVED. The PAIRWISE fold transport and
+   `modarith7Form_shift`/`step_shift_modarith7` are merged. Remaining: `go_drop_ok`/`go_fuel_mono`/
+   `runBlocks` over the full 31-arm step, the `compactGo` scan/walk induction, and the nine
+   emitter-value paths (pow5, MODARITH7 shape, limb shape, decomposition residue split, generic
+   const/mem/token, add-product macro incl. swapped-operand retry, binary accumulator leaves,
+   affine term).
+2. `qvm_compile_correct_certifier` (`:693`) — the `certifyItemWalk`/`itemStarts` induction;
+   consumes (1).
+3. `qvm_compile_correct_program` (`:709`) — the certifier entry point plus the trailing-byte check.
+4. `builder_segments_total` (`:996`) — builder-side totality for every segment shape.
+5. `qvm_validated_noBoundsFault` — the second per-arm fact (operand/no-bounds; `:1856`, `:2173`).
+6. `quotientFold_matches_linearization` (`QvmFold.lean:364`) — Horner reverse, bucket gaps,
+   grouped add.
+7. `QInterpRefinesSegment` (`QuotientInterp.lean` §11; `QuotientRows.lean:170`) and its
+   `qvmLoop` instantiation; the caller supplies D-QVM2's window, table agreement, stack safety and
+   start state.
+8. The segment/spill/validator lane (existing QVM agent): `QvmSegmentReal`, `QuotientSpill`,
+   `QuotientInterp`, `MemoryPairs`, `QvmNoBounds`, fixed-segment window/fit, and `q_blockRow`.
+9. Widening QVM arms (C5/C6): external quotient arm (`WID.16`), evaluator body (`WID.17`),
+   widened totality (`WID.19`); the M9 evaluator remains trusted via `EvaluatorTrust`.
+10. Certified generator QVM streams (D3–D5): the QVM program/certifier/stream facts consumed by
+    `generator_correct`.
+
+The first three are the compiler-correctness tranche; (1) is the only one that still has a
+mathematical gap (the emitter/compaction values). (2)–(7) are inductions/compositions over
+already-landed per-arm facts. (8) is the external agent's lane; (9)–(10) follow the row and
+widening integrations.
