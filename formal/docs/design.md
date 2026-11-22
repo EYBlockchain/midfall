@@ -2970,3 +2970,52 @@ the frozen `.lean` files themselves are unchanged. The W12 falsifier
 do not drop the clause to keep it. If the Rust verifier is found to accept `x = 0` and the intended
 semantics is to handle rather than exclude it, that needs a new decision and a different partition
 alignment; the current generator partition is provably wrong there.
+
+## D-GATE6 — **Approved: rotation-distinctness on the supported profile (KZG query bridge)**
+
+> **Status: APPROVED.** Signed 2026-11-22 after the port-fidelity audit (F1) and D1 independently
+> found that `Exec/Kzg/Utils.lean` and `Generator/Kzg.lean` key the intermediate sets by field
+> point and integer rotation respectively. A commitment opened at two rotations congruent mod `n`
+> gives one Halo2 point set and two generator point sets; the unconditional bridge is false.
+
+**Decision.** The supported profile carries a rotation-distinctness clause on the generated query
+list, in `SupportedV2` or `WellFormed` (the audit chooses the minimal existing structure):
+
+```lean
+rotationDistinct : ∀ q r, q ∈ queries → r ∈ queries →
+  Rotation.value q.rotation ≡ Rotation.value r.rotation [MOD vk.domain.n] →
+  q.rotation = r.rotation
+```
+
+Together with D-GATE5's `x ≠ 0` and `omega` having exact order `n`, this is exactly the audit's
+`hrot` side condition, so the query-map bridge
+`constructIntermediateSets_of_queryMap` can be proved. The deployed rotation set
+`{-1,0,1,-(bf+1)}` satisfies it when `bf+1 < n`; that is a witness, not an assumption on a row.
+This is a supported-input/profile clause, not a hypothesis on a row, bundle, `ValidV3` or the root.
+It is a statement repair: the old unconditional partition equality is false. The falsifier
+(colliding rotations) stays as W12 evidence. The generator may additionally reject a colliding
+plan; that is a generator-side guard for a later card, not a Lean-only patch and not a substitute
+for the clause.
+
+## D-GATE7 — **Approved: the VK phase-length interface for `scatterIndexed`**
+
+> **Status: APPROVED.** Signed 2026-11-22 after audit F3: Rust pre-fills `Commitment::default()` /
+> `F::ZERO` and continues when an advice/challenge slot is unplaced; Lean's `scatterIndexed` faults.
+> The statements quantify over the well-formed VK interface, so the fault is off-domain.
+
+**Decision.** `WellFormed` (the VK interface, `Halo2/Exec/VerifyingKey.lean`) gains the two length
+clauses that make every advice/challenge slot placeable:
+
+```lean
+advicePhaseTotal  : vk.cs.adviceColumnPhase.size = vk.cs.numAdviceColumns
+challengePhaseTotal : vk.cs.challengePhase.size = vk.cs.numChallenges
+```
+
+(or the exact field names the VK uses). `scatterIndexed_hole_is_a_fault` stays as the off-domain
+W12 witness; the P-SCHED prose is updated to say the verifier statements quantify over this
+interface. This is a statement/interface strengthening, not a row/bundle/`ValidV3`/root hypothesis
+and not a weakening of the accepted language on the well-formed domain.
+
+**F8/F2.** F8 (`ParamsVerifierKZG.read` sign) is a conformance-bundle provenance pin: record in
+`build.json` which SRS/params produced `params.json`; no Lean change. F2 (`ConstraintSystemMeta.new`
+`numPointSets = 0`) is the known pre-V3/frozen defect repaired by V3 `PlanMeta`; no audit edit.
