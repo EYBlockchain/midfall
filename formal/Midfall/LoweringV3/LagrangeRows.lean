@@ -2085,3 +2085,17 @@ theorem loadWord_storeWord_at {mem : Nat → UInt8} {p q : Nat} {v : U256}
 theorem loadWord_storeWord_same_at (mem : Nat → UInt8) (p : Nat) (v : U256) :
     loadWord (storeWord mem p v) p = v :=
   Midfall.Yul.Word.loadWord_storeWord_same mem p v
+
+/-- One second-pass iteration, environment half: the body's `pow_of_omega` update and the post
+block's `mptr` update collapse to the invariant's normal form. -/
+theorem second_pass_env_step {V : VEnv (Bridge.Dialect c g)} {p pw mp vmp : U256} :
+    VEnv.set (VEnv.set (("pow_of_omega", p) :: VEnv.set V "mptr" mp)
+      "pow_of_omega" pw) "mptr" vmp =
+      ("pow_of_omega", pw) :: VEnv.set V "mptr" vmp := by
+  have h1 : VEnv.set (("pow_of_omega", p) :: VEnv.set V "mptr" mp)
+      "pow_of_omega" pw = ("pow_of_omega", pw) :: VEnv.set V "mptr" mp := by
+    simp [VEnv.set]
+  have h2 : VEnv.set (("pow_of_omega", pw) :: VEnv.set V "mptr" mp)
+      "mptr" vmp = ("pow_of_omega", pw) :: VEnv.set (VEnv.set V "mptr" mp) "mptr" vmp := by
+    simp [VEnv.set]
+  rw [h1, h2, venv_set_set (D := Bridge.Dialect c g)]
