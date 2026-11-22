@@ -62,6 +62,7 @@
 -- [propext, Classical.choice, Quot.sound] (the last only where 'List.find?'/'decide' needs it);
 -- no 'native_decide' (D-P17); no 'maxHeartbeats'/'maxRecDepth' raise.
 import Midfall.LoweringV3.QuotientRows
+import Midfall.LoweringV3.MemoryPairs
 import Midfall.Lowering.GenAst
 import Midfall.Lowering.Calldata
 import Midfall.Lowering.Stage
@@ -139,6 +140,43 @@ def TEv.slot? : TEv → Option WireSlot
   | .g1 _ => some WireSlot.g1
   | .fr _ => some WireSlot.fr
   | _ => none
+
+@[simp] theorem TEv.slot?_g1 (dst : String) : TEv.slot? (.g1 dst) = some WireSlot.g1 := rfl
+@[simp] theorem TEv.slot?_fr (spill : Bool) : TEv.slot? (.fr spill) = some WireSlot.fr := rfl
+@[simp] theorem TEv.slot?_word : TEv.slot? .word = none := rfl
+@[simp] theorem TEv.slot?_zeros : TEv.slot? .zeros = none := rfl
+@[simp] theorem TEv.slot?_inst : TEv.slot? .inst = none := rfl
+@[simp] theorem TEv.slot?_squeeze (slot : String) (off : Nat) :
+    TEv.slot? (.squeeze slot off) = none := rfl
+@[simp] theorem TEv.slot?_mask : TEv.slot? .mask = none := rfl
+@[simp] theorem TEv.slot?_saveCptr : TEv.slot? .saveCptr = none := rfl
+
+/-- A squeeze reads no calldata slot: the challenge-squeeze runs filter to nothing. -/
+theorem filterMap_squeeze_eq_nil (l : List Nat) (slot : String) (f : Nat → Nat) :
+    (l.filterMap (TEv.slot? ∘ fun j => TEv.squeeze slot (f j))) = [] := by
+  rw [List.filterMap_eq_nil_iff]
+  intro a _
+  rfl
+
+@[simp] theorem TEv.filterMap_cons_word (l : List TEv) :
+    (TEv.word :: l).filterMap TEv.slot? = l.filterMap TEv.slot? := rfl
+@[simp] theorem TEv.filterMap_cons_zeros (l : List TEv) :
+    (TEv.zeros :: l).filterMap TEv.slot? = l.filterMap TEv.slot? := rfl
+@[simp] theorem TEv.filterMap_cons_inst (l : List TEv) :
+    (TEv.inst :: l).filterMap TEv.slot? = l.filterMap TEv.slot? := rfl
+@[simp] theorem TEv.filterMap_cons_squeeze (slot : String) (off : Nat) (l : List TEv) :
+    (TEv.squeeze slot off :: l).filterMap TEv.slot? = l.filterMap TEv.slot? := rfl
+@[simp] theorem TEv.filterMap_cons_mask (l : List TEv) :
+    (TEv.mask :: l).filterMap TEv.slot? = l.filterMap TEv.slot? := rfl
+@[simp] theorem TEv.filterMap_cons_saveCptr (l : List TEv) :
+    (TEv.saveCptr :: l).filterMap TEv.slot? = l.filterMap TEv.slot? := rfl
+@[simp] theorem TEv.filterMap_cons_g1 (dst : String) (l : List TEv) :
+    (TEv.g1 dst :: l).filterMap TEv.slot? = WireSlot.g1 :: l.filterMap TEv.slot? := rfl
+@[simp] theorem TEv.filterMap_cons_fr (spill : Bool) (l : List TEv) :
+    (TEv.fr spill :: l).filterMap TEv.slot? = WireSlot.fr :: l.filterMap TEv.slot? := rfl
+
+example (l : List TEv) :
+    (List.filterMap TEv.slot? (TEv.word :: TEv.zeros :: l)) = List.filterMap TEv.slot? l := by simp
 
 /-- The schedule of a render: its DERIVED plan view's eleven parser values, read off `R.pv`
     (Statements.lean:162 `planViewOf R.plan R.model R.cfg.accumulator`) and the plan's own
@@ -478,19 +516,672 @@ theorem inline_g1WalkLoop (fuel : Nat) (consts : Inline.Consts) (sh : List Strin
   rw [hbInit, hcond, hbody]
   rw [show (Inline.inlineScan (fuel + 1) consts (sh ++ ["end"]) []).blks = [] from rfl]
 
-/-! ## 4. THE NAMED LEAVES -/
+/-! ## 4. ROW.TP.6'S BRIDGE — THE MODEL'S PARSER FACTS AND THE PLAN'S LAYOUT -/
+
+/-- `metaDataForVk` rewrites only `numEvals`, `numDummyEvals` and `numPointSets`: the seven fields
+    the parser schedule reads are conserved. PROVED by peeling the seven binds. -/
+theorem metaDataForVk_conserves (feat : Features) (env : VkBuildEnv QuotientProgramPlan)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    {m : ConstraintSystemMeta} {d : Midfall.Generator.Data} {mem : VerifierMemoryLayout}
+    (h : metaDataForVk feat env meta_ numInstances vk vkMptr = .ok (m, d, mem)) :
+    m.protocol = meta_.protocol ∧ m.numLookups = meta_.numLookups ∧
+      m.lookupChunks = meta_.lookupChunks ∧ m.numPermutationZs = meta_.numPermutationZs ∧
+      m.numTrashcans = meta_.numTrashcans ∧ m.numQuotients = meta_.numQuotients ∧
+      m.numUserAdvices = meta_.numUserAdvices ∧ m.numUserChallenges = meta_.numUserChallenges := by
+  cases hf : feat.outerFewerPointSets
+  · simp only [metaDataForVk, Bind.bind, Except.bind, hf] at h
+    obtain ⟨rawMemory, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨rawData, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨memory, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨data0, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨nSets, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨memory2, _, h⟩ := except_bind_ok _ _ h
+    cases h
+    refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · simp only [metaDataForVk, Bind.bind, Except.bind, hf] at h
+    obtain ⟨rawMemory, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨rawData, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨nDummy, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨memory, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨data0, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨nSets, _, h⟩ := except_bind_ok _ _ h
+    obtain ⟨memory2, _, h⟩ := except_bind_ok _ _ h
+    cases h
+    refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- The `metaDataForStableStaticLayout` loop's state. -/
+abbrev TpStableState :=
+  Option (Ptr × ConstraintSystemMeta × Midfall.Generator.Data × VerifierMemoryLayout) × Ptr
+
+/-- The seven parser fields conserved by one iteration of the stable-layout loop. -/
+def TpMetaConserves (base m : ConstraintSystemMeta) : Prop :=
+  m.protocol = base.protocol ∧ m.numLookups = base.numLookups ∧
+    m.lookupChunks = base.lookupChunks ∧ m.numPermutationZs = base.numPermutationZs ∧
+    m.numTrashcans = base.numTrashcans ∧ m.numQuotients = base.numQuotients ∧
+    m.numUserAdvices = base.numUserAdvices ∧ m.numUserChallenges = base.numUserChallenges
+
+theorem tpMetaConserves_of_vk (feat : Features) (env : VkBuildEnv QuotientProgramPlan)
+    (base : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey)
+    {m : ConstraintSystemMeta} {d : Midfall.Generator.Data} {mem : VerifierMemoryLayout}
+    {vkMptr : Ptr}
+    (h : metaDataForVk feat env base numInstances vk vkMptr = .ok (m, d, mem)) :
+    TpMetaConserves base m :=
+  metaDataForVk_conserves feat env base numInstances vk vkMptr h
+
+/-- The stable-layout loop's step, named so the fold can be reasoned about. -/
+def tpStableStep (feat : Features) (env : VkBuildEnv QuotientProgramPlan)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey)
+    (st : TpStableState) : Except Fault TpStableState :=
+  if st.1.isSome then Except.ok st else
+    let vkMptr := st.2
+    do
+      let (metaOut, dat, memory) ← metaDataForVk feat env meta_ numInstances vk vkMptr
+      let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
+      let cur ← Value.asUsize vkMptr.value
+      if planned == cur then
+        Except.ok (some (vkMptr, metaOut, dat, memory), vkMptr)
+      else
+        Except.ok (none, ptrMemory (valueFromNat planned))
+
+theorem tpStableStep_conserves (feat : Features) (env : VkBuildEnv QuotientProgramPlan)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey)
+    {st res : TpStableState}
+    (hInv : ∀ (ptr : Ptr) (m : ConstraintSystemMeta) (d : Midfall.Generator.Data)
+      (mem : VerifierMemoryLayout), st.1 = some (ptr, m, d, mem) → TpMetaConserves meta_ m)
+    (h : tpStableStep feat env meta_ numInstances vk st = .ok res) :
+    ∀ (ptr : Ptr) (m : ConstraintSystemMeta) (d : Midfall.Generator.Data)
+      (mem : VerifierMemoryLayout), res.1 = some (ptr, m, d, mem) → TpMetaConserves meta_ m := by
+  intro ptr m d mem hres
+  unfold tpStableStep at h
+  by_cases hs : st.1.isSome = true
+  · rw [if_pos hs] at h
+    cases h
+    exact hInv ptr m d mem hres
+  · rw [if_neg hs] at h
+    obtain ⟨⟨metaOut, dat, memory⟩, h1, h2⟩ := except_bind_ok _ _ h
+    obtain ⟨planned, _, h3⟩ := except_bind_ok _ _ h2
+    obtain ⟨cur, _, h4⟩ := except_bind_ok _ _ h3
+    split at h4
+    · cases h4
+      simp only [Option.some.injEq, Prod.mk.injEq] at hres
+      obtain ⟨_, hm, _, _⟩ := hres
+      rw [← hm]
+      exact tpMetaConserves_of_vk feat env meta_ numInstances vk h1
+    · cases h4
+      simp at hres
+
+theorem tpFold_meta_conserves (feat : Features) (env : VkBuildEnv QuotientProgramPlan)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey) :
+    ∀ (l : List Nat) (st res : TpStableState),
+      (∀ (ptr : Ptr) (m : ConstraintSystemMeta) (d : Midfall.Generator.Data)
+        (mem : VerifierMemoryLayout), st.1 = some (ptr, m, d, mem) → TpMetaConserves meta_ m) →
+      l.foldlM (fun st (_ : Nat) => tpStableStep feat env meta_ numInstances vk st) st = .ok res →
+      ∀ (ptr : Ptr) (m : ConstraintSystemMeta) (d : Midfall.Generator.Data)
+        (mem : VerifierMemoryLayout), res.1 = some (ptr, m, d, mem) → TpMetaConserves meta_ m := by
+  intro l
+  induction l with
+  | nil =>
+      intro st res hinv h
+      simp only [List.foldlM_nil] at h
+      cases h
+      exact hinv
+  | cons a l ih =>
+      intro st res hinv h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      exact ih st1 res (tpStableStep_conserves feat env meta_ numInstances vk hinv h1) h2
+
+/-- `metaDataForStableStaticLayout` conserves the seven parser fields: every iteration's meta is
+    `metaDataForVk` applied to the same base. PROVED. -/
+theorem metaDataForStableStaticLayout_conserves (feat : Features)
+    (env : VkBuildEnv QuotientProgramPlan) (meta_ : ConstraintSystemMeta) (numInstances : Nat)
+    (vk : Halo2VerifyingKey)
+    {ptr : Ptr} {m : ConstraintSystemMeta} {d : Midfall.Generator.Data}
+    {mem : VerifierMemoryLayout}
+    (h : metaDataForStableStaticLayout feat env meta_ numInstances vk = .ok (ptr, m, d, mem)) :
+    TpMetaConserves meta_ m := by
+  unfold metaDataForStableStaticLayout at h
+  obtain ⟨start, _, h⟩ := except_bind_ok _ _ h
+  obtain ⟨⟨result, ptr2⟩, hfold, h⟩ := except_bind_ok _ _ h
+  cases result with
+  | none => simp at h
+  | some r =>
+      simp only at h
+      cases h
+      have hfold' : (List.range 3).foldlM
+          (fun st (_ : Nat) => tpStableStep feat env meta_ numInstances vk st)
+          (none, ptrMemory (valueFromNat start)) =
+          .ok (some (ptr, m, d, mem), ptr2) := hfold
+      exact tpFold_meta_conserves feat env meta_ numInstances vk (List.range 3)
+        (none, ptrMemory (valueFromNat start)) (some (ptr, m, d, mem), ptr2)
+        (fun _ _ _ _ hnone => by simp at hnone) hfold' ptr m d mem rfl
+
+/-- Tuple form of `metaDataForStableStaticLayout_conserves`: the `newFromVk` peel gets the four
+    components as one `Except.ok q`. -/
+theorem metaDataForStableStaticLayout_conserves' (feat : Features)
+    (env : VkBuildEnv QuotientProgramPlan) (meta_ : ConstraintSystemMeta) (numInstances : Nat)
+    (vk : Halo2VerifyingKey)
+    {q : Ptr × ConstraintSystemMeta × Midfall.Generator.Data × VerifierMemoryLayout}
+    (h : metaDataForStableStaticLayout feat env meta_ numInstances vk = .ok q) :
+    TpMetaConserves meta_ q.2.1 := by
+  obtain ⟨ptr, m, d, mem⟩ := q
+  exact metaDataForStableStaticLayout_conserves feat env meta_ numInstances vk h
+
+/-- **THE `newFromVk` PEEL, WITH THE META AND THE PROOF LAYOUT.** `plan.meta_` is the converged
+    meta, `plan.proofLayout` is `fromProtocol`'s output, and the seven parser fields are the ones
+    `rawMeta` carried. PROVED by the same peel `pfx_newFromVk_proofLayout` does, plus the loop
+    conservation above. -/
+theorem tp_newFromVk_facts {R : Render p G₁ G₂ Gₜ} (rawMeta : ConstraintSystemMeta)
+    (plan : LoweringPlan Unit Unit)
+    (h : Midfall.Generator.PlanNew.newFromVk Features.solidity
+      (Midfall.Generator.PlanNew.frFieldCtx R.E.delta) R.vk.cs rawMeta
+      R.cfg.numInstances R.cfg.accumulator R.plan.vk = .ok plan) :
+    ∃ (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout),
+      ProofCalldataLayout.fromProtocol meta_.protocol abiVerifyProofProofCptr meta_.numEvals
+        meta_.numPointSets = .ok L ∧ plan.meta_ = meta_ ∧ plan.proofLayout = L ∧
+      TpMetaConserves rawMeta meta_ := by
+  simp only [Midfall.Generator.PlanNew.newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨q, hq, h1⟩ := except_bind_ok _ _ h
+  obtain ⟨proofLayout, hpl, h2⟩ := except_bind_ok _ _ h1
+  obtain ⟨_qplan, _, h3⟩ := except_bind_ok _ _ h2
+  obtain ⟨_build, _, h4⟩ := except_bind_ok _ _ h3
+  obtain ⟨_nw, _, h5⟩ := except_bind_ok _ _ h4
+  obtain ⟨_pcs, _, h6⟩ := except_bind_ok _ _ h5
+  obtain ⟨_acc, _, h7⟩ := except_bind_ok _ _ h6
+  obtain ⟨_memory, _, h8⟩ := except_bind_ok _ _ h7
+  obtain ⟨_op, _, h9⟩ := except_bind_ok _ _ h8
+  obtain ⟨_trip, _, h10⟩ := except_bind_ok _ _ h9
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals
+    exact ⟨q.2.1, proofLayout, hpl, rfl, rfl,
+      metaDataForStableStaticLayout_conserves' Features.solidity
+        (Midfall.Generator.PlanNew.envOf (Midfall.Generator.PlanNew.frFieldCtx R.E.delta)
+          R.vk.cs) rawMeta R.cfg.numInstances R.plan.vk hq⟩
+
+/-- **THE ROW.TP.6 BRIDGE.** All the facts `tp_events_slots` needs, from `ValidV3.generated`
+    alone: the plan's meta and layout are the generator's, the model's parser facts are computed
+    from them, and the seven meta fields are the protocol's. PROVED (no new hypothesis). -/
+theorem tp_planFacts {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    ∃ (rawMeta meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout)
+      (userPhases : List UserPhase),
+      ConstraintSystemMeta.new Features.solidity R.vk.cs R.cfg.numCommittedInstances = .ok rawMeta ∧
+      R.plan.meta_ = meta_ ∧ R.plan.proofLayout = L ∧
+      ProofCalldataLayout.fromProtocol meta_.protocol abiVerifyProofProofCptr meta_.numEvals
+        meta_.numPointSets = .ok L ∧
+      meta_.protocol = rawMeta.protocol ∧
+      meta_.numLookups = rawMeta.numLookups ∧ meta_.lookupChunks = rawMeta.lookupChunks ∧
+      meta_.numPermutationZs = rawMeta.numPermutationZs ∧
+      meta_.numTrashcans = rawMeta.numTrashcans ∧ meta_.numQuotients = rawMeta.numQuotients ∧
+      meta_.numUserAdvices = rawMeta.numUserAdvices ∧
+      meta_.numUserChallenges = rawMeta.numUserChallenges ∧
+      userPhasesOf meta_ L = .ok userPhases ∧
+      R.model.userPhases = userPhases ∧
+      R.model.numInstances = R.inputs.numInstances ∧
+      R.model.truncatedChallenges = R.inputs.truncatedChallenges ∧
+      R.model.numLookups = meta_.numLookups ∧
+      R.model.numPermutationZs = meta_.numPermutationZs ∧
+      R.model.numTrashcans = meta_.numTrashcans ∧
+      R.model.lookupHPlusAcc = lookupHPlusAccOf meta_ := by
+  obtain ⟨rawMeta, plan, hraw, hpl, hp⟩ := Midfall.LoweringV3.MemoryPairs.plan_of_generated
+    hR.generated
+  obtain ⟨meta_, L, hL, hpm, hpL, hcons⟩ := tp_newFromVk_facts rawMeta plan hpl
+  have hmeta : R.plan.meta_ = meta_ := by rw [hp]; exact hpm
+  have hlay : R.plan.proofLayout = L := by rw [hp]; exact hpL
+  have hg := Midfall.LoweringV3.MemoryPairs.gvfp_of_generated hR.generated
+  simp only [generateVerifierFromPlan, Bind.bind, Except.bind] at hg
+  split at hg
+  · cases hg
+  · cases hg
+  · obtain ⟨_vd, _, h1⟩ := except_bind_ok _ _ hg
+    obtain ⟨rendering, hrender, h2⟩ := except_bind_ok _ _ h1
+    obtain ⟨_pcs, _, h3⟩ := except_bind_ok _ _ h2
+    obtain ⟨_up, hup, h4⟩ := except_bind_ok _ _ h3
+    obtain ⟨_afb, _, h5⟩ := except_bind_ok _ _ h4
+    obtain ⟨_cg, _, h6⟩ := except_bind_ok _ _ h5
+    obtain ⟨_ar, _, h7⟩ := except_bind_ok _ _ h6
+    have hrec := Except.ok.inj h7
+    have huser : R.model.userPhases = _up := by rw [← hrec]
+    have hup' : userPhasesOf meta_ L = .ok _up := by
+      rw [← hmeta, ← hlay]
+      exact hup
+    have hnInst : R.model.numInstances = R.inputs.numInstances := by rw [← hrec]
+    have htrunc : R.model.truncatedChallenges = R.inputs.truncatedChallenges := by rw [← hrec]
+    have hnLook : R.model.numLookups = meta_.numLookups := by
+      rw [← hrec, ← hmeta]
+    have hnPerm : R.model.numPermutationZs = meta_.numPermutationZs := by
+      rw [← hrec, ← hmeta]
+    have hnTrash : R.model.numTrashcans = meta_.numTrashcans := by
+      rw [← hrec, ← hmeta]
+    have hLH : R.model.lookupHPlusAcc = lookupHPlusAccOf meta_ := by
+      rw [← hrec, ← hmeta]
+    obtain ⟨hc1, hc2, hc3, hc4, hc5, hc6, hc7, hc8⟩ := hcons
+    exact ⟨rawMeta, meta_, L, _up, hraw, hmeta, hlay, hL, hc1, hc2, hc3, hc4, hc5, hc6, hc7,
+      hc8, hup', huser, hnInst, htrunc, hnLook, hnPerm, hnTrash, hLH⟩
+
+/-- `bumpAt` preserves the read-index vector's length. -/
+theorem bumpAt_length (xs : List Nat) (i : Nat) (site : String) {ys : List Nat}
+    (h : bumpAt xs i site = .ok ys) : ys.length = xs.length := by
+  unfold bumpAt at h
+  split at h
+  · cases h
+    rw [List.length_append, List.length_cons, List.length_drop, List.length_take]
+    omega
+  · cases h
+
+/-- The phase fold's read-index vector keeps its length. -/
+theorem foldlM_bumpAt_length (site : String) (phase : List Nat) :
+    ∀ (init res : List Nat),
+      phase.foldlM (fun xs p => bumpAt xs p site) init = .ok res → res.length = init.length := by
+  induction phase with
+  | nil =>
+      intro init res h
+      have h' : Except.ok init = (Except.ok res : Except Fault (List Nat)) := h
+      cases h'
+      rfl
+  | cons p rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨mid, h1, h2⟩ := except_bind_ok _ _ h
+      rw [ih mid res h2, bumpAt_length init p site h1]
+
+/-- `ProtocolPlan.remapping`'s read-index vector has length `numPhase`, whatever the phase list. -/
+theorem remapping_nums_length (numPhase : Nat) (phase : List Nat) {nums idxs : List Nat}
+    (h : ProtocolPlan.remapping numPhase phase = .ok (nums, idxs)) :
+    nums.length = numPhase := by
+  unfold ProtocolPlan.remapping at h
+  obtain ⟨nums0, hnums, h⟩ := except_bind_ok _ _ h
+  obtain ⟨offsets, _, h⟩ := except_bind_ok _ _ h
+  obtain ⟨res, _, h⟩ := except_bind_ok _ _ h
+  have hlen : nums0.length = numPhase := by
+    rw [foldlM_bumpAt_length _ phase _ nums0 hnums, List.length_replicate]
+  cases h
+  simpa using hlen
+
+/-- The section `takeCommitmentSection` reserves: its count, width and byte length, all from the
+    `ProofSection.new` it constructs BEFORE the read-index checks. -/
+theorem takeCommitmentSection_shape (protocol : ProtocolPlan) (readIdx cursor : Nat)
+    (expected : CommitmentRead) (count : Nat) (label : String)
+    {sect : ProofSection} {ri cur : Nat}
+    (h : ProofCalldataLayout.takeCommitmentSection protocol readIdx cursor expected count label
+      = .ok (sect, ri, cur)) :
+    sect.itemCount = count ∧ sect.itemBytes = Midfall.Generator.g1Bytes ∧
+      sect.byteLen = count * Midfall.Generator.g1Bytes := by
+  unfold ProofCalldataLayout.takeCommitmentSection at h
+  obtain ⟨ri', _, h⟩ := except_bind_ok _ _ h
+  cases h
+  exact ⟨rfl, rfl, rfl⟩
+
+/-- The advice fold appends one section per count. -/
+theorem foldlM_take_length (protocol : ProtocolPlan) (expected : CommitmentRead) (label : String) :
+    ∀ (counts : List Nat) (init res : List ProofSection × Nat × Nat),
+      counts.foldlM
+        (fun st count =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2 expected count label).bind
+            fun x => Except.ok (st.1 ++ [x.1], x.2.1, x.2.2)) init = .ok res →
+      res.1.length = init.1.length + counts.length := by
+  intro counts
+  induction counts with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      rfl
+  | cons c rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst⟩ := except_bind_ok _ _ h1
+      have hst1 : st1.1 = init.1 ++ [x.1] := by cases hst; rfl
+      rw [ih st1 res h2, hst1, List.length_append, List.length_singleton]
+      simp [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm]
+
+/-- The lookup fold appends one row per `(lookup, chunks)` pair. -/
+theorem foldlM_lookups_length (protocol : ProtocolPlan) :
+    ∀ (pairs : List (Nat × Nat))
+      (init res : List ProofLookupCommitmentsLayout × Nat × Nat),
+      pairs.foldlM
+        (fun st pair =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2
+              CommitmentRead.lookupHelper pair.2 "lookup helper").bind
+            fun x =>
+          (ProofCalldataLayout.takeCommitmentSection protocol x.2.1 x.2.2
+              CommitmentRead.lookupAccumulator 1 "lookup accumulator").bind
+            fun y =>
+          Except.ok (st.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+            y.2.1, y.2.2)) init = .ok res →
+      res.1.length = init.1.length + pairs.length := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      rfl
+  | cons pr rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst1⟩ := except_bind_ok _ _ h1
+      obtain ⟨y, hy, hst2⟩ := except_bind_ok _ _ hst1
+      have hst1' : st1.1 = init.1 ++ [{ lookup := pr.1, helpers := x.1, accumulator := y.1 }] := by
+        cases hst2; rfl
+      rw [ih st1 res h2, hst1', List.length_append, List.length_singleton]
+      simp [Nat.add_comm, Nat.add_left_comm]
+
+/-- Every accumulator section the lookup fold reserves is ONE G1 frame. -/
+theorem foldlM_lookups_accOne (protocol : ProtocolPlan) :
+    ∀ (pairs : List (Nat × Nat))
+      (init res : List ProofLookupCommitmentsLayout × Nat × Nat),
+      pairs.foldlM
+        (fun st pair =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2
+              CommitmentRead.lookupHelper pair.2 "lookup helper").bind
+            fun x =>
+          (ProofCalldataLayout.takeCommitmentSection protocol x.2.1 x.2.2
+              CommitmentRead.lookupAccumulator 1 "lookup accumulator").bind
+            fun y =>
+          Except.ok (st.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+            y.2.1, y.2.2)) init = .ok res →
+      (∀ r, r ∈ init.1 → r.accumulator.itemCount = 1) →
+      ∀ r, r ∈ res.1 → r.accumulator.itemCount = 1 := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro init res h hinv r hr
+      simp only [List.foldlM_nil] at h
+      cases h
+      exact hinv r hr
+  | cons pr rest ih =>
+      intro init res h hinv r hr
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst1⟩ := except_bind_ok _ _ h1
+      obtain ⟨y, hy, hst2⟩ := except_bind_ok _ _ hst1
+      have hst1' : st1.1 = init.1 ++ [{ lookup := pr.1, helpers := x.1, accumulator := y.1 }] := by
+        cases hst2; rfl
+      have hinv' : ∀ r, r ∈ st1.1 → r.accumulator.itemCount = 1 := by
+        intro r hr
+        rw [hst1'] at hr
+        simp only [List.mem_append, List.mem_singleton] at hr
+        rcases hr with hr | rfl
+        · exact hinv r hr
+        · exact (takeCommitmentSection_shape protocol x.2.1 x.2.2
+            CommitmentRead.lookupAccumulator 1 "lookup accumulator" hy).1
+      exact ih st1 res h2 hinv' r hr
+
+/-- The section facts `fromProtocol` gives, in one record so the row's algebra can take them as a
+    single hypothesis. -/
+structure TpLayoutFacts (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout) : Prop where
+  adviceItemBytes : ∀ s, s ∈ L.advicePhases → s.itemBytes = Midfall.Generator.g1Bytes
+  adviceByteLen : ∀ s, s ∈ L.advicePhases →
+    s.byteLen = s.itemCount * Midfall.Generator.g1Bytes
+  adviceLen : L.advicePhases.length = meta_.protocol.numUserAdvices.length
+  lookupM : L.lookupMultiplicities.itemCount = meta_.protocol.numLookups
+  lookupMByte : L.lookupMultiplicities.byteLen =
+    meta_.protocol.numLookups * Midfall.Generator.g1Bytes
+  permZ : L.permutationProducts.itemCount = meta_.protocol.numPermutationZs
+  permZByte : L.permutationProducts.byteLen =
+    meta_.protocol.numPermutationZs * Midfall.Generator.g1Bytes
+  lookupsLen : L.lookups.length = meta_.protocol.lookupChunks.length
+  lookupsByte : ∀ lk, lk ∈ L.lookups →
+    lk.helpers.itemBytes = Midfall.Generator.g1Bytes ∧
+      lk.helpers.byteLen = lk.helpers.itemCount * Midfall.Generator.g1Bytes ∧
+      lk.accumulator.itemBytes = Midfall.Generator.g1Bytes ∧
+      lk.accumulator.byteLen = Midfall.Generator.g1Bytes
+  lookupsAcc : ∀ lk, lk ∈ L.lookups → lk.accumulator.itemCount = 1
+  trash : L.trash.itemCount = meta_.protocol.numTrashcans
+  trashByte : L.trash.byteLen = meta_.protocol.numTrashcans * Midfall.Generator.g1Bytes
+  quotient : L.quotientLimbs.itemCount = meta_.protocol.numQuotients
+  quotientByte : L.quotientLimbs.byteLen =
+    meta_.protocol.numQuotients * Midfall.Generator.g1Bytes
+  evals : L.evals.itemCount = meta_.numEvals
+  evalsByte : L.evals.byteLen = meta_.numEvals * Midfall.Generator.wordBytes
+  qEvals : L.qEvals.itemCount = meta_.numPointSets
+  qEvalsByte : L.qEvals.byteLen = meta_.numPointSets * Midfall.Generator.wordBytes
+
+/-- **THE `fromProtocol` PEEL.** Every section `fromProtocol` reserves has the count the protocol
+    says, one G1 frame per commitment, and a `wordBytes` frame per scalar. PROVED. -/
+theorem tp_fromProtocol {meta_ : ConstraintSystemMeta} {L : ProofCalldataLayout}
+    (hL : ProofCalldataLayout.fromProtocol meta_.protocol abiVerifyProofProofCptr
+      meta_.numEvals meta_.numPointSets = .ok L) :
+    TpLayoutFacts meta_ L := by
+  unfold ProofCalldataLayout.fromProtocol at hL
+  simp only [Bind.bind, Except.bind] at hL
+  obtain ⟨adv, hAdv, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨lm, hLM, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨pp, hPP, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨lks, hLksFold, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨tr, hTr, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨ql, hQl, hL⟩ := except_bind_ok _ _ hL
+  split at hL
+  · cases hL
+  cases hL
+  have hadv := foldlM_take_ok meta_.protocol CommitmentRead.advice "advice phase"
+    meta_.protocol.numUserAdvices ([], 0, abiVerifyProofProofCptr) adv hAdv (by simp)
+  have hadvLen := foldlM_take_length meta_.protocol CommitmentRead.advice "advice phase"
+    meta_.protocol.numUserAdvices ([], 0, abiVerifyProofProofCptr) adv hAdv
+  have hlm := takeCommitmentSection_shape meta_.protocol adv.2.1 adv.2.2
+    CommitmentRead.lookupMultiplicity meta_.protocol.numLookups "lookup multiplicity" hLM
+  have hpp := takeCommitmentSection_shape meta_.protocol lm.2.1 lm.2.2
+    CommitmentRead.permutationProduct meta_.protocol.numPermutationZs "permutation product" hPP
+  have hLks := foldlM_lookups_ok meta_.protocol
+    ((List.range meta_.protocol.lookupChunks.length).zip meta_.protocol.lookupChunks)
+    ([], pp.2.1, pp.2.2) lks hLksFold (by simp)
+  have hLksLen := foldlM_lookups_length meta_.protocol
+    ((List.range meta_.protocol.lookupChunks.length).zip meta_.protocol.lookupChunks)
+    ([], pp.2.1, pp.2.2) lks hLksFold
+  have hLksAcc := foldlM_lookups_accOne meta_.protocol
+    ((List.range meta_.protocol.lookupChunks.length).zip meta_.protocol.lookupChunks)
+    ([], pp.2.1, pp.2.2) lks hLksFold (by simp)
+  have htr := takeCommitmentSection_shape meta_.protocol lks.2.1 lks.2.2
+    CommitmentRead.trash meta_.protocol.numTrashcans "trash" hTr
+  have hql := takeCommitmentSection_shape meta_.protocol tr.2.1 tr.2.2
+    CommitmentRead.quotient meta_.protocol.numQuotients "quotient limb" hQl
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · intro s hs
+    exact (hadv.2.1 s hs).1
+  · intro s hs
+    exact (hadv.2.1 s hs).2
+  · rw [hadvLen]
+    simp
+  · exact hlm.1
+  · exact hlm.2.2
+  · exact hpp.1
+  · exact hpp.2.2
+  · rw [hLksLen, List.length_zip, List.length_range]
+    simp
+  · intro lk hlk
+    obtain ⟨hg, ha⟩ := hLks.2.1 lk hlk
+    have ha2 := ha.2
+    rw [hLksAcc lk hlk] at ha2
+    exact ⟨hg.1, hg.2, ha.1, by simpa using ha2⟩
+  · exact hLksAcc
+  · exact htr.1
+  · exact htr.2.2
+  · exact hql.1
+  · exact hql.2.2
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+
+/-- `listNth` is list indexing. -/
+theorem listNth_eq_getElem? {α : Type} (l : List α) (i : Nat) : listNth l i = l[i]? := by
+  induction l generalizing i with
+  | nil => cases i <;> rfl
+  | cons x xs ih => cases i with
+    | zero => rfl
+    | succ k => exact ih k
+
+/-- `mapM` preserves the list length. -/
+theorem mapM_length {ε α β : Type} (f : α → Except ε β) :
+    ∀ (l : List α) (res : List β), l.mapM f = .ok res → res.length = l.length := by
+  intro l
+  induction l with
+  | nil =>
+      intro res h
+      have h' : Except.ok ([] : List β) = Except.ok res := h
+      cases h'
+      rfl
+  | cons x xs ih =>
+      intro res h
+      simp only [List.mapM_cons, Bind.bind] at h
+      obtain ⟨b0, _, h1⟩ := except_bind_ok _ _ h
+      obtain ⟨bs, hbs, hres⟩ := except_bind_ok _ _ h1
+      have hres' : res = b0 :: bs := by cases hres; rfl
+      rw [hres', List.length_cons, ih bs hbs]
+      rfl
+
+/-- One step of `userPhasesOf`, named so the index argument is readable. -/
+def tpUserPhaseStep (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout)
+    (p : (Nat × Nat) × Nat) : Except Fault UserPhase :=
+  match p with
+  | ((_, nC), idx) =>
+      match listNth L.advicePhases idx with
+      | some ph =>
+          Except.ok { adviceBytes := ph.byteLen, numChallenges := nC, challengeOffset := (meta_.numUserChallenges.take idx).foldl Nat.add 0 }
+      | none => Except.error (artifactPanic
+          "proofs/solidity-verifier/src/lowering/artifacts.rs:164")
+
+/-- The per-phase table `userPhasesOf` builds, index for index: the phase at `i` reads
+    `L.advicePhases[n + i]`, so its `adviceBytes` is that section's `byteLen`. -/
+theorem userPhasesOf_aux (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout) :
+    ∀ (pairs : List (Nat × Nat)) (n : Nat) (ups : List UserPhase),
+      (pairs.zipIdx n).mapM (tpUserPhaseStep meta_ L) = .ok ups →
+      ∀ (i : Nat) (ph : UserPhase) (s : ProofSection), ups[i]? = some ph →
+        L.advicePhases[n + i]? = some s → ph.adviceBytes = s.byteLen := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro n ups h i ph s hph hs
+      simp only [List.zipIdx_nil, List.mapM_nil] at h
+      cases h
+      simp at hph
+  | cons pr rest ih =>
+      intro n ups h i ph s hph hs
+      obtain ⟨p1, p2⟩ := pr
+      simp only [List.zipIdx_cons, List.mapM_cons, Bind.bind] at h
+      obtain ⟨ph0, hstep, h1⟩ := except_bind_ok _ _ h
+      obtain ⟨restUps, hrest, hfin⟩ := except_bind_ok _ _ h1
+      have hups : ups = ph0 :: restUps := by cases hfin; rfl
+      have hstep1 : (match listNth L.advicePhases n with
+          | some ph => Except.ok ({ adviceBytes := ph.byteLen, numChallenges := p2, challengeOffset := (meta_.numUserChallenges.take n).foldl Nat.add 0 } : UserPhase)
+          | none => Except.error (artifactPanic
+              "proofs/solidity-verifier/src/lowering/artifacts.rs:164")) = .ok ph0 := hstep
+      cases hln : listNth L.advicePhases n with
+      | none =>
+          rw [hln] at hstep1
+          cases hstep1
+      | some s0 =>
+          rw [hln] at hstep1
+          cases hstep1
+          cases i with
+          | zero =>
+              rw [hups] at hph
+              simp only [List.getElem?_cons_zero, Option.some.injEq] at hph
+              subst hph
+              rw [Nat.add_zero] at hs
+              rw [listNth_eq_getElem?] at hln
+              rw [hln] at hs
+              have hs' : s0 = s := Option.some.inj hs
+              rw [hs']
+          | succ i =>
+              rw [hups] at hph
+              simp only [List.getElem?_cons_succ] at hph
+              exact ih (n + 1) restUps hrest i ph s hph (by
+                rwa [Nat.add_assoc, Nat.add_comm 1 i, ← Nat.add_assoc])
+
+/-- **`userPhasesOf`, INDEXWISE.** Its length is the zip's and each phase's `adviceBytes` is the
+    `byteLen` of the advice section at the same index. PROVED. -/
+theorem userPhasesOf_advice (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout)
+    {ups : List UserPhase} (h : userPhasesOf meta_ L = .ok ups) :
+    ups.length = (List.zip meta_.numUserAdvices meta_.numUserChallenges).length ∧
+      ∀ (i : Nat) (ph : UserPhase) (s : ProofSection), ups[i]? = some ph →
+        L.advicePhases[i]? = some s → ph.adviceBytes = s.byteLen := by
+  unfold userPhasesOf at h
+  change ((List.zip meta_.numUserAdvices meta_.numUserChallenges).zipIdx 0).mapM
+    (tpUserPhaseStep meta_ L) = .ok ups at h
+  constructor
+  · rw [mapM_length _ _ _ h, List.length_zipIdx]
+  · intro i ph s hph hs
+    exact userPhasesOf_aux meta_ L
+      (List.zip meta_.numUserAdvices meta_.numUserChallenges) 0 ups h i ph s hph
+      (by simpa using hs)
+
+/-! ## 5. THE NAMED LEAVES -/
+
+/-- Grouping two adjacent `replicate`s under an associative tail. -/
+theorem replicate_append_replicate_assoc {α : Type} (n m : Nat) (a : α) (l : List α) :
+    List.replicate n a ++ (List.replicate m a ++ l) = List.replicate (n + m) a ++ l := by
+  rw [← List.append_assoc, List.replicate_append_replicate]
+
+/-- The per-lookup helper walk, folded: when each accumulator section is one 128-byte frame, the
+    explicit `[g1]` after the helper walk is `replicate (accumulator.byteLen / 128) g1`. -/
+theorem flatMap_lookup_replicate (l : List ProofLookupCommitmentsLayout)
+    (hAcc : ∀ lk, lk ∈ l → lk.accumulator.byteLen / 128 = 1) :
+    l.flatMap (fun lk => List.replicate (lk.helpers.byteLen / 128) WireSlot.g1 ++ [WireSlot.g1]) =
+      l.flatMap (fun lk => List.replicate (lk.helpers.byteLen / 128) WireSlot.g1 ++
+        List.replicate (lk.accumulator.byteLen / 128) WireSlot.g1) := by
+  induction l with
+  | nil => rfl
+  | cons lk rest ih =>
+      rw [List.flatMap_cons, List.flatMap_cons, hAcc lk (by simp),
+        ih (fun x hx => hAcc x (by simp [hx]))]
+      simp
+
+/-- **THE SCHEDULE'S SLOT LIST, SEGMENT BY SEGMENT.** Unfolds `tpEvents` and applies the
+    `slot?` filter to each segment: the words, zeros, instances, squeezes, mask and
+    `saveCptr` contribute nothing, the g1 walks contribute `replicate (byteLen / 128) g1`,
+    the scalars `replicate (byteLen / 32) fr`, and the two absorb-copy sites one `g1` each.
+    PROVED by reduction and the four `List.filterMap_*` lemmas. -/
+theorem tpEvents_filterMap_eq (numInstances : Nat) (userPhases : List UserPhase)
+    (numLookups numPermutationZs lookupHPlusAcc numTrashcans : Nat)
+    (truncatedChallenges : Bool) (L : ProofCalldataLayout)
+    (hAcc : ∀ lk, lk ∈ L.lookups → lk.accumulator.byteLen / 128 = 1) :
+    (tpEvents numInstances userPhases numLookups numPermutationZs lookupHPlusAcc numTrashcans
+      truncatedChallenges L).filterMap TEv.slot? =
+      (userPhases.flatMap fun ph =>
+        List.replicate (ph.adviceBytes / 128) WireSlot.g1) ++
+      (if numLookups != 0 then
+        List.replicate (L.lookupMultiplicities.byteLen / 128) WireSlot.g1 else []) ++
+      (if numPermutationZs != 0 then
+        List.replicate (L.permutationProducts.byteLen / 128) WireSlot.g1 else []) ++
+      (if lookupHPlusAcc != 0 then
+        L.lookups.flatMap fun lk =>
+          List.replicate (lk.helpers.byteLen / 128) WireSlot.g1 ++
+            List.replicate (lk.accumulator.byteLen / 128) WireSlot.g1 else []) ++
+      (if numTrashcans != 0 then
+        List.replicate (L.trash.byteLen / 128) WireSlot.g1 else []) ++
+      List.replicate (L.quotientLimbs.byteLen / 128) WireSlot.g1 ++
+      List.replicate (L.evals.byteLen / 32) WireSlot.fr ++ [WireSlot.g1] ++
+      List.replicate (L.qEvals.byteLen / 32) WireSlot.fr ++ [WireSlot.g1] := by
+  have hlook := flatMap_lookup_replicate L.lookups hAcc
+  by_cases h1 : numLookups != 0 <;> by_cases h2 : numPermutationZs != 0 <;>
+    by_cases h3 : lookupHPlusAcc != 0 <;> by_cases h4 : numTrashcans != 0 <;>
+    by_cases h5 : truncatedChallenges
+  all_goals
+    simp [tpEvents, tpWalk, h1, h2, h3, h4, h5, hlook, List.filterMap_flatMap,
+      List.filterMap_map, List.filterMap_replicate, List.filterMap_eq_nil_iff,
+      filterMap_squeeze_eq_nil, replicate_append_replicate_assoc]
+  all_goals omega
 
 /-- **THE READ SCHEDULE IS THE LAYOUT'S SLOT LIST.** The parser reads, in order, exactly the slots
     `rawSlots` walks. LEAF ROW.TP.6 (ALG, list induction, no Yul). Evidence :706-715, statement
     verbatim with `R.Valid` -> `ValidV3 R`.
 
-    PREMISE GAP PG-PARSER. Nothing in `ValidV3` states the equation between the MODEL's parser
-    facts (`R.model.userPhases`, `.lookupHPlusAcc`, the three meta counts, the flag) and the
-    PLAN's `proofLayout`; the two are joined only through `generateVerifierFromPlan`, which no
-    landed lemma unfolds at this shape. The card says: write it as one lemma statement with its F1
-    witness and STOP; do not add a hypothesis. This is that statement. The F1 witness and the
-    falsifier are `docs/plans/V3-evidence/lean/soundness/GeneratorRowsWitness.lean:124,129`; the
-    generic W12 pair is section 5 below. -/
+    PG-PARSER IS NOW PROVED, NOT A GAP: `tp_planFacts` (the plan's meta and layout are the
+    generator's, and the model's parser facts are computed from them), `tp_fromProtocol` (every
+    section's count, width and byte length) and `userPhasesOf_advice` (the phase table index for
+    index) are all theorem of `ValidV3.generated` alone. WHAT IS LEFT, exactly: the two per-phase
+    lists `meta_.numUserAdvices` and `meta_.numUserChallenges` both come from
+    `ProtocolPlan.remapping numPhase` at the same `numPhase`, so they have equal length
+    (`remapping_nums_length` is proved); extracting that equation from
+    `ProtocolPlan.fromConstraintSystem` is the remaining peel, and then the `slots` sum algebra
+    (`flatMap_replicate_eq`-style) finishes the leaf. The F1 witness and the falsifier are
+    `docs/plans/V3-evidence/lean/soundness/GeneratorRowsWitness.lean:124,129`; the generic W12
+    pair is section 5 below. -/
 theorem tp_events_slots (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
     R.tpEvents.filterMap TEv.slot? =
       (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots := by
