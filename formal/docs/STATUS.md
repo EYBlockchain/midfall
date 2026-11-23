@@ -3,7 +3,7 @@
 **As of:** `9c9e6eaf` (2026-11-23). **Quick gate green.** The last FULL gate was at `d0bf226` (KAT
 1648/119); it is stale after the D-GATE5-8 statement wave and the current lane merges, so the final
 full gate is deferred until the next integration point. Current report: root **11 / sound 5**,
-register **98 rows / 10 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
+register **97 rows / 12 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
 252 modules; closure **5250 declarations / 620 external leaves / digest `209cde2f48115a76`**.
 
 ## 1. Verified - PROGRESS
@@ -247,7 +247,7 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `9c9e6eaf` (2026-11-23): register **98 rows / 10 ROOT / 22 CERT**, 0 REFUTED, 1 legacy VACUOUS
+At `9a60ce22` (2026-11-23): register **97 rows / 12 ROOT / 22 CERT**, 0 REFUTED, 1 legacy VACUOUS
 (`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
 620 external leaves / digest 209cde2f48115a76**; quick gate green.
 
@@ -286,8 +286,18 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
   resourced-codec F1 render `f1PointRenderCCN` with `ValidV3` under `hpay` and the gate's codec
   conjunct discharged (`f1PointRenderCCN_gateAtV3_of`); `DoneAt` now has the F1-resourced instance
   `f1PointRenderCCN_doneAt`, reducing to the gate data, `ArtifactEq` and `hpay`.
-- A6: `TranscriptRows` merged, `fromProtocol_advice_itemCount`, and the `parseTrace` loop-width
-  lemmas (advice/lookup/permutation/trashcan) building `ParseTraceSchedule`.
+- A6: `TranscriptRows` merged, `fromProtocol_advice_itemCount`, the `parseTrace` width walk, and
+  `parseTraceSchedule : ValidV3 R → ParseTraceSchedule R` (D-GATE7's `advicePhaseTotal` closes the
+  phase-count pin); `Rows.tp_blockSim` is closed. The five TP leaves remain, blocked on the
+  `common_uncompressed_g1` call summary and SIM.10's `xcript_total`.
+- A12: the resourced-codec F1 render `f1PointRenderCCN` and the fixture gate inputs
+  (`decode`/`snapshot`/`SoundSide`/`CompleteSide`/deployment/entry) are proved; `LeanAccepts` is
+  REFUTED for the tracked test-SRS calldata at the production key, so a positive F1 `DoneAt` needs a
+  production calldata/proof (documented in `VACUITY.md` §10c).
+- D-GATE9: `programFits` carries the batch-invert scratch floor (`32 ≤ batchInvertScratchMptr`);
+  A4's lag call uses it.
+- D-GATE10: the old `KzgMultiPrepareWidths` (`∀ queries`) is false for positive `numPointSets`;
+  the consumer is repaired to the per-query obligation at `linearize`'s query vector.
 
 ### Six-lane critical path (user cap)
 

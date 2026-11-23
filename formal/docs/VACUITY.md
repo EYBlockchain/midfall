@@ -515,6 +515,23 @@ model. `total` is `totalV3_correct` (hence `block_live`), and `valid` is
 encoder-first law (`g1CodecC`), in flight; the F1 render currently uses `g1CodecZ`, whose law set is
 false, so the render needs the computable-codec data choice before the gate can be inhabited.
 
+## 10c. The F1 `LeanAccepts` data boundary (A12)
+
+The resourced render `f1PointRenderCCN n` has `ValidV3` under `hpay`, the codec law, and the
+fixture gate inputs except `LeanAccepts`/`Eip2537.Holds`. A12 proved
+
+```lean
+f1PointRenderCCN_not_leanAccepts_testExponent :
+  ¬ LeanAccepts (f1PointRenderCCN (blsR - sTest)) keccak256 poseidonFixtureCalldata
+```
+
+The tracked `poseidon-testsrs` proof was produced for `NativeReplay.vkF1` (the test-SRS key); at
+`n = blsR - sTest` the resourced production key differs in `fixedCommitments`,
+`permutation.commitments` and `transcriptRepr`, and `verifyMsgs` is not `.ok ()`. So a positive
+F1 `DoneAt.gate` needs a **production-key calldata/proof** (or a different render key), not just
+`hpay`. This is a data/trust boundary, not a proof gap; no statement was weakened and the mismatch
+is machine-checked on both sides.
+
 ## 11. Reproduce
 
 ```sh
