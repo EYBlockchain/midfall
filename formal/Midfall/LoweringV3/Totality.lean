@@ -3700,7 +3700,216 @@ theorem fpBodyRun (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
         Or.inr rfl⟩⟩
 
 
-#assert_axioms Midfall.LoweringV3.fpBodyRun [propext, Classical.choice, Quot.sound] native []
+set_option maxRecDepth 100000 in
+set_option maxHeartbeats 4000000 in
+theorem fpBodyRun_clean (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (st : EvmState) (lhsW rhsW : U256) (hfits : FpBodyEnvFits R lhsW rhsW)
+    (hvalid : pairingValidInput (fpActualFrame R st lhsW rhsW) = true)
+    (hprod : product (fpActualFrame R st lhsW rhsW) = true) :
+    ∃ Vend stend,
+      Step (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (["success", "lhs_mptr", "rhs_mptr"].zip [(1 : U256), lhsW, rhsW] ++
+          bindZeros (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0)) ["ret"])
+        st
+        (.stmt (.block (Midfall.LoweringV2.Blocks.EcPairing.ecPairingBodyLit
+          (GenAst.pairingScratchOf R.pv)
+          (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base))
+          (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base))
+          R.model.templateConstants.gas.pairingTwoPair 0x0f 768 32 0x84e81692 0xc3b0d8cd)))
+        (.sres Vend stend .normal) ∧
+      VEnv.get Vend "ret" = some (1 : U256) ∧
+      (∀ x, x < R.pv.memory.finalPairingScratchMptr ∨
+        R.pv.memory.finalPairingScratchMptr + 768 ≤ x → stend.memory x = st.memory x) ∧
+      stend.env = st.env ∧ stend.halted = st.halted ∧
+      product (fpActualFrame R st lhsW rhsW) = true := by
+  obtain ⟨hscratchWin, hg2fit, hnfit, hd1, hd2, hd3, hd4⟩ := hfits
+  let c : ExternalCalls := callsOf product
+  let g : ExternalGas := ExternalGas.ofFun fun _ => 0
+  let funs : FunEnv (Bridge.Dialect c g) := R.scope c g
+  let scratch : Nat := R.pv.memory.finalPairingScratchMptr
+  let g2 : Nat := cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base)
+  let neg : Nat := cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base)
+  let gas : Nat := R.model.templateConstants.gas.pairingTwoPair
+  let body : Block EVM.Op := Midfall.LoweringV2.Blocks.EcPairing.ecPairingBodyLit
+    (GenAst.pairingScratchOf R.pv) g2 neg gas 0x0f 768 32 0x84e81692 0xc3b0d8cd
+  let funs' : FunEnv (Bridge.Dialect c g) := hoist (Bridge.Dialect c g) body :: funs
+  have hscratchLt : scratch < 2 ^ 256 := by omega
+  have hdst : (BitVec.ofNat 256 scratch).toNat = scratch := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hscratchLt]
+  have hg2mod : (BitVec.ofNat 256 g2).toNat = g2 := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hg2fit]
+  have hnmod : (BitVec.ofNat 256 neg).toNat = neg := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hnfit]
+  have h768 : (BitVec.ofNat 256 768).toNat = 768 := by decide
+  have h32 : (BitVec.ofNat 256 32).toNat = 32 := by decide
+  obtain ⟨V3, st4, hpre, henv4, hhalt4, hret3, hscr3, hlhs3, hrhs3, hmem3, hnames3⟩ :=
+    Midfall.LoweringV2.Blocks.EcPairing.ecPairing_prefix_run (c := c) (g := g) funs' st
+      lhsW rhsW scratch g2 neg gas
+  have hfail : ∃ cenv, lookupFun funs' "fail" =
+      some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv) := by
+    refine ⟨funs, ?_⟩
+    show lookupFun (hoist (Bridge.Dialect c g) body :: funs) "fail" =
+      some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, funs)
+    rw [show hoist (Bridge.Dialect c g) body = [] from rfl]
+    exact Midfall.LoweringV2.Blocks.TraceReturn.fail_lookup R
+  have hoff128 : (BitVec.ofNat 256 scratch + (0x80 : U256)).toNat =
+      (BitVec.ofNat 256 scratch).toNat + 128 := by
+    rw [BitVec.toNat_add, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hscratchLt]
+    have h80 : ((0x80 : U256)).toNat = 128 := by decide
+    rw [h80]
+    exact Nat.mod_eq_of_lt (by omega)
+  have hoff384 : (BitVec.ofNat 256 scratch + (0x180 : U256)).toNat =
+      (BitVec.ofNat 256 scratch).toNat + 384 := by
+    rw [BitVec.toNat_add, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hscratchLt]
+    have h384 : ((0x180 : U256)).toNat = 384 := by decide
+    rw [h384]
+    exact Nat.mod_eq_of_lt (by omega)
+  have hoff512 : (BitVec.ofNat 256 scratch + (0x200 : U256)).toNat =
+      (BitVec.ofNat 256 scratch).toNat + 512 := by
+    rw [BitVec.toNat_add, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hscratchLt]
+    have h512 : ((0x200 : U256)).toNat = 512 := by decide
+    rw [h512]
+    exact Nat.mod_eq_of_lt (by omega)
+  have hmem3' : st4.memory = copyWithin
+      (copyWithin
+        (copyWithin
+          (copyWithin st.memory (BitVec.ofNat 256 scratch).toNat lhsW.toNat 128)
+          ((BitVec.ofNat 256 scratch).toNat + 128) (BitVec.ofNat 256 g2).toNat 256)
+        ((BitVec.ofNat 256 scratch).toNat + 384) rhsW.toNat 128)
+      ((BitVec.ofNat 256 scratch).toNat + 512) (BitVec.ofNat 256 neg).toNat 256 := by
+    rw [hmem3, hoff128, hoff384, hoff512]
+  have hread : readBytes st4.memory (BitVec.ofNat 256 scratch).toNat 768 =
+      readBytes st.memory lhsW.toNat 128 ++
+        (readBytes st.memory (BitVec.ofNat 256 g2).toNat 256 ++
+          (readBytes st.memory rhsW.toNat 128 ++ readBytes st.memory (BitVec.ofNat 256 neg).toNat 256)) :=
+    Midfall.LoweringV2.Blocks.EcPairing.readBytes_mem4_eq st4.memory st.memory
+      (BitVec.ofNat 256 scratch).toNat lhsW.toNat (BitVec.ofNat 256 g2).toNat rhsW.toNat
+      (BitVec.ofNat 256 neg).toNat hmem3'
+      (by rw [hdst]; dsimp only [scratch]; exact hd1)
+      (by rw [hdst, hg2mod]; dsimp only [scratch, g2]; exact hd2)
+      (by rw [hdst]; dsimp only [scratch]; exact hd3)
+      (by rw [hdst, hnmod]; dsimp only [scratch, neg]; exact hd4)
+  have hframe : fpActualFrame R st lhsW rhsW =
+      bytesAppend (bytesAppend (bytesAppend (bytesAt st lhsW.toNat 128) (bytesAt st g2 256))
+        (bytesAt st rhsW.toNat 128)) (bytesAt st neg 256) := by
+    unfold fpActualFrame
+    rw [Midfall.LoweringV2.Blocks.EcPairing.pairingFrame_two]
+  have hreadAt1 : readBytes st.memory lhsW.toNat 128 = (bytesAt st lhsW.toNat 128).data.toList := rfl
+  have hreadAt2 : readBytes st.memory g2 256 = (bytesAt st g2 256).data.toList := rfl
+  have hreadAt3 : readBytes st.memory rhsW.toNat 128 = (bytesAt st rhsW.toNat 128).data.toList := rfl
+  have hreadAt4 : readBytes st.memory neg 256 = (bytesAt st neg 256).data.toList := rfl
+  let req : YulSemantics.EVM.CallRequest :=
+    { kind := YulSemantics.EVM.CallKind.staticcall, gas := BitVec.ofNat 256 gas,
+      target := BitVec.ofNat 256 0x0f, value := 0,
+      input := readBytes st4.memory (BitVec.ofNat 256 scratch).toNat (BitVec.ofNat 256 768).toNat }
+  let input : Bytes := ByteArray.mk req.input.toArray
+  have hinput : input = fpActualFrame R st lhsW rhsW := by
+    show ByteArray.mk (readBytes st4.memory (BitVec.ofNat 256 scratch).toNat
+      (BitVec.ofNat 256 768).toNat).toArray = fpActualFrame R st lhsW rhsW
+    rw [hframe, h768, hread, hg2mod, hnmod, hreadAt1, hreadAt2, hreadAt3, hreadAt4]
+    apply ByteArray.ext
+    simp [bytesAppend]
+  have htarget : req.target = pairingAddress := rfl
+  by_cases hv : pairingValidInput input = true
+  · -- honest success
+    let resp : CallResponse := ofOutcome st4 ⟨true, pairingOutputWord (product input)⟩
+    have hhonest : honestOf (honestRelations product) req st4 = some resp := by
+      show honestOf (honestRelations product) req st4 =
+        some (ofOutcome st4 ⟨true, pairingOutputWord (product input)⟩)
+      exact Midfall.LoweringV2.Blocks.EcPairing.honestOf_pairing_valid product req st4 htarget hv
+    have hcall : (callsOf product).Call req st4 resp := by
+      show honestOf (honestRelations product) req st4 = some resp ∨
+        (accountKey req.target == accountKey (0 : U256) ∧ False)
+      exact Or.inl hhonest
+    obtain ⟨st5, hstatic, hst5⟩ :=
+      Midfall.LoweringV2.Blocks.EcPairing.ecPairing_staticcall_step (c := c) (g := g)
+        funs' st4 V3 scratch gas 0x0f 768 32 resp hscr3 hcall
+    let V5 : VEnv (Bridge.Dialect c g) := VEnv.setMany V3 ["ret"] [resp.flag]
+    have hret5 : VEnv.get V5 "ret" = some resp.flag := by
+      show VEnv.get (VEnv.setMany V3 ["ret"] [resp.flag]) "ret" = some resp.flag
+      rw [show VEnv.setMany V3 ["ret"] [resp.flag] = VEnv.set V3 "ret" resp.flag from rfl]
+      exact Midfall.LoweringV2.Blocks.EcPairing.venv_get_set_same hret3
+    have hscr5 : VEnv.get V5 "scratch" = some (BitVec.ofNat 256 scratch) := by
+      show VEnv.get (VEnv.setMany V3 ["ret"] [resp.flag]) "scratch" = some (BitVec.ofNat 256 scratch)
+      rw [show VEnv.setMany V3 ["ret"] [resp.flag] = VEnv.set V3 "ret" resp.flag from rfl,
+        Midfall.LoweringV2.Blocks.EcPairing.fp_venv_get_set_ne (D := Bridge.Dialect c g)
+          (x := "ret") (y := "scratch") (v := resp.flag) (by decide)]
+      exact hscr3
+    have hflag : resp.flag = (1 : U256) := by simp [resp, ofOutcome, CallResponse.flag]
+    have hlen : st5.returndata.length = 32 := by
+      rw [hst5]
+      dsimp only [resp]
+      simp [ofOutcome, pairingOutputWord, ByteArray.size_data,
+        Midfall.Assumptions.bytesNatBE_size]
+      rfl
+    have hmem5 : st5.memory = copyReturn st4.memory scratch 32 resp.returndata := by
+      rw [hst5, Midfall.LoweringV2.Blocks.EcPairing.finishCall_staticcall_memory', hdst, h32]
+    have henv5 : st5.env = st4.env := by
+      rw [hst5, Midfall.LoweringV2.Blocks.EcPairing.finishCall_staticcall_env']
+    have hhalt5 : st5.halted = st4.halted := by
+      rw [hst5]; exact Midfall.LoweringV3.finishCall_halted .staticcall st4 resp _ _ _ _
+    by_cases hb : product input = true
+    · -- normal exit
+      have hretData : resp.returndata = (bytesNatBE 1 32).data.toList := by
+        show (pairingOutputWord (product input)).data.toList = (bytesNatBE 1 32).data.toList
+        rw [hb]; rfl
+      have hload : loadWord st5.memory scratch = (1 : U256) := by
+        rw [hmem5, hretData]
+        exact Midfall.LoweringV2.Blocks.EcPairing.loadWord_copyReturn_bytesNatBE_one st4.memory scratch
+      have hret5' : VEnv.get V5 "ret" = some (1 : U256) := by rw [hret5, hflag]
+      obtain ⟨Vt, stt, htail, hstt, hretT, hnamesT⟩ :=
+        Midfall.LoweringV2.Blocks.EcPairing.ecPairing_tail_normal (c := c) (g := g)
+          funs' st5 V5 scratch 0x84e81692 0xc3b0d8cd hret5' hscr5 hlen hload hscratchLt
+      have hstep : Step (Bridge.Dialect c g) funs
+          (["success", "lhs_mptr", "rhs_mptr"].zip [(1 : U256), lhsW, rhsW] ++
+            bindZeros (Bridge.Dialect c g) ["ret"]) st
+          (.stmt (.block body)) (.sres (restore (["success", "lhs_mptr", "rhs_mptr"].zip
+            [(1 : U256), lhsW, rhsW] ++ bindZeros (Bridge.Dialect c g) ["ret"]) Vt) stt .normal) := by
+        refine Step.block (D := Bridge.Dialect c g) ?_
+        exact ExecStmts.append hpre (ExecStmts.append (Step.seqCons hstatic Step.seqNil) htail)
+      have hnamesAll : Vt.map Prod.fst = ["scratch"] ++
+          ((["success", "lhs_mptr", "rhs_mptr"].zip [(1 : U256), lhsW, rhsW] ++
+            bindZeros (Bridge.Dialect c g) ["ret"])).map Prod.fst := by
+        rw [hnamesT]
+        dsimp only [V5]
+        rw [Midfall.LoweringV2.Blocks.EcPairing.venv_setMany_fst, hnames3]
+        rfl
+      have hretRestore : VEnv.get (restore (["success", "lhs_mptr", "rhs_mptr"].zip
+          [(1 : U256), lhsW, rhsW] ++ bindZeros (Bridge.Dialect c g) ["ret"]) Vt) "ret" =
+          some (1 : U256) :=
+        Midfall.LoweringV2.Blocks.EcPairing.venv_get_restore_of_names hnamesAll (by decide) hretT
+      have hmemOut : ∀ x, x < scratch ∨ scratch + 768 ≤ x → stt.memory x = st.memory x := by
+        intro x hx
+        rw [hstt]
+        show (touchMemory st5 scratch 32).memory x = st.memory x
+        rw [show (touchMemory st5 scratch 32).memory = st5.memory from rfl, hmem5]
+        have hmm : st4.memory = copyWithin
+            (copyWithin
+              (copyWithin
+                (copyWithin st.memory scratch lhsW.toNat 128) (scratch + 128) g2 256)
+              (scratch + 384) rhsW.toNat 128) (scratch + 512) neg 256 := by
+          rw [hmem3, hoff128, hoff384, hoff512, hdst, hg2mod, hnmod]
+        rw [hmm]
+        exact Midfall.LoweringV2.Blocks.EcPairing.copyReturn_four_outside st.memory scratch
+          lhsW.toNat g2 rhsW.toNat neg 32 resp.returndata x
+          (by have h := Nat.min_le_left 32 resp.returndata.length; omega) hx
+      have henvT : stt.env = st.env := by
+        rw [hstt, Midfall.LoweringV2.touchMemory_env, henv5, henv4]
+      have hhaltT : stt.halted = st.halted := by
+        rw [hstt, Midfall.LoweringV2.touchMemory_halted, hhalt5, hhalt4]
+      have hprod : product (fpActualFrame R st lhsW rhsW) = true := by
+        rw [← hinput]; exact hb
+      exact ⟨restore (["success", "lhs_mptr", "rhs_mptr"].zip [(1 : U256), lhsW, rhsW] ++
+          bindZeros (Bridge.Dialect c g) ["ret"]) Vt, stt, hstep,
+        hretRestore, hmemOut, henvT, hhaltT, hprod⟩
+    · exact absurd (hinput ▸ hprod) hb
+  · exact absurd (hinput ▸ hvalid) hv
+
+#assert_axioms Midfall.LoweringV3.fpBodyRun
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.fpBodyRun_clean
+  [propext, Classical.choice, Quot.sound] native []
 
 /-- **THE pcs CASE OF `block_live`, REDUCED TO THE ROW'S TOTAL PROGRESS CONTRACT.** `BlockProgS`
     already carries both halves over the honest dialect: its `StmtsContract` field is the exhibited
