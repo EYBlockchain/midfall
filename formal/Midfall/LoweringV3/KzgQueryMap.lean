@@ -616,6 +616,16 @@ theorem forall_mem_listReplaceAt {α : Type} (P : α → Prop) :
           · exact hl a (by simp)
           · exact ih i v (fun b hb => hl b (by simp [hb])) hv a ha
 
+theorem forall_mem_append_singleton {α : Type} (P : α → Prop) (l : List α) (v : α)
+    (hl : ∀ a ∈ l, P a) (hv : P v) : ∀ a ∈ l ++ [v], P a := by
+  intro a ha
+  rw [List.mem_append] at ha
+  rcases ha with ha | ha
+  · exact hl a ha
+  · rw [List.mem_singleton] at ha
+    subst ha
+    exact hv
+
 theorem forall_mem_take_append_drop {α : Type} (P : α → Prop) (l : List α) (i : Nat) (v : α)
     (hl : ∀ a ∈ l, P a) (hv : P v) :
     ∀ a ∈ l.take i ++ [v] ++ l.drop (i + 1), P a := by
@@ -881,10 +891,15 @@ theorem pass1_step1_sim
     [LawfulBEq F] [LawfulBEq K]
     (eqC : CommitmentReference F C → CommitmentReference F C → Bool)
     (fk : F → Int) (ck : CommitmentReference F C → K) (gk : EcPoint → K)
-    (hCommEq : ∀ a b, eqC a b = (ck a == ck b))
-    (hGCommEq : ∀ a b, ecPointBeq a b = (gk a == gk b))
-    (hPointEq : ∀ a b, (a == b) = (fk a == fk b))
     (L : List (VerifierQuery F C × Query))
+    (hCommEq : ∀ p ∈ L, ∀ p' ∈ L,
+      eqC p.1.commitment p'.1.commitment = (ck p.1.commitment == ck p'.1.commitment))
+    (hGCommEq : ∀ p ∈ L, ∀ p' ∈ L,
+      ecPointBeq p.2.comm p'.2.comm = (gk p.2.comm == gk p'.2.comm))
+    (hPointEq : ∀ p ∈ L, ∀ p' ∈ L,
+      (p.1.point == p'.1.point) = (fk p.1.point == fk p'.1.point))
+    (pre suffix : List (VerifierQuery F C × Query))
+    (hL : L = pre ++ suffix)
     (pts : List F) (rots : List Int) (cms : List (CD F C))
     (gs : List (EcPoint × List Nat × List Word))
     (pts' : List F) (rots' : List Int) (cms' : List (CD F C))
@@ -894,25 +909,34 @@ theorem pass1_step1_sim
     (hidx : cmsIdx cms = gsIdx gs)
     (hndC : ∀ cd ∈ cms, cd.pointIndices.toList.Nodup)
     (hndG : ∀ e ∈ gs, e.2.1.Nodup)
+    (hcmMem : ∀ cd ∈ cms, ∃ p ∈ L, cd.commitment = p.1.commitment)
+    (hgsMem : ∀ e ∈ gs, ∃ p ∈ L, e.1 = p.2.comm)
+    (hptMem : ∀ x ∈ pts, ∃ p ∈ L, x = p.1.point)
     (hpairP : ∀ p ∈ L, fk p.1.point = p.2.rotation)
     (hpairC : ∀ p ∈ L, ck p.1.commitment = gk p.2.comm)
-    (hV : constructIntermediateSets.pass1 eqC (L.map Prod.fst) pts cms = .ok (pts', cms'))
-    (hG : step1Fold (L.map Prod.snd) (gs, rots) = .ok (gs', rots')) :
+    (hV : constructIntermediateSets.pass1 eqC (suffix.map Prod.fst) pts cms = .ok (pts', cms'))
+    (hG : step1Fold (suffix.map Prod.snd) (gs, rots) = .ok (gs', rots')) :
     rots' = pts'.map fk ∧ cmsComm ck cms' = gsComm gk gs' ∧
       cmsIdx cms' = gsIdx gs' ∧
       (∀ cd ∈ cms', cd.pointIndices.toList.Nodup) ∧
       (∀ e ∈ gs', e.2.1.Nodup) := by
-  induction L generalizing pts rots cms gs with
+  induction suffix generalizing pre pts rots cms gs with
   | nil =>
       simp only [List.map_nil, constructIntermediateSets.pass1.eq_1,
         step1Fold] at hV hG
       cases hV
       cases hG
       exact ⟨hrots, hcomm, hidx, hndC, hndG⟩
-  | cons p rest ih =>
-      obtain ⟨qV, qG⟩ := p
-      have hpq : fk qV.point = qG.rotation := hpairP (qV, qG) (by simp)
-      have hcq : ck qV.commitment = gk qG.comm := hpairC (qV, qG) (by simp)
+  | cons q rest ih =>
+      obtain ⟨qV, qG⟩ := q
+      have hqL : (qV, qG) ∈ L := by
+        rw [hL]
+        simp
+      have hL' : L = (pre ++ [(qV, qG)]) ++ rest := by
+        rw [hL]
+        simp [List.append_assoc]
+      have hpq : fk qV.point = qG.rotation := hpairP (qV, qG) hqL
+      have hcq : ck qV.commitment = gk qG.comm := hpairC (qV, qG) hqL
       have hfindPts : rots.findIdx? (fun r => r == qG.rotation)
           = pts.findIdx? (fun x => x == qV.point) := by
         have h1 : rots.findIdx? (fun r => r == qG.rotation)
@@ -923,13 +947,18 @@ theorem pass1_step1_sim
         have h3 : pts.findIdx? (fun x => fk x == qG.rotation)
             = pts.findIdx? (fun x => x == qV.point) := by
           rw [← hpq]
-          exact findIdx?_congr pts _ _ (fun x _ => (hPointEq x qV.point).symm)
+          exact findIdx?_congr pts _ _ (fun x hx => by
+            obtain ⟨p, hpL, rfl⟩ := hptMem x hx
+            exact (hPointEq p hpL (qV, qG) hqL).symm)
         exact (h1.trans h2).trans h3
       have hfindCms : gs.findIdx? (fun e => ecPointBeq e.1 qG.comm)
           = cms.findIdx? (fun cd => eqC cd.commitment qV.commitment) := by
         have h2 : gs.findIdx? (fun e => ecPointBeq e.1 qG.comm)
             = gs.findIdx? (fun e => gk e.1 == gk qG.comm) :=
-          findIdx?_congr gs _ _ (fun e _ => hGCommEq e.1 qG.comm)
+          findIdx?_congr gs _ _ (fun e he => by
+            obtain ⟨p, hpL, heq⟩ := hgsMem e he
+            rw [heq]
+            exact hGCommEq p hpL (qV, qG) hqL)
         have h3 : gs.findIdx? (fun e => gk e.1 == gk qG.comm)
             = (gs.map (fun e => gk e.1)).findIdx? (fun k => k == gk qG.comm) := by
           change List.findIdx? (fun e => gk e.1 == gk qG.comm) gs =
@@ -947,7 +976,10 @@ theorem pass1_step1_sim
             (p := fun k => k == gk qG.comm)
         have h1 : cms.findIdx? (fun cd => eqC cd.commitment qV.commitment)
             = cms.findIdx? (fun cd => ck cd.commitment == ck qV.commitment) :=
-          findIdx?_congr cms _ _ (fun cd _ => hCommEq cd.commitment qV.commitment)
+          findIdx?_congr cms _ _ (fun cd hcd => by
+            obtain ⟨p, hpL, heq⟩ := hcmMem cd hcd
+            rw [heq]
+            exact hCommEq p hpL (qV, qG) hqL)
         have h1b : cms.findIdx? (fun cd => ck cd.commitment == ck qV.commitment)
             = cms.findIdx? (fun cd => ck cd.commitment == gk qG.comm) := by
           rw [hcq]
@@ -1010,12 +1042,22 @@ theorem pass1_step1_sim
                 · rw [List.mem_singleton] at he
                   subst he
                   simp
-              exact ih (pts ++ [qV.point]) (rots ++ [qG.rotation])
+              have hptMem' : ∀ x ∈ pts ++ [qV.point], ∃ p ∈ L, x = p.1.point :=
+                forall_mem_append_singleton _ pts qV.point hptMem
+                  ⟨(qV, qG), hqL, rfl⟩
+              have hcmMem' : ∀ cd ∈ cms ++ [cdNew],
+                  ∃ p ∈ L, cd.commitment = p.1.commitment :=
+                forall_mem_append_singleton _ cms cdNew hcmMem
+                  ⟨(qV, qG), hqL, by simp [cdNew, CommitmentData.new]⟩
+              have hgsMem' : ∀ e ∈ gs ++ [(qG.comm, [rots.length], [qG.eval])],
+                  ∃ p ∈ L, e.1 = p.2.comm :=
+                forall_mem_append_singleton _ gs _ hgsMem
+                  ⟨(qV, qG), hqL, rfl⟩
+              exact ih (pre ++ [(qV, qG)]) hL' (pts ++ [qV.point]) (rots ++ [qG.rotation])
                 (cms ++ [cdNew])
                 (gs ++ [(qG.comm, [rots.length], [qG.eval])])
                 hrots' hcomm' hidx' hndC' hndG'
-                (fun pp hp => hpairP pp (by simp [hp]))
-                (fun pp hp => hpairC pp (by simp [hp]))
+                hcmMem' hgsMem' hptMem'
                 hV hrest
           | some pos =>
               rw [hcm] at hstep hV
@@ -1131,12 +1173,27 @@ theorem pass1_step1_sim
                     exact forall_mem_take_append_drop (fun e => e.2.1.Nodup) gs pos
                       (comm, pis ++ [rots.length], evals ++ [qG.eval])
                       (fun b hb => hndG b hb) hnew
-                  exact ih (pts ++ [qV.point]) (rots ++ [qG.rotation])
+                  have hptMem' : ∀ x ∈ pts ++ [qV.point], ∃ p ∈ L, x = p.1.point :=
+                    forall_mem_append_singleton _ pts qV.point hptMem
+                      ⟨(qV, qG), hqL, rfl⟩
+                  have hcmMem' : ∀ cd ∈ listReplaceAt cms pos cdNew,
+                      ∃ p ∈ L, cd.commitment = p.1.commitment :=
+                    forall_mem_listReplaceAt _ cms pos cdNew hcmMem
+                      (by simpa [cdNew] using hcmMem (cms[pos]) (List.getElem_mem hpos))
+                  have hcommMem : ∃ p ∈ L, comm = p.2.comm := by
+                    obtain ⟨p, hpL, heq⟩ := hgsMem (gs[pos]) (List.getElem_mem hposG)
+                    rw [hgse] at heq
+                    exact ⟨p, hpL, heq⟩
+                  have hgsMem' : ∀ e ∈ gs.take pos ++
+                      [(comm, pis ++ [rots.length], evals ++ [qG.eval])] ++ gs.drop (pos + 1),
+                      ∃ p ∈ L, e.1 = p.2.comm :=
+                    forall_mem_take_append_drop _ gs pos _
+                      hgsMem hcommMem
+                  exact ih (pre ++ [(qV, qG)]) hL' (pts ++ [qV.point]) (rots ++ [qG.rotation])
                     (listReplaceAt cms pos cdNew)
                     (gs.take pos ++ [(comm, pis ++ [rots.length], evals ++ [qG.eval])] ++ gs.drop (pos + 1))
                     hrots' hcomm' hidx' hndC' hndG'
-                    (fun pp hp => hpairP pp (by simp [hp]))
-                    (fun pp hp => hpairC pp (by simp [hp]))
+                    hcmMem' hgsMem' hptMem'
                     hV hrest
       | some pidx =>
           rw [hpt] at hstep hV
@@ -1180,11 +1237,18 @@ theorem pass1_step1_sim
                 · rw [List.mem_singleton] at he
                   subst he
                   simp
-              exact ih pts rots (cms ++ [cdNew])
+              have hcmMem' : ∀ cd ∈ cms ++ [cdNew],
+                  ∃ p ∈ L, cd.commitment = p.1.commitment :=
+                forall_mem_append_singleton _ cms cdNew hcmMem
+                  ⟨(qV, qG), hqL, by simp [cdNew, CommitmentData.new]⟩
+              have hgsMem' : ∀ e ∈ gs ++ [(qG.comm, [pidx], [qG.eval])],
+                  ∃ p ∈ L, e.1 = p.2.comm :=
+                forall_mem_append_singleton _ gs _ hgsMem
+                  ⟨(qV, qG), hqL, rfl⟩
+              exact ih (pre ++ [(qV, qG)]) hL' pts rots (cms ++ [cdNew])
                 (gs ++ [(qG.comm, [pidx], [qG.eval])])
                 hrots hcomm' hidx' hndC' hndG'
-                (fun pp hp => hpairP pp (by simp [hp]))
-                (fun pp hp => hpairC pp (by simp [hp]))
+                hcmMem' hgsMem' hptMem
                 hV hrest
           | some pos =>
               rw [hcm] at hstep hV
@@ -1294,11 +1358,23 @@ theorem pass1_step1_sim
                     exact forall_mem_take_append_drop (fun e => e.2.1.Nodup) gs pos
                       (comm, pis ++ [pidx], evals ++ [qG.eval])
                       (fun b hb => hndG b hb) hnew
-                  exact ih pts rots (listReplaceAt cms pos cdNew)
+                  have hcmMem' : ∀ cd ∈ listReplaceAt cms pos cdNew,
+                      ∃ p ∈ L, cd.commitment = p.1.commitment :=
+                    forall_mem_listReplaceAt _ cms pos cdNew hcmMem
+                      (by simpa [cdNew] using hcmMem (cms[pos]) (List.getElem_mem hpos))
+                  have hcommMem : ∃ p ∈ L, comm = p.2.comm := by
+                    obtain ⟨p, hpL, heq⟩ := hgsMem (gs[pos]) (List.getElem_mem hposG)
+                    rw [hgse] at heq
+                    exact ⟨p, hpL, heq⟩
+                  have hgsMem' : ∀ e ∈ gs.take pos ++
+                      [(comm, pis ++ [pidx], evals ++ [qG.eval])] ++ gs.drop (pos + 1),
+                      ∃ p ∈ L, e.1 = p.2.comm :=
+                    forall_mem_take_append_drop _ gs pos _
+                      hgsMem hcommMem
+                  exact ih (pre ++ [(qV, qG)]) hL' pts rots (listReplaceAt cms pos cdNew)
                     (gs.take pos ++ [(comm, pis ++ [pidx], evals ++ [qG.eval])] ++ gs.drop (pos + 1))
                     hrots hcomm' hidx' hndC' hndG'
-                    (fun pp hp => hpairP pp (by simp [hp]))
-                    (fun pp hp => hpairC pp (by simp [hp]))
+                    hcmMem' hgsMem' hptMem
                     hV hrest
 
 
@@ -1397,6 +1473,20 @@ theorem intermediateSets_parts (meta_ : ConstraintSystemMeta) (data : Data)
       simp only [Bind.bind, Except.bind] at hrest
       exact ⟨qs, sets, hq, hci, hrest⟩
 
+theorem Data.new_dummyEvalWords (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey)
+    (mem : VerifierMemoryLayout) (d : Data) (h : Data.new meta_ vk mem = .ok d) :
+    d.dummyEvalWords = [] := by
+  unfold Data.new at h
+  simp only [Bind.bind, Except.bind] at h
+  split at h
+  · cases h
+  · obtain ⟨slots, _hslots, h1⟩ := except_bind_ok h
+    obtain ⟨permZEvals, _hp, h2⟩ := except_bind_ok h1
+    obtain ⟨lookupEvals, _hl, h3⟩ := except_bind_ok h2
+    obtain ⟨trashEvals, _ht, h4⟩ := except_bind_ok h3
+    cases h4
+    rfl
+
 theorem numPointSets_eq_of_queries
     (meta_ : ConstraintSystemMeta) (data : Data)
     (qs : List Query) (sets out : IntermediateSets)
@@ -1464,20 +1554,156 @@ structure KzgQueryMapData {F C : Type} [BEq F]
   hGlist : queriesG = L.map Prod.snd
   hpairP : ∀ x ∈ L, fk x.1.point = x.2.rotation
   hpairC : ∀ x ∈ L, ck x.1.commitment = gk x.2.comm
-  hCommEq : ∀ a b, eqC a b = (ck a == ck b)
-  hGCommEq : ∀ a b, ecPointBeq a b = (gk a == gk b)
-  hPointEq : ∀ a b, (a == b) = (fk a == fk b)
+  hCommEq : ∀ p ∈ L, ∀ p' ∈ L,
+    eqC p.1.commitment p'.1.commitment = (ck p.1.commitment == ck p'.1.commitment)
+  hGCommEq : ∀ p ∈ L, ∀ p' ∈ L,
+    ecPointBeq p.2.comm p'.2.comm = (gk p.2.comm == gk p'.2.comm)
+  hPointEq : ∀ p ∈ L, ∀ p' ∈ L,
+    (p.1.point == p'.1.point) = (fk p.1.point == fk p'.1.point)
+
+theorem findIdx?_eq_of_equiv {α : Type} (l : List α) (r : α → α → Bool)
+    (hrefl : ∀ a ∈ l, r a a = true)
+    (hsymm : ∀ a ∈ l, ∀ b ∈ l, r a b = r b a)
+    (htrans : ∀ a ∈ l, ∀ b ∈ l, ∀ c ∈ l,
+      r a b = true → r b c = true → r a c = true)
+    {a b : α} (ha : a ∈ l) (hb : b ∈ l) :
+    r a b = (l.findIdx? (r a) == l.findIdx? (r b)) := by
+  have hsomeA : (l.findIdx? (r a)).isSome = true := by
+    rw [List.findIdx?_isSome]
+    exact List.any_eq_true.mpr ⟨a, ha, hrefl a ha⟩
+  have hsomeB : (l.findIdx? (r b)).isSome = true := by
+    rw [List.findIdx?_isSome]
+    exact List.any_eq_true.mpr ⟨b, hb, hrefl b hb⟩
+  cases hia : l.findIdx? (r a) with
+  | none => rw [hia] at hsomeA; cases hsomeA
+  | some i0 =>
+  cases hib : l.findIdx? (r b) with
+  | none => rw [hib] at hsomeB; cases hsomeB
+  | some j0 =>
+  obtain ⟨hi0, hpredA, hminA⟩ := List.findIdx?_eq_some_iff_getElem.mp hia
+  obtain ⟨hj0, hpredB, hminB⟩ := List.findIdx?_eq_some_iff_getElem.mp hib
+  have hleA : ∀ (j : Nat) (hj : j < l.length), r a l[j] = true → i0 ≤ j := by
+    intro j hj hpred
+    by_contra hlt
+    exact hminA j (by omega) hpred
+  have hleB : ∀ (j : Nat) (hj : j < l.length), r b l[j] = true → j0 ≤ j := by
+    intro j hj hpred
+    by_contra hlt
+    exact hminB j (by omega) hpred
+  by_cases hab : r a b = true
+  · have hba : r b a = true := by
+      rw [← hsymm a ha b hb]
+      exact hab
+    have hbi0 : r b l[i0] = true :=
+      htrans b hb a ha l[i0] (List.getElem_mem hi0) hba hpredA
+    have hle1 : j0 ≤ i0 := hleB i0 hi0 hbi0
+    have haj0 : r a l[j0] = true :=
+      htrans a ha b hb l[j0] (List.getElem_mem hj0) hab hpredB
+    have hle2 : i0 ≤ j0 := hleA j0 hj0 haj0
+    have heq : i0 = j0 := by omega
+    subst heq
+    simp [hab]
+  · have habf : r a b = false := by simpa using hab
+    have hbf : r b a = false := by
+      rw [← hsymm a ha b hb]
+      exact habf
+    have hne : i0 ≠ j0 := by
+      intro heq
+      subst heq
+      have haj : r a l[i0] = true := hpredA
+      have hbj : r b l[i0] = true := hpredB
+      have hcontra : r a b = true :=
+        htrans a ha l[i0] (List.getElem_mem hi0) b hb haj (by
+          rw [hsymm l[i0] (List.getElem_mem hi0) b hb]
+          exact hbj)
+      rw [habf] at hcontra
+      cases hcontra
+    have hbeq : (some i0 == some j0) = false := by
+      rw [Bool.eq_false_iff]
+      intro h
+      exact hne (Option.some.inj (beq_iff_eq.mp h))
+    rw [hbeq]
+    exact habf
+
+noncomputable def ckOf {F C : Type} (eqC : CommitmentReference F C → CommitmentReference F C → Bool)
+    (L : List (VerifierQuery F C × Query)) (a : CommitmentReference F C) : Option Nat :=
+  L.findIdx? (fun p => eqC a p.1.commitment)
+
+noncomputable def gkOf {F C : Type} (L : List (VerifierQuery F C × Query)) (c : EcPoint) : Option Nat :=
+  L.findIdx? (fun p => ecPointBeq c p.2.comm)
+
+noncomputable def KzgQueryMapData.ofList {F C : Type} [BEq F]
+    (eqC : CommitmentReference F C → CommitmentReference F C → Bool)
+    (queriesV : Array (VerifierQuery F C)) (queriesG : List Query)
+    (L : List (VerifierQuery F C × Query))
+    (hVlist : queriesV.toList = L.map Prod.fst)
+    (hGlist : queriesG = L.map Prod.snd)
+    (fk : F → Int) (hPointEq : ∀ a b, (a == b) = (fk a == fk b))
+    (hpairP : ∀ p ∈ L, fk p.1.point = p.2.rotation)
+    (hclass : ∀ p ∈ L, ∀ p' ∈ L,
+      eqC p.1.commitment p'.1.commitment = ecPointBeq p.2.comm p'.2.comm)
+    (hCommRefl : ∀ p ∈ L, eqC p.1.commitment p.1.commitment = true)
+    (hCommSymm : ∀ p ∈ L, ∀ p' ∈ L,
+      eqC p.1.commitment p'.1.commitment = eqC p'.1.commitment p.1.commitment)
+    (hCommTrans : ∀ p ∈ L, ∀ p' ∈ L, ∀ p'' ∈ L,
+      eqC p.1.commitment p'.1.commitment = true →
+      eqC p'.1.commitment p''.1.commitment = true →
+      eqC p.1.commitment p''.1.commitment = true)
+    (hGRefl : ∀ p ∈ L, ecPointBeq p.2.comm p.2.comm = true)
+    (hGSymm : ∀ p ∈ L, ∀ p' ∈ L,
+      ecPointBeq p.2.comm p'.2.comm = ecPointBeq p'.2.comm p.2.comm)
+    (hGTrans : ∀ p ∈ L, ∀ p' ∈ L, ∀ p'' ∈ L,
+      ecPointBeq p.2.comm p'.2.comm = true →
+      ecPointBeq p'.2.comm p''.2.comm = true →
+      ecPointBeq p.2.comm p''.2.comm = true) :
+    KzgQueryMapData eqC queriesV queriesG := by
+  refine
+    { K := Option Nat
+      beqK := inferInstance
+      lawfulK := inferInstance
+      fk := fk
+      ck := ckOf eqC L
+      gk := gkOf L
+      L := L
+      hVlist := hVlist
+      hGlist := hGlist
+      hpairP := hpairP
+      hpairC := ?_
+      hCommEq := ?_
+      hGCommEq := ?_
+      hPointEq := ?_ }
+  · intro p hp
+    have hidx : L.findIdx? (fun p' => eqC p.1.commitment p'.1.commitment) =
+        L.findIdx? (fun p' => ecPointBeq p.2.comm p'.2.comm) :=
+      findIdx?_congr L _ _ (fun p' hp' => hclass p hp p' hp')
+    simpa [ckOf, gkOf] using hidx
+  · intro p hp p' hp'
+    have h := findIdx?_eq_of_equiv L
+      (fun p p' => eqC p.1.commitment p'.1.commitment)
+      hCommRefl hCommSymm hCommTrans hp hp'
+    simpa [ckOf] using h
+  · intro p hp p' hp'
+    have h := findIdx?_eq_of_equiv L
+      (fun p p' => ecPointBeq p.2.comm p'.2.comm)
+      hGRefl hGSymm hGTrans hp hp'
+    simpa [gkOf] using h
+  · intro p hp p' hp'
+    exact hPointEq p.1.point p'.1.point
+
 
 theorem constructIntermediateSets_pointSets_size_eq_of_queryMap
     {F C K : Type} [Field F] [BEq F] [BEq K]
     [LawfulBEq F] [LawfulBEq K]
     (eqC : CommitmentReference F C → CommitmentReference F C → Bool)
     (fk : F → Int) (ck : CommitmentReference F C → K) (gk : EcPoint → K)
-    (hCommEq : ∀ a b, eqC a b = (ck a == ck b))
-    (hGCommEq : ∀ a b, ecPointBeq a b = (gk a == gk b))
-    (hPointEq : ∀ a b, (a == b) = (fk a == fk b))
-    (queriesV : Array (VerifierQuery F C)) (queriesG : List Query)
     (L : List (VerifierQuery F C × Query))
+    (hCommEq : ∀ p ∈ L, ∀ p' ∈ L,
+      eqC p.1.commitment p'.1.commitment = (ck p.1.commitment == ck p'.1.commitment))
+    (hGCommEq : ∀ p ∈ L, ∀ p' ∈ L,
+      ecPointBeq p.2.comm p'.2.comm = (gk p.2.comm == gk p'.2.comm))
+    (hPointEq : ∀ p ∈ L, ∀ p' ∈ L,
+      (p.1.point == p'.1.point) = (fk p.1.point == fk p'.1.point))
+    (queriesV : Array (VerifierQuery F C)) (queriesG : List Query)
     (hVlist : queriesV.toList = L.map Prod.fst)
     (hGlist : queriesG = L.map Prod.snd)
     (hpairP : ∀ p ∈ L, fk p.1.point = p.2.rotation)
@@ -1506,8 +1732,9 @@ theorem constructIntermediateSets_pointSets_size_eq_of_queryMap
     rw [← hGlist]
     exact hstepFold
   have hsim := pass1_step1_sim (eqC := eqC) (fk := fk) (ck := ck) (gk := gk)
-    hCommEq hGCommEq hPointEq L [] [] [] [] points step1.2 cm0 step1.1
-    rfl rfl rfl (by simp) (by simp) hpairP hpairC hV1 hG1
+    L hCommEq hGCommEq hPointEq [] L rfl [] [] [] [] points step1.2 cm0 step1.1
+    rfl rfl rfl (by simp) (by simp) (by simp) (by simp) (by simp)
+    hpairP hpairC hV1 hG1
   obtain ⟨_hrots, _hcomm, hidx, hndC, _hndG⟩ := hsim
   -- verifier count
   have hsetsFold : setsV = cm0.foldl (fun acc cd => addKeyFind acc (natSort cd.pointIndices.toList)) [] := by

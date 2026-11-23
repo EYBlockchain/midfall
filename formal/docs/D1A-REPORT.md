@@ -315,3 +315,50 @@ EXACT RESIDUAL AND INTERFACE OBSTRUCTION:
 
 W12 remains green (`kzgPartitionBridge_false_at_x0`); no statement was weakened
 and no row/bundle/root gained a hypothesis.
+
+## Local/relational `KzgQueryMapData` (supersedes the global key fields)
+
+The global `hCommEq`/`hGCommEq` fields of the merged datum were the wrong
+interface for the real verifier (`kzgCommitBeq` compares `.onePiece` by slot,
+`ecPointBeq` by pointer). The datum is now **tail-local**:
+
+* `KzgQueryMapData.hCommEq`, `hGCommEq`, `hPointEq` quantify only over pairs in
+  the datum's paired list `L` (not over all `CommitmentReference`s/`EcPoint`s).
+* `pass1_step1_sim` takes the same local hypotheses plus an explicit
+  `pre`/`suffix` split (`L = pre ++ suffix`) and provenance of the verifier's
+  `cms`/`gs`/`pts` state in `L`. The provenance is maintained per step; the
+  counting theorem starts at `pre = []`, `suffix = L`, empty state.
+* The counting theorem `constructIntermediateSets_pointSets_size_eq_of_queryMap`
+  and the consumers `KzgPartitionBridge_of_queryMap` /
+  `KzgMultiPrepareWidths_of_queryMap` are unchanged in statement but now consume
+  the local fields.
+
+CONSTRUCTORS LANDED:
+
+* `findIdx?_eq_of_equiv`: the first-index characterization of an equivalence
+  relation on a list (`r a b = (idx a == idx b)`), used to turn per-tail
+  equivalence classes into keys.
+* `KzgQueryMapData.ofList`: builds the local datum with `K := Option Nat`,
+  `ck a := L.findIdx? (eqC a ·.commitment)`, `gk c := L.findIdx? (ecPointBeq c ·.comm)`.
+  It proves `hpairC` from `hclass` by pointwise predicate equality, and
+  `hCommEq`/`hGCommEq` from the restricted reflexivity/symmetry/transitivity
+  facts. `hPointEq` is the global point-key equality.
+* `KzgQueryMapData.ofRotations`: instantiates `ofList` with the global
+  `exists_pointKey` rotation key. Inputs are the actual point/rotation relation
+  (`hpairPoint`), the rotation-list membership (`hrot`), and the per-tail
+  `hclass`/equivalence data. `Data.new_dummyEvalWords` is proved, and
+  `planMeta_numPointSets_generator` no longer takes `hdummy`.
+
+EXACT remaining datum inputs for one `linearize` output:
+
+1. the paired list `L` and its two projections: the `linearize` query vector
+   and `Generator.queries R.plan.meta_ R.plan.data` in the same order
+   (`collectQueries` order vs `ProtocolPlan.fromConstraintSystem` order);
+2. `hpairPoint`: `qV.point = x·ω^qG.rotation` for every pair;
+3. `hclass` and the equivalence facts for `kzgCommitBeq`/`ecPointBeq` over `L`.
+   The `.linear`-vs-`computedQuotientComm` entry is the remaining per-entry
+   identity: `kzgCommitBeq` on the verifier's `.linear` query must match
+   `ecPointBeq` on the generator's `computedQuotientComm`, and the
+   committed-instance aliasing (`G1_IDENTITY_MPTR`) must be absent from the
+   actual query list. `ofList` consumes exactly these facts; it does not assume
+   them globally.
