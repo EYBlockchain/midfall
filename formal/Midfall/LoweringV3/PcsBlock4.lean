@@ -242,6 +242,50 @@ theorem b1_eval_sub_from_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
                   rw [← hrEq, hsubv]
                   rfl
 
+theorem b1_eval_mload_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p : String} {off : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mload
+        [GenAst.yop EVM.Op.add [GenAst.yvar p, GenAst.ylit off]]) (.vals [cv] st')) :
+    ∃ pv, VEnv.get V p = some pv ∧
+      cv = loadWord st.memory (pv + BitVec.ofNat 256 off).toNat ∧
+      st' = touchMemory st (pv + BitVec.ofNat 256 off).toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil harg =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨pv, hpv, haddr, hst1⟩ := b1_eval_add_var_lit_inv harg
+          rw [hst1] at hbi
+          simp only [builtinWithExternal, stepOp] at hbi
+          cases hbi
+          exact ⟨pv, hpv, by rw [haddr], by rw [haddr]⟩
+
+theorem b1_eval_calldataload_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p : String} {off : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.calldataload
+        [GenAst.yop EVM.Op.add [GenAst.yvar p, GenAst.ylit off]]) (.vals [cv] st')) :
+    ∃ pv, VEnv.get V p = some pv ∧
+      cv = wordFrom st.env.calldata (pv + BitVec.ofNat 256 off).toNat ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil harg =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨pv, hpv, haddr, hst1⟩ := b1_eval_add_var_lit_inv harg
+          rw [hst1] at hbi
+          simp only [builtinWithExternal, stepOp] at hbi
+          cases hbi
+          exact ⟨pv, hpv, by rw [haddr], rfl⟩
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mload_add_var_lit_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_calldataload_add_var_lit_inv
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_vars_inv
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_addmod_vars_inv
