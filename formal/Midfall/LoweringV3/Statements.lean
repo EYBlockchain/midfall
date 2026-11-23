@@ -32,6 +32,7 @@
 import Midfall.LoweringV2.Blocks
 import Midfall.LoweringV2.Generated
 import Midfall.LoweringV2.ProgramLemmas
+import Midfall.LoweringV3.RunMono
 set_option autoImplicit false
 
 namespace Midfall.LoweringV3
