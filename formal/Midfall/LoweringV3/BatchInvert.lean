@@ -1135,7 +1135,7 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
         VEnv.get V "all_inv" = some invAll ∧ VEnv.get V "r" = some rw ∧
         (VEnv.get V "ret").isSome ∧
-        (∀ i, i ≤ k - 2 → loadWord st.memory (s + 32 * i) = fwdProd st.memory a rw (i + 1)) ∧
+        (∀ i, i ≤ k - 3 → loadWord st.memory (s + 32 * i) = fwdProd st.memory a rw (i + 1)) ∧
         (∀ i, i < k → (loadWord st.memory (a + 32 * i)).toNat < rw.toNat) ∧
         wMulmodAt invAll (fwdProd st.memory a rw (k - 1)) rw = 1)
       (fun _ st V' st' o => o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
