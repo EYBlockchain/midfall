@@ -4235,6 +4235,25 @@ theorem bytesAt_calldatacopy_cdSlice (st : EvmState) (cd : Bytes) (dst src n : N
   congr 1
   rw [show src + (dst - dst) = src from by omega]
 
+/-- **THE COORDINATE RANGE CHECK AS A `Nat` FACT.** `common_uncompressed_g1` writes
+    its two coordinate checks as `iszero(or(lt(hi, BLS_P_HI), and(eq(hi, BLS_P_HI),
+    iszero(gt(lo, BLS_P_MINUS_ONE_LO)))))`; at `BitVec 256` the *passing* check (the
+    `iszero` value being zero) is this `b2w (decide (b2w or = 0)) = 0`, and it holds
+    exactly when `hi.toNat < BLS_P_HI ∨ (hi.toNat = BLS_P_HI ∧ lo.toNat ≤
+    BLS_P_MINUS_ONE_LO)`. -/
+theorem coordCheck_to_nat (xh xl hi lo : U256) :
+    (b2w (decide (b2w (xh.ult hi || ((xh == hi) && !(lo.ult xl))) = 0))) = (0 : U256) ↔
+      (xh.toNat < hi.toNat ∨ (xh.toNat = hi.toNat ∧ xl.toNat ≤ lo.toNat)) := by
+  rw [Midfall.Yul.WpTac.b2w_eq_zero_iff, decide_eq_false_iff_not,
+    Midfall.Yul.WpTac.b2w_eq_zero_iff]
+  have hiff : (¬((xh.ult hi || ((xh == hi) && !(lo.ult xl))) = false))
+      ↔ (xh.ult hi || ((xh == hi) && !(lo.ult xl))) = true := by
+    cases hb : (xh.ult hi || ((xh == hi) && !(lo.ult xl))) <;> simp
+  rw [hiff]
+  simp only [Bool.or_eq_true, Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq,
+    BitVec.ult_eq_decide, decide_eq_true_eq, decide_eq_false_iff_not, BitVec.toNat_eq]
+  omega
+
 set_option maxRecDepth 100000
 
 theorem nat_lor_mul_two_pow (X b : Nat) (hb : b < 2 ^ 8) :
@@ -4807,6 +4826,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.coordLt_pBase [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1WordsOk_of_checks [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wordFrom_eq_cdWord [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.coordCheck_to_nat [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonG1_inline [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_calldatacopy_cdSlice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSize_of_envelope [propext, Classical.choice, Quot.sound] native []
