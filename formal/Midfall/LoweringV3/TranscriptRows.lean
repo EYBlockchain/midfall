@@ -2841,6 +2841,206 @@ theorem fpSimple_filter_cons (cs : ConstraintSystem (Fr p))
   · simp only [List.filter_cons, h, if_true, List.length_cons]; omega
   · simp only [List.filter_cons, h, Bool.false_eq_true, if_false, List.length_cons]; omega
 
+theorem runsAllP_fixed_fold_aux (E : VerifierEnv p G₁ G₂ Gₜ) (cs : ConstraintSystem (Fr p))
+    (init : List (Fr p)) (hinit : init.length = cs.numFixedColumns - cs.numSimpleSelectors) :
+    ∀ (steps : List (Nat × (Column × Rotation))) (start done : Nat) (acc : List (Fr p)),
+      acc.length = init.length + done →
+      done ≤ start →
+      (∀ k < steps.length, (steps[k]?).map Prod.fst = some (start + k)) →
+      start + steps.length ≤ cs.numFixedColumns →
+      done + (steps.filter (fpSimple? cs)).length ≥ cs.numSimpleSelectors →
+      RunsAllP E (steps.foldlM (fpInsertStep cs) acc) []
+        (fun out => out.length = acc.length + (steps.filter (fpSimple? cs)).length) := by
+  intro steps
+  induction steps with
+  | nil =>
+      intro start done acc hacc hdone hidx hbound hcount
+      refine RunsAllP.pure E acc _ ?_
+      simp only [List.foldlM_nil, List.filter_nil, List.length_nil, Nat.add_zero]
+  | cons s ss ih =>
+      intro start done acc hacc hdone hidx hbound hcount
+      have hidx0 : s.1 = start := by
+        have h := hidx 0 (by simp)
+        simp only [List.getElem?_cons_zero, Option.map_some, Option.some.injEq] at h
+        exact h
+      have hidx_tail : ∀ k < ss.length, (ss[k]?).map Prod.fst = some (start + 1 + k) := by
+        intro k hk
+        have h := hidx (k + 1) (by simpa using Nat.succ_lt_succ hk)
+        rw [List.getElem?_cons_succ] at h
+        rw [show start + (k + 1) = start + 1 + k by omega] at h
+        exact h
+      have hR : (ss.filter (fpSimple? cs)).length ≤ ss.length :=
+        List.length_filter_le _ _
+      have hcount' : done + (if fpSimple? cs s then 1 else 0) +
+          (ss.filter (fpSimple? cs)).length ≥ cs.numSimpleSelectors := by
+        have h := fpSimple_filter_cons cs s ss
+        rw [h] at hcount
+        omega
+      have hbound' : start + 1 + ss.length ≤ cs.numFixedColumns := by
+        have := hbound
+        simp only [List.length_cons] at this
+        omega
+      have hj : (if fpSimple? cs s then 1 else 0) ≤ 1 := by split <;> omega
+      have hstart : s.1 ≤ acc.length := by
+        rw [hidx0, hacc, hinit]
+        omega
+      cases hs : cs.hasSimpleSelectorCol s.2.1.index
+      · have hsimple0 : (if fpSimple? cs s then 1 else 0) = 0 := by
+          unfold fpSimple?; rw [if_neg (by simp [hs])]
+        rw [hsimple0, Nat.add_zero] at hcount'
+        have hhead : RunsAllP E (fpInsertStep cs acc s) []
+            (fun a => a.length = acc.length + 0) := by
+          unfold fpInsertStep
+          rw [if_neg (by simp [hs])]
+          exact RunsAllP.pure E acc _ (by omega)
+        have hdone' : done ≤ start + 1 := by omega
+        rw [List.foldlM_cons]
+        change RunsAllP E (fpInsertStep cs acc s >>= fun a => ss.foldlM (fpInsertStep cs) a) []
+          (fun out => out.length = acc.length + ((s :: ss).filter (fpSimple? cs)).length)
+        have hb := RunsAllP.bind E (ms₁ := []) (ms₂ := []) hhead
+          (fun a ha => by
+            have hacc_a : a.length = init.length + (done + 0) := by rw [ha, hacc]; omega
+            have htail := ih (start + 1) (done + 0) a hacc_a hdone' hidx_tail hbound' hcount'
+            simpa only [ha, hsimple0, fpSimple_filter_cons, Nat.add_zero, Nat.add_assoc,
+              Nat.zero_add] using htail)
+        rw [List.append_nil] at hb
+        simpa only [hsimple0, fpSimple_filter_cons, Nat.add_zero, Nat.zero_add] using hb
+      · have hsimple1 : (if fpSimple? cs s then 1 else 0) = 1 := by
+          unfold fpSimple?; rw [if_pos hs]
+        rw [hsimple1] at hcount'
+        obtain ⟨ys, hys⟩ := listInsertAt_ok_of_le acc s.1 1 _ (by omega)
+        have hyslen : ys.length = acc.length + 1 := by
+          unfold Midfall.Halo2.Verifier.listInsertAt at hys
+          split at hys
+          · cases hys
+          · rename_i hle
+            injection hys with hys'
+            rw [← hys']
+            simp only [List.length_append, List.length_cons, List.length_nil,
+              List.length_take, List.length_drop]
+            omega
+        have hhead : RunsAllP E (fpInsertStep cs acc s) []
+            (fun a => a.length = acc.length + 1) := by
+          unfold fpInsertStep
+          rw [if_pos hs, hys]
+          exact RunsAllP.lift_ok E ys (fun a => a.length = acc.length + 1) hyslen
+        have hdone' : done + 1 ≤ start + 1 := by omega
+        rw [List.foldlM_cons]
+        change RunsAllP E (fpInsertStep cs acc s >>= fun a => ss.foldlM (fpInsertStep cs) a) []
+          (fun out => out.length = acc.length + ((s :: ss).filter (fpSimple? cs)).length)
+        have hb := RunsAllP.bind E (ms₁ := []) (ms₂ := []) hhead
+          (fun a ha => by
+            have hacc_a : a.length = init.length + (done + 1) := by rw [ha, hacc]; omega
+            have htail := ih (start + 1) (done + 1) a hacc_a hdone' hidx_tail hbound' hcount'
+            simpa only [ha, hsimple1, fpSimple_filter_cons, Nat.add_assoc] using htail)
+        rw [List.append_nil] at hb
+        simpa only [hsimple1, fpSimple_filter_cons, Nat.add_assoc] using hb
+
+theorem filter_snd_zip_length {α β : Type} :
+    ∀ (idx : List β) (l : List α), idx.length = l.length →
+      ∀ p : α → Bool, ((idx.zip l).filter (fun s => p s.2)).length = (l.filter p).length
+  | [], [], _, p => rfl
+  | [], _ :: _, h, p => by simp at h
+  | _ :: _, [], h, p => by simp at h
+  | b :: bs, a :: as, h, p => by
+      have hlen : bs.length = as.length := by simpa using h
+      rw [List.zip_cons_cons, List.filter_cons, List.filter_cons]
+      by_cases hp : p a
+      · simp [hp, filter_snd_zip_length bs as hlen p]
+      · simp [hp, filter_snd_zip_length bs as hlen p]
+
+theorem runsAllP_fixed_fold (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (init : List (Fr p))
+    (hinit : init.length = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors) :
+    RunsAllP E
+      ((List.zip (List.range vk.cs.fixedQueries.size) vk.cs.fixedQueries.toList).foldlM
+        (fpInsertStep vk.cs) init) []
+      (fun out => out.length = init.length +
+        ((List.zip (List.range vk.cs.fixedQueries.size) vk.cs.fixedQueries.toList).filter
+          (fpSimple? vk.cs)).length) := by
+  have hlen : (List.zip (List.range vk.cs.fixedQueries.size)
+      vk.cs.fixedQueries.toList).length = vk.cs.fixedQueries.toList.length := by
+    rw [List.length_zip]; simp
+  have hidx : ∀ k < (List.zip (List.range vk.cs.fixedQueries.size)
+        vk.cs.fixedQueries.toList).length,
+      ((List.zip (List.range vk.cs.fixedQueries.size) vk.cs.fixedQueries.toList)[k]?).map
+        Prod.fst = some (0 + k) := by
+    intro k hk
+    have hk' : k < vk.cs.fixedQueries.toList.length := by rw [← hlen]; exact hk
+    simpa using zip_range_fst vk.cs.fixedQueries.toList hk'
+  have hbound : 0 + (List.zip (List.range vk.cs.fixedQueries.size)
+      vk.cs.fixedQueries.toList).length ≤ vk.cs.numFixedColumns := by
+    rw [hlen]
+    simpa using hf.fixedQueriesBound
+  have hcount : 0 + ((List.zip (List.range vk.cs.fixedQueries.size)
+        vk.cs.fixedQueries.toList).filter (fpSimple? vk.cs)).length ≥
+      vk.cs.numSimpleSelectors := by
+    rw [show ((List.zip (List.range vk.cs.fixedQueries.size)
+          vk.cs.fixedQueries.toList).filter (fpSimple? vk.cs)).length =
+        (vk.cs.fixedQueries.toList.filter
+          (fun q => vk.cs.hasSimpleSelectorCol q.1.index)).length from
+      filter_snd_zip_length (List.range vk.cs.fixedQueries.size)
+        vk.cs.fixedQueries.toList (by simp)
+        (fun q => vk.cs.hasSimpleSelectorCol q.1.index)]
+    simpa using hf.simpleSelectorQueriesBound
+  exact runsAllP_fixed_fold_aux E vk.cs init hinit _ 0 0 init (by omega) (by omega)
+    hidx hbound hcount
+
+theorem runsAllP_readFixedEvals (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (qs : List (Fr p))
+    (hlen : qs.length = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors) :
+    RunsAllP E (Midfall.Halo2.Verifier.readFixedEvals (p := p) vk.cs)
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+      (fun out => out.size = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors +
+        ((List.zip (List.range vk.cs.fixedQueries.size) vk.cs.fixedQueries.toList).filter
+          (fpSimple? vk.cs)).length) := by
+  unfold Midfall.Halo2.Verifier.readFixedEvals
+  rw [if_neg (by have := hf.fixedSelectorBound; omega)]
+  dsimp only
+  have hgrp : RunsAllP E (tmReadN (hashableFr (p := p))
+      (vk.cs.numFixedColumns - vk.cs.numSimpleSelectors))
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+      (fun arr => arr.size = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors) :=
+    runsAllP_tmReadN_fr E _ qs hlen
+  have hb := RunsAllP.bind E (ms₁ := qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) (ms₂ := [])
+    hgrp (fun arr ha => by
+      have hinit : arr.toList.length =
+          vk.cs.numFixedColumns - vk.cs.numSimpleSelectors := by
+        rw [Array.length_toList]; exact ha
+      have hfold := runsAllP_fixed_fold E vk hf arr.toList hinit
+      have hb2 := RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := []) hfold
+        (fun out hout => RunsAllP.pure E out.toArray
+          (fun a : Array (Fr p) => a.size = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors +
+            ((List.zip (List.range vk.cs.fixedQueries.size)
+              vk.cs.fixedQueries.toList).filter (fpSimple? vk.cs)).length)
+          (by rw [List.size_toArray, hout, hinit]))
+      rw [List.nil_append] at hb2
+      simpa using hb2)
+  rw [List.append_nil] at hb
+  exact hb
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem runsAll_readFixedEvals (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (qs : List (Fr p))
+    (hlen : qs.length = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors) :
+    RunsAll E (Midfall.Halo2.Verifier.readFixedEvals (p := p) vk.cs)
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) :=
+  (runsAllP_readFixedEvals E vk hf qs hlen).toRunsAll
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -4854,6 +5054,11 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.i32Abs_zero [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.zip_range_fst [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.fpSimple_filter_cons [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_fixed_fold_aux [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.filter_snd_zip_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_fixed_fold [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_readFixedEvals [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readFixedEvals [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
