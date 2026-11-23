@@ -2149,6 +2149,58 @@ theorem foldlM_take_prefix (protocol : ProtocolPlan) (expected : CommitmentRead)
       · simp [hres, hst1, List.append_assoc]
       · simp [hlen]
 
+/-- The i-th section of the fold has the i-th count (with the initial-list offset). -/
+theorem foldlM_take_nth (protocol : ProtocolPlan) (expected : CommitmentRead) (label : String) :
+    ∀ (counts : List Nat) (init res : List ProofSection × Nat × Nat) (i : Nat)
+      (s : ProofSection),
+      counts.foldlM
+        (fun st count =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2 expected count label).bind
+            fun x => Except.ok (st.1 ++ [x.1], x.2.1, x.2.2)) init = .ok res →
+      init.1.length ≤ i →
+      res.1[i]? = some s →
+      ∃ c, counts[i - init.1.length]? = some c ∧ s.itemCount = c := by
+  intro counts
+  induction counts with
+  | nil =>
+      intro init res i s h hle hs
+      simp only [List.foldlM_nil] at h
+      cases h
+      have hnone : init.1[i]? = none := List.getElem?_eq_none_iff.mpr (by omega)
+      rw [hnone] at hs
+      cases hs
+  | cons c rest ih =>
+      intro init res i s h hle hs
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst⟩ := except_bind_ok _ _ h1
+      have hst1 : st1.1 = init.1 ++ [x.1] := by cases hst; rfl
+      have hxc : x.1.itemCount = c :=
+        (takeCommitmentSection_shape protocol init.2.1 init.2.2 expected c label hx).1
+      obtain ⟨extra, hres, hlen⟩ := foldlM_take_prefix protocol expected label rest st1 res h2
+      by_cases hi : i = init.1.length
+      · subst hi
+        have hget : res.1[init.1.length]? = some x.1 := by
+          rw [hres, hst1, List.getElem?_append]
+          simp
+        rw [hget] at hs
+        have hseq : s = x.1 := (Option.some.inj hs).symm
+        subst hseq
+        exact ⟨c, by simp, hxc⟩
+      · have hlt : init.1.length < i := lt_of_le_of_ne hle (Ne.symm hi)
+        have hle' : st1.1.length ≤ i := by
+          rw [hst1, List.length_append]
+          simp
+          omega
+        obtain ⟨c', hc', hsc'⟩ := ih st1 res i s h2 hle' hs
+        have hst1len : st1.1.length = init.1.length + 1 := by rw [hst1]; simp
+        rw [hst1len] at hc'
+        refine ⟨c', ?_, hsc'⟩
+        have hidx : i - init.1.length = (i - (init.1.length + 1)) + 1 := by omega
+        rw [hidx]
+        rw [List.getElem?_cons_succ]
+        exact hc'
+
 /-- The lookup fold appends one row per `(lookup, chunks)` pair. -/
 theorem foldlM_lookups_length (protocol : ProtocolPlan) :
     ∀ (pairs : List (Nat × Nat))
