@@ -3826,7 +3826,9 @@ theorem runBody_mono (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256) (c c' :
     (g : ExternalGas) (st₀ : EvmState) (obs : Obs)
     (hcc : ∀ req st r, c.Call req st r → c'.Call req st r)
     (h : RunBody R vkAddr qAddr c g st₀ obs) : RunBody R vkAddr qAddr c' g st₀ obs := by
-  sorry
+  rw [RunBody] at h ⊢
+  obtain ⟨V', hrun⟩ := h
+  exact Midfall.LoweringV3.RunMono.RunCommitted_mono (c := c) (c' := c') hcc hrun
 
 /-- CONSEQUENCE, PROVED from `runBody_mono`: totality gives a permissive run, so conjuncts 1 and 3
     are not vacuous at any entry frame. -/
