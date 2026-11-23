@@ -3881,14 +3881,13 @@ theorem adviceReadCount_eq_phaseSize {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type
     rw [Array.length_toList, Array.size_map, h]
   rw [hlen, h]
 
-/-- **THE MISSING vk-TO-PLAN PHASE PIN, NAMED.** The parser's phase loop reads one
-    `g1` per advice column of every phase; this is the advice-column count exactly
-    when the key's advice-phase vector covers its advice columns. `Obligations`'
-    `readScheduleAgrees` records the same gap for the emitted schedule: a vk whose
-    phase vector is shorter than its advice-column count makes `parseTrace` read a
-    different number of commitments than `fromProtocol` reserved. The natural
-    Rust invariant is `adviceColumnPhase.size = numAdviceColumns`; nothing in
-    `ValidV3` (or `WellFormed`) carries it. -/
+/-- **THE ADVICE COUNT IDENTITY, NAMED.** The parser's phase loop reads one `g1`
+    per advice column of every phase, so its total is the advice-phase vector's
+    length. D-GATE7's `WellFormed.advicePhaseTotal`
+    (`adviceColumnPhase.size = numAdviceColumns`) supplies that length, and
+    `adviceReadCount_eq_phaseSize` proves the identity from it
+    (`advicePhaseCountFit_of_wellFormed`); the name is kept because the counting
+    argument factors through it. -/
 def AdvicePhaseCountFit {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
     (vk : VerifyingKey (Fr p) G₁) : Prop :=
   adviceReadCount vk.cs 1 = vk.cs.adviceColumnPhase.size
@@ -3902,12 +3901,14 @@ theorem advicePhaseCountFit_of_wellFormed {p : ℕ} [Fact (Nat.Prime p)] {G₁ :
   adviceReadCount_eq_phaseSize vk hf.advicePhaseTotal
 
 set_option maxHeartbeats 4000000 in
-/-- **`ParseTraceSchedule` FROM THE PHASE PIN.** The width walk
+/-- **`ParseTraceSchedule` FROM THE ADVICE COUNT IDENTITY.** The width walk
     (`parseTrace_widths`), the protocol counts (`protocol_parseCounts`), the layout
     peel (`tp_fromProtocol`) and the group-sum identity
     (`sum_commitmentReadGroups`) assemble into the schedule outright: every
-    committed group contributes exactly its parser reads. The single input not
-    derived from `ValidV3` is `AdvicePhaseCountFit`. -/
+    committed group contributes exactly its parser reads. The one input beyond
+    `ValidV3` is `AdvicePhaseCountFit`, itself a theorem of `WellFormed`
+    (`advicePhaseCountFit_of_wellFormed`), so `parseTraceSchedule` is
+    unconditional. -/
 theorem parseTraceSchedule_of_advicePhase {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
     [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
@@ -4060,8 +4061,8 @@ theorem PrepareLogSlots_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ G�
   rfl
 
 /-- **`PrepareLogSlots` WITH THE A6 WIDTH BLOCK DISCHARGED.** The parseTrace
-    schedule is now a theorem (`parseTraceSchedule_of_advicePhase`), so the only
-    A6-side input is the vk-to-plan phase pin; the KZG scalar block is unchanged. -/
+    schedule is a theorem of `ValidV3` (`parseTraceSchedule`); the KZG scalar
+    block is the only remaining premise. -/
 theorem PrepareLogSlots_of_advicePhase (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (hR : ValidV3 R) (hpin : AdvicePhaseCountFit R.vk)
     (hKZG : KzgMultiPrepareWidths R) :
