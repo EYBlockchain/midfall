@@ -623,6 +623,85 @@ theorem VkHeaderBuilder.step_length (start : Nat) (name : String) (self : VkHead
           simp only [hw] at h
           cases h
 
+private theorem update_get?_at {α : Type} (l : List α) (w : Nat) (v : α)
+    (hw : w < l.length) :
+    (l.take w ++ [v] ++ l.drop (w + 1))[w]? = some v := by
+  rw [List.getElem?_append]
+  have hlen : (l.take w).length = w := List.length_take_of_le (Nat.le_of_lt hw)
+  have hlen2 : (l.take w ++ [v]).length = w + 1 := by simp [hlen]
+  rw [if_pos (by omega)]
+  rw [List.getElem?_append]
+  rw [if_neg (by omega)]
+  simp [hlen]
+
+private theorem update_get?_other {α : Type} (l : List α) (w : Nat) (v : α)
+    (hw : w < l.length) (i : Nat) (hne : i ≠ w) :
+    (l.take w ++ [v] ++ l.drop (w + 1))[i]? = l[i]? := by
+  rw [List.getElem?_append]
+  have hlen : (l.take w).length = w := List.length_take_of_le (Nat.le_of_lt hw)
+  have hlen2 : (l.take w ++ [v]).length = w + 1 := by simp [hlen]
+  by_cases hi : i < w
+  · rw [if_pos (by omega)]
+    rw [List.getElem?_append]
+    rw [if_pos (by omega)]
+    rw [List.getElem?_take_of_lt hi]
+  · have hi' : w + 1 ≤ i := by omega
+    rw [if_neg (by omega)]
+    rw [List.getElem?_drop]
+    congr 1
+    omega
+
+/-- A successful `step` writes its own word. PROVED. -/
+theorem VkHeaderBuilder.step_get?_at (start : Nat) (name : String) (self : VkHeaderBuilder)
+    (offset : Nat) (value : String × Word256) (b' : VkHeaderBuilder)
+    (h : VkHeaderBuilder.step start name self (offset, value) = .ok b')
+    (hword : start + offset < self.words.length) :
+    b'.words[start + offset]? = some (some value) := by
+  unfold VkHeaderBuilder.step at h
+  dsimp only at h
+  cases hw : self.words[start + offset]? with
+  | none =>
+      simp only [hw] at h
+      injection h with hb
+      subst hb
+      rw [update_get?_at self.words (start + offset) (some value) hword]
+  | some x =>
+      cases x with
+      | none =>
+          simp only [hw] at h
+          injection h with hb
+          subst hb
+          rw [update_get?_at self.words (start + offset) (some value) hword]
+      | some v =>
+          simp only [hw] at h
+          cases h
+
+/-- A successful `step` leaves every other word unchanged. PROVED. -/
+theorem VkHeaderBuilder.step_get?_other (start : Nat) (name : String) (self : VkHeaderBuilder)
+    (offset : Nat) (value : String × Word256) (b' : VkHeaderBuilder)
+    (h : VkHeaderBuilder.step start name self (offset, value) = .ok b')
+    (hword : start + offset < self.words.length)
+    (i : Nat) (hne : i ≠ start + offset) :
+    b'.words[i]? = self.words[i]? := by
+  unfold VkHeaderBuilder.step at h
+  dsimp only at h
+  cases hw : self.words[start + offset]? with
+  | none =>
+      simp only [hw] at h
+      injection h with hb
+      subst hb
+      rw [update_get?_other self.words (start + offset) (some value) hword i hne]
+  | some x =>
+      cases x with
+      | none =>
+          simp only [hw] at h
+          injection h with hb
+          subst hb
+          rw [update_get?_other self.words (start + offset) (some value) hword i hne]
+      | some v =>
+          simp only [hw] at h
+          cases h
+
 /-- A `foldlM` of length-preserving `step`s preserves the number of header words. PROVED. -/
 theorem VkHeaderBuilder.foldlM_step_length (l : List (Nat × (String × Word256)))
     (self : VkHeaderBuilder) (start : Nat) (name : String) (b' : VkHeaderBuilder)
@@ -675,6 +754,73 @@ def VkHeaderBuilder.insert (self : VkHeaderBuilder) (slot : VkHeaderSlot)
       (List.zip (List.range values.length) values).foldlM
         (VkHeaderBuilder.step start spec.name) self
 
+/-- A `foldlM` of steps that all avoid word `i` leaves word `i` unchanged. PROVED. -/
+theorem VkHeaderBuilder.foldlM_step_frame (l : List (Nat × (String × Word256)))
+    (self : VkHeaderBuilder) (start : Nat) (name : String) (b' : VkHeaderBuilder)
+    (h : l.foldlM (VkHeaderBuilder.step start name) self = .ok b')
+    (hbound : ∀ p ∈ l, start + p.1 < self.words.length)
+    (i : Nat) (havoid : ∀ p ∈ l, start + p.1 ≠ i) :
+    b'.words[i]? = self.words[i]? := by
+  induction l generalizing self with
+  | nil =>
+      change Except.ok self = Except.ok b' at h
+      injection h with hb
+      subst hb
+      rfl
+  | cons p ps ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : VkHeaderBuilder.step start name self p with
+      | error e => simp only [hs] at h; cases h
+      | ok b1 =>
+          simp only [hs] at h
+          have hpbound : start + p.1 < self.words.length := hbound p (by simp)
+          have hpne : start + p.1 ≠ i := havoid p (by simp)
+          have hsl := VkHeaderBuilder.step_get?_other start name self p.1 p.2 b1 hs hpbound i
+            (Ne.symm hpne)
+          have hsl_len := VkHeaderBuilder.step_length start name self p b1 hs hpbound
+          rw [ih b1 h (fun q hq => by simpa [hsl_len] using hbound q (by simp [hq]))
+            (fun q hq => havoid q (by simp [hq])), hsl]
+
+/-- An insert whose slot range excludes `i` leaves word `i` unchanged. PROVED. -/
+theorem VkHeaderBuilder.insert_get?_other (self : VkHeaderBuilder) (slot : VkHeaderSlot)
+    (expectedWidth : Nat) (values : List (String × Word256)) (b' : VkHeaderBuilder)
+    (h : self.insert slot expectedWidth values = .ok b')
+    (i : Nat) (hi : i < VkHeaderSlot.word slot ∨
+      VkHeaderSlot.word slot + values.length ≤ i) :
+    b'.words[i]? = self.words[i]? := by
+  by_cases hw : ((VkHeaderLayout.field slot).widthWords != expectedWidth)
+  · simp only [VkHeaderBuilder.insert, hw] at h; cases h
+  · by_cases hv : (values.length != (VkHeaderLayout.field slot).widthWords)
+    · simp only [VkHeaderBuilder.insert, hw, hv] at h; cases h
+    · by_cases hf : (VkHeaderSlot.word slot + (VkHeaderLayout.field slot).widthWords >
+          self.words.length)
+      · simp only [VkHeaderBuilder.insert, hw, hv, hf] at h; cases h
+      · simp only [VkHeaderBuilder.insert, hw, hv, hf] at h
+        have hlen : values.length = (VkHeaderLayout.field slot).widthWords := by
+          have hfalse : (values.length != (VkHeaderLayout.field slot).widthWords) = false := by
+            cases hh : (values.length != (VkHeaderLayout.field slot).widthWords) <;>
+              simp_all
+          exact bne_eq_false_iff_eq.mp hfalse
+        have hfit : VkHeaderSlot.word slot + (VkHeaderLayout.field slot).widthWords ≤
+            self.words.length := by omega
+        refine VkHeaderBuilder.foldlM_step_frame
+          ((List.range values.length).zip values) self (VkHeaderSlot.word slot)
+          (VkHeaderLayout.field slot).name b' h ?_ i ?_
+        · intro p hp
+          obtain ⟨a, b⟩ := p
+          have hmem := List.of_mem_zip hp
+          have ha : a < values.length := List.mem_range.mp hmem.1
+          have : VkHeaderSlot.word slot + a <
+              VkHeaderSlot.word slot + (VkHeaderLayout.field slot).widthWords := by omega
+          omega
+        · intro p hp
+          obtain ⟨a, b⟩ := p
+          have hmem := List.of_mem_zip hp
+          have ha : a < values.length := List.mem_range.mp hmem.1
+          rcases hi with hi | hi
+          · omega
+          · omega
+
 /-- `insert` preserves the number of header words. PROVED. -/
 theorem VkHeaderBuilder.insert_length (self : VkHeaderBuilder) (slot : VkHeaderSlot)
     (expectedWidth : Nat) (values : List (String × Word256)) (b' : VkHeaderBuilder)
@@ -713,6 +859,61 @@ theorem VkHeaderBuilder.insert_length (self : VkHeaderBuilder) (slot : VkHeaderS
 def VkHeaderBuilder.scalar (self : VkHeaderBuilder) (slot : VkHeaderSlot)
     (name : String) (value : Word256) : Except String VkHeaderBuilder :=
   self.insert slot 1 [(name, value)]
+
+private theorem except_bind_pure {ε α : Type} (e : Except ε α) :
+    (e >>= fun x => Except.ok x) = e := by
+  cases e <;> rfl
+
+/-- A successful scalar insert writes its slot. PROVED. -/
+theorem VkHeaderBuilder.scalar_get (self : VkHeaderBuilder) (slot : VkHeaderSlot)
+    (name : String) (value : Word256) (b' : VkHeaderBuilder)
+    (h : self.scalar slot name value = .ok b') :
+    b'.words[VkHeaderSlot.word slot]? = some (some (name, value)) := by
+  unfold VkHeaderBuilder.scalar at h
+  by_cases hw : ((VkHeaderLayout.field slot).widthWords != 1)
+  · simp only [VkHeaderBuilder.insert, hw] at h; cases h
+  · by_cases hv : ([(name, value)].length != (VkHeaderLayout.field slot).widthWords)
+    · simp only [VkHeaderBuilder.insert, hw, hv] at h; cases h
+    · by_cases hf : (VkHeaderSlot.word slot + (VkHeaderLayout.field slot).widthWords >
+          self.words.length)
+      · simp only [VkHeaderBuilder.insert, hw, hv, hf] at h; cases h
+      · have hwfalse : ((VkHeaderLayout.field slot).widthWords != 1) = false := by
+          cases hh : ((VkHeaderLayout.field slot).widthWords != 1) <;> simp_all
+        have hvfalse : ([(name, value)].length != (VkHeaderLayout.field slot).widthWords) = false := by
+          cases hh : ([(name, value)].length != (VkHeaderLayout.field slot).widthWords) <;>
+            simp_all
+        have hwidth : (VkHeaderLayout.field slot).widthWords = 1 :=
+          bne_eq_false_iff_eq.mp hwfalse
+        have hlen : ([(name, value)].length : Nat) = (VkHeaderLayout.field slot).widthWords :=
+          bne_eq_false_iff_eq.mp hvfalse
+        simp only [VkHeaderBuilder.insert, hwfalse, hvfalse, hf, Bool.false_eq_true,
+          if_false] at h
+        have hfit : VkHeaderSlot.word slot + (VkHeaderLayout.field slot).widthWords ≤
+            self.words.length := by omega
+        have hword : VkHeaderSlot.word slot < self.words.length := by omega
+        have hsingle : (List.zip (List.range [(name, value)].length) [(name, value)]) =
+            [(0, (name, value))] := by rfl
+        rw [hsingle] at h
+        simp only [List.foldlM_cons, List.foldlM_nil, pure, Except.bind] at h
+        change (VkHeaderBuilder.step (VkHeaderSlot.word slot)
+          (VkHeaderLayout.field slot).name self (0, (name, value)) >>=
+            fun x => Except.ok x) = Except.ok b' at h
+        rw [except_bind_pure] at h
+        exact VkHeaderBuilder.step_get?_at (VkHeaderSlot.word slot)
+          (VkHeaderLayout.field slot).name self 0 (name, value) b' h hword
+
+/-- A successful scalar insert leaves every other slot unchanged. PROVED. -/
+theorem VkHeaderBuilder.scalar_frame (self : VkHeaderBuilder) (slot : VkHeaderSlot)
+    (name : String) (value : Word256) (b' : VkHeaderBuilder)
+    (h : self.scalar slot name value = .ok b') (i : Nat) (hne : i ≠ VkHeaderSlot.word slot) :
+    b'.words[i]? = self.words[i]? := by
+  have hi : i < VkHeaderSlot.word slot ∨
+      VkHeaderSlot.word slot + [(name, value)].length ≤ i := by
+    have hlen : [(name, value)].length = 1 := rfl
+    omega
+  simpa [VkHeaderBuilder.scalar] using
+    VkHeaderBuilder.insert_get?_other self slot 1 [(name, value)] b'
+      (by simpa [VkHeaderBuilder.scalar] using h) i hi
 
 /-- rust: LM:633-642 (VkHeaderBuilder::g1) @formal-baseline. The Rust zips a
     [&str; G1_WORDS] with a [U256; G1_WORDS]; the port takes two lists and
