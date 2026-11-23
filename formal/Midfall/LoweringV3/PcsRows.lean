@@ -3298,6 +3298,355 @@ theorem b1_restore4_one (V : VEnv (Bridge.Dialect c g)) (xv om oi a : U256) :
   simp only [restore, venv_set_length, List.length_cons]
   rw [show List.length V + 1 + 1 + 1 + 1 - List.length V = 4 by omega]
   rfl
+
+/-! ## 11. ROW.PCS.1: block 1's table spec (PROVED)
+
+  The block-level contract over the whole emitted block 1. `b1BlockPre` names the pre-state
+  (the three header reads, the rotation table pointer, `r`, and the three loaded words), and the
+  post says: every run is normal, the block exits with its env restored, the env/halted records
+  are unchanged, the table holds `rotVal` at every distinct-rotation slot, and nothing outside the
+  table window moved.
+
+  The body contract (`pcs_b1_body`) is proved over `b1All = head ++ fwd ++ back`: the head writes
+  the rot-0 entry, the forward walk writes `1..maxRot`, the back walk (after the reset) writes
+  `-1..minRot`; the three-way split for an index `i < rots.length` uses the head readback plus the
+  two walks' unwritten clauses for `rot = 0`, `fwd_mem`/`back_mem` and the prefix length lemmas
+  for the other two cases. `pcs_b1_sem` wraps it through `StmtContractAll.block` and the
+  `pcsBlock1Ast_eq` shape. -/
+
+/-- The block-1 precondition, named (the theorem states it twice). -/
+def b1BlockPre (xp op oip xv om oi rv : U256) (mem0 : Nat → UInt8) (R : Nat) (rots : List Int)
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop :=
+  VEnv.get V "X_MPTR" = some xp ∧ VEnv.get V "OMEGA_MPTR" = some op ∧
+    VEnv.get V "OMEGA_INV_MPTR" = some oip ∧
+    VEnv.get V "ROT_POINTS_MPTR" = some (BitVec.ofNat 256 R) ∧
+    VEnv.get V "r" = some rv ∧
+    loadWord st.memory xp.toNat = xv ∧ loadWord st.memory op.toNat = om ∧
+    loadWord st.memory oip.toNat = oi ∧
+    (∀ a, a < R ∨ R + rots.length * 32 ≤ a → st.memory a = mem0 a)
+
+theorem nodup_intRangeInclusive_one (m : Int) :
+    (Midfall.Generator.intRangeInclusive 1 m).Nodup := by
+  unfold Midfall.Generator.intRangeInclusive
+  split
+  · simp
+  · exact List.Nodup.map (fun a b h => by
+      simp only [Int.ofNat_eq_natCast] at h
+      omega) List.nodup_range
+
+theorem nodup_intRange_rev (mn : Int) :
+    ((Midfall.Generator.intRange mn 0).reverse).Nodup := by
+  unfold Midfall.Generator.intRange
+  split
+  · simp
+  · rw [← List.map_reverse]
+    exact List.Nodup.map (fun a b h => by
+      simp only [Int.ofNat_eq_natCast] at h
+      omega) (List.nodup_reverse.mpr List.nodup_range)
+
+theorem pcs_b1_body {funs : FunEnv (Bridge.Dialect c g)} (rots : List Int)
+    (maxRot minRot : Int) (xp op oip xv om oi rv : U256) (mem0 : Nat → UInt8) (R : Nat)
+    (hnd : rots.Nodup) (hR : R < 2 ^ 256) (hb : R + rots.length * 32 ≤ 2 ^ 256)
+    (hmax : ∀ r ∈ rots, 0 ≤ r → r ≤ maxRot)
+    (hmin : ∀ r ∈ rots, r < 0 → minRot ≤ r) :
+    StmtsContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (b1All rots maxRot minRot) :: funs)
+      (b1All rots maxRot minRot)
+      (b1BlockPre xp op oip xv om oi rv mem0 R rots)
+      (fun V st Vb stb o => o = .normal ∧ restore V Vb = V ∧ stb.env = st.env ∧
+        stb.halted = st.halted ∧
+        (∀ (i : Nat) (hi : i < rots.length),
+          loadWord stb.memory (R + i * 32) = rotVal xv om oi rv (rots[i]'hi)) ∧
+        (∀ a, a < R ∨ R + rots.length * 32 ≤ a → stb.memory a = mem0 a)) := by
+  intro V st hpre Vb stb o hbody
+  obtain ⟨hX, hO, hOI, hRP, hrv, hx, ho, hoi, hout⟩ := hpre
+  set fns : FunEnv (Bridge.Dialect c g) :=
+    hoist (Bridge.Dialect c g) (b1All rots maxRot minRot) :: funs with hfns
+  rcases Step.stmts_append_inv hbody with ⟨Vhf, shf, hHF, hBackRun⟩ | ⟨hHF, hne⟩
+  · rcases Step.stmts_append_inv hHF with ⟨Vh, sh, hHead, hFwd⟩ | ⟨hHead, hne1⟩
+    · -- head
+      obtain ⟨hoH, hVH, hreadH, hunwH, houtH, henvH, hhaltH⟩ :=
+        b1_head_contract (c := c) (g := g) (funs := fns) rots xp op oip xv om oi rv mem0 R
+          hR hb V st ⟨hX, hO, hOI, hRP, hrv, hx, ho, hoi, hout⟩
+          Vh sh .normal hHead
+      -- fwd
+      have hpreF : b1Pre rots "omega" xv om rv mem0 R Vh sh := by
+        rw [hVH]
+        exact ⟨b1_env4_mem V xv om oi, b1_env4_omega V xv om oi,
+          b1_env4_r V xv om oi rv hrv, b1_env4_rot V xv om oi R hRP, houtH⟩
+      unfold b1Fwd b1WalkL at hFwd
+      obtain ⟨hoF, hVF, hreadF, hunwF, houtF, henvF, hhaltF⟩ :=
+        b1_walk_contract (c := c) (g := g) (funs := fns) rots
+          (Midfall.Generator.intRangeInclusive 1 maxRot) "omega" xv om rv mem0 R
+          (by decide) hnd hR hb
+          (fun rot _ idx hf => by
+            have := findIdx?_some_lt hf
+            simpa using this)
+          (nodup_intRangeInclusive_one maxRot)
+          Vh sh hpreF Vhf shf .normal hFwd
+      by_cases hmn : minRot < 0
+      · -- back = reset ++ walk
+        have hbackShape : b1Back rots minRot =
+            [GenAst.yset "x_pow_of_omega" (GenAst.yvar "x")] ++
+              b1WalkL rots ((Midfall.Generator.intRange minRot 0).reverse) "omega_inv" := by
+          rw [b1Back, if_pos hmn]
+        rw [hbackShape] at hBackRun
+        rcases Step.stmts_append_inv hBackRun with ⟨Vr, sr, hReset, hWalk⟩ | ⟨hReset, hne2⟩
+        · have hpreR : VEnv.get Vhf "x" = some xv := by
+            rw [hVF, hVH]
+            exact b1_env4_x V xv om oi
+          obtain ⟨hoR, hVR, hsr⟩ :=
+            b1_reset_contract (c := c) (g := g) (funs := fns) xv
+              Vhf shf hpreR Vr sr .normal hReset
+          have hpreB : b1Pre rots "omega_inv" xv oi rv mem0 R Vr sr := by
+            rw [hVR, hsr, hVF, hVH]
+            refine ⟨?_, ?_, ?_, ?_, houtF⟩
+            · exact venv_get_set_same (D := Bridge.Dialect c g)
+                (venv_get_set_same (D := Bridge.Dialect c g) (b1_env4_mem V xv om oi))
+            · rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega")
+                (y := "omega_inv") (by decide)]
+              rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega")
+                (y := "omega_inv") (by decide)]
+              exact b1_env4_omega_inv V xv om oi
+            · rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega")
+                (y := "r") (by decide)]
+              rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega")
+                (y := "r") (by decide)]
+              exact b1_env4_r V xv om oi rv hrv
+            · rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega")
+                (y := "ROT_POINTS_MPTR") (by decide)]
+              rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega")
+                (y := "ROT_POINTS_MPTR") (by decide)]
+              exact b1_env4_rot V xv om oi R hRP
+          unfold b1WalkL at hWalk
+          obtain ⟨hoB, hVB, hreadB, hunwB, houtB, henvB, hhaltB⟩ :=
+            b1_walk_contract (c := c) (g := g) (funs := fns) rots
+              ((Midfall.Generator.intRange minRot 0).reverse) "omega_inv" xv oi rv mem0 R
+              (by decide) hnd hR hb
+              (fun rot _ idx hf => by
+                have := findIdx?_some_lt hf
+                simpa using this)
+              (nodup_intRange_rev minRot)
+              Vr sr hpreB Vb stb o hWalk
+          refine ⟨hoB, ?_, ?_, ?_, ?_, houtB⟩
+          · rw [hVB, hVR, hVF, hVH]
+            exact b1_restore4 V xv om oi
+              (wWalk xv om rv (Midfall.Generator.intRangeInclusive 1 maxRot)) xv
+              (wWalk xv oi rv ((Midfall.Generator.intRange minRot 0).reverse))
+          · rw [henvB, hsr, henvF, henvH]
+          · rw [hhaltB, hsr, hhaltF, hhaltH]
+          · intro i hi
+            set rot := rots[i]'hi with hrot
+            have hmem : rot ∈ rots := List.getElem_mem hi
+            have hidx : rots.findIdx? (fun r => r == rot) = some i := findIdx?_beq_getElem hnd hi
+            by_cases hzero : rot = 0
+            · have hidx0 : rots.findIdx? (fun r => r == 0) = some i := by
+                rw [← hzero]; exact hidx
+              have hnf : ∀ (j : Nat)
+                  (hj : j < (Midfall.Generator.intRangeInclusive 1 maxRot).length),
+                  rots.findIdx? (fun r => r ==
+                    (Midfall.Generator.intRangeInclusive 1 maxRot)[j]'hj) ≠ some i := by
+                intro j hj hfj
+                have hrotj : (Midfall.Generator.intRangeInclusive 1 maxRot)[j]'hj = rot :=
+                  (findIdx?_beq_inj (l := rots) (a := rot)
+                    (b := (Midfall.Generator.intRangeInclusive 1 maxRot)[j]'hj)
+                    (ia := i) (ib := i) hidx hfj rfl).symm
+                have hpos := fwd_pos (List.getElem_mem hj)
+                rw [hzero] at hrotj
+                omega
+              have hnb : ∀ (j : Nat)
+                  (hj : j < ((Midfall.Generator.intRange minRot 0).reverse).length),
+                  rots.findIdx? (fun r => r ==
+                    ((Midfall.Generator.intRange minRot 0).reverse)[j]'hj) ≠ some i := by
+                intro j hj hfj
+                have hrotj : ((Midfall.Generator.intRange minRot 0).reverse)[j]'hj = rot :=
+                  (findIdx?_beq_inj (l := rots) (a := rot)
+                    (b := ((Midfall.Generator.intRange minRot 0).reverse)[j]'hj)
+                    (ia := i) (ib := i) hidx hfj rfl).symm
+                have hneg := back_neg (List.getElem_mem hj)
+                rw [hzero] at hrotj
+                omega
+              have e1 : loadWord stb.memory (R + i * 32) = loadWord sh.memory (R + i * 32) := by
+                rw [hunwB i hnb, hsr, hunwF i hnf]
+              rw [e1, hreadH i hidx0, hzero, rotVal_eq, rotValI]
+              rw [if_pos (by norm_num : (0 : Int) ≤ 0)]
+              rfl
+            · by_cases hpos : 0 < rot
+              · have hle : rot ≤ maxRot := hmax rot hmem (by omega)
+                obtain ⟨j, hj, hget⟩ :=
+                  List.mem_iff_getElem.mp (fwd_mem (maxRot := maxRot) hpos hle)
+                have hidx' : rots.findIdx? (fun r => r ==
+                    (Midfall.Generator.intRangeInclusive 1 maxRot)[j]'hj) = some i := by
+                  rw [hget]; exact hidx
+                have hnb : ∀ (j : Nat)
+                    (hj : j < ((Midfall.Generator.intRange minRot 0).reverse).length),
+                    rots.findIdx? (fun r => r ==
+                      ((Midfall.Generator.intRange minRot 0).reverse)[j]'hj) ≠ some i := by
+                  intro j hj hfj
+                  have hrotj : ((Midfall.Generator.intRange minRot 0).reverse)[j]'hj = rot :=
+                    (findIdx?_beq_inj (l := rots) (a := rot)
+                      (b := ((Midfall.Generator.intRange minRot 0).reverse)[j]'hj)
+                      (ia := i) (ib := i) hidx hfj rfl).symm
+                  have hneg := back_neg (List.getElem_mem hj)
+                  omega
+                have e1 : loadWord stb.memory (R + i * 32) = loadWord shf.memory (R + i * 32) := by
+                  rw [hunwB i hnb, hsr]
+                rw [e1, hreadF j hj i hidx', wWalk_eq]
+                have hlen : ((Midfall.Generator.intRangeInclusive 1 maxRot).take (j + 1)).length
+                    = j + 1 := by
+                  rw [List.length_take]
+                  omega
+                rw [hlen, rotVal_eq, rotValI, if_pos (le_of_lt hpos)]
+                have hgetI : rot = 1 + (j : Int) := by
+                  have hm1 : 1 ≤ maxRot := by omega
+                  simpa [intRangeInclusive_one_eq maxRot hm1, List.getElem_map,
+                    List.getElem_range] using hget.symm
+                have hnat : ((1 : Int) + (j : Int)).natAbs = j + 1 := by
+                  rw [Int.natAbs_eq_iff]; left; omega
+                rw [hgetI, hnat]
+              · have hneg : rot < 0 := by omega
+                have hle : minRot ≤ rot := hmin rot hmem hneg
+                obtain ⟨j, hj, hget⟩ :=
+                  List.mem_iff_getElem.mp (back_mem (mn := minRot) hneg hle)
+                have hidx' : rots.findIdx? (fun r => r ==
+                    ((Midfall.Generator.intRange minRot 0).reverse)[j]'hj) = some i := by
+                  rw [hget]; exact hidx
+                rw [hreadB j hj i hidx', wWalk_eq]
+                have hlen : (((Midfall.Generator.intRange minRot 0).reverse).take (j + 1)).length
+                    = j + 1 := by
+                  rw [List.length_take]
+                  omega
+                rw [hlen, rotVal_eq, rotValI, if_neg (by omega)]
+                have hgetI : rot = -1 - (j : Int) := by
+                  have h := hget.symm
+                  simp only [intRange_rev_eq minRot hmn, List.getElem_map,
+                    List.getElem_range] at h
+                  rw [h]
+                  simp only [Int.ofNat_eq_natCast]
+                  ring
+                have hnat : ((-1 : Int) - (j : Int)).natAbs = j + 1 := by
+                  rw [Int.natAbs_eq_iff]; right; omega
+                rw [hgetI, hnat]
+        · obtain ⟨ho, _, _⟩ :=
+            b1_reset_contract (c := c) (g := g) (funs := fns) xv Vhf shf
+              (by rw [hVF, hVH]; exact b1_env4_x V xv om oi) Vb stb o hReset
+          exact absurd ho hne2
+      · -- no back
+        have hbackNil : b1Back rots minRot = [] := by
+          rw [b1Back, if_neg hmn]
+        rw [hbackNil] at hBackRun
+        cases hBackRun
+        refine ⟨rfl, ?_, ?_, ?_, ?_, houtF⟩
+        · rw [hVF, hVH]
+          exact b1_restore4_one V xv om oi
+            (wWalk xv om rv (Midfall.Generator.intRangeInclusive 1 maxRot))
+        · rw [henvF, henvH]
+        · rw [hhaltF, hhaltH]
+        · intro i hi
+          set rot := rots[i]'hi with hrot
+          have hmem : rot ∈ rots := List.getElem_mem hi
+          have hidx : rots.findIdx? (fun r => r == rot) = some i := findIdx?_beq_getElem hnd hi
+          by_cases hzero : rot = 0
+          · have hidx0 : rots.findIdx? (fun r => r == 0) = some i := by
+              rw [← hzero]; exact hidx
+            have hnf : ∀ (j : Nat)
+                (hj : j < (Midfall.Generator.intRangeInclusive 1 maxRot).length),
+                rots.findIdx? (fun r => r ==
+                  (Midfall.Generator.intRangeInclusive 1 maxRot)[j]'hj) ≠ some i := by
+              intro j hj hfj
+              have hrotj : (Midfall.Generator.intRangeInclusive 1 maxRot)[j]'hj = rot :=
+                (findIdx?_beq_inj (l := rots) (a := rot)
+                  (b := (Midfall.Generator.intRangeInclusive 1 maxRot)[j]'hj)
+                  (ia := i) (ib := i) hidx hfj rfl).symm
+              have hpos := fwd_pos (List.getElem_mem hj)
+              rw [hzero] at hrotj
+              omega
+            have e1 : loadWord stb.memory (R + i * 32) = loadWord sh.memory (R + i * 32) :=
+              hunwF i hnf
+            rw [e1, hreadH i hidx0, hzero, rotVal_eq, rotValI]
+            rw [if_pos (by norm_num : (0 : Int) ≤ 0)]
+            rfl
+          · have hpos : 0 < rot := by
+              by_contra hle0
+              have := hmin rot hmem (by omega)
+              omega
+            have hle : rot ≤ maxRot := hmax rot hmem (by omega)
+            obtain ⟨j, hj, hget⟩ :=
+              List.mem_iff_getElem.mp (fwd_mem (maxRot := maxRot) hpos hle)
+            have hidx' : rots.findIdx? (fun r => r ==
+                (Midfall.Generator.intRangeInclusive 1 maxRot)[j]'hj) = some i := by
+              rw [hget]; exact hidx
+            rw [hreadF j hj i hidx', wWalk_eq]
+            have hlen : ((Midfall.Generator.intRangeInclusive 1 maxRot).take (j + 1)).length
+                = j + 1 := by
+              rw [List.length_take]
+              omega
+            rw [hlen, rotVal_eq, rotValI, if_pos (le_of_lt hpos)]
+            have hgetI : rot = 1 + (j : Int) := by
+              have hm1 : 1 ≤ maxRot := by omega
+              simpa [intRangeInclusive_one_eq maxRot hm1, List.getElem_map,
+                List.getElem_range] using hget.symm
+            have hnat : ((1 : Int) + (j : Int)).natAbs = j + 1 := by
+              rw [Int.natAbs_eq_iff]; left; omega
+            rw [hgetI, hnat]
+    · exact absurd rfl hne1
+  · rcases Step.stmts_append_inv hHF with ⟨Vh, sh, hHead, hFwd⟩ | ⟨hHead, hne1⟩
+    · obtain ⟨_, _, _, _, _, _, _⟩ :=
+        b1_head_contract (c := c) (g := g) (funs := fns) rots xp op oip xv om oi rv mem0 R
+          hR hb V st ⟨hX, hO, hOI, hRP, hrv, hx, ho, hoi, hout⟩
+          Vh sh .normal hHead
+      have hpreF : b1Pre rots "omega" xv om rv mem0 R Vh sh := by
+        rw [show Vh = ("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) ::
+            ("x", xv) :: V from by assumption]
+        exact ⟨b1_env4_mem V xv om oi, b1_env4_omega V xv om oi,
+          b1_env4_r V xv om oi rv hrv, b1_env4_rot V xv om oi R hRP,
+          by assumption⟩
+      unfold b1Fwd b1WalkL at hFwd
+      obtain ⟨hoF, _, _, _, _, _, _⟩ :=
+        b1_walk_contract (c := c) (g := g) (funs := fns) rots
+          (Midfall.Generator.intRangeInclusive 1 maxRot) "omega" xv om rv mem0 R
+          (by decide) hnd hR hb
+          (fun rot _ idx hf => by
+            have := findIdx?_some_lt hf
+            simpa using this)
+          (nodup_intRangeInclusive_one maxRot)
+          Vh sh hpreF Vb stb o hFwd
+      exact absurd hoF hne
+    · obtain ⟨ho, _, _, _, _, _, _⟩ :=
+        b1_head_contract (c := c) (g := g) (funs := fns) rots xp op oip xv om oi rv mem0 R
+          hR hb V st ⟨hX, hO, hOI, hRP, hrv, hx, ho, hoi, hout⟩
+          Vb stb o hHead
+      exact absurd ho hne1
+
+theorem pcs_b1_sem {funs : FunEnv (Bridge.Dialect c g)} (rots : List Int)
+    (maxRot minRot : Int) (xp op oip xv om oi rv : U256) (mem0 : Nat → UInt8) (R : Nat)
+    (hnd : rots.Nodup) (hR : R < 2 ^ 256) (hb : R + rots.length * 32 ≤ 2 ^ 256)
+    (hmax : ∀ r ∈ rots, 0 ≤ r → r ≤ maxRot)
+    (hmin : ∀ r ∈ rots, r < 0 → minRot ≤ r) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.block (GenAstPcs.pcsBlock1Ast rots maxRot minRot false []))
+      (b1BlockPre xp op oip xv om oi rv mem0 R rots)
+      (fun V st V' st' o => o = .normal ∧ V' = V ∧ st'.env = st.env ∧
+        st'.halted = st.halted ∧
+        (∀ (i : Nat) (hi : i < rots.length),
+          loadWord st'.memory (R + i * 32) = rotVal xv om oi rv (rots[i]'hi)) ∧
+        (∀ a, a < R ∨ R + rots.length * 32 ≤ a → st'.memory a = mem0 a)) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hX, hO, hOI, hRP, hrv, hx, ho, hoi, hout⟩ := hpre
+  cases hrun with
+  | block hbody =>
+    rename_i Vb
+    rw [pcsBlock1Ast_eq] at hbody
+    obtain ⟨ho, hrestore, henv, hhalt, htable, hout'⟩ :=
+      pcs_b1_body (c := c) (g := g) (funs := funs) rots maxRot minRot xp op oip xv om oi rv
+        mem0 R hnd hR hb hmax hmin V st ⟨hX, hO, hOI, hRP, hrv, hx, ho, hoi, hout⟩
+        Vb _ o hbody
+    exact ⟨ho, hrestore, henv, hhalt, htable, hout'⟩
+#assert_axioms Midfall.LoweringV3.PcsRows.pcs_b1_body
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.pcs_b1_sem
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.wWalk_eq
   [propext, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.rotVal_eq
