@@ -2042,6 +2042,10 @@ structure BridgeHeadSucc (p a : Nat) (gv x_last : U256) (st st' : EvmState)
   hok : o = .normal
   hgp : VEnv.get V' "gp" = some (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
     (BitVec.ofNat 256 Midfall.Yul.blsR))
+  hgp_canon : (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
+    (BitVec.ofNat 256 Midfall.Yul.blsR)).toNat < Midfall.Yul.blsR
+  hgp_ne : Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
+    (BitVec.ofNat 256 Midfall.Yul.blsR) ≠ 0
   hgp_mptr : VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p)
   hmstart : VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a)
   hr : VEnv.get V' "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR)
@@ -2123,7 +2127,16 @@ theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dial
               subst hV4
               cases hrest4
               rw [← hv11]
-              exact Or.inr ⟨rfl, hgetgp, by
+              exact Or.inr ⟨rfl, hgetgp,
+                by
+                  have hbR : Midfall.Yul.blsR < 2 ^ 256 := by decide
+                  have hr0 : (BitVec.ofNat 256 Midfall.Yul.blsR) ≠ 0 :=
+                    ofNat_ne_zero_of_pos (by decide) hbR
+                  have hcanon := wMulmodAt_toNat_lt (r := BitVec.ofNat 256 Midfall.Yul.blsR) (a := gv) (b := v11) hr0
+                  rwa [show (BitVec.ofNat 256 Midfall.Yul.blsR).toNat = Midfall.Yul.blsR from by
+                    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hbR]] at hcanon,
+                hgp0,
+                by
                   rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "gp_mptr") (by decide),
                     Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "gp_mptr") (by decide)]
                   exact hgp_mptr,
@@ -2186,6 +2199,8 @@ structure BridgeSucc (p a : Nat) (gp' : U256) (st st' : EvmState)
     (V' : VEnv (Bridge.Dialect c g)) (o : Outcome) : Prop where
   hok : o = .normal
   hgp : VEnv.get V' "gp" = some gp'
+  hgp_canon : gp'.toNat < Midfall.Yul.blsR
+  hgp_ne : gp' ≠ 0
   hgp_mptr : VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p)
   hmstart : VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a)
   hr : VEnv.get V' "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR)
@@ -2229,8 +2244,10 @@ theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c
           (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
             (BitVec.ofNat 256 Midfall.Yul.blsR)) hp
           V1 st1 ⟨hs.hgp_mptr, hs.hgp, hs.hr⟩ V' st' o hstores
-      refine Or.inr ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      refine Or.inr ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
       · rw [hV']; exact hs.hgp
+      · exact hs.hgp_canon
+      · exact hs.hgp_ne
       · rw [hV']; exact hs.hgp_mptr
       · rw [hV']; exact hs.hmstart
       · rw [hV']; exact hs.hr
