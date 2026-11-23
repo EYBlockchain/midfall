@@ -2521,6 +2521,280 @@ theorem range_map_neg_take (K k : Nat) (hk : k < K) :
       (List.range (k + 1)).map (fun i => -((1 : Int) + Int.ofNat i)) := by
   rw [← List.map_take, List.take_range, Nat.min_eq_left (Nat.succ_le_of_lt hk)]
 
+/-! ### Block 1: the head (four lets + the rot-0 store) -/
+
+/-- Terminate a four-binding env with the four constant reads. -/
+theorem b1_env4_mem (V : VEnv (Bridge.Dialect c g)) (xv om oi : U256) :
+    VEnv.get (("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) ::
+      ("x", xv) :: V) "x_pow_of_omega" = some xv :=
+  venv_get_cons_self (D := Bridge.Dialect c g) _ "x_pow_of_omega" xv
+
+theorem b1_env4_omega (V : VEnv (Bridge.Dialect c g)) (xv om oi : U256) :
+    VEnv.get (("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) ::
+      ("x", xv) :: V) "omega" = some om := by
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega") (y := "omega")
+    (by decide)]
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega_inv") (y := "omega")
+    (by decide)]
+  exact venv_get_cons_self (D := Bridge.Dialect c g) _ "omega" om
+
+theorem b1_env4_omega_inv (V : VEnv (Bridge.Dialect c g)) (xv om oi : U256) :
+    VEnv.get (("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) ::
+      ("x", xv) :: V) "omega_inv" = some oi := by
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega") (y := "omega_inv")
+    (by decide)]
+  exact venv_get_cons_self (D := Bridge.Dialect c g) _ "omega_inv" oi
+
+theorem b1_env4_r (V : VEnv (Bridge.Dialect c g)) (xv om oi rv : U256)
+    (hrv : VEnv.get V "r" = some rv) :
+    VEnv.get (("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) ::
+      ("x", xv) :: V) "r" = some rv := by
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega") (y := "r")
+    (by decide)]
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega_inv") (y := "r")
+    (by decide)]
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega") (y := "r")
+    (by decide)]
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x") (y := "r")
+    (by decide)]
+  exact hrv
+
+theorem b1_env4_rot (V : VEnv (Bridge.Dialect c g)) (xv om oi : U256) (R : Nat)
+    (hRP : VEnv.get V "ROT_POINTS_MPTR" = some (BitVec.ofNat 256 R)) :
+    VEnv.get (("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) ::
+      ("x", xv) :: V) "ROT_POINTS_MPTR" = some (BitVec.ofNat 256 R) := by
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega")
+    (y := "ROT_POINTS_MPTR") (by decide)]
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega_inv")
+    (y := "ROT_POINTS_MPTR") (by decide)]
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega")
+    (y := "ROT_POINTS_MPTR") (by decide)]
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x")
+    (y := "ROT_POINTS_MPTR") (by decide)]
+  exact hRP
+
+theorem b1_lets_contract {funs : FunEnv (Bridge.Dialect c g)} (xp op oip : U256)
+    (xv om oi : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [GenAst.ylet "x" (GenAst.yop EVM.Op.mload [GenAst.yvar "X_MPTR"]),
+       GenAst.ylet "omega" (GenAst.yop EVM.Op.mload [GenAst.yvar "OMEGA_MPTR"]),
+       GenAst.ylet "omega_inv" (GenAst.yop EVM.Op.mload [GenAst.yvar "OMEGA_INV_MPTR"]),
+       GenAst.ylet "x_pow_of_omega" (GenAst.yvar "x")]
+      (fun V st => VEnv.get V "X_MPTR" = some xp ∧
+        VEnv.get V "OMEGA_MPTR" = some op ∧ VEnv.get V "OMEGA_INV_MPTR" = some oip ∧
+        loadWord st.memory xp.toNat = xv ∧ loadWord st.memory op.toNat = om ∧
+        loadWord st.memory oip.toNat = oi)
+      (fun V st V' st' o => o = .normal ∧
+        V' = ("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) :: ("x", xv) :: V ∧
+        st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hX, hO, hOI, hx, ho, hoi⟩ := hpre
+  obtain ⟨V1, st1, h1, h2⟩ | ⟨h1, _⟩ :=
+    Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun
+  · obtain ⟨_, p1, hp1, hV1, hst1⟩ :=
+      b1_exec_ylet_mload_var (x := "x") (p := "X_MPTR") h1
+    rw [hX] at hp1
+    have hp1' : p1 = xp := (Option.some.inj hp1).symm
+    rw [hp1'] at hV1
+    obtain ⟨V2, st2, h2a, h2b⟩ | ⟨h2a, _⟩ :=
+      Step.stmts_cons_inv (D := Bridge.Dialect c g) h2
+    · obtain ⟨_, p2, hp2, hV2, hst2⟩ :=
+        b1_exec_ylet_mload_var (x := "omega") (p := "OMEGA_MPTR") h2a
+      rw [hV1] at hp2
+      rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x") (y := "OMEGA_MPTR")
+        (by decide)] at hp2
+      rw [hO] at hp2
+      have hp2' : p2 = op := (Option.some.inj hp2).symm
+      rw [hp2'] at hV2
+      have hv2 : loadWord st1.memory op.toNat = om := by rw [hst1]; exact ho
+      obtain ⟨V3, st3, h3a, h3b⟩ | ⟨h3a, _⟩ :=
+        Step.stmts_cons_inv (D := Bridge.Dialect c g) h2b
+      · obtain ⟨_, p3, hp3, hV3, hst3⟩ :=
+          b1_exec_ylet_mload_var (x := "omega_inv") (p := "OMEGA_INV_MPTR") h3a
+        rw [hV2] at hp3
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega")
+          (y := "OMEGA_INV_MPTR") (by decide)] at hp3
+        rw [hV1] at hp3
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x")
+          (y := "OMEGA_INV_MPTR") (by decide)] at hp3
+        rw [hOI] at hp3
+        have hp3' : p3 = oip := (Option.some.inj hp3).symm
+        rw [hp3'] at hV3
+        have hv3 : loadWord st2.memory oip.toNat = oi := by rw [hst2, hst1]; exact hoi
+        obtain ⟨V4, st4, h4a, h4b⟩ | ⟨h4a, _⟩ :=
+          Step.stmts_cons_inv (D := Bridge.Dialect c g) h3b
+        · obtain ⟨_, yv, hyv, hV4, hst4⟩ := b1_exec_ylet_var h4a
+          rw [hV3] at hyv
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega_inv") (y := "x")
+            (by decide)] at hyv
+          rw [hV2] at hyv
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega") (y := "x")
+            (by decide)] at hyv
+          rw [hV1] at hyv
+          rw [hx] at hyv
+          rw [venv_get_cons_self (D := Bridge.Dialect c g)] at hyv
+          have hyv' : yv = xv := (Option.some.inj hyv).symm
+          rw [hyv'] at hV4
+          cases h4b
+          -- exact env, state
+          have hV_eq : V' = ("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) ::
+              ("x", xv) :: V := by
+            rw [hV4, hV3, hV2, hV1, hx, hv2, hv3]
+          have hmem : st'.memory = st.memory := by
+            rw [hst4, hst3, hst2, hst1]
+            rfl
+          have henv : st'.env = st.env := by
+            rw [hst4, hst3, hst2, hst1]
+            rfl
+          have hhalt : st'.halted = st.halted := by
+            rw [hst4, hst3, hst2, hst1]
+            rfl
+          exact ⟨rfl, hV_eq, hmem, henv, hhalt⟩
+        · obtain ⟨ho, _, _, _⟩ := b1_exec_ylet_var h4a
+          exact absurd ho ‹_›
+      · obtain ⟨ho, _, _, _⟩ := b1_exec_ylet_mload_var (x := "omega_inv") (p := "OMEGA_INV_MPTR") h3a
+        exact absurd ho ‹_›
+    · obtain ⟨ho, _, _, _⟩ := b1_exec_ylet_mload_var (x := "omega") (p := "OMEGA_MPTR") h2a
+      exact absurd ho ‹_›
+  · obtain ⟨ho, _, _, _⟩ := b1_exec_ylet_mload_var (x := "x") (p := "X_MPTR") h1
+    exact absurd ho ‹_›
+
+theorem b1_store_only {funs : FunEnv (Bridge.Dialect c g)} (rots : List Int) (rot : Int)
+    (v xv : U256) (mem0 : Nat → UInt8) (R : Nat)
+    (hR : R < 2 ^ 256) (hb : R + rots.length * 32 ≤ 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (b1Store rots rot).toList
+      (fun V st => VEnv.get V "x_pow_of_omega" = some v ∧
+        VEnv.get V "ROT_POINTS_MPTR" = some (BitVec.ofNat 256 R) ∧
+        (∀ a, a < R ∨ R + rots.length * 32 ≤ a → st.memory a = mem0 a))
+      (fun V st V' st' o => o = .normal ∧ V' = V ∧
+        (∀ idx, rots.findIdx? (fun r => r == rot) = some idx →
+            loadWord st'.memory (R + idx * 32) = v) ∧
+        (∀ idx, rots.findIdx? (fun r => r == rot) ≠ some idx →
+            loadWord st'.memory (R + idx * 32) = loadWord st.memory (R + idx * 32)) ∧
+        (∀ a, a < R ∨ R + rots.length * 32 ≤ a → st'.memory a = mem0 a) ∧
+        st'.env = st.env ∧ st'.halted = st.halted) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hv, hRP, hout⟩ := hpre
+  cases hf : rots.findIdx? (fun r => r == rot) with
+  | none =>
+      rw [show (b1Store rots rot).toList = [] by simp [b1Store, hf]] at hrun
+      cases hrun
+      refine ⟨rfl, rfl, ?_, ?_, ?_, rfl, rfl⟩
+      · intro idx hidx; cases hidx
+      · intro idx _; rfl
+      · exact hout
+  | some idx =>
+      rw [show (b1Store rots rot).toList =
+          [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+            [GenAst.yop EVM.Op.add [GenAst.yvar "ROT_POINTS_MPTR",
+               GenAst.ylit (idx * Midfall.Generator.wordBytes)],
+             GenAst.yvar "x_pow_of_omega"])] by simp [b1Store, hf]] at hrun
+      obtain ⟨ho, hV, pv, vv, hpv, hvv, hmem, henv, hhalt⟩ :=
+        b1_exec_mstore_add_var (b1_stmt_of_singleton hrun)
+      rw [hRP] at hpv
+      have hpv' : pv = BitVec.ofNat 256 R := (Option.some.inj hpv).symm
+      rw [hpv'] at hmem
+      have hvv' : vv = v := Option.some.inj (hvv.symm.trans hv)
+      rw [hvv'] at hmem
+      have hidx' : idx < rots.length := by
+        have := findIdx?_some_lt hf
+        simpa using this
+      have hidx32 : idx * 32 < 2 ^ 256 :=
+        Nat.lt_of_lt_of_le (Nat.lt_of_lt_of_le
+          (Nat.mul_lt_mul_of_pos_right hidx' (by norm_num)) (Nat.le_add_left _ _)) hb
+      have hsum : R + idx * 32 < 2 ^ 256 :=
+        Nat.lt_of_lt_of_le (Nat.add_lt_add_left
+          (Nat.mul_lt_mul_of_pos_right hidx' (by norm_num)) R) hb
+      have haddr : ((BitVec.ofNat 256 R) + BitVec.ofNat 256 (idx * 32)).toNat
+          = R + idx * 32 := b1_addr_toNat hR hidx32 hsum
+      rw [show Midfall.Generator.wordBytes = 32 from rfl] at hmem
+      rw [haddr] at hmem
+      refine ⟨ho, hV, ?_, ?_, ?_, by rw [henv], by rw [hhalt]⟩
+      · intro idx' hidx''
+        have hidx_eq : idx = idx' := Option.some.inj hidx''
+        subst hidx_eq
+        rw [hmem, Midfall.Yul.Word.loadWord_storeWord_same]
+      · intro idx' hidx''
+        have hne' : idx' ≠ idx := by
+          intro heq
+          exact hidx'' (by rw [heq])
+        rw [hmem]
+        exact Midfall.Yul.Word.loadWord_storeWord_disjoint st.memory (R + idx * 32)
+          (R + idx' * 32) v (b1_addr_disjoint hne')
+      · intro a ha
+        rw [hmem]
+        unfold storeWord
+        rw [if_neg]
+        · exact hout a ha
+        · rintro ⟨h1', h2'⟩
+          rcases ha with h | h
+          · omega
+          · have : idx * 32 + 32 ≤ rots.length * 32 := by nlinarith
+            omega
+
+/-- Block 1's head: the three memory reads, `x_pow_of_omega := x`, then the rot-0 store. -/
+def b1Head (rots : List Int) : Block EVM.Op :=
+  [GenAst.ylet "x" (GenAst.yop EVM.Op.mload [GenAst.yvar "X_MPTR"]),
+   GenAst.ylet "omega" (GenAst.yop EVM.Op.mload [GenAst.yvar "OMEGA_MPTR"]),
+   GenAst.ylet "omega_inv" (GenAst.yop EVM.Op.mload [GenAst.yvar "OMEGA_INV_MPTR"]),
+   GenAst.ylet "x_pow_of_omega" (GenAst.yvar "x")] ++ (b1Store rots 0).toList
+
+theorem b1_head_contract {funs : FunEnv (Bridge.Dialect c g)} (rots : List Int)
+    (xp op oip : U256) (xv om oi rv : U256) (mem0 : Nat → UInt8) (R : Nat)
+    (hR : R < 2 ^ 256) (hb : R + rots.length * 32 ≤ 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (b1Head rots)
+      (fun V st => VEnv.get V "X_MPTR" = some xp ∧
+        VEnv.get V "OMEGA_MPTR" = some op ∧ VEnv.get V "OMEGA_INV_MPTR" = some oip ∧
+        VEnv.get V "ROT_POINTS_MPTR" = some (BitVec.ofNat 256 R) ∧
+        VEnv.get V "r" = some rv ∧
+        loadWord st.memory xp.toNat = xv ∧ loadWord st.memory op.toNat = om ∧
+        loadWord st.memory oip.toNat = oi ∧
+        (∀ a, a < R ∨ R + rots.length * 32 ≤ a → st.memory a = mem0 a))
+      (fun V st V' st' o => o = .normal ∧
+        V' = ("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) :: ("x", xv) :: V ∧
+        (∀ idx, rots.findIdx? (fun r => r == 0) = some idx →
+            loadWord st'.memory (R + idx * 32) = xv) ∧
+        (∀ idx, rots.findIdx? (fun r => r == 0) ≠ some idx →
+            loadWord st'.memory (R + idx * 32) = loadWord st.memory (R + idx * 32)) ∧
+        (∀ a, a < R ∨ R + rots.length * 32 ≤ a → st'.memory a = mem0 a) ∧
+        st'.env = st.env ∧ st'.halted = st.halted) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hX, hO, hOI, hRP, hrv, hx, ho, hoi, hout⟩ := hpre
+  rw [b1Head] at hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+    ⟨Vh, sth, hlets, hstore⟩ | ⟨hlets, hne⟩
+  · obtain ⟨ho1, hV1, hmem1, henv1, hhalt1⟩ :=
+      b1_lets_contract (c := c) (g := g) (funs := funs) xp op oip xv om oi
+        V st ⟨hX, hO, hOI, hx, ho, hoi⟩ Vh sth .normal hlets
+    rw [hV1] at hstore
+    have hout1 : ∀ a, a < R ∨ R + rots.length * 32 ≤ a → sth.memory a = mem0 a := by
+      intro a ha
+      rw [hmem1]
+      exact hout a ha
+    obtain ⟨ho2, hV2, hread, hunw, hout2, henv2, hhalt2⟩ :=
+      b1_store_only (c := c) (g := g) (funs := funs) rots 0 xv xv mem0 R hR hb
+        (("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) :: ("x", xv) :: V)
+        sth ⟨b1_env4_mem V xv om oi, b1_env4_rot V xv om oi R hRP, hout1⟩
+        V' st' o hstore
+    have hunw' : ∀ (idx : Nat), rots.findIdx? (fun r => r == 0) ≠ some idx →
+        loadWord st'.memory (R + idx * 32) = loadWord st.memory (R + idx * 32) := by
+      intro idx h
+      rw [← hmem1]
+      exact hunw idx h
+    refine ⟨ho2, hV2, hread, hunw', hout2, ?_, ?_⟩
+    · rw [henv2, henv1]
+    · rw [hhalt2, hhalt1]
+  · obtain ⟨ho, _, _, _, _⟩ :=
+      b1_lets_contract (c := c) (g := g) (funs := funs) xp op oip xv om oi
+        V st ⟨hX, hO, hOI, hx, ho, hoi⟩ V' st' o hlets
+    exact absurd ho hne
+#assert_axioms Midfall.LoweringV3.PcsRows.b1_lets_contract
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b1_store_only
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b1_head_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b1_store_step
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b1_walk_contract
