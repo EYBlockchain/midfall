@@ -1,10 +1,9 @@
 # STATUS - midfall
 
-**As of:** `775bf386` (2026-11-23). **Quick gate green.** The last **full** gate green was at
-`7f11b588` (`verify.sh: ok (full)`, KAT 1648/119); a later full-gate run on the D-GATE7/9 tree was
-killed by `ram_guard` at 14.58 GiB because seven lane builds were running concurrently (budget
-12 GiB), not by a proof failure. The final full gate is re-run with the lanes idle. Current report: root **11 / sound 5**,
-register **97 rows / 12 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
+**As of:** `7a55dc8d` (2026-11-23). **Full gate GREEN at `b171a8a9`** (`verify.sh: ok (full)`,
+KAT 1648/119, closure 5251/620 digest `da67ab3de31b92e9`). The only later change is A11's
+`fp_blockProgS` closure (a proof term; the closure digest is unchanged). Current report: root **11 / sound 5**,
+register **96 rows / 11 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
 254 modules; closure **5251 declarations / 620 external leaves / digest `da67ab3de31b92e9`**.
 
 ## 1. Verified - PROGRESS
@@ -248,7 +247,7 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `775bf386` (2026-11-23): register **97 rows / 12 ROOT / 22 CERT**, 0 REFUTED, 1 legacy VACUOUS
+At `7a55dc8d` (2026-11-23): register **96 rows / 11 ROOT / 22 CERT**, 0 REFUTED, 1 legacy VACUOUS
 (`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
 620 external leaves / digest 209cde2f48115a76**; quick gate green.
 
@@ -275,7 +274,9 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
 - D2: `generateBaseVkHeader_slots` (slots 0-10), reservation/fill `getD` prefix lemmas, the five
   payload CERT leaves (`payload_header`/`g1Base`/`g2Base`/`negSG2`/`payload_comms`), and the
   generator refactor (closure re-pinned at 5250 decls, digest `209cde2f48115a76`).
-- A11: `fp_blockSim` CLOSED (root 11 -> 10), `fpBodyRun_clean`, `fp_slice_det`, `callsOf_functional`.
+- A11: `fp_blockSim` CLOSED, `fpBodyRun_clean`, `fp_slice_det`, `callsOf_functional`, and
+  **`fp_blockProgS` CLOSED** — no finalPairing ROOT row remains (ROOT 12 -> 11 after the TP leaves
+  enter the cone).
 - A12: REF.9/REF.10 CLOSED (`g1CodecC_compressedEncoderFirst`, `g1CodecC_lawsV3`; register 102 rows).
 - A9: PCS block-4 m1 set contract and the general-arm `dxLines`/`lbasisLines`/`bp` step contracts,
   `block_live_pcs`.
@@ -302,9 +303,10 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
 
 ### Six-lane critical path (user cap)
 
-Phase 1 (live): A5 `batch_invert_summary`; A9 PCS block-4 general arm/blocks 5-6; A12
-`FpBodyRun`/finalPairing; A11 `fp_blockSim`; A6 `parseTrace` widths + TP leaves; A4 lagrange block
-composition; D2 CERT payload. (D1A is paused after its link commit; A4 took the rotated slot.)
+Phase 1 (live): A9 PCS `bpLines`/`bq`/term lines; A4 lag group 13 + inner contract; A6
+`common_uncompressed_g1` scope/body contract; A11b SIM.10 `xcript_total`; A5 KZG query-map bridge;
+D2 CERT.5 gas scans. A12's F1 gate is data-blocked on `LeanAccepts` (test-SRS proof vs production
+key).
 
 Phase 2: `block_live` (3/7: traceReturn, vkLoading, finalPairing poison; clean finalPairing via A12),
 then the TP/PCS/lag/quotient cases, `TotalV3`, and the `Rows` glue.
