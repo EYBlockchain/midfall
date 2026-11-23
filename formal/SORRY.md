@@ -40,7 +40,6 @@ comments but not string literals. The environment scan needs no exemption.
 
 | declaration | module | kind | status | cone | statement | removed by |
 | Midfall.Generator.Certified.env_negLagranges | Midfall.Generator.Certified | theorem | OPEN | - | `b0cfe1fd7ad3a1fe` | V3 CERT.6 - ART builder from the plan meta; meta = ConstraintSystemMeta.new |
-| Midfall.Generator.Certified.env_vkDigest | Midfall.Generator.Certified | theorem | OPEN | - | `669009852444ef59` | V3 CERT.7 - header slot 0 survives the reservation loop; feToU256 o frToRepr = frWord |
 | Midfall.Generator.Certified.payload_comms | Midfall.Generator.Certified | theorem | OPEN | - | `7f86bf73bd42d399` | V3 CERT.7 - generate_base_vk mapM; untouched by the reservation loop, plus the G1 codec law |
 | Midfall.Generator.Certified.payload_constantsLength | Midfall.Generator.Certified | theorem | OPEN | - | `6398a0dcef7f3b8e` | V3 CERT.7 - D-GATE1 PayloadAgrees.constantsLength: generate_base_vk writes the 11 header constants |
 | Midfall.Generator.Certified.payload_g1Base | Midfall.Generator.Certified | theorem | OPEN | - | `170e05851cf399ab` | V3 CERT.7 - slot 11 written from P.g1 plus the G1 codec law |
@@ -58,7 +57,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Generator.Certified.prog_gasFree | Midfall.Generator.Certified | theorem | OPEN | - | `14ce060d6970fece` | V3 CERT.5 (D3, D-CERT1) - the whole program executes no gas() (D-GATE1) |
 | Midfall.Generator.Certified.prog_hasMultiPointSet | Midfall.Generator.Certified | theorem | OPEN | - | `3faca9d12edc289e` | V3 CERT.6 (D4, D-CERT1) - intermediateSets has a point set of size at least two |
 | Midfall.Generator.Certified.prog_negLagrangesFloor | Midfall.Generator.Certified | theorem | OPEN | - | `bd485dd368546fea` | V3 CERT.6 (D4, D-CERT1) - PG-NEGLAG: at least two Lagrange denominators |
-| Midfall.Generator.Certified.prog_noDirect | Midfall.Generator.Certified | theorem | OPEN | - | `ea8cc033e901ac1b` | V3 CERT.6 - newFromVk sets direct := none; the ART builder copies it |
 | Midfall.Generator.Certified.prog_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `ff281295813cb0cf` | V3 CERT.5 - every-binder scan: binder lemma per emitter (the tree name is noShadowProg) |
 | Midfall.Generator.Certified.prog_noWriters | Midfall.Generator.Certified | theorem | OPEN | - | `f3dfc04a7d459e38` | V3 CERT.5 - scan lemma per emitter; inlining substitutes literals only |
 | Midfall.Generator.Certified.prog_permCommMatchRepaired | Midfall.Generator.Certified | theorem | OPEN | - | `d63f9dbb0b7608f5` | V3 CERT.6 (D4, D-CERT1) - D-P59 repair: one sigma commitment per permutation column |
@@ -71,7 +69,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Generator.Certified.v3_codegen | Midfall.Generator.Certified | theorem | OPEN | - | `d33dda869f6949aa` | V3 CERT.2 - route A: CodegenAgrees (today false until WP-G1 is certified) |
 | Midfall.Generator.Certified.v3_exitDiscipline | Midfall.Generator.Certified | theorem | OPEN | - | `1fd03addccdcce61` | V3 CERT.5 - exit-scan lemma per emitter |
 | Midfall.Generator.Certified.v3_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `3fceb6a2ff594db0` | V3 CERT.5 - top-level binder scan, as prog_noShadow |
-| Midfall.Generator.Certified.v3_payload | Midfall.Generator.Certified | theorem | OPEN | - | `7418db397b0c6004` | V3 CERT.7 - the five payload groups at the V3 slot names |
 | Midfall.Generator.Certified.v3_pins_of_valid | Midfall.Generator.Certified | theorem | OPEN | - | `8649414d6a6af241` | V3 CERT.6 - the pin bundles are consequences of the one ValidV3, not of generation |
 | Midfall.Generator.Certified.v3_planMeta | Midfall.Generator.Certified | theorem | OPEN | - | `9f526c3d549e8a4d` | V3 CERT.1 probe - NEEDS CLAUSE: Data.new gets the FINAL memory in the port, the pre-point-set memory in Rust; candidate stability clause in Instances/CertProbes.lean |
 | Midfall.Halo2.Spec.accepts | Midfall.Halo2.Spec.Piop | def | OPEN | - | `6db1418cbda599b6` | Phase 4 (spec layer) |
