@@ -1,10 +1,11 @@
 # STATUS - midfall
 
-**As of:** `9c9e6eaf` (2026-11-23). **Quick gate green.** The last FULL gate was at `d0bf226` (KAT
-1648/119); it is stale after the D-GATE5-8 statement wave and the current lane merges, so the final
-full gate is deferred until the next integration point. Current report: root **11 / sound 5**,
+**As of:** `775bf386` (2026-11-23). **Quick gate green.** The last **full** gate green was at
+`7f11b588` (`verify.sh: ok (full)`, KAT 1648/119); a later full-gate run on the D-GATE7/9 tree was
+killed by `ram_guard` at 14.58 GiB because seven lane builds were running concurrently (budget
+12 GiB), not by a proof failure. The final full gate is re-run with the lanes idle. Current report: root **11 / sound 5**,
 register **97 rows / 12 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
-252 modules; closure **5250 declarations / 620 external leaves / digest `209cde2f48115a76`**.
+254 modules; closure **5251 declarations / 620 external leaves / digest `da67ab3de31b92e9`**.
 
 ## 1. Verified - PROGRESS
 
@@ -247,7 +248,7 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `9a60ce22` (2026-11-23): register **97 rows / 12 ROOT / 22 CERT**, 0 REFUTED, 1 legacy VACUOUS
+At `775bf386` (2026-11-23): register **97 rows / 12 ROOT / 22 CERT**, 0 REFUTED, 1 legacy VACUOUS
 (`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
 620 external leaves / digest 209cde2f48115a76**; quick gate green.
 
