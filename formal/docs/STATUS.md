@@ -4,7 +4,7 @@
 1648/119); it is stale after the D-GATE5-8 statement wave and the current lane merges, so the final
 full gate is deferred until the next integration point. Current report: root **11 / sound 5**,
 register **102 rows / 10 ROOT / 26 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
-251 modules; closure **5249 declarations / 620 external leaves / digest `128d7f9cb4eb39ac`**.
+252 modules; closure **5250 declarations / 620 external leaves / digest `209cde2f48115a76`**.
 
 ## 1. Verified - PROGRESS
 
@@ -248,14 +248,15 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 ## 11. Current integration
 
 At `e8279b1b` (2026-11-23): register **102 rows / 10 ROOT / 26 CERT**, 0 REFUTED, 1 legacy VACUOUS
-(`end_to_end_acc_complete`); 108 sorried declarations; 251 modules; closure **5249 declarations /
-620 external leaves / digest 128d7f9cb4eb39ac**; quick gate green.
+(`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
+620 external leaves / digest 209cde2f48115a76**; quick gate green.
 
 **D-GATE8 (signed, 2026-11-23)**: `programFits`/`programFitB` carry `staticWorkingSetFits pv`
 (`traceU256Mptr + wordBytes < 2^256`), the full static-region fit. A11 derived `PG_PAIRINGFIT`,
 `pairingLhsMptr_toNat_of_valid` and `pairingRhsMptr_toNat_of_valid` from it;
 `block_live_finalPairing_of_body_fit` discharges the finalPairing fit premises. The closure manifest
-was regenerated (5249 decls, digest `128d7f9cb4eb39ac`) and `Frozen.sha256` re-pinned.
+was regenerated after D-GATE8 and again after D2's generator refactor (5250 decls, digest
+`209cde2f48115a76`) and `Frozen.sha256` re-pinned.
 
 **Merged this wave**:
 - A5: bridge head/full success+reject, stores env/halt frame, canonical/nonzero `BridgeSucc`,
