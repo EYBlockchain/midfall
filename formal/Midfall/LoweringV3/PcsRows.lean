@@ -4328,6 +4328,217 @@ theorem b3_eval_lt_var_lit_halt {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_lt_var_lit_halt
   [propext, Classical.choice, Quot.sound] native []
 
+/-! ### Block 3: the rolled-loop iteration body -/
+
+theorem qkey_ne_pow_p (k : Nat) : qkey k ≠ "pow_p" := by
+  intro h
+  have hlen := congrArg String.length h
+  unfold qkey at hlen
+  rw [String.length_append] at hlen
+  have h1 : ("q_eval_set_" : String).length = 11 := by decide
+  have h2 : ("pow_p" : String).length = 5 := by decide
+  rw [h1, h2] at hlen
+  omega
+
+/-- The rolled source value: the inner eval word fetched through `eval_p`. -/
+def rolledWord (st : EvmState) (ep : U256) (k : Nat) : U256 :=
+  if k = 0 then loadWord st.memory (loadWord st.memory ep.toNat).toNat
+  else loadWord st.memory
+    (loadWord st.memory (ep + BitVec.ofNat 256 (k * Midfall.Generator.wordBytes)).toNat).toNat
+
+/-- The loop body: `let pow := mload(pow_p)`; the nRot folds; the two cursor updates. -/
+def b3RolledBody (nRot : Nat) : Block EVM.Op :=
+  [GenAst.ylet "pow" (GenAst.yop EVM.Op.mload [GenAst.yvar "pow_p"])]
+  ++ ((List.range nRot).map b3RolledFoldStmt)
+  ++ [GenAst.yset "pow_p" (GenAst.yop EVM.Op.add
+        [GenAst.yvar "pow_p", GenAst.ylit Midfall.Generator.wordBytes]),
+      GenAst.yset "eval_p" (GenAst.yop EVM.Op.add
+        [GenAst.yvar "eval_p",
+         GenAst.ylit (nRot * Midfall.Generator.wordBytes)])]
+
+set_option maxHeartbeats 1200000 in
+theorem b3_cursor_contract {funs : FunEnv (Bridge.Dialect c g)} (nRot : Nat) (pp ep : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [GenAst.yset "pow_p" (GenAst.yop EVM.Op.add
+          [GenAst.yvar "pow_p", GenAst.ylit Midfall.Generator.wordBytes]),
+       GenAst.yset "eval_p" (GenAst.yop EVM.Op.add
+          [GenAst.yvar "eval_p", GenAst.ylit (nRot * Midfall.Generator.wordBytes)])]
+      (fun V _ => VEnv.get V "pow_p" = some pp ∧ VEnv.get V "eval_p" = some ep)
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' "pow_p" = some (pp + BitVec.ofNat 256 Midfall.Generator.wordBytes) ∧
+        VEnv.get V' "eval_p" = some
+          (ep + BitVec.ofNat 256 (nRot * Midfall.Generator.wordBytes)) ∧
+        (∀ y, y ≠ "pow_p" → y ≠ "eval_p" → VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hpp, hep⟩ := hpre
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, h1, h2⟩ | ⟨h1, hne⟩
+  · obtain ⟨ho1, ppv, hppv, hV1, hst1⟩ := b3_exec_yset_add_var_lit h1
+    rw [hpp] at hppv
+    have hppv' : ppv = pp := (Option.some.inj hppv).symm
+    subst ppv
+    have hpp1 : VEnv.get (VEnv.set V "pow_p"
+        (pp + BitVec.ofNat 256 Midfall.Generator.wordBytes)) "pow_p" =
+        some (pp + BitVec.ofNat 256 Midfall.Generator.wordBytes) :=
+      venv_get_set_same (D := Bridge.Dialect c g) hpp
+    have hep1 : VEnv.get (VEnv.set V "pow_p"
+        (pp + BitVec.ofNat 256 Midfall.Generator.wordBytes)) "eval_p" = some ep := by
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "pow_p") (y := "eval_p")
+        (v := pp + BitVec.ofNat 256 Midfall.Generator.wordBytes) (by decide)]
+      exact hep
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h2 with
+      ⟨V2, st2, h2a, h2b⟩ | ⟨h2a, hne2⟩
+    · obtain ⟨ho2, epv, hepv, hV2, hst2⟩ := b3_exec_yset_add_var_lit h2a
+      have hep1' := hep1
+      rw [← hV1] at hep1
+      rw [hep1] at hepv
+      have hepv' : epv = ep := (Option.some.inj hepv).symm
+      subst epv
+      rw [hV1] at hV2
+      cases h2b
+      refine ⟨ho2, ?_, ?_, ?_, by rw [hst2, hst1]⟩
+      · rw [hV2, venv_get_set_ne (D := Bridge.Dialect c g) (x := "eval_p") (y := "pow_p")
+          (v := ep + BitVec.ofNat 256 (nRot * Midfall.Generator.wordBytes)) (by decide)]
+        exact hpp1
+      · rw [hV2]
+        exact venv_get_set_same (D := Bridge.Dialect c g) hep1'
+      · intro y hypp hyep
+        rw [hV2, venv_get_set_ne (D := Bridge.Dialect c g) (x := "eval_p") (y := y)
+          (v := ep + BitVec.ofNat 256 (nRot * Midfall.Generator.wordBytes)) hyep]
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "pow_p") (y := y)
+          (v := pp + BitVec.ofNat 256 Midfall.Generator.wordBytes) hypp]
+    · obtain ⟨ho2, _, _⟩ := b3_exec_yset_add_var_lit h2a
+      exact absurd ho2 hne2
+  · obtain ⟨ho1, _, _, _⟩ := b3_exec_yset_add_var_lit h1
+    exact absurd ho1 hne
+
+set_option maxHeartbeats 3000000 in
+theorem b3_rolled_iter_contract {funs : FunEnv (Bridge.Dialect c g)} (nRot : Nat)
+    (init : Nat → U256) (pp ep rv : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (b3RolledBody nRot)
+      (fun V st =>
+        (∀ k, k < nRot → VEnv.get V (qkey k) = some (init k)) ∧
+        VEnv.get V "pow_p" = some pp ∧
+        VEnv.get V "eval_p" = some ep ∧
+        VEnv.get V "r" = some rv)
+      (fun V st V' st' o => o = .normal ∧
+        (∀ k, k < nRot →
+          VEnv.get V' (qkey k) = some
+            (b3FoldK rv (loadWord st.memory pp.toNat) (rolledWord st ep)
+              (List.range nRot) k (init k))) ∧
+        VEnv.get V' "pow_p" = some (pp + BitVec.ofNat 256 Midfall.Generator.wordBytes) ∧
+        VEnv.get V' "eval_p" = some
+          (ep + BitVec.ofNat 256 (nRot * Midfall.Generator.wordBytes)) ∧
+        st'.memory = st.memory) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hinit, hpp, hep, hrv⟩ := hpre
+  rw [b3RolledBody, List.singleton_append] at hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, hpow, hrest⟩ | ⟨hpow, hne⟩
+  · -- the pow let
+    obtain ⟨hop, pw, hpw, hV1, hst1⟩ := b1_exec_ylet_mload_var (x := "pow") (p := "pow_p") hpow
+    have hpw' : pw = pp := Option.some.inj (hpw.symm.trans hpp)
+    subst pw
+    -- folds ++ cursor updates
+    rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrest with
+      ⟨Vf, stf, hfolds, hcursors⟩ | ⟨hfolds, hnef⟩
+    · -- the nRot folds
+      have hqinit : ∀ k, k < nRot → VEnv.get V1 (qkey k) = some (init k) := by
+        intro k hk
+        rw [hV1]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "pow") (y := qkey k)
+          (v := loadWord st.memory pp.toNat) (by
+            intro h; exact qkey_ne_pow k h)]
+        exact hinit k hk
+      have hr1 : VEnv.get V1 "r" = some rv := by
+        rw [hV1]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "pow") (y := "r")
+          (v := loadWord st.memory pp.toNat) (by decide)]
+        exact hrv
+      have hep1 : VEnv.get V1 "eval_p" = some ep := by
+        rw [hV1]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "pow") (y := "eval_p")
+          (v := loadWord st.memory pp.toNat) (by decide)]
+        exact hep
+      have hfeq : ∀ k, k < nRot → rolledWord st ep k =
+          (if k = 0 then loadWord st1.memory (loadWord st1.memory ep.toNat).toNat
+           else loadWord st1.memory
+            (loadWord st1.memory
+              (ep + BitVec.ofNat 256 (k * Midfall.Generator.wordBytes)).toNat).toNat) := by
+        intro k hk
+        rw [hst1, Midfall.Yul.Word.touchMemory_memory]
+        rfl
+      obtain ⟨hof, hlookf, houtf, hmemf⟩ :=
+        b3_rolled_body_contract (c := c) (g := g) (funs := funs) nRot init
+          (rolledWord st ep) (loadWord st.memory pp.toNat) rv ep
+          V1 st1 ⟨hqinit, by rw [hV1]; exact venv_get_cons_self V "pow" (loadWord st.memory pp.toNat),
+            hr1, hep1, hfeq⟩ Vf stf .normal hfolds
+      -- the cursor updates
+      have hppf : VEnv.get Vf "pow_p" = some pp := by
+        rw [houtf "pow_p" (fun k hk h => qkey_ne_pow_p k h.symm)]
+        rw [hV1]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "pow") (y := "pow_p")
+          (v := loadWord st.memory pp.toNat) (by decide)]
+        exact hpp
+      have hepf : VEnv.get Vf "eval_p" = some ep := by
+        rw [houtf "eval_p" (fun k hk h => qkey_ne_eval_p k h.symm)]
+        rw [hV1]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "pow") (y := "eval_p")
+          (v := loadWord st.memory pp.toNat) (by decide)]
+        exact hep
+      obtain ⟨hoc, hppc, hepc, houtc, hstc⟩ :=
+        b3_cursor_contract (c := c) (g := g) (funs := funs) nRot pp ep
+          Vf stf ⟨hppf, hepf⟩ V' st' o hcursors
+      refine ⟨hoc, ?_, hppc, hepc, ?_⟩
+      · intro k hk
+        rw [houtc (qkey k) (qkey_ne_pow_p k) (qkey_ne_eval_p k)]
+        exact hlookf k hk
+      · rw [hstc, hmemf, hst1, Midfall.Yul.Word.touchMemory_memory]
+    · obtain ⟨hof, _, _, _⟩ :=
+        b3_rolled_body_contract (c := c) (g := g) (funs := funs) nRot init
+          (rolledWord st ep) (loadWord st.memory pp.toNat) rv ep
+          V1 st1 ⟨by
+            intro k hk
+            rw [hV1]
+            change VEnv.get (("pow", loadWord st.memory pp.toNat) :: V) (qkey k) =
+              some (init k)
+            rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "pow") (y := qkey k)
+              (v := loadWord st.memory pp.toNat) (by intro h; exact qkey_ne_pow k h)]
+            exact hinit k hk,
+          by rw [hV1]; exact venv_get_cons_self V "pow" (loadWord st.memory pp.toNat),
+          by
+            rw [hV1]
+            rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "pow") (y := "r")
+              (v := loadWord st.memory pp.toNat) (by decide)]
+            exact hrv,
+          by
+            rw [hV1]
+            rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "pow") (y := "eval_p")
+              (v := loadWord st.memory pp.toNat) (by decide)]
+            exact hep,
+          by
+            intro k hk
+            rw [hst1, Midfall.Yul.Word.touchMemory_memory]
+            rfl⟩ V' st' o hfolds
+      exact absurd hof hnef
+  · obtain ⟨hop, _, _, _, _⟩ :=
+      b1_exec_ylet_mload_var (x := "pow") (p := "pow_p") hpow
+    exact absurd hop hne
+
+
+
+#assert_axioms Midfall.LoweringV3.PcsRows.qkey_ne_pow_p
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.rolledWord
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3RolledBody
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_cursor_contract
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_rolled_iter_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow_halt
