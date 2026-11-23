@@ -32,7 +32,8 @@ theorem scalarInv_call_contract_var {g : ExternalGas} (product : PairingProduct)
       0 < xv.toNat → xv.toNat < Midfall.Yul.blsR →
       EvalExpr (Bridge.Dialect (permissive (callsOf product)) g) funs V st
         (Expr.call "scalar_inv" [Expr.var arg]) r →
-      (∃ st', r = .vals [SIInv xv] st' ∧ MemSameOutside st st' scratch 192) ∨
+      (∃ st', r = .vals [SIInv xv] st' ∧ MemSameOutside st st' scratch 192 ∧
+        st'.env = st.env) ∨
         (∃ st', r = .halt st' ∧ Midfall.LoweringV2.Reverted st') := by
   intro V st r harg hx0 hxR he
   have hbodyC := bodyLit_contract (product := product) (funs := cenv) (cenv := cenv')
@@ -76,8 +77,8 @@ theorem scalarInv_call_contract_var {g : ExternalGas} (product : PairingProduct)
                           (scalarBodyLit scratch n gasN selN selP) :: cenv) (cenv := cenv')
                         scratch n gasN selN selP xv hn hscratch hscratch256 hfail'
                       have hpost := hbodyC' _ _ (hcalleePre _ hxv) _ _ _ hstmts
-                      rcases hpost with ⟨hon, hVb, hget, hout⟩ | ⟨hoh, hrev⟩
-                      · refine Or.inl ⟨_, ?_, hout⟩
+                      rcases hpost with ⟨hon, hVb, hget, hout, houtenv⟩ | ⟨hoh, hrev⟩
+                      · refine Or.inl ⟨_, ?_, hout, houtenv⟩
                         rw [hVb]
                         simp [VEnv.set, restore, VEnv.get, List.find?, bindZeros]
                       · rcases ho with hn | hl
@@ -138,7 +139,8 @@ theorem b3_exec_ylet_scalar_inv_var {g : ExternalGas} (product : PairingProduct)
       0 < xv.toNat → xv.toNat < Midfall.Yul.blsR →
       ExecStmt (Bridge.Dialect (permissive (callsOf product)) g) funs V st
         (GenAst.ylet x (GenAst.ycall "scalar_inv" [GenAst.yvar arg])) V' st' o →
-      (o = .normal ∧ V' = (x, SIInv xv) :: V ∧ MemSameOutside st st' scratch 192) ∨
+      (o = .normal ∧ V' = (x, SIInv xv) :: V ∧ MemSameOutside st st' scratch 192 ∧
+        st'.env = st.env) ∨
         (o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
   intro arg x V st V' st' o harg hx0 hxR hrun
   cases hrun with
@@ -147,17 +149,18 @@ theorem b3_exec_ylet_scalar_inv_var {g : ExternalGas} (product : PairingProduct)
         (funs := funs) (decl := decl) (cenv := cenv) (cenv' := cenv')
         scratch n gasN selN selP xv hlook hbody hparams hrets hn hscratch hscratch256 hfail
         V st _ harg hx0 hxR he
-      rcases hc with ⟨st1, hev, hout⟩ | ⟨st1, heh, hrev⟩
+      rcases hc with ⟨st1, hev, hout, houtenv⟩ | ⟨st1, heh, hrev⟩
       · injection hev with hvals hst
         rw [hvals]
-        exact Or.inl ⟨rfl, by simp [VEnv.setMany], by simpa [hst] using hout⟩
+        exact Or.inl ⟨rfl, by simp [VEnv.setMany], by simpa [hst] using hout,
+          by simpa [hst] using houtenv⟩
       · exact absurd heh (by simp)
   | letHalt he =>
       have hc := scalarInv_call_contract_var (product := product) (arg := arg)
         (funs := funs) (decl := decl) (cenv := cenv) (cenv' := cenv')
         scratch n gasN selN selP xv hlook hbody hparams hrets hn hscratch hscratch256 hfail
         V st _ harg hx0 hxR he
-      rcases hc with ⟨st1, hev, _⟩ | ⟨st1, heh, hrev⟩
+      rcases hc with ⟨st1, hev, _, _⟩ | ⟨st1, heh, hrev⟩
       · exact absurd hev (by simp)
       · injection heh with hst
         subst hst

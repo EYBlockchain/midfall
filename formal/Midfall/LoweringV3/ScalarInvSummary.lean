@@ -1093,7 +1093,7 @@ theorem guardsLit_contract {c : ExternalCalls} {g : ExternalGas}
         (o = .normal ∧ V' = ("p", sv scratch) :: V ∧
           VEnv.get V' "p" = some (sv scratch) ∧
           VEnv.get V' "x" = some xv ∧ (VEnv.get V' "inv").isSome ∧
-          st'.memory = st.memory)
+          st'.memory = st.memory ∧ st'.env = st.env)
         ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hx, hinv⟩ := hpre
@@ -1101,13 +1101,13 @@ theorem guardsLit_contract {c : ExternalCalls} {g : ExternalGas}
       ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne⟩
   · have g1 := guardLt_lit_contract (funs := funs) (cenv := cenv) n xv selN hfail
       V st hx V1 st1 .normal h1
-    rcases g1 with ⟨ho1, hV1, hm1, _⟩ | ⟨ho1, hrev1⟩
+    rcases g1 with ⟨ho1, hV1, hm1, he1, _⟩ | ⟨ho1, hrev1⟩
     · subst V1
       rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
           ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
       · have g2 := guardNonzero_lit_contract (funs := funs) (cenv := cenv) xv selN hfail
           V st1 hx V2 st2 .normal h2
-        rcases g2 with ⟨ho2, hV2, hm2, _⟩ | ⟨ho2, hrev2⟩
+        rcases g2 with ⟨ho2, hV2, hm2, he2, _⟩ | ⟨ho2, hrev2⟩
         · subst V2
           rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest2 with
               ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
@@ -1116,7 +1116,7 @@ theorem guardsLit_contract {c : ExternalCalls} {g : ExternalGas}
                 cases he with
                 | lit =>
                     cases hrest3
-                    refine Or.inl ⟨rfl, ?_, ?_, ?_, ?_, ?_⟩
+                    refine Or.inl ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
                     · simp only [List.zip_cons_cons, List.zip_nil_left, List.cons_append,
                         List.nil_append]
                       rfl
@@ -1132,6 +1132,7 @@ theorem guardsLit_contract {c : ExternalCalls} {g : ExternalGas}
                       simpa [VEnv.get, List.find?,
                         show decide (("p" : String) = "inv") = false by decide] using hinv
                     · exact hm2.trans hm1
+                    · exact he2.trans he1
           · cases h3 with
             | letVal he hlen => exact absurd rfl hne3
             | letHalt he => cases he
@@ -1161,14 +1162,15 @@ theorem storesLit_contract {c : ExternalCalls} {g : ExternalGas}
         (o = .normal ∧ V' = V ∧ VEnv.get V' "p" = some (sv scratch) ∧
           VEnv.get V' "x" = some xv ∧ (VEnv.get V' "inv").isSome ∧
           SIFrame scratch xv st' ∧
-          st'.memory = mxMem st.memory (sv scratch).toNat xv)
+          st'.memory = mxMem st.memory (sv scratch).toNat xv ∧
+          st'.env = st.env)
         ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hp, hx, hinv⟩ := hpre
   have h := modexpFrameStores_lit_contract (funs := funs) (pv := sv scratch) xv n hscratch
     V st ⟨hp, hx⟩ V' st' o hrun
   rcases h with ⟨ho, hV, hmem, henv, hhalt⟩
-  refine Or.inl ⟨ho, hV, ?_, ?_, ?_, ?_, ?_⟩
+  refine Or.inl ⟨ho, hV, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [hV]; exact hp
   · rw [hV]; exact hx
   · rw [hV]; exact hinv
@@ -1176,6 +1178,7 @@ theorem storesLit_contract {c : ExternalCalls} {g : ExternalGas}
     rw [hmem, hn, mxMemFr_blsR]
     exact mxMem_frame st.memory (sv scratch).toNat xv
   · rw [hmem, hn, mxMemFr_blsR]
+  · exact henv
 
 theorem invAssign_lit_contract {c : ExternalCalls} {g : ExternalGas}
     (funs : FunEnv (Bridge.Dialect c g)) (sv invW : U256) :
@@ -1186,7 +1189,7 @@ theorem invAssign_lit_contract {c : ExternalCalls} {g : ExternalGas}
       (fun V st V' st' o =>
         (o = .normal ∧ V' = VEnv.set V "inv" invW ∧
           VEnv.get V' "inv" = some invW ∧
-          st'.memory = st.memory ∧ st'.halted = st.halted)
+          st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted)
         ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hp, hload, hinv⟩ := hpre
@@ -1194,7 +1197,7 @@ theorem invAssign_lit_contract {c : ExternalCalls} {g : ExternalGas}
   | assignVal he hlen =>
       obtain ⟨a, hvs, ha, hst⟩ := eval_mload_var_vals funs V "p" sv hp he
       subst hvs
-      refine Or.inl ⟨rfl, ?_, ?_, ?_, ?_⟩
+      refine Or.inl ⟨rfl, ?_, ?_, ?_, ?_, ?_⟩
       · simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
           List.foldl_nil]
         rw [ha, hload]
@@ -1205,6 +1208,7 @@ theorem invAssign_lit_contract {c : ExternalCalls} {g : ExternalGas}
             simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
               List.foldl_nil]
             exact venv_get_set_same (D := Bridge.Dialect c g) hv
+      · rw [hst]; rfl
       · rw [hst]; rfl
       · rw [hst]; rfl
   | assignHalt he => exact absurd he (expr_mload_var_ne_halts funs V "p")
@@ -1255,7 +1259,8 @@ theorem readBackLit_contract {g : ExternalGas} (product : PairingProduct)
         (o = .normal ∧ V' = VEnv.set V "inv" (SIInv xv) ∧
           VEnv.get V' "inv" = some (SIInv xv) ∧
           (∀ a, a < (sv scratch).toNat ∨ (sv scratch).toNat + 192 ≤ a →
-            st'.memory a = st.memory a))
+            st'.memory a = st.memory a) ∧
+          st'.env = st.env)
         ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hp, hx, hinv, hx0, hxR, hframe⟩ := hpre
@@ -1280,13 +1285,15 @@ theorem readBackLit_contract {g : ExternalGas} (product : PairingProduct)
               ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
           · have asg := invAssign_lit_contract (funs := funs) (sv scratch) (SIInv xv)
               V st2 ⟨hp, hload2, hinv⟩ V3 st3 .normal h3
-            rcases asg with ⟨ho3, hV3, hget3, hm3, _hh⟩ | ⟨ho3, hrev3⟩
+            rcases asg with ⟨ho3, hV3, hget3, hm3, he3, _hh⟩ | ⟨ho3, hrev3⟩
             · cases hrest3
-              refine Or.inl ⟨ho3, hV3, hget3, ?_⟩
-              intro a ha
-              rw [hm3, hst2, hst]
-              exact finishCall_memory_outside _ _ _ _ _
-                (by omega : a < (sv scratch).toNat ∨ (sv scratch).toNat + 32 ≤ a)
+              refine Or.inl ⟨ho3, hV3, hget3, ?_, ?_⟩
+              · intro a ha
+                rw [hm3, hst2, hst]
+                exact finishCall_memory_outside _ _ _ _ _
+                  (by omega : a < (sv scratch).toNat ∨ (sv scratch).toNat + 32 ≤ a)
+              · rw [he3, hst2, hst]
+                simp [finishCall, touchMemory2, touchMemory]
             · cases hrest3
               exact Or.inr ⟨ho3, hrev3⟩
           · cases h3 with
@@ -1349,7 +1356,7 @@ theorem bodyLit_contract {g : ExternalGas} (product : PairingProduct)
       (fun V st V' st' o =>
         (o = .normal ∧ V' = VEnv.set (("p", sv scratch) :: V) "inv" (SIInv xv) ∧
           VEnv.get V' "inv" = some (SIInv xv) ∧
-          MemSameOutside st st' scratch 192)
+          MemSameOutside st st' scratch 192 ∧ st'.env = st.env)
         ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hx, hinv, hx0, hxR⟩ := hpre
@@ -1359,17 +1366,17 @@ theorem bodyLit_contract {g : ExternalGas} (product : PairingProduct)
       ⟨V1, st1, hg, hrest⟩ | ⟨hg, hne⟩
   · have g := guardsLit_contract (funs := funs) (cenv := cenv) scratch n selN xv hfail
       V st ⟨hx, hinv⟩ V1 st1 .normal hg
-    rcases g with ⟨ho1, hV1, hp1, hx1, hinv1, hm1⟩ | ⟨ho1, hrev1⟩
+    rcases g with ⟨ho1, hV1, hp1, hx1, hinv1, hm1, he1⟩ | ⟨ho1, hrev1⟩
     · rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrest with
           ⟨V2, st2, hs, hr⟩ | ⟨hs, hne2⟩
       · have s := storesLit_contract (funs := funs) scratch n xv hn hscratch
           V1 st1 ⟨hp1, hx1, hinv1⟩ V2 st2 .normal hs
-        rcases s with ⟨ho2, hV2, hp2, hx2, hinv2, hframe, hm2⟩ | ⟨ho2, hrev2⟩
+        rcases s with ⟨ho2, hV2, hp2, hx2, hinv2, hframe, hm2, he2⟩ | ⟨ho2, hrev2⟩
         · have r := readBackLit_contract (product := product) (funs := funs) (cenv := cenv)
             scratch gasN selN selP xv hfail
             V2 st2 ⟨hp2, hx2, hinv2, hx0, hxR, hframe⟩ V' st' o hr
-          rcases r with ⟨ho3, hV3, hget3, hfr⟩ | ⟨ho3, hrev3⟩
-          · refine Or.inl ⟨ho3, ?_, hget3, ?_⟩
+          rcases r with ⟨ho3, hV3, hget3, hfr, he3⟩ | ⟨ho3, hrev3⟩
+          · refine Or.inl ⟨ho3, ?_, hget3, ?_, ?_⟩
             · rw [hV3, hV2, hV1]
             · have hpv : (sv scratch).toNat = scratch := by
                 show (BitVec.ofNat 256 scratch).toNat = scratch
@@ -1379,6 +1386,7 @@ theorem bodyLit_contract {g : ExternalGas} (product : PairingProduct)
                 rw [hpv]; exact ha
               rw [hfr a ha', hm2,
                 mxMem_outside st1.memory (sv scratch).toNat xv a (by rw [hpv]; exact ha), hm1]
+            · exact he3.trans (he2.trans he1)
           · exact Or.inr ⟨ho3, hrev3⟩
         · exact absurd ho2 (by decide)
       · have s := storesLit_contract (funs := funs) scratch n xv hn hscratch
