@@ -1851,17 +1851,19 @@ theorem wSum_congr (r : U256) {f f' : Nat → U256} (hf : ∀ i, f i = f' i) :
 set_option maxHeartbeats 2000000 in
 /-- **`LagP14_store`**: with the reads at the fixed `mem0`, a slot store only moves the memory
 witness and extends the inside-window agreement and the `MemSameOut` frame by
-`storeWord_outside`. -/
+`storeWord_outside`. The post-state is arbitrary with `st'.memory = storeWord mem q v` and the
+frame fields preserved (this is what the `mstore` contract hands out). -/
 theorem LagP14_store {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
     {C : LagCfg consts cd k n m} {ret pf : U256} {inv : Nat → U256} {st0 : EvmState}
-    {mem0 mem : Nat → UInt8} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {mem0 mem : Nat → UInt8} {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
     (h : LagP14 C ret pf inv st0 mem0 mem V st) (q : Nat) (v : U256)
     (hqslot : q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE)
-    (hq : q + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ q) :
-    LagP14 C ret pf inv st0 mem0 (storeWord mem q v) V
-      { st with memory := storeWord mem q v } := by
-  obtain ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := h
-  refine ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, rfl, ?_, henv, hhalt, ?_⟩
+    (hq : q + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ q)
+    (hmem : st'.memory = storeWord mem q v)
+    (henv : st'.env = st0.env) (hhalt : st'.halted = st0.halted) :
+    LagP14 C ret pf inv st0 mem0 (storeWord mem q v) V st' := by
+  obtain ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmemEq, hout, -, -, hms⟩ := h
+  refine ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmem, ?_, henv, hhalt, ?_⟩
   · intro x h1 h2
     rw [storeWord_outside mem q v x (by
       rcases hq with hq' | hq'
@@ -1869,7 +1871,7 @@ theorem LagP14_store {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
       · exact Or.inl (by omega))]
     exact hout x h1 h2
   · intro a ha hb hs
-    show storeWord mem q v a = st0.memory a
+    rw [hmem]
     rw [storeWord_outside mem q v a (by
       rcases hs q hqslot with h' | h' <;> omega)]
     rw [show mem = st.memory from hmemEq.symm]
