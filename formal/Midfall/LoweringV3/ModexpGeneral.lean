@@ -2077,6 +2077,7 @@ theorem bi_bridge_head_form (consts : Inline.Consts) :
 structure BridgeReject (st st' : EvmState) (V' : VEnv (Bridge.Dialect c g)) (o : Outcome) : Prop where
   hok : o = .leave
   hret : VEnv.get V' "ret" = some 0
+  hpf_some : (VEnv.get V' "precompile_failed").isSome
   hmem : st'.memory = st.memory
   henv : st'.env = st.env
   hhalt : st'.halted = st.halted
@@ -2221,9 +2222,13 @@ theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dial
                 (BitVec.ofNat 256 Midfall.Yul.blsR) = 0
             · obtain ⟨ho4, hV4, hst4⟩ := h4c.2 hgp0
               subst hV4 hst4
-              refine Or.inl ⟨ho4, ?_, ?_, ?_, ?_⟩
+              refine Or.inl ⟨ho4, ?_, ?_, ?_, ?_, ?_⟩
               · exact Midfall.LoweringV3.LagrangeRows.venv_get_set_same (D := Bridge.Dialect c g)
                   ((Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "ret") (by decide)).trans hret1)
+              · rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "ret") (y := "precompile_failed") (by decide),
+                  Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "precompile_failed") (by decide),
+                  Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "precompile_failed") (by decide)]
+                exact hpf
               · rw [hst3, hst2, hst1]; rfl
               · rw [hst3, hst2, hst1]; rfl
               · rw [hst3, hst2, hst1]; rfl
@@ -2245,8 +2250,11 @@ theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dial
           cases h : v11.ult (BitVec.ofNat 256 Midfall.Yul.blsR) <;> simp_all
         obtain ⟨ho2, hV2, hst2⟩ := h2c.2 hltf
         subst hV2 hst2
-        refine Or.inl ⟨ho2, ?_, ?_, ?_, ?_⟩
+        refine Or.inl ⟨ho2, ?_, ?_, ?_, ?_, ?_⟩
         · rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_same (D := Bridge.Dialect c g) hret1]
+        · rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "ret") (y := "precompile_failed") (by decide),
+            Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "precompile_failed") (by decide)]
+          exact hpf
         · rw [hst1]; rfl
         · rw [hst1]; rfl
         · rw [hst1]; rfl
@@ -3694,7 +3702,8 @@ structure FrontPre (M : Nat → UInt8) (a e s : Nat) (succ : U256)
     the whole scratch window `[s, s + 32k + 192)`. -/
 def FrontFail (_a k s : Nat) (st st' : EvmState) (V' : VEnv (Bridge.Dialect c g))
     (o : Outcome) : Prop :=
-  o = .leave ∧ VEnv.get V' "ret" = some 0 ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+  o = .leave ∧ VEnv.get V' "ret" = some 0 ∧
+    (VEnv.get V' "precompile_failed").isSome ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
     MemSameOutside st st' s (32 * k + 192)
 
 /-- The front's success arm: the state after statement 28, ready for the backward pass
@@ -3884,7 +3893,8 @@ theorem bi_front (consts : Inline.Consts) (product : PairingProduct) (g : Extern
               intro i hi
               have hstep := hPstep i (by omega)
               rw [hstep.2, hPeq (i + 1) (by omega)]
-          · refine Or.inl ⟨hfail.hok, hfail.hret, ?_, ?_, ?_⟩
+          · refine Or.inl ⟨hfail.hok, hfail.hret, ?_, ?_, ?_, ?_⟩
+            · rw [hfail.hpf]; rfl
             · rw [hfail.henv, hs.henv, henv1]
             · rw [hfail.hhalt, hs.hhalt, hhalt1]
             · intro q hq
@@ -3911,7 +3921,7 @@ theorem bi_front (consts : Inline.Consts) (product : PairingProduct) (g : Extern
           (x_last := loadWord M (a + 32 * (k - 1))) hpbr hmpbr
           V1 st1 hbrpre V' st' o hbrun
         rcases hb with hrej | hs
-        · refine Or.inl ⟨hrej.hok, hrej.hret, ?_, ?_, ?_⟩
+        · refine Or.inl ⟨hrej.hok, hrej.hret, hrej.hpf_some, ?_, ?_, ?_⟩
           · rw [hrej.henv, henv1]
           · rw [hrej.hhalt, hhalt1]
           · intro q hq
@@ -3921,8 +3931,8 @@ theorem bi_front (consts : Inline.Consts) (product : PairingProduct) (g : Extern
   · have hl := bi_forward_loop (consts := consts) (c := permissive (callsOf product)) (g := g)
       funs (rw := BlsR) (a := a) (e := e) (s := s) hae hal he hs hdisj
       V st hloopPre V' st' o hloop
-    rcases hl with ⟨hok, hret0, henv, hhalt, hout⟩ | ⟨ho, -⟩
-    · refine Or.inl ⟨hok, hret0, henv, hhalt, ?_⟩
+    rcases hl with ⟨hok, hret0, hpfs, henv, hhalt, hout⟩ | ⟨ho, -⟩
+    · refine Or.inl ⟨hok, hret0, hpfs, henv, hhalt, ?_⟩
       intro q hq
       exact hout q (by rcases hq with h | h <;> omega)
     · exact absurd ho hne
