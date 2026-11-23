@@ -490,14 +490,6 @@ theorem b1_eval_sub_var_mload_add_var_lit_halt {funs : FunEnv (Bridge.Dialect c 
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_addmod_mulmod_vars_inv
   [propext, Classical.choice, Quot.sound] native []
 
-#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mload_add_var_lit_halt
-  [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_calldataload_add_var_lit_halt
-  [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_vars_halt
-  [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_var_mload_add_var_lit_halt
-  [propext, Classical.choice, Quot.sound] native []
 set_option maxHeartbeats 1200000 in
 theorem b1_eval_sub_from_vars_halt {funs : FunEnv (Bridge.Dialect c g)}
     {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x y : String} {st' : EvmState}
@@ -621,6 +613,87 @@ theorem b1_eval_addmod_mulmod_vars_halt {funs : FunEnv (Bridge.Dialect c g)}
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mulmod_subfrom_cdl_mload_halt
   [propext, Classical.choice, Quot.sound] native []
+theorem b1_exec_ylet_sub_from_vars {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {x a b : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.ylet x (subFrom (GenAst.yvar a) (GenAst.yvar b))) V' st' o) :
+    o = .normal ∧ ∃ av bv rv, VEnv.get V a = some av ∧ VEnv.get V b = some bv ∧
+      VEnv.get V "r" = some rv ∧
+      V' = (x, wAddmodAt av (rv - bv) rv) :: V ∧ st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨av, bv, rv, ha, hb, hr, hval, hst⟩ := b1_eval_sub_from_vars_inv he
+      subst hval; subst hst
+      exact ⟨rfl, av, bv, rv, ha, hb, hr, by simp, rfl⟩
+  | letHalt he => exact (b1_eval_sub_from_vars_halt he).elim
+
+theorem b1_exec_ylet_mulmod_subfrom {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {x qc qe inv : String} {offc offe : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.ylet x
+        (GenAst.yop EVM.Op.mulmod
+          [subFrom
+            (GenAst.yop EVM.Op.calldataload
+              [GenAst.yop EVM.Op.add [GenAst.yvar qc, GenAst.ylit offc]])
+            (GenAst.yop EVM.Op.mload
+              [GenAst.yop EVM.Op.add [GenAst.yvar qe, GenAst.ylit offe]]),
+           GenAst.yvar inv, GenAst.yvar "r"])) V' st' o) :
+    o = .normal ∧ ∃ cptr qep rv invv subv,
+      VEnv.get V qc = some cptr ∧ VEnv.get V qe = some qep ∧
+      VEnv.get V inv = some invv ∧ VEnv.get V "r" = some rv ∧
+      subv = wAddmodAt
+        (wordFrom st.env.calldata (cptr + BitVec.ofNat 256 offc).toNat)
+        (rv - loadWord st.memory (qep + BitVec.ofNat 256 offe).toNat) rv ∧
+      V' = (x, wMulmodAt subv invv rv) :: V := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨cptr, qep, rv, invv, subv, hc, hq, hi, hr, hsub, hval⟩ :=
+        b1_eval_mulmod_subfrom_cdl_mload_inv he
+      subst hval
+      exact ⟨rfl, cptr, qep, rv, invv, subv, hc, hq, hi, hr, hsub, by simp⟩
+  | letHalt he => exact (b1_eval_mulmod_subfrom_cdl_mload_halt he).elim
+
+theorem b1_exec_yset_f_eval {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {f x2 ev : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.yset f
+        (GenAst.yop EVM.Op.addmod
+          [GenAst.yop EVM.Op.mulmod
+             [GenAst.yvar f, GenAst.yvar x2, GenAst.yvar "r"],
+           GenAst.yvar ev, GenAst.yvar "r"])) V' st' o) :
+    o = .normal ∧ ∃ fv x2v evv rv, VEnv.get V f = some fv ∧
+      VEnv.get V x2 = some x2v ∧ VEnv.get V ev = some evv ∧
+      VEnv.get V "r" = some rv ∧
+      V' = VEnv.set V f (wAddmodAt (wMulmodAt fv x2v rv) evv rv) ∧ st' = st := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨fv, x2v, evv, rv, hf, hx2, hev, hr, hval, hst⟩ :=
+        b1_eval_addmod_mulmod_vars_inv he
+      subst hval; subst hst
+      exact ⟨rfl, fv, x2v, evv, rv, hf, hx2, hev, hr, by simp [VEnv.setMany], rfl⟩
+  | assignHalt he => exact (b1_eval_addmod_mulmod_vars_halt he).elim
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mload_add_var_lit_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_calldataload_add_var_lit_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_vars_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_var_mload_add_var_lit_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_exec_ylet_sub_from_vars
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_exec_ylet_mulmod_subfrom
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_exec_yset_f_eval
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_addmod_mulmod_vars_halt
   [propext, Classical.choice, Quot.sound] native []
 
