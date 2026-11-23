@@ -3696,6 +3696,20 @@ theorem pcsStmtsContractAll_append_mid4 {funs : FunEnv (Bridge.Dialect c g)}
   · exact absurd (h1 V st hpre V' st' o h1run).1 hne
 
 set_option maxHeartbeats 30000000 in
+
+theorem pcsSetBlockAst_eq_gen (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off : Nat) (hm : 1 < points.length) :
+    GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off =
+      pcsSetBodyGen setIdx points distinctRotations off := by
+  unfold GenAstPcs.pcsSetBlockAst pcsSetBodyGen
+  dsimp only
+  split
+  · rename_i h
+    have h1 : points.length = 1 := by simpa using h
+    omega
+  · rfl
+
+set_option maxHeartbeats 30000000 in
 theorem pcsGenPrefix_contract {funs : FunEnv (Bridge.Dialect c g)}
     (points : List Int) (distinctRotations : List Int)
     (xs : List (Nat × String)) (ks : Nat → List (Nat × String))
