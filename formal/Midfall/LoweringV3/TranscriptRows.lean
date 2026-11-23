@@ -1994,6 +1994,154 @@ theorem runsAll_parseTraceLookupMultiplicities_one (E : VerifierEnv p G₁ G₂ 
   rw [List.append_nil] at hb
   exact hb
 
+theorem runsAll_logup_readCommitment (E : VerifierEnv p G₁ G₂ Gₜ)
+    (cm : Logup.CommittedMultiplicities G₁) (n : Nat) (Qs : List G₁)
+    (hlen : Qs.length = n + 1) :
+    RunsAll E (cm.readCommitment n (hashableG1 E.g1))
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  have hle : n ≤ Qs.length := by omega
+  have hlen1 : (Qs.take n).length = n := by rw [List.length_take]; omega
+  have hlen2 : (Qs.drop n).length = 1 := by rw [List.length_drop]; omega
+  have hsplit : Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+      (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+    rw [← List.map_append, List.take_append_drop]
+  rw [hsplit]
+  unfold Logup.CommittedMultiplicities.readCommitment
+  refine RunsAll.bind E (ms₁ := (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ?_ ?_
+  · exact runsAll_tmReadN_g1 E n (Qs.take n) hlen1
+  · intro helperPolys
+    obtain ⟨Q, Qs', hQs'⟩ := List.exists_cons_of_length_pos (by rw [hlen2]; simp)
+    have hQs'0 : Qs' = [] := List.eq_nil_of_length_eq_zero (by
+      have := hlen2
+      rw [hQs', List.length_cons] at this
+      omega)
+    subst hQs'0
+    rw [hQs']
+    have hb := RunsAll.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁))) (ms₂ := [])
+      (runsAll_read_g1 E Q)
+      (fun accumulator => RunsAll.pure E (Logup.Committed.mk cm.multiplicities helperPolys accumulator))
+    rw [List.append_nil] at hb
+    exact hb
+
+/-- The per-proof lookup-commitment row: `numChunks + 1` reads per lookup. -/
+theorem runsAll_lookupCommitments_row (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (row : List (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+      (acc : Array (Logup.Committed G₁)) (Qs : List G₁),
+      Qs.length = (row.map (fun p => p.2.numChunks + 1)).sum →
+      RunsAll E (row.foldlM (init := acc) fun acc' p => do
+          let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+          pure (acc'.push c)) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  intro row
+  induction row with
+  | nil =>
+      intro acc Qs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      simpa only [List.foldlM_nil, List.map_nil] using RunsAll.pure E acc
+  | cons p ps ih =>
+      intro acc Qs hlen
+      obtain ⟨m, chunked⟩ := p
+      have hsum : Qs.length = (chunked.numChunks + 1) + (ps.map (fun p => p.2.numChunks + 1)).sum := by
+        simpa only [List.map_cons, List.sum_cons] using hlen
+      have hle : chunked.numChunks + 1 ≤ Qs.length := by omega
+      have hlen1 : (Qs.take (chunked.numChunks + 1)).length = chunked.numChunks + 1 := by
+        rw [List.length_take]; omega
+      have hlen2 : (Qs.drop (chunked.numChunks + 1)).length =
+          (ps.map (fun p => p.2.numChunks + 1)).sum := by
+        rw [List.length_drop, hsum]; omega
+      have hsplit : Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          (Qs.take (chunked.numChunks + 1)).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop (chunked.numChunks + 1)).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.foldlM_cons, hsplit]
+      refine RunsAll.bind E (ms₁ := (Qs.take (chunked.numChunks + 1)).map
+          (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (ms₂ := (Qs.drop (chunked.numChunks + 1)).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        ?_ ?_
+      · have hb := RunsAll.bind E
+          (ms₁ := (Qs.take (chunked.numChunks + 1)).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (ms₂ := [])
+          (runsAll_logup_readCommitment E m chunked.numChunks
+            (Qs.take (chunked.numChunks + 1)) hlen1)
+          (fun c => RunsAll.pure E (acc.push c))
+        rw [List.append_nil] at hb
+        exact hb
+      · intro init
+        exact ih init (Qs.drop (chunked.numChunks + 1)) hlen2
+
+/-- The outer lookup-commitment pass: one row per proof. -/
+theorem runsAll_lookupCommitments_rows (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (rows : List (Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p))))
+      (acc : Array (Array (Logup.Committed G₁))) (Qs : List G₁),
+      Qs.length = (rows.map (fun row =>
+        (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum →
+      RunsAll E (rows.foldlM (init := acc) fun acc row => do
+          let out ← row.toList.foldlM (init := #[]) fun acc' p => do
+            let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+            pure (acc'.push c)
+          pure (acc.push out)) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  intro rows
+  induction rows with
+  | nil =>
+      intro acc Qs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      simpa only [List.foldlM_nil, List.map_nil] using RunsAll.pure E acc
+  | cons row rows ih =>
+      intro acc Qs hlen
+      have hsum : Qs.length = (row.toList.map (fun p => p.2.numChunks + 1)).sum +
+          (rows.map (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum := by
+        simpa only [List.map_cons, List.sum_cons] using hlen
+      have hle : (row.toList.map (fun p => p.2.numChunks + 1)).sum ≤ Qs.length := by omega
+      obtain ⟨rowLen, hrowLen⟩ : ∃ k, (row.toList.map (fun p => p.2.numChunks + 1)).sum = k :=
+        ⟨_, rfl⟩
+      have hlen1 : (Qs.take rowLen).length =
+          (row.toList.map (fun p => p.2.numChunks + 1)).sum := by
+        rw [List.length_take, hrowLen]; omega
+      have hlen2 : (Qs.drop rowLen).length =
+          (rows.map (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum := by
+        rw [List.length_drop, hsum, hrowLen]; omega
+      have hsplit : Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          (Qs.take rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.foldlM_cons, hsplit]
+      refine RunsAll.bind E (ms₁ := (Qs.take rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (ms₂ := (Qs.drop rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ?_ ?_
+      · have hb := RunsAll.bind E
+          (ms₁ := (Qs.take rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+          (runsAll_lookupCommitments_row E row.toList #[] (Qs.take rowLen) hlen1)
+          (fun out => RunsAll.pure E (acc.push out))
+        rw [List.append_nil] at hb
+        exact hb
+      · intro init
+        exact ih init (Qs.drop rowLen) hlen2
+
+def parseTraceLookupCommitments (E : VerifierEnv p G₁ G₂ Gₜ)
+    (rows : Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) :
+    TranscriptM (Array (Array (Logup.Committed G₁))) :=
+  rows.toList.foldlM (init := #[]) fun acc row => do
+    let out ← row.toList.foldlM (init := #[]) fun acc' p => do
+      let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+      pure (acc'.push c)
+    pure (acc.push out)
+
+/-- **THE LOOKUP-COMMITMENT RUN.** The message count is the chunk-count ledger
+    `Σ (numChunks + 1)` over the multiplicities the previous pass produced. -/
+theorem runsAll_parseTraceLookupCommitments (E : VerifierEnv p G₁ G₂ Gₜ)
+    (rows : Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p))))
+    (Qs : List G₁)
+    (hlen : Qs.length = (rows.toList.map (fun row =>
+      (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum) :
+    RunsAll E (parseTraceLookupCommitments E rows)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  rw [parseTraceLookupCommitments]
+  exact runsAll_lookupCommitments_rows E rows.toList #[] Qs hlen
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -3875,6 +4023,10 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_logup_readMultiplicities [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupMultiplicities_fold [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_logup_readCommitment [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupCommitments_row [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupCommitments_rows [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupCommitments [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_at [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_of_algebraRun [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_at [propext, Classical.choice, Quot.sound] native []
