@@ -4530,6 +4530,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms queryFromPlan_permutationCommon_rotation
   [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_permutationZ_rotation
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_lookupAccumulator_rotation
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms PcsQuerySource.rotation_linearization
   [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgQueryMapData.ofRotations
@@ -4558,6 +4562,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms collectQueries_back?
   [propext, Classical.choice, Quot.sound]
+#assert_axioms collectQueries_parts
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
@@ -4567,6 +4573,10 @@ open Midfall.Tools.Done in
 #assert_axioms computeLinearizationCommitment_commitment
   [propext, Classical.choice, Quot.sound]
 #assert_axioms linearize_back?_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms rotateOmega_zero
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms linearize_back?_point_rotateOmega
   [propext, Classical.choice, Quot.sound]
 #assert_axioms multiPrepare_width_empty [propext, Classical.choice, Quot.sound]
 #assert_axioms multiPrepare_width_at [propext, Classical.choice, Quot.sound]

@@ -433,3 +433,29 @@ build the zipped list once the sizes agree; the per-index block theorem is the
 remaining priority-2 input. `hclass`/`G1_IDENTITY_MPTR` freshness remains
 priority 3, and `fromConstraintSystem_pcsQueries_last` remains the single named
 `match`-wrapper residual.
+
+## Generator rotation half closed; verifier decomposition and tail shape
+
+Landed and green:
+
+* `queryFromPlan_permutationZ_rotation` — `0` for `Cur`, `1` for `Next`,
+  `rotationLast` for `Last` (the `some` branch; the `none` branch is a panic).
+* `queryFromPlan_lookupAccumulator_rotation` — `rotation` for `0`/`1`, panic
+  otherwise.
+  With the seven prior source lemmas, all ten `PcsQuerySource` constructors now
+  have their generator rotation identified with
+  `PcsQuerySource.rotation rotationLast`.
+* `collectQueries_parts` — a successful `collectQueries` list is
+  `perProof.flatten ++ fixed ++ common ++ [linCom]`. This names the verifier-side
+  block decomposition for the same-order theorem.
+* `rotateOmega_zero` and `linearize_back?_point_rotateOmega` — the last
+  `linearize` query point is `vk.domain.rotateOmega alg.x (Rotation.value 0)`.
+
+Remaining for the full same-order theorem: the per-block equality of
+`perProof`/`fixed`/`common` against `pcsQueries`'s advice/instance/permutation/
+lookup/trash/fixed/common sources, plus the per-index `rotateOmega` point shape
+inside each block. `pairQueries` supplies the zipped `L` once the sizes agree.
+`hclass`/`.linear`-vs-`computedQuotientComm`/`G1_IDENTITY_MPTR` freshness remains
+the priority-3 input. `fromConstraintSystem_pcsQueries_last` remains the single
+named `match`-wrapper residual; `PlanMeta`/`v3_planMeta` remains CERT.1 and is
+not assumed.
