@@ -2940,17 +2940,160 @@ theorem prog_gasFree (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.GasFree ((renderOf gi o).prog 0 0) := by
   sorry -- CERT.5 (D3)
 
+set_option maxHeartbeats 10000000 in
+/-- `new`'s selector-accumulator base, in the arena's own arithmetic (`rfl`: a structure field is
+    a thunk; the twenty-nine other allocations are not evaluated). `batchInvertScratchMptr` IS
+    `selectorAccMptr`, so D-GATE11's batch floor reads this equation. -/
+theorem new_selectorAccMptr_eq (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey)
+    (vkMptr : Ptr) (config : VerifierMemoryLayoutConfig) :
+    (VerifierMemoryLayout.new meta_ vk vkMptr config).selectorAccMptr =
+      alignUp (alignUp (alignUp (alignUp (ptrAddr vkMptr + vk.len) wordBytes
+          + meta_.challengeIndices.length * wordBytes) wordBytes
+          + ThetaWindowLayout.compatibility.reversedEvalsWord * wordBytes
+          + meta_.numEvals * wordBytes) wordBytes
+          + commitmentG1Count meta_ * g1Bytes) wordBytes := rfl
+
+theorem alignUp_step_le (x y : Nat) : x ≤ alignUp (x + y) wordBytes :=
+  Nat.le_trans (Nat.le_add_right x y)
+    (Midfall.LoweringV3.MemoryPairs.alignUp_le _ _ Midfall.LoweringV3.MemoryPairs.wordBytes_pos)
+
+theorem alignUp_step2_le (x y z : Nat) : x ≤ alignUp (x + y + z) wordBytes :=
+  Nat.le_trans (Nat.le_trans (Nat.le_add_right x y) (Nat.le_add_right (x + y) z))
+    (Midfall.LoweringV3.MemoryPairs.alignUp_le _ _ Midfall.LoweringV3.MemoryPairs.wordBytes_pos)
+
+set_option maxHeartbeats 10000000 in
+/-- **D-GATE11: `selectorAccMptr` is above the payload window.** Four monotone `alignUp` steps:
+    the selector base is the fourth arena step after `vkMptr + vk.len`. This is the standalone
+    form of `Totality`'s local `hp_selector` bound (there it is an inline `have`, not exported). -/
+theorem new_selectorAccMptr_ge (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey)
+    (vkMptr : Ptr) (config : VerifierMemoryLayoutConfig) :
+    ptrAddr vkMptr + vk.len ≤
+      (VerifierMemoryLayout.new meta_ vk vkMptr config).selectorAccMptr := by
+  let A := ptrAddr vkMptr + vk.len
+  let C := meta_.challengeIndices.length * wordBytes
+  let D := ThetaWindowLayout.compatibility.reversedEvalsWord * wordBytes
+  let E := meta_.numEvals * wordBytes
+  let F := commitmentG1Count meta_ * g1Bytes
+  have h0 : A ≤ alignUp A wordBytes :=
+    Midfall.LoweringV3.MemoryPairs.alignUp_le _ _ Midfall.LoweringV3.MemoryPairs.wordBytes_pos
+  have h02 : alignUp A wordBytes ≤ alignUp (alignUp A wordBytes + C) wordBytes :=
+    alignUp_step_le _ C
+  have h2 : alignUp (alignUp A wordBytes + C) wordBytes ≤
+      alignUp (alignUp (alignUp A wordBytes + C) wordBytes + D + E) wordBytes :=
+    alignUp_step2_le _ D E
+  have h3 : alignUp (alignUp (alignUp A wordBytes + C) wordBytes + D + E) wordBytes ≤
+      alignUp (alignUp (alignUp (alignUp A wordBytes + C) wordBytes + D + E) wordBytes + F) wordBytes :=
+    alignUp_step_le _ F
+  have hexp : A ≤
+      alignUp (alignUp (alignUp (alignUp A wordBytes + C) wordBytes + D + E) wordBytes + F) wordBytes :=
+    Nat.le_trans h0 (Nat.le_trans h02 (Nat.le_trans h2 h3))
+  have heq := new_selectorAccMptr_eq meta_ vk vkMptr config
+  change A ≤ (VerifierMemoryLayout.new meta_ vk vkMptr config).selectorAccMptr
+  rw [heq]
+  simpa only [A, C, D, E, F] using hexp
+
+/-- `packedPackWords` emits exactly the word count it is given. -/
+theorem packedPackWords_length (bs : List Nat) (n : Nat) :
+    (packedPackWords bs n).length = n := by
+  induction n generalizing bs with
+  | zero => simp [packedPackWords]
+  | succ n ih => simp [packedPackWords, ih]
+
+/-- `PackedProgramCodec.encodeWords` has exactly `wordLenForBytes` words. -/
+theorem encodeWords_length (b : Bytes) :
+    (PackedProgramCodec.encodeWords b).length =
+      PackedProgramCodec.wordLenForBytes (bytesToList b).length := by
+  unfold PackedProgramCodec.encodeWords
+  exact packedPackWords_length _ _
+
+/-- A byte length fits in the rounded-up word count. -/
+theorem wordLenForBytes_le_mul (n : Nat) :
+    n ≤ 32 * PackedProgramCodec.wordLenForBytes n := by
+  unfold PackedProgramCodec.wordLenForBytes
+  have hw : Midfall.Generator.wordBytes = 32 := rfl
+  rw [hw]
+  have hmod := Nat.mod_lt (n + 31) (by norm_num : 0 < 32)
+  have hdiv := Nat.div_add_mod (n + 31) 32
+  have h : n ≤ (n + 31) / 32 * 32 := by omega
+  simpa [Nat.mul_comm] using h
+
+/-- **D-GATE11: the quotient program's byte size from `vkCarriesBuild`.** The encoded program is
+    the VK reservation's `quotientProgramWords`, and the raw bytes are at most the word count
+    times the 32-byte word stride. This is the first builder-size bound the static layout needs;
+    it does not use `maxStack`. PROVED. -/
+theorem build_bytes_size_le (vk : Halo2VerifyingKey) (build : QuotientProgramBuild)
+    (h : Midfall.Generator.PlanNew.vkCarriesBuild vk build = true) :
+    build.bytes.size ≤ 32 * vk.quotientProgramWords := by
+  have hprog : (PackedProgramCodec.encodeWords build.bytes).length ≤
+      vk.quotientProgramWords := by
+    unfold Midfall.Generator.PlanNew.vkCarriesBuild at h
+    split at h
+    · rename_i qc qp hqc hqp
+      simp only [Bool.and_eq_true, beq_iff_eq] at h
+      obtain ⟨_, hprog⟩ := h
+      change List.take vk.quotientProgramWords
+          (List.drop qp (List.map (fun x => x.2) vk.constants)) =
+        PackedProgramCodec.encodeWords build.bytes ++
+          List.replicate (vk.quotientProgramWords -
+            (PackedProgramCodec.encodeWords build.bytes).length) 0 at hprog
+      have hlen := congrArg List.length hprog
+      have htake : (List.take vk.quotientProgramWords
+          (List.drop qp (List.map (fun x => x.2) vk.constants))).length ≤
+          vk.quotientProgramWords := by
+        rw [List.length_take]
+        omega
+      simp only [List.length_append, List.length_replicate] at hlen
+      omega
+    · cases h
+  have hsize : build.bytes.size ≤
+      32 * (PackedProgramCodec.encodeWords build.bytes).length := by
+    rw [encodeWords_length]
+    have hb : (bytesToList build.bytes).length = build.bytes.size := by simp [bytesToList]
+    rw [hb]
+    exact wordLenForBytes_le_mul _
+  omega
+
+/-- **D-GATE11: the batch-invert scratch floor, from `generated`.** `batchInvertScratchMptr` is
+    `selectorAccMptr` (`rfl`), which is above the payload window; the payload floor is
+    `0x1560` (`staticWorkingMemorySizeForMeta_floor`), so the `32` the batch-inversion walk
+    subtracts never reaches the EVM scratch. PROVED. -/
+theorem batchInvertScratchFits_of_generated {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut}
+    (hg : Generates gi o) :
+    Midfall.LoweringV3.batchInvertScratchFits (renderOf gi o).pv := by
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, hvk, hsize⟩ :=
+    Midfall.LoweringV3.plan_size_of_generated (generated_of hg)
+  unfold Midfall.LoweringV3.batchInvertScratchFits
+  rw [hmem]
+  have hfloorSize : 0x1560 ≤ vkBase :=
+    Midfall.LoweringV3.staticWorkingMemorySizeForMeta_floor meta_
+      (renderOf gi o).cfg.numInstances hsize
+  have hfloor : 0x1560 ≤ ptrAddr vkMptr + (renderOf gi o).pv.vk.len := by
+    rw [hvk, Midfall.LoweringV3.MemoryPairs.ptrAddr_valueFromNat]
+    omega
+  have hsel := new_selectorAccMptr_ge meta_ (renderOf gi o).pv.vk vkMptr config
+  have hbatch :
+      (VerifierMemoryLayout.new meta_ (renderOf gi o).pv.vk vkMptr config).batchInvertScratchMptr =
+        (VerifierMemoryLayout.new meta_ (renderOf gi o).pv.vk vkMptr config).selectorAccMptr := rfl
+  rw [hbatch]
+  omega
+
 /-- D-CERT1 / CERT.6: the address-fit invariant (D-QVM1), VK window and quotient interpreter.
 
-    D-GATE11 reduced the `v3_cdBound` half and the point-set census to the input count budget
-    (`CountBound`). The residual is exact: `staticWorkingSetFits` still consumes the final
-    `VerifierMemoryLayoutConfig` (`quotientStateWords`, `quotientStackWords`, `accMsmTerms` and the
-    four `PcsMemoryRequirements` fields), which are sized from the quotient IDENTITY PLAN and the
-    emitted `QuotientProgramBuild` (`quotientProgramPlan` -> `buildQuotientProgramItems` ->
-    `memoryRequirements`), and `quotientProgramFits` needs the same program/const/stack lengths.
-    Those are not bounded by the CS count budget alone (a quotient-builder size lemma is needed),
-    so the remaining input clause is a quotient-build sizing bound, not another count bound. No `ValidV3`, row or root hypothesis is
-    involved; `SupportedInput` was strengthened, not weakened. -/
+    D-GATE11 reduced the `v3_cdBound` half, the point-set census, and `batchInvertScratchFits`
+    (`batchInvertScratchFits_of_generated` via the exported `new_selectorAccMptr_ge`) to the input
+    count budget (`CountBound`). The quotient program's byte size is proved from `vkCarriesBuild`
+    (`build_bytes_size_le`: `build.bytes.size ≤ 32 * vk.quotientProgramWords`). The residual is
+    now exact and is NOT another count bound: `build.maxStack ≤ build.bytes.size` is not a
+    state-level consequence of the builder API (`pushStackAcct` is a public accounting primitive
+    that emits no byte, so `pushStackAcct builderDefault` has `maxStack = 1` and `bytes.length =
+    0`), and `finish` records `maxStack` from the PRE-compaction stream while `build.bytes` is the
+    COMPACTED stream. The Rust asserts the validator's max stack against the compacted program at
+    QVM:1217-1222, but `finishValidatorLeg` is precisely the unported validator. Closing
+    `staticWorkingSetFits` (and `quotientProgramFits`'s stack half) therefore needs either a port
+    of that validator/compaction preservation proof or an input clause bounding
+    `build.maxStack`; the PCS-config half is sized from `memoryRequirements` and needs the
+    corresponding quotient-build count bounds. No `ValidV3`, row or root hypothesis is involved;
+    `SupportedInput` was strengthened, not weakened. -/
 theorem prog_programFits (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.programFits (renderOf gi o).pv (renderOf gi o).model := by
   sorry -- CERT.6 (D4), residual documented above (quotient-build sizing)
