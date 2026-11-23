@@ -46,6 +46,7 @@ import Midfall.Generator.Quotient.VmCertify
 import Midfall.Generator.Quotient.FoldCompute
 import Midfall.LoweringV2.Consts
 import Midfall.Lowering.VkDigest
+import Midfall.LoweringV3.LagrangeAlg
 set_option autoImplicit false
 
 namespace Midfall.Generator.Certified
@@ -1508,7 +1509,154 @@ theorem payload_header (hg : Generates gi o) (hs : SupportedInput gi) :
       (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numAccLimbs).toNat,
       (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numAccLimbBits).toNat) =
       accWordsOfEncoding gi.cfg.accumulator := by
-  sorry -- CERT.6
+  obtain ⟨m0, payload, hraw, hgenvk, _hfp, h4⟩ := generate_spec hg
+  have hvk : o.out.plan.vk = payload := plan_vk_of_generateAll h4
+  obtain ⟨vk0, hbase⟩ := generateVk_base hgenvk
+  obtain ⟨pre, hpre, hbody⟩ := generateBaseVk_parts hbase
+  obtain ⟨g1W, g2W, negW, consts, fixedC, permC, henc, hhdr, hfix, hperm, hconst,
+    _hfixEq, _hpermEq⟩ := generateBaseVkBody_parts hbody
+  have hlen31 : vk0.constants.length = 31 := by
+    rw [hconst]
+    exact generateBaseVkHeader_length hhdr
+  obtain ⟨hd, ⟨nInvField, hinv, hnInv⟩, homega, homegaInv, homegaInvToL⟩ :=
+    generateBaseVkPrefix_components hpre
+  have hdigest : pre.1 = frWord gi.vk.transcriptRepr :=
+    Except.ok.inj (hd.symm.trans (Midfall.Lowering.feToU256_frToRepr gi.vk.transcriptRepr))
+  have hinvEq : nInvField = (((2 ^ gi.vk.domain.k : ℕ) : Fr p))⁻¹ := by
+    change invert (((2 ^ gi.vk.domain.k : ℕ) : Fr p)) = some nInvField at hinv
+    unfold invert at hinv
+    by_cases hzero : (((2 ^ gi.vk.domain.k : ℕ) : Fr p)) = 0
+    · rw [if_pos hzero] at hinv
+      cases hinv
+    · rw [if_neg hzero] at hinv
+      exact (Option.some.inj hinv).symm
+  have hnInv' : pre.2.1 = frWord (((2 ^ gi.vk.domain.k : ℕ) : Fr p)⁻¹) := by
+    have h := Except.ok.inj (hnInv.symm.trans (Midfall.Lowering.feToU256_frToRepr nInvField))
+    rw [hinvEq] at h
+    exact h
+  have homega' : pre.2.2.1 = frWord gi.vk.domain.omega := by
+    have h := Except.ok.inj (homega.symm.trans
+      (Midfall.Lowering.feToU256_frToRepr (EvaluationDomain.getOmega (buildInputsOf gi m0).vk.domain)))
+    simp only [EvaluationDomain.getOmega] at h
+    change pre.2.2.1 = frWord (gi.vk.domain.omega) at h
+    exact h
+  have homegaInv' : pre.2.2.2.1 = frWord gi.vk.domain.omegaInv := by
+    have h := Except.ok.inj (homegaInv.symm.trans
+      (Midfall.Lowering.feToU256_frToRepr (EvaluationDomain.getOmegaInv (buildInputsOf gi m0).vk.domain)))
+    simp only [EvaluationDomain.getOmegaInv] at h
+    change pre.2.2.2.1 = frWord (gi.vk.domain.omegaInv) at h
+    exact h
+  obtain ⟨rawMeta, plan, hraw', hpl, hp⟩ :=
+    Midfall.LoweringV3.MemoryPairs.plan_of_generated (generated_of hg)
+  have hrawEq : rawMeta = m0 := Except.ok.inj (hraw'.symm.trans hraw)
+  have hmeta : (renderOf gi o).plan.meta_.rotationLast = m0.rotationLast := by
+    rw [hp]
+    rw [newFromVk_rotationLast Features.solidity (frFieldCtx gi.E.delta) gi.vk.cs rawMeta
+      gi.cfg.numInstances gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl, hrawEq]
+  have homegaInvToL' : pre.2.2.2.2 =
+      frWord (gi.vk.domain.omegaInv ^ (renderOf gi o).plan.meta_.rotationLast.natAbs) := by
+    have h := Except.ok.inj (homegaInvToL.symm.trans (Midfall.Lowering.feToU256_frToRepr
+      (powVartime (EvaluationDomain.getOmegaInv (buildInputsOf gi m0).vk.domain)
+        (Int.natAbs (buildInputsOf gi m0).meta_.rotationLast))))
+    rw [Midfall.LoweringV3.LagrangeAlg.powVartime_eq_pow] at h
+    simp only [EvaluationDomain.getOmegaInv] at h
+    change pre.2.2.2.2 =
+      frWord (gi.vk.domain.omegaInv ^ m0.rotationLast.natAbs) at h
+    rw [hmeta]
+    exact h
+  have hval : ∀ (i : Nat), i < vk0.constants.length →
+      Midfall.LoweringV3.payloadWord (renderOf gi o).pv i =
+        (vk0.constants.getD i ("", 0)).2 := by
+    intro i hi
+    unfold Midfall.LoweringV3.payloadWord
+    change ((o.out.plan.vk).constants.getD i ("", 0)).2 =
+      (vk0.constants.getD i ("", 0)).2
+    rw [hvk]
+    exact congrArg Prod.snd (generateVk_getD_lt hgenvk vk0 hbase i hi ("", 0))
+  have slot (i : Nat) (hi : i < vk0.constants.length) :
+      Midfall.LoweringV3.payloadWord (renderOf gi o).pv i =
+        (vk0.constants.getD i ("", 0)).2 := hval i hi
+  have h0 : vk0.constants.getD 0 ("", 0) = ("vk_digest", pre.1) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).1
+  have h1 : vk0.constants.getD 1 ("", 0) =
+      ("num_instances", (BitVec.ofNat 256 (buildInputsOf gi m0).numInstances)) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.1
+  have h2 : vk0.constants.getD 2 ("", 0) =
+      ("k", (BitVec.ofNat 256 (buildInputsOf gi m0).vk.domain.k)) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.2.1
+  have h3 : vk0.constants.getD 3 ("", 0) = ("n_inv", pre.2.1) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.2.2.1
+  have h4s : vk0.constants.getD 4 ("", 0) = ("omega", pre.2.2.1) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.2.2.2.1
+  have h5s : vk0.constants.getD 5 ("", 0) = ("omega_inv", pre.2.2.2.1) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.2.2.2.2.1
+  have h6s : vk0.constants.getD 6 ("", 0) = ("omega_inv_to_l", pre.2.2.2.2) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.2.2.2.2.2.1
+  have h7s : vk0.constants.getD 7 ("", 0) =
+      ("has_accumulator", (BitVec.ofNat 256 (if (buildInputsOf gi m0).accEncoding.isSome then 1 else 0))) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.2.2.2.2.2.2.1
+  have h8s : vk0.constants.getD 8 ("", 0) =
+      ("acc_offset", (match (buildInputsOf gi m0).accEncoding with
+        | some e => BitVec.ofNat 256 e.offset | none => 0)) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.2.2.2.2.2.2.2.1
+  have h9s : vk0.constants.getD 9 ("", 0) =
+      ("num_acc_limbs", (match (buildInputsOf gi m0).accEncoding with
+        | some e => BitVec.ofNat 256 e.numLimbs | none => 0)) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.2.2.2.2.2.2.2.2.1
+  have h10s : vk0.constants.getD 10 ("", 0) =
+      ("num_acc_limb_bits", (match (buildInputsOf gi m0).accEncoding with
+        | some e => BitVec.ofNat 256 e.numLimbBits | none => 0)) := by
+    rw [hconst]; exact (generateBaseVkHeader_slots hhdr).2.2.2.2.2.2.2.2.2.2
+  have hnumBound : gi.cfg.numInstances < 2 ^ 256 := by
+    have h1 := hs.sizeBound.1
+    have h2 : (2 : Nat) ^ 64 ≤ 2 ^ 256 := by norm_num
+    omega
+  have hkBound : gi.vk.domain.k < 2 ^ 256 := by
+    have h1 := hs.sizeBound.2
+    have h2 : (2 : Nat) ^ 64 ≤ 2 ^ 256 := by norm_num
+    omega
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · change Midfall.LoweringV3.payloadWord (renderOf gi o).pv 0 = frWord gi.vk.transcriptRepr
+    exact (slot 0 (by omega)).trans ((congrArg Prod.snd h0).trans hdigest)
+  · change (Midfall.LoweringV3.payloadWord (renderOf gi o).pv 1).toNat = gi.cfg.numInstances
+    rw [slot 1 (by omega), congrArg Prod.snd h1, BitVec.toNat_ofNat]
+    change gi.cfg.numInstances % 2 ^ 256 = gi.cfg.numInstances
+    exact Nat.mod_eq_of_lt hnumBound
+  · change (Midfall.LoweringV3.payloadWord (renderOf gi o).pv 2).toNat = gi.vk.domain.k
+    rw [slot 2 (by omega), congrArg Prod.snd h2, BitVec.toNat_ofNat]
+    change gi.vk.domain.k % 2 ^ 256 = gi.vk.domain.k
+    exact Nat.mod_eq_of_lt hkBound
+  · change Midfall.LoweringV3.payloadWord (renderOf gi o).pv 3 =
+      frWord (((2 ^ gi.vk.domain.k : ℕ) : Fr p)⁻¹)
+    exact (slot 3 (by omega)).trans ((congrArg Prod.snd h3).trans hnInv')
+  · change Midfall.LoweringV3.payloadWord (renderOf gi o).pv 4 = frWord gi.vk.domain.omega
+    exact (slot 4 (by omega)).trans ((congrArg Prod.snd h4s).trans homega')
+  · change Midfall.LoweringV3.payloadWord (renderOf gi o).pv 5 = frWord gi.vk.domain.omegaInv
+    exact (slot 5 (by omega)).trans ((congrArg Prod.snd h5s).trans homegaInv')
+  · change Midfall.LoweringV3.payloadWord (renderOf gi o).pv 6 =
+      frWord (gi.vk.domain.omegaInv ^ (renderOf gi o).plan.meta_.rotationLast.natAbs)
+    exact (slot 6 (by omega)).trans ((congrArg Prod.snd h6s).trans homegaInvToL')
+  · change ((Midfall.LoweringV3.payloadWord (renderOf gi o).pv 7).toNat,
+      (Midfall.LoweringV3.payloadWord (renderOf gi o).pv 8).toNat,
+      (Midfall.LoweringV3.payloadWord (renderOf gi o).pv 9).toNat,
+      (Midfall.LoweringV3.payloadWord (renderOf gi o).pv 10).toNat) =
+      accWordsOfEncoding gi.cfg.accumulator
+    change vk0.constants.getD 7 ("", 0) =
+      ("has_accumulator", (BitVec.ofNat 256 (if gi.cfg.accumulator.isSome then 1 else 0))) at h7s
+    change vk0.constants.getD 8 ("", 0) =
+      ("acc_offset", (match gi.cfg.accumulator with
+        | some e => BitVec.ofNat 256 e.offset | none => 0)) at h8s
+    change vk0.constants.getD 9 ("", 0) =
+      ("num_acc_limbs", (match gi.cfg.accumulator with
+        | some e => BitVec.ofNat 256 e.numLimbs | none => 0)) at h9s
+    change vk0.constants.getD 10 ("", 0) =
+      ("num_acc_limb_bits", (match gi.cfg.accumulator with
+        | some e => BitVec.ofNat 256 e.numLimbBits | none => 0)) at h10s
+    rw [slot 7 (by omega), slot 8 (by omega), slot 9 (by omega), slot 10 (by omega)]
+    rw [congrArg Prod.snd h7s, congrArg Prod.snd h8s, congrArg Prod.snd h9s,
+      congrArg Prod.snd h10s]
+    rw [hs.noAcc]
+    simp [accWordsOfEncoding]
 
 theorem env_vkDigest (hg : Generates gi o) (hs : SupportedInput gi) :
     ((renderOf gi o).pv.vk.constants.getD 0 ("", 0)).2 = frWord gi.vk.transcriptRepr := by
