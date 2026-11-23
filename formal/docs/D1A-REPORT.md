@@ -481,3 +481,25 @@ the `pcsQueries` block decomposition are available.
 `hclass`/`.linear`-vs-`computedQuotientComm`/`G1_IDENTITY_MPTR` freshness remains
 priority 3; `fromConstraintSystem_pcsQueries_last` and `PlanMeta` remain the
 named residuals.
+
+## Fixed-block verifier shape; PlanMeta discharged on main
+
+Merged `origin/formal/baseline` (PlanMeta/CERT.1 closure; `v3_planMeta` is now
+`MemoryPairs.planMeta_of_generated`). Added:
+
+* `planMeta_numPointSets_generator_of_validV3` — the KZG plan-count chain at
+  `ValidV3`, consuming `MemoryPairs.planMeta_of_generated hR.generated` (the
+  main lane also provides `planMeta_numPointSets_of_validV3`).
+* `mem_mapM` — membership extraction for a successful `List.mapM`.
+* `fixedQueryFn_point` — every query built by the fixed block has point
+  `vk.domain.rotateOmega x q.2.2`.
+* `collectQueries_fixed_point` — the fixed block's queries all have point
+  `vk.domain.rotateOmega x r`, and the fixed block sits in the
+  `perProof.flatten ++ fixed ++ common ++ [linCom]` decomposition.
+
+Remaining verifier block shapes: advice, committed instance, permutationZ. Each
+needs the per-proof `perProof`/inner-`mapM` decomposition (`adv.flatten`,
+`inst.flatten`, `perm.toList`); `fixed` is the first complete block because it
+is a direct `mapM`. The same-order list equality against `pcsQueries` is then a
+block-by-block comparison. `hclass`/`.linear`-vs-`computedQuotientComm`/
+`G1_IDENTITY_MPTR` freshness remains priority 3.
