@@ -59,6 +59,7 @@ open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
 open Midfall.LoweringV2 Midfall.Generator.PlanNew
 open Midfall.Generator.QuotientFold Midfall.Generator.QuotientFoldCompute
 open Midfall.Generator.QuotientBuilder Midfall.Generator.QuotientEvaluator
+open Midfall.LoweringV3.TranscriptRows
 
 /-! ## 1. Input, generator, render -/
 
@@ -3121,17 +3122,85 @@ theorem proofLen_eq_repackedLen_at (protocol : Midfall.Generator.ProtocolPlan)
       ring
     · rw [hplE, hcptrE, hpeE, hpe2, Nat.add_sub_cancel_left]
 
+theorem tp_fromProtocol_at {meta_ : ConstraintSystemMeta} {L : ProofCalldataLayout}
+    (cptr : Nat)
+    (hL : ProofCalldataLayout.fromProtocol meta_.protocol cptr
+      meta_.numEvals meta_.numPointSets = .ok L) :
+    Midfall.LoweringV3.TranscriptRows.TpLayoutFacts meta_ L := by
+  unfold ProofCalldataLayout.fromProtocol at hL
+  simp only [Bind.bind, Except.bind] at hL
+  obtain ⟨adv, hAdv, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨lm, hLM, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨pp, hPP, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨lks, hLksFold, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨tr, hTr, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨ql, hQl, hL⟩ := except_bind_ok _ _ hL
+  split at hL
+  · cases hL
+  cases hL
+  have hadv := foldlM_take_ok meta_.protocol CommitmentRead.advice "advice phase"
+    meta_.protocol.numUserAdvices ([], 0, cptr) adv hAdv (by simp)
+  have hadvLen := foldlM_take_length meta_.protocol CommitmentRead.advice "advice phase"
+    meta_.protocol.numUserAdvices ([], 0, cptr) adv hAdv
+  have hlm := takeCommitmentSection_shape meta_.protocol adv.2.1 adv.2.2
+    CommitmentRead.lookupMultiplicity meta_.protocol.numLookups "lookup multiplicity" hLM
+  have hpp := takeCommitmentSection_shape meta_.protocol lm.2.1 lm.2.2
+    CommitmentRead.permutationProduct meta_.protocol.numPermutationZs "permutation product" hPP
+  have hLks := foldlM_lookups_ok meta_.protocol
+    ((List.range meta_.protocol.lookupChunks.length).zip meta_.protocol.lookupChunks)
+    ([], pp.2.1, pp.2.2) lks hLksFold (by simp)
+  have hLksLen := foldlM_lookups_length meta_.protocol
+    ((List.range meta_.protocol.lookupChunks.length).zip meta_.protocol.lookupChunks)
+    ([], pp.2.1, pp.2.2) lks hLksFold
+  have hLksAcc := foldlM_lookups_accOne meta_.protocol
+    ((List.range meta_.protocol.lookupChunks.length).zip meta_.protocol.lookupChunks)
+    ([], pp.2.1, pp.2.2) lks hLksFold (by simp)
+  have htr := takeCommitmentSection_shape meta_.protocol lks.2.1 lks.2.2
+    CommitmentRead.trash meta_.protocol.numTrashcans "trash" hTr
+  have hql := takeCommitmentSection_shape meta_.protocol tr.2.1 tr.2.2
+    CommitmentRead.quotient meta_.protocol.numQuotients "quotient limb" hQl
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · intro s hs
+    exact (hadv.2.1 s hs).1
+  · intro s hs
+    exact (hadv.2.1 s hs).2
+  · rw [hadvLen]
+    simp
+  · simpa [sumNat_nil] using hadv.2.2
+  · exact hlm.1
+  · exact hlm.2.2
+  · exact hpp.1
+  · exact hpp.2.2
+  · rw [hLksLen, List.length_zip, List.length_range]
+    simp
+  · intro lk hlk
+    obtain ⟨hg, ha⟩ := hLks.2.1 lk hlk
+    have ha2 := ha.2
+    rw [hLksAcc lk hlk] at ha2
+    exact ⟨hg.1, hg.2, ha.1, by simpa using ha2⟩
+  · exact hLksAcc
+  · simpa [sumNat_nil] using hLks.2.2
+  · exact htr.1
+  · exact htr.2.2
+  · exact hql.1
+  · exact hql.2.2
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+
+
 /-- **D-GATE11: `fromProtocol`'s proof payload length is below `2 ^ 80`.** The same
     `tp_fromProtocol` + `proofLen_eq_repackedLen` arithmetic as `v3_cdBound`, factored out for
     the transcript-buffer bound. Counts come from `MetaCountsBound`; no render is mentioned. -/
 theorem proofLen_lt_of_fromProtocol {meta_ m0 : ConstraintSystemMeta} {L : ProofCalldataLayout}
-    (hM : MetaCountsBound m0) (hProtocol : meta_.protocol = m0.protocol)
+    (cptr : Nat) (hM : MetaCountsBound m0) (hProtocol : meta_.protocol = m0.protocol)
     (hEval : meta_.numEvals < 2 ^ 32) (hPoint : meta_.numPointSets < 2 ^ 32)
-    (hL : ProofCalldataLayout.fromProtocol meta_.protocol abiVerifyProofProofCptr
+    (hL : ProofCalldataLayout.fromProtocol meta_.protocol cptr
       meta_.numEvals meta_.numPointSets = .ok L) :
     L.proofLen < 2 ^ 80 := by
-  have hfacts := Midfall.LoweringV3.TranscriptRows.tp_fromProtocol hL
-  have hpen := proofLen_eq_repackedLen meta_.protocol meta_.numEvals meta_.numPointSets L hL
+  have hfacts := tp_fromProtocol_at cptr hL
+  have hpen := proofLen_eq_repackedLen_at meta_.protocol cptr meta_.numEvals meta_.numPointSets L hL
   have hCG : L.commitmentG1Count = sumNat meta_.protocol.numUserAdvices
       + meta_.protocol.numLookups + meta_.protocol.numPermutationZs
       + sumNat (((List.range meta_.protocol.lookupChunks.length).zip
@@ -3231,10 +3300,11 @@ theorem plan_proofLen_lt {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut}
       gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
     rwa [hmeta] at h
   have hPoint : meta_.numPointSets < 2 ^ 32 := lt_of_le_of_lt hPointLe hM.pcsQueries
-  have hlen := proofLen_lt_of_fromProtocol hM hmetaFacts.2 hEval hPoint hL
+  have hlen := proofLen_lt_of_fromProtocol _ hM hmetaFacts.2 hEval hPoint hL
   rw [hp]
   rw [hLplan]
   exact hlen
+
 
 /-- **D-GATE11: the quotient program's byte size from `vkCarriesBuild`.** The encoded program is
     the VK reservation's `quotientProgramWords`, and the raw bytes are at most the word count
