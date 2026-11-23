@@ -627,3 +627,43 @@ self-equality equals generator quotient-pointer self-equality), and
 classification and freshness.  The remaining assembly is to instantiate these
 at the actual `linearize`/`Generator.queries` pair and connect the
 `queryFromPlan` source to the verifier `.linear` linearization query.
+
+## Final-datum assembly progress
+
+Landed on top of the upstream slice:
+
+* `upstreamSources_zslice`/`upstreamSources_filter_pcsBlockList` now return the
+  whole source-list equation
+  `upstreamSources = pre ++ permZUpstream numPermutationZs ++ post`, not only
+  its z filter.  This is the block alignment the final pairing consumes.
+* `exists_pairQueries`: with equal lengths, `pairQueries` is the list whose two
+  projections are the two query lists.  `KzgQueryMapData.ofPairQueries` is the
+  corresponding datum constructor.
+* `queryFromPlan_comm_numericOrG1_of_ne_linearization` and
+  `queryFromPlan_comm_ne_quotient`: a non-linearization source never yields the
+  quotient pointer.  Together with the Data predicate this is the source-level
+  freshness fact.
+* `RenderFresh.plan_data_commsNumericOrIdentity`: from `GeneratedBy`,
+  `plan_memory_eq_new`/`vkMptr_shape_of_generated` supply `vkMptr.Numeric`, then
+  `VerifierMemoryLayout.new_numericBases` and
+  `Data.new_commsNumericOrIdentity` give `R.plan.data.CommsNumericOrIdentity`.
+* `KzgMultiPrepareWidths_of_upstreamDatum`: the named consumer for the final
+  assembly, taking the upstream source list, its `queryFromPlan` map, the
+  generator sets, and a `KzgQueryMapData` at the verifier/upstream list.
+
+Remaining exact work:
+
+1. Instantiate `KzgQueryMapData.ofPairQueries` at the actual `linearize`
+   output and the upstream query list; this needs the query-list length
+   equality and the per-index `hpairP`/`hpairC`/`hclass` facts.
+2. Discharge `hpairP` block by block: the verifier block shapes and the
+   `queryFromPlan_*_rotation` lemmas are available; the missing piece is the
+   query-level block alignment between `collectQueries_single_blocks` and the
+   upstream source-list equality.
+3. Discharge `hpairC`/`hclass` block by block: this is the allocation
+   correspondence `CommitSlot` ↔ `EcPoint` pointer.  The linearization
+   diagonal/off-diagonal cases are proved in `QuotientFresh`; the advice,
+   instance, permZ, lookup, trash, fixed and common one-piece cases still need
+   the slot/pointer map.
+4. Feed the resulting datum to `KzgMultiPrepareWidths_of_upstreamDatum` and the
+   existing `EndToEnd` consumer.
