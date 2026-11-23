@@ -503,3 +503,25 @@ needs the per-proof `perProof`/inner-`mapM` decomposition (`adv.flatten`,
 is a direct `mapM`. The same-order list equality against `pcsQueries` is then a
 block-by-block comparison. `hclass`/`.linear`-vs-`computedQuotientComm`/
 `G1_IDENTITY_MPTR` freshness remains priority 3.
+
+## Advice and committed-instance block point shapes
+
+Landed in `QueryBlockShape`:
+
+* `adviceQueryFn_point` / `instanceQueryFn_point` — a single advice/instance
+  query block entry has point `vk.domain.rotateOmega x q.2.2`.
+* `adviceQueryFn_mem` / `instanceQueryFn_mem` — the same for any member of the
+  returned singleton block (instance's non-committed branch is `[]`).
+* `adviceBlock_point` / `instanceBlock_point` — using `mem_mapM` and
+  `List.mem_flatten`, every query in `adv.flatten` / `inst.flatten` has point
+  `vk.domain.rotateOmega x r` for some rotation.
+
+With `collectQueries_fixed_point`, `Trash.Evaluated.queries_point`,
+`Permutation.CommonEvaluated.queries_point` and `Logup.Evaluated.queries_point`,
+the verifier point shapes now cover advice, committed instance, fixed, trash,
+common and lookup. Remaining: the `permutationZ` block point lemma (head
+`x`/`xNext`, tail `xLast`) and the `perProof` append decomposition
+(`adv.flatten ++ inst.flatten ++ perm.toList ++ lk ++ tr`) that lifts the inner
+block lemmas to `perProof.flatten`. The same-order equality against `pcsQueries`
+then follows block by block; `hclass`/`.linear`/`G1_IDENTITY_MPTR` freshness
+remains priority 3.

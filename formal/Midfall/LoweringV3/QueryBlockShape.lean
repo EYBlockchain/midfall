@@ -120,4 +120,126 @@ theorem collectQueries_fixed_point (nbCommitted : Nat) (vk : VerifyingKey (Fr p)
   exact ⟨a.2.2, fixedQueryFn_point vk x fixedEvals a q hfa⟩
 
 
+def adviceQueryFn (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ac : Array G₁) (ae : Array (Fr p)) (proof : Nat)
+    (q : Nat × (Column × Rotation)) : Except Fault (List (VerifierQuery (Fr p) G₁)) := do
+  let com ← Permutation.atIndex ac q.2.1.index "proofs/src/plonk/verifier.rs:605"
+  let ev ← Permutation.atIndex ae q.1 "proofs/src/plonk/verifier.rs:606"
+  pure [VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
+    (CommitmentLabel.advice q.2.1.index) (.advice proof q.2.1.index) com ev]
+
+theorem adviceQueryFn_point (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ac : Array G₁) (ae : Array (Fr p)) (proof : Nat) (q : Nat × (Column × Rotation))
+    (q' : VerifierQuery (Fr p) G₁)
+    (h : adviceQueryFn vk x ac ae proof q = .ok [q']) :
+    q'.point = vk.domain.rotateOmega x q.2.2 := by
+  unfold adviceQueryFn at h
+  obtain ⟨com, _hcom, h1⟩ := except_bind_ok h
+  obtain ⟨ev, _hev, h2⟩ := except_bind_ok h1
+  change Except.ok [VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
+    (CommitmentLabel.advice q.2.1.index) (.advice proof q.2.1.index) com ev] = .ok [q'] at h2
+  have hq : q' = VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
+    (CommitmentLabel.advice q.2.1.index) (.advice proof q.2.1.index) com ev := by
+    have h := Except.ok.inj h2
+    exact (List.cons.inj h).1.symm
+  rw [hq]
+  rfl
+
+def instanceQueryFn (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ci : Array G₁) (ie : Array (Fr p)) (proof : Nat)
+    (q : Nat × (Column × Rotation)) : Except Fault (List (VerifierQuery (Fr p) G₁)) := do
+  if q.2.1.index < nbCommitted then
+    let com ← Permutation.atIndex ci q.2.1.index "proofs/src/plonk/verifier.rs:616"
+    let ev ← Permutation.atIndex ie q.1 "proofs/src/plonk/verifier.rs:617"
+    pure [VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
+      (CommitmentLabel.instance_ q.2.1.index) (.instance_ proof q.2.1.index) com ev]
+  else
+    pure []
+
+theorem instanceQueryFn_point (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ci : Array G₁) (ie : Array (Fr p)) (proof : Nat) (q : Nat × (Column × Rotation))
+    (q' : VerifierQuery (Fr p) G₁)
+    (h : instanceQueryFn nbCommitted vk x ci ie proof q = .ok [q']) :
+    q'.point = vk.domain.rotateOmega x q.2.2 := by
+  unfold instanceQueryFn at h
+  split at h
+  · obtain ⟨com, _hcom, h1⟩ := except_bind_ok h
+    obtain ⟨ev, _hev, h2⟩ := except_bind_ok h1
+    change Except.ok [VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
+      (CommitmentLabel.instance_ q.2.1.index) (.instance_ proof q.2.1.index) com ev] = .ok [q'] at h2
+    have hq : q' = VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
+      (CommitmentLabel.instance_ q.2.1.index) (.instance_ proof q.2.1.index) com ev := by
+      have h := Except.ok.inj h2
+      exact (List.cons.inj h).1.symm
+    rw [hq]
+    rfl
+  · change Except.ok ([] : List (VerifierQuery (Fr p) G₁)) = .ok [q'] at h
+    cases h
+
+theorem adviceQueryFn_mem (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ac : Array G₁) (ae : Array (Fr p)) (proof : Nat) (q0 : Nat × (Column × Rotation))
+    (l : List (VerifierQuery (Fr p) G₁)) (h : adviceQueryFn vk x ac ae proof q0 = .ok l)
+    {q : VerifierQuery (Fr p) G₁} (hq : q ∈ l) :
+    q.point = vk.domain.rotateOmega x q0.2.2 := by
+  unfold adviceQueryFn at h
+  obtain ⟨com, _hcom, h1⟩ := except_bind_ok h
+  obtain ⟨ev, _hev, h2⟩ := except_bind_ok h1
+  change Except.ok [VerifierQuery.new (vk.domain.rotateOmega x q0.2.2)
+    (CommitmentLabel.advice q0.2.1.index) (.advice proof q0.2.1.index) com ev] = .ok l at h2
+  have hl : l = [VerifierQuery.new (vk.domain.rotateOmega x q0.2.2)
+    (CommitmentLabel.advice q0.2.1.index) (.advice proof q0.2.1.index) com ev] :=
+    (Except.ok.inj h2).symm
+  rw [hl] at hq
+  simp only [List.mem_singleton] at hq
+  rw [hq]
+  rfl
+
+theorem instanceQueryFn_mem (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ci : Array G₁) (ie : Array (Fr p)) (proof : Nat) (q0 : Nat × (Column × Rotation))
+    (l : List (VerifierQuery (Fr p) G₁))
+    (h : instanceQueryFn nbCommitted vk x ci ie proof q0 = .ok l)
+    {q : VerifierQuery (Fr p) G₁} (hq : q ∈ l) :
+    q.point = vk.domain.rotateOmega x q0.2.2 := by
+  unfold instanceQueryFn at h
+  split at h
+  · obtain ⟨com, _hcom, h1⟩ := except_bind_ok h
+    obtain ⟨ev, _hev, h2⟩ := except_bind_ok h1
+    change Except.ok [VerifierQuery.new (vk.domain.rotateOmega x q0.2.2)
+      (CommitmentLabel.instance_ q0.2.1.index) (.instance_ proof q0.2.1.index) com ev] = .ok l at h2
+    have hl : l = [VerifierQuery.new (vk.domain.rotateOmega x q0.2.2)
+      (CommitmentLabel.instance_ q0.2.1.index) (.instance_ proof q0.2.1.index) com ev] :=
+      (Except.ok.inj h2).symm
+    rw [hl] at hq
+    simp only [List.mem_singleton] at hq
+    rw [hq]
+    rfl
+  · change Except.ok ([] : List (VerifierQuery (Fr p) G₁)) = .ok l at h
+    cases h
+    simp at hq
+
+theorem adviceBlock_point (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ac : Array G₁) (ae : Array (Fr p)) (proof : Nat)
+    (adv : List (List (VerifierQuery (Fr p) G₁)))
+    (hadv : (List.zip (List.range vk.cs.adviceQueries.size)
+        vk.cs.adviceQueries.toList).mapM (adviceQueryFn vk x ac ae proof) = .ok adv) :
+    ∀ q ∈ adv.flatten, ∃ r : Rotation, q.point = vk.domain.rotateOmega x r := by
+  intro q hq
+  rw [List.mem_flatten] at hq
+  obtain ⟨l, hl, hql⟩ := hq
+  obtain ⟨a, _ha, hfa⟩ := mem_mapM _ _ hadv l hl
+  exact ⟨a.2.2, adviceQueryFn_mem vk x ac ae proof a l hfa hql⟩
+
+theorem instanceBlock_point (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ci : Array G₁) (ie : Array (Fr p)) (proof : Nat)
+    (inst : List (List (VerifierQuery (Fr p) G₁)))
+    (hinst : (List.zip (List.range vk.cs.instanceQueries.size)
+        vk.cs.instanceQueries.toList).mapM (instanceQueryFn nbCommitted vk x ci ie proof)
+        = .ok inst) :
+    ∀ q ∈ inst.flatten, ∃ r : Rotation, q.point = vk.domain.rotateOmega x r := by
+  intro q hq
+  rw [List.mem_flatten] at hq
+  obtain ⟨l, hl, hql⟩ := hq
+  obtain ⟨a, _ha, hfa⟩ := mem_mapM _ _ hinst l hl
+  exact ⟨a.2.2, instanceQueryFn_mem nbCommitted vk x ci ie proof a l hfa hql⟩
+
 end Midfall.LoweringV3
