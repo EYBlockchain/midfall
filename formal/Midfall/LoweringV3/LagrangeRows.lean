@@ -4299,3 +4299,94 @@ theorem lag_stmt17_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inlin
   | seqStop h1 hne => cases h1 with
       | letVal _ _ => simp at hne
       | letHalt he => cases he
+
+theorem lag_stmt19_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 19 1 =
+      [GenAst.ylet "x_n_minus_1_inv" (GenAst.yop EVM.Op.mload [GenAst.yvar "mptr_end"])] := by
+  kernel_rfl
+
+theorem lag_stmt20_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 20 1 =
+      [GenAst.ylet "l_last" (GenAst.yop EVM.Op.mload
+        [Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts])] := by
+  kernel_rfl
+
+theorem lag_stmt21_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 21 1 =
+      [GenAst.ylet "l_0" (GenAst.yop EVM.Op.mload
+        [GenAst.yop EVM.Op.add
+          [Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts, GenAst.ylit (m * 32)]])] := by
+  kernel_rfl
+
+theorem lag_stmt19_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m : Nat) (mp : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 19 1)
+      (fun V _ => VEnv.get V "mptr_end" = some mp)
+      (fun V st V' st' o => o = .normal ∧ st' = touchMemory st mp.toNat 32 ∧
+        V' = ("x_n_minus_1_inv", loadWord st.memory mp.toNat) :: V) := by
+  rw [lag_stmt19_form]
+  intro V st hmp V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := list_length_one hlen
+              obtain ⟨p, hp, hv, hst⟩ := eval_mload_var_inv he
+              have hpv : p = mp := Option.some.inj (hp.symm.trans hmp)
+              subst hpv
+              exact ⟨rfl, hst, by simp [hv]⟩
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => exact (eval_mload_var_halt_false he).elim
+
+theorem lag_stmt20_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aD : Nat) (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some aD)
+    (haD : aD < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 20 1)
+      (fun _ _ => True)
+      (fun V st V' st' o => o = .normal ∧ st' = touchMemory st aD 32 ∧
+        V' = ("l_last", loadWord st.memory aD) :: V) := by
+  rw [lag_stmt20_form]
+  simp only [Blocks.VkLoading.vkSite, hD]
+  intro V st _ V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := list_length_one hlen
+              obtain ⟨hv, hst⟩ := eval_mload_lit_inv (c := c) (g := g)
+                (funs := funs) (V := V) (a := aD) haD he
+              exact ⟨rfl, hst, by simp [hv]⟩
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => exact (eval_mload_lit_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) (a := aD) he).elim
+
+theorem lag_stmt21_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aD : Nat) (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some aD)
+    (haD : aD < 2 ^ 256) (hm32 : m * 32 < 2 ^ 256) (haDm : aD + m * 32 < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 21 1)
+      (fun _ _ => True)
+      (fun V st V' st' o => o = .normal ∧ st' = touchMemory st (aD + m * 32) 32 ∧
+        V' = ("l_0", loadWord st.memory (aD + m * 32)) :: V) := by
+  rw [lag_stmt21_form]
+  simp only [Blocks.VkLoading.vkSite, hD]
+  intro V st _ V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := list_length_one hlen
+              obtain ⟨hv, hst⟩ := eval_mload_add_lit_inv (c := c) (g := g)
+                (funs := funs) (V := V) (a := aD) (b := m * 32) haD hm32 haDm he
+              exact ⟨rfl, hst, by simp [hv]⟩
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => exact (eval_mload_add_lit_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) (a := aD) (b := m * 32) he).elim
