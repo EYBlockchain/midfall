@@ -1824,4 +1824,55 @@ theorem lag_group12 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : Lag
       (fun _ _ _ => lag_step21 (consts := consts) (k := k) (n := n) (m := m) C funs hD haD
         hm32 haDm ret pf inv st0))
 
+
+/-- A word read outside the store's 32-byte window is preserved. -/
+theorem loadWord_storeWord_slot {mem : Nat → UInt8} {q : Nat} {v : U256} {x : Nat}
+    (h : q + 32 ≤ x ∨ x + 32 ≤ q) :
+    loadWord (storeWord mem q v) x = loadWord mem x :=
+  loadWord_storeWord_at (Or.symm h)
+
+/-- A word inside the denominator window reads the same through a slot store. -/
+theorem loadWord_slot_inside {D n m : Nat} {mem : Nat → UInt8} {q : Nat} {v : U256} {x : Nat}
+    (hq : q + 32 ≤ D ∨ D + 32 * (n + m + 1) ≤ q)
+    (h1 : D ≤ x) (h2 : x + 32 ≤ D + 32 * (n + m + 1)) :
+    loadWord (storeWord mem q v) x = loadWord mem x :=
+  loadWord_storeWord_slot (by
+    rcases hq with hq' | hq'
+    · exact Or.inl (by omega)
+    · exact Or.inr (by omega))
+
+/-- `wSum` respects pointwise-equal summands and equal accumulators. -/
+theorem wSum_congr (r : U256) {f f' : Nat → U256} (hf : ∀ i, f i = f' i) :
+    ∀ (j : Nat) (acc acc' : U256), acc = acc' → wSum r f j acc = wSum r f' j acc'
+  | 0, acc, acc', h => h
+  | j + 1, acc, acc', h => by
+      rw [wSum, wSum, wSum_congr r hf j acc acc' h, hf j]
+
+set_option maxHeartbeats 2000000 in
+/-- **`LagP14_store`**: with the reads at the fixed `mem0`, a slot store only moves the memory
+witness and extends the inside-window agreement and the `MemSameOut` frame by
+`storeWord_outside`. -/
+theorem LagP14_store {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    {C : LagCfg consts cd k n m} {ret pf : U256} {inv : Nat → U256} {st0 : EvmState}
+    {mem0 mem : Nat → UInt8} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    (h : LagP14 C ret pf inv st0 mem0 mem V st) (q : Nat) (v : U256)
+    (hqslot : q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE)
+    (hq : q + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ q) :
+    LagP14 C ret pf inv st0 mem0 (storeWord mem q v) V
+      { st with memory := storeWord mem q v } := by
+  obtain ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := h
+  refine ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, rfl, ?_, henv, hhalt, ?_⟩
+  · intro x h1 h2
+    rw [storeWord_outside mem q v x (by
+      rcases hq with hq' | hq'
+      · exact Or.inr (by omega)
+      · exact Or.inl (by omega))]
+    exact hout x h1 h2
+  · intro a ha hb hs
+    show storeWord mem q v a = st0.memory a
+    rw [storeWord_outside mem q v a (by
+      rcases hs q hqslot with h' | h' <;> omega)]
+    rw [show mem = st.memory from hmemEq.symm]
+    exact hms a ha hb hs
+
 end Midfall.LoweringV3.LagrangeBlock
