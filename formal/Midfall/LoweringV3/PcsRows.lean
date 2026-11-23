@@ -3710,6 +3710,202 @@ theorem b3_folds_contract {funs : FunEnv (Bridge.Dialect c g)} (n : Nat)
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_folds_contract
   [propext, Classical.choice, Quot.sound] native []
 
+/-! ### Block 3: rolled-arm nested-mload and mulmod inversions -/
+
+/-- A successful `mload` returns the word at the argument address and touches that range. -/
+theorem stepOp_mload_ok {a : U256} {st : EvmState} {cv : U256} {st' : EvmState}
+    (h : stepOp EVM.Op.mload [a] st = some (.ok [cv] st')) :
+    cv = loadWord st.memory a.toNat ∧ st' = touchMemory st a.toNat 32 := by
+  simp only [stepOp, ter] at h
+  injection h with h1
+  injection h1 with hlist hstate
+  injection hlist with hval
+  refine ⟨?_, hstate.symm⟩
+  rw [← hval]
+
+/-- `mload e`, with an arbitrary argument expression. -/
+theorem b3_eval_mload_expr_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {e : Expr EVM.Op}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mload [e]) (.vals [cv] st')) :
+    ∃ av st1, EvalExpr (Bridge.Dialect c g) funs V st e (.vals [av] st1) ∧
+      cv = loadWord st1.memory av.toNat ∧ st' = touchMemory st1 av.toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil he =>
+      cases hnil with
+      | argsNil =>
+          -- make the argument list concrete
+          simp only [builtinWithExternal, stepOp] at hbi
+          cases hbi
+          exact ⟨_, st1, he, rfl, rfl⟩
+
+/-- `mload (mload e)`, the rolled arm's double-indirect eval read. -/
+theorem b3_eval_mload2_expr_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {e : Expr EVM.Op}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mload [Expr.builtin EVM.Op.mload [e]]) (.vals [cv] st')) :
+    ∃ ptr st1 av, EvalExpr (Bridge.Dialect c g) funs V st e (.vals [ptr] st1) ∧
+      av = loadWord st1.memory ptr.toNat ∧
+      cv = loadWord st1.memory av.toNat ∧
+      st'.memory = st1.memory := by
+  obtain ⟨av, st1, hinner, hcv, hst⟩ := b3_eval_mload_expr_inv h
+  obtain ⟨ptr, st2, he, hav, hst1⟩ := b3_eval_mload_expr_inv hinner
+  refine ⟨ptr, st2, av, he, hav, ?_, ?_⟩
+  · rw [hst1, Midfall.Yul.Word.touchMemory_memory] at hcv
+    exact hcv
+  · rw [hst, Midfall.Yul.Word.touchMemory_memory, hst1,
+      Midfall.Yul.Word.touchMemory_memory]
+
+/-- The `k=0` rolled source: `mload(mload(eval_p))`. -/
+theorem b3_eval_mload2_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p : String}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mload [Expr.builtin EVM.Op.mload [Expr.var p]])
+      (.vals [cv] st')) :
+    ∃ pv, VEnv.get V p = some pv ∧
+      cv = loadWord st.memory (loadWord st.memory pv.toNat).toNat ∧
+      st'.memory = st.memory := by
+  obtain ⟨ptr, st1, av, he, hav, hcv, hmem⟩ := b3_eval_mload2_expr_inv h
+  obtain ⟨hpv, hst1⟩ := b1_eval_var_inv he
+  rw [hst1] at hav hmem
+  have hcv' : cv = loadWord st.memory (loadWord st.memory ptr.toNat).toNat := by
+    rw [hcv, hst1, hav]
+  exact ⟨_, hpv, hcv', hmem⟩
+
+/-- The `k>0` rolled source: `mload(mload(add(eval_p, off)))`. -/
+theorem b3_eval_mload2_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p : String} {off : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mload
+        [Expr.builtin EVM.Op.mload
+          [Expr.builtin EVM.Op.add [Expr.var p, Expr.lit (Literal.number off)]]])
+      (.vals [cv] st')) :
+    ∃ pv, VEnv.get V p = some pv ∧
+      cv = loadWord st.memory
+        (loadWord st.memory (pv + BitVec.ofNat 256 off).toNat).toNat ∧
+      st'.memory = st.memory := by
+  obtain ⟨ptr, st1, av, he, hav, hcv, hmem⟩ := b3_eval_mload2_expr_inv h
+  obtain ⟨hpv, hget, hrest⟩ := b1_eval_add_var_lit_inv he
+  obtain ⟨hptr, hst1⟩ := hrest
+  rw [hst1] at hav hmem
+  rw [hptr] at hav
+  have hcv' : cv = loadWord st.memory
+      (loadWord st.memory (hpv + BitVec.ofNat 256 off).toNat).toNat := by
+    rw [hcv, hst1, hav]
+  exact ⟨_, hget, hcv', hmem⟩
+
+
+
+/-- `mload e` never halts when `e` does not. -/
+theorem b3_eval_mload_expr_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {e : Expr EVM.Op} {st' : EvmState}
+    (hinner : ∀ st1 st2, EvalExpr (Bridge.Dialect c g) funs V st1 e (.halt st2) → False)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mload [e]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_unary (op := EVM.Op.mload)
+    (fun _ _ _ hr => Midfall.LoweringV2.Blocks.VkLoading.vk_ok_mload hr)
+    (fun _ _ hh => hinner _ _ hh) h
+
+theorem b3_eval_mload2_var_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mload [Expr.builtin EVM.Op.mload [Expr.var p]])
+      (.halt st')) : False :=
+  b3_eval_mload_expr_halt
+    (hinner := fun _ _ hh => b1_eval_mload_var_halt hh) h
+
+theorem b3_eval_mload2_add_var_lit_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p : String} {off : Nat} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mload
+        [Expr.builtin EVM.Op.mload
+          [Expr.builtin EVM.Op.add [Expr.var p, Expr.lit (Literal.number off)]]])
+      (.halt st')) : False :=
+  b3_eval_mload_expr_halt
+    (hinner := fun _ _ hh =>
+      b3_eval_mload_expr_halt
+        (e := Expr.builtin EVM.Op.add [Expr.var p, Expr.lit (Literal.number off)])
+        (hinner := fun _ _ hh' => b1_eval_add_var_lit_halt hh') hh) h
+
+/-- `mulmod e, pow, r` with an arbitrary first argument expression. -/
+theorem b3_eval_mulmod_expr_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {e : Expr EVM.Op}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mulmod [e, Expr.var "pow", Expr.var "r"])
+      (.vals [cv] st')) :
+    ∃ wv st1 pw rv, EvalExpr (Bridge.Dialect c g) funs V st e (.vals [wv] st1) ∧
+      VEnv.get V "pow" = some pw ∧ VEnv.get V "r" = some rv ∧
+      cv = wMulmodAt wv pw rv ∧ st'.memory = st1.memory := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest he =>
+      cases hrest with
+      | argsCons hrest2 hpw =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hrv, hstr⟩ := b1_eval_var_inv hr
+                  rw [hstr] at hpw
+                  obtain ⟨hpwv, hstp⟩ := b1_eval_var_inv hpw
+                  rw [hstp] at he
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  exact ⟨_, _, _, _, he, hpwv, hrv, rfl, rfl⟩
+
+set_option maxHeartbeats 800000 in
+theorem b3_eval_mulmod_expr_vars_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {e : Expr EVM.Op} {st' : EvmState}
+    (hne : ∀ st1 st2, EvalExpr (Bridge.Dialect c g) funs V st1 e (.halt st2) → False)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mulmod [e, Expr.var "pow", Expr.var "r"]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest he =>
+          cases hrest with
+          | argsCons hrest2 hpw =>
+              cases hrest2 with
+              | argsCons hnil hr =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact b1_eval_args_halt_false (fun e' he' st0 st1 hh => by
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he'
+        rcases he' with rfl | rfl | rfl
+        · exact hne st0 st1 hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) hargs
+
+#assert_axioms Midfall.LoweringV3.PcsRows.stepOp_mload_ok
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mload_expr_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mload2_expr_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mload2_var_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mload2_add_var_lit_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mload_expr_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mload2_var_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mload2_add_var_lit_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mulmod_expr_vars_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mulmod_expr_vars_halt
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow_halt
