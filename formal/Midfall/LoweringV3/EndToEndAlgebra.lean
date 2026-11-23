@@ -4626,6 +4626,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms instanceBlock_point
   [propext, Classical.choice, Quot.sound]
+#assert_axioms VerifierQuery.new_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Permutation.Evaluated.queries_point
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point

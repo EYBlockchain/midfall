@@ -242,4 +242,70 @@ theorem instanceBlock_point (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) 
   obtain ⟨a, _ha, hfa⟩ := mem_mapM _ _ hinst l hl
   exact ⟨a.2.2, instanceQueryFn_mem nbCommitted vk x ci ie proof a l hfa hql⟩
 
+theorem VerifierQuery.new_point {F C : Type} (point : F) (label : CommitmentLabel)
+    (slot : CommitSlot) (com : C) (ev : F) :
+    (VerifierQuery.new point label slot com ev).point = point := rfl
+
+theorem Permutation.Evaluated.queries_point
+    (ev : Permutation.Evaluated (Fr p) G₁)
+    (domain : EvaluationDomain (Fr p)) (blindingFactors : Nat) (x : Fr p)
+    (proof : Nat) (result : Array (VerifierQuery (Fr p) G₁))
+    (h : Permutation.Evaluated.queries ev domain blindingFactors x proof = .ok result) :
+    ∀ q ∈ result.toList,
+      q.point = x ∨ q.point = domain.rotateOmega x Rotation.next ∨
+        q.point = domain.rotateOmega x
+          (Rotation.value (Permutation.negI32 (Permutation.asI32 (blindingFactors + 1)))) := by
+  unfold Permutation.Evaluated.queries at h
+  obtain ⟨head, hhead, h1⟩ := except_bind_ok h
+  obtain ⟨tail, htail, h2⟩ := except_bind_ok h1
+  cases h2
+  intro q hq
+  rw [Array.toList_append, List.mem_append] at hq
+  rcases hq with hq | hq
+  · rw [List.mem_flatten] at hq
+    obtain ⟨l, hl, hql⟩ := hq
+    obtain ⟨a, _ha, hfa⟩ := mem_mapM _ _ hhead l hl
+    obtain ⟨c, _hc, hb⟩ := except_bind_ok hfa
+    obtain ⟨c', _hc', hb2⟩ := except_bind_ok hb
+    change Except.ok [VerifierQuery.new x CommitmentLabel.noLabel
+        (.permProduct proof a.1) c a.2.permutationProductEval,
+      VerifierQuery.new (domain.rotateOmega x Rotation.next) CommitmentLabel.noLabel
+        (.permProduct proof a.1) c' a.2.permutationProductNextEval] = .ok l at hb2
+    have hl' : l = [VerifierQuery.new x CommitmentLabel.noLabel
+        (.permProduct proof a.1) c a.2.permutationProductEval,
+      VerifierQuery.new (domain.rotateOmega x Rotation.next) CommitmentLabel.noLabel
+        (.permProduct proof a.1) c' a.2.permutationProductNextEval] :=
+      (Except.ok.inj hb2).symm
+    rw [hl'] at hql
+    simp at hql
+    rcases hql with rfl | rfl
+    · left; rfl
+    · right; left; rfl
+  · rw [List.mem_flatten] at hq
+    obtain ⟨l, hl, hql⟩ := hq
+    obtain ⟨a, _ha, hfa⟩ := mem_mapM _ _ htail l hl
+    obtain ⟨set, _hset, hb⟩ := except_bind_ok hfa
+    obtain ⟨c, _hc, hb1⟩ := except_bind_ok hb
+    cases hlast : set.permutationProductLastEval with
+    | none =>
+        rw [hlast] at hb1
+        cases hb1
+    | some e =>
+        rw [hlast] at hb1
+        change Except.ok [VerifierQuery.new
+            (domain.rotateOmega x (Rotation.value
+              (Permutation.negI32 (Permutation.asI32 (blindingFactors + 1)))))
+            CommitmentLabel.noLabel (.permProduct proof a) c e] = .ok l at hb1
+        have hl' : l = [VerifierQuery.new
+            (domain.rotateOmega x (Rotation.value
+              (Permutation.negI32 (Permutation.asI32 (blindingFactors + 1)))))
+            CommitmentLabel.noLabel (.permProduct proof a) c e] :=
+          (Except.ok.inj hb1).symm
+        rw [hl'] at hql
+        simp only [List.mem_singleton] at hql
+        rw [hql]
+        refine Or.inr (Or.inr ?_)
+        rw [VerifierQuery.new_point]
+
+
 end Midfall.LoweringV3
