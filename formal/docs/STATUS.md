@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `50cdf6d8` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
+**As of:** `0a06a55b` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
 PlanMeta later re-pinned the closure at **5252 declarations / digest `fa2cfd35f9d64826`**; a final
 full gate is owed on the current tree. Current report: root **11 / sound 5**, register
 **94 rows / 11 ROOT / 21 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
