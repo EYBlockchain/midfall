@@ -990,6 +990,505 @@ theorem pcsSetBlock1_contract {g : ExternalGas} (product : PairingProduct)
     · -- a halting dx0 is impossible
       exact absurd (b1_exec_ylet_sub_from_vars h1).1 hne1
 
+/-! ### Block 4, general arm: variable `mulmod(x, subFrom(y,z), r)` plumbing -/
+
+/-- Value inversion for `mulmod(x, subFrom(y,z), r)`: the middle operand is a field
+    subtraction of two variables. -/
+theorem b1_eval_mulmod_subfrom_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x y z : String}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAst.yvar x, GenAstPcs.subFrom (GenAst.yvar y) (GenAst.yvar z),
+         GenAst.yvar "r"]) (.vals [cv] st')) :
+    ∃ xv yv zv rv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      VEnv.get V z = some zv ∧ VEnv.get V "r" = some rv ∧
+      cv = wMulmodAt xv (wAddmodAt yv (rv - zv) rv) rv ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hrest with
+      | argsCons hrest2 hsub =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hrStep, hstr⟩ := b1_eval_var_inv hr
+                  obtain ⟨rv0, hrv0, _⟩ := b1_eval_var_vals hr
+                  have hrvEq0 := Option.some.inj (hrv0.symm.trans hrStep)
+                  obtain ⟨yv, zv, rvsub, hyv, hzv, hrvsub, hsubVal, hsubSt⟩ :=
+                    b1_eval_sub_from_vars_inv hsub
+                  obtain ⟨hxStep, hstx⟩ := b1_eval_var_inv hx
+                  obtain ⟨xv, hxv, _⟩ := b1_eval_var_vals hx
+                  have hxvEq := Option.some.inj (hxv.symm.trans hxStep)
+                  have hrvEq : rvsub = rv0 := Option.some.inj (hrvsub.symm.trans hrv0)
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  refine ⟨xv, yv, zv, rv0, hxv, hyv, hzv, hrv0, ?_, ?_⟩
+                  · rw [← hxvEq, ← hrvEq0, hsubVal, hrvEq]
+                    rfl
+                  · rw [hstx, hsubSt, hstr]
+
+theorem b1_eval_mulmod_subfrom_vars_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x y z : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAst.yvar x, GenAstPcs.subFrom (GenAst.yvar y) (GenAst.yvar z),
+         GenAst.yvar "r"]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hx =>
+          cases hrest with
+          | argsCons hrest2 hsub =>
+              cases hrest2 with
+              | argsCons hnil hr =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact b1_eval_args_halt_false (fun e he st0 st1 hh => by
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+        · exact b1_eval_sub_from_vars_halt hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) hargs
+
+/-- The exec step of one `lbasis_j` update. -/
+theorem b1_exec_yset_mulmod_subfrom_vars {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {x y z : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.yset x (GenAst.yop EVM.Op.mulmod
+        [GenAst.yvar x, GenAstPcs.subFrom (GenAst.yvar y) (GenAst.yvar z),
+         GenAst.yvar "r"])) V' st' o) :
+    o = .normal ∧ ∃ xv yv zv rv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      VEnv.get V z = some zv ∧ VEnv.get V "r" = some rv ∧
+      V' = VEnv.set V x (wMulmodAt xv (wAddmodAt yv (rv - zv) rv) rv) ∧ st' = st := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨xv, yv, zv, rv, hxv, hyv, hzv, hrv, hcv, hst⟩ :=
+        b1_eval_mulmod_subfrom_vars_inv he
+      subst hcv; subst hst
+      exact ⟨rfl, xv, yv, zv, rv, hxv, hyv, hzv, hrv, by simp [VEnv.setMany], rfl⟩
+  | assignHalt he => exact (b1_eval_mulmod_subfrom_vars_halt he).elim
+
+/-! ### Block 4, general arm: the point-list folds -/
+
+/-- The `dx_j` name of the general set arm. -/
+def pcsDxName (j : Nat) : String := "dx_" ++ toString j
+
+/-- One dx line: `let dx_j := subFrom(x3, rot_pt_j)`. -/
+def pcsDxStmt (j : Nat) (pt : String) : Stmt EVM.Op :=
+  GenAst.ylet (pcsDxName j) (GenAstPcs.subFrom (GenAst.yvar "x3") (GenAst.yvar pt))
+
+set_option maxHeartbeats 800000 in
+/-- **THE `dxLines` FOLD.** Every `dx_j := x3 - rot_pt_j` of a general set arm runs normal and
+    leaves exactly the `dx_j` bindings; every other name is untouched (the `dx_*` names are
+    disjoint from the rotation names and from `x3`/`r`). -/
+theorem pcsDxLines_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (xs : List (Nat × String)) (x3v rv : U256) (p : Nat → U256)
+    (hx3ne : ∀ q ∈ xs, pcsDxName q.1 ≠ "x3")
+    (hrne : ∀ q ∈ xs, pcsDxName q.1 ≠ "r")
+    (hrotne : ∀ q ∈ xs, ∀ r ∈ xs, q.2 ≠ pcsDxName r.1)
+    (hidx : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1)
+    (hdxne : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1 → pcsDxName q.1 ≠ pcsDxName r.1) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (xs.map (fun q => pcsDxStmt q.1 q.2))
+      (fun V st => VEnv.get V "x3" = some x3v ∧ VEnv.get V "r" = some rv ∧
+        (∀ q ∈ xs, VEnv.get V q.2 = some (p q.1)))
+      (fun V st V' st' o => o = .normal ∧
+        (∀ q ∈ xs, VEnv.get V' (pcsDxName q.1) =
+          some (wAddmodAt x3v (rv - p q.1) rv)) ∧
+        (∀ y, (∀ q ∈ xs, y ≠ pcsDxName q.1) → VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  induction xs with
+  | nil =>
+      intro V st hpre V' st' o hrun
+      cases hrun
+      refine ⟨rfl, ?_, ?_, rfl⟩
+      · intro q hq
+        simp at hq
+      · intro y _
+        rfl
+  | cons q rest ih =>
+      intro V st hpre V' st' o hrun
+      obtain ⟨hx3, hrv, hrot⟩ := hpre
+      rw [List.map_cons] at hrun
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+          ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+      · obtain ⟨ho, av, bv, rvw, hx3', hpt', hr', hV1, hst1⟩ :=
+          b1_exec_ylet_sub_from_vars hhead
+        have hx3e : av = x3v := Option.some.inj (hx3'.symm.trans hx3)
+        have hpte : bv = p q.1 := Option.some.inj (hpt'.symm.trans (hrot q (by simp)))
+        have hre : rvw = rv := Option.some.inj (hr'.symm.trans hrv)
+        have hV1' : V1 = (pcsDxName q.1, wAddmodAt x3v (rv - p q.1) rv) :: V := by
+          rw [hV1, hx3e, hpte, hre]
+        rw [hV1'] at htail
+        rw [hst1] at htail
+        have hx3ne' : ∀ r ∈ rest, pcsDxName r.1 ≠ "x3" :=
+          fun r hr => hx3ne r (List.mem_cons_of_mem _ hr)
+        have hrne' : ∀ r ∈ rest, pcsDxName r.1 ≠ "r" :=
+          fun r hr => hrne r (List.mem_cons_of_mem _ hr)
+        have hrotne' : ∀ r ∈ rest, ∀ r' ∈ rest, r.2 ≠ pcsDxName r'.1 :=
+          fun r hr r' hr' => hrotne r (List.mem_cons_of_mem _ hr) r'
+            (List.mem_cons_of_mem _ hr')
+        have hidx' : ∀ r ∈ rest, ∀ r' ∈ rest, r.1 ≠ r'.1 :=
+          fun r hr r' hr' => hidx r (List.mem_cons_of_mem _ hr) r'
+            (List.mem_cons_of_mem _ hr')
+        have hdxne' : ∀ r ∈ rest, ∀ r' ∈ rest, r.1 ≠ r'.1 →
+            pcsDxName r.1 ≠ pcsDxName r'.1 :=
+          fun r hr r' hr' => hdxne r (List.mem_cons_of_mem _ hr) r'
+            (List.mem_cons_of_mem _ hr')
+        have hx3'' : VEnv.get ((pcsDxName q.1, wAddmodAt x3v (rv - p q.1) rv) :: V)
+            "x3" = some x3v := by
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsDxName q.1) (y := "x3")
+            (v := wAddmodAt x3v (rv - p q.1) rv) (by
+              intro h; exact hx3ne q (by simp) h.symm)]
+          exact hx3
+        have hrv'' : VEnv.get ((pcsDxName q.1, wAddmodAt x3v (rv - p q.1) rv) :: V)
+            "r" = some rv := by
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsDxName q.1) (y := "r")
+            (v := wAddmodAt x3v (rv - p q.1) rv) (by
+              intro h; exact hrne q (by simp) h.symm)]
+          exact hrv
+        have hrot'' : ∀ r ∈ rest, VEnv.get ((pcsDxName q.1, wAddmodAt x3v (rv - p q.1) rv)
+            :: V) r.2 = some (p r.1) := by
+          intro r hr
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsDxName q.1) (y := r.2)
+            (v := wAddmodAt x3v (rv - p q.1) rv) (by
+              intro h; exact hrotne r (List.mem_cons_of_mem _ hr) q (by simp) h)]
+          exact hrot r (List.mem_cons_of_mem _ hr)
+        obtain ⟨ho2, hlook2, hout2, hst2⟩ :=
+          ih hx3ne' hrne' hrotne' hidx' hdxne'
+            _ _ ⟨hx3'', hrv'', hrot''⟩ V' st' o htail
+        refine ⟨ho2, ?_, ?_, hst2⟩
+        · intro r hr
+          rcases List.mem_cons.mp hr with hq | hr'
+          · subst hq
+            rw [hout2 (pcsDxName r.1) (fun s hs =>
+              hdxne r (by simp) s (List.mem_cons_of_mem _ hs)
+                (hidx r (by simp) s (List.mem_cons_of_mem _ hs)))]
+            rw [venv_get_cons_self (D := Bridge.Dialect c g)]
+          · exact hlook2 r hr'
+        · intro y hy
+          rw [hout2 y (fun r hr => hy r (List.mem_cons_of_mem _ hr))]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsDxName q.1) (y := y)
+            (v := wAddmodAt x3v (rv - p q.1) rv) (by
+              intro h; exact hy q (by simp) h)]
+      · exact absurd (b1_exec_ylet_sub_from_vars hhead).1 hne
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDxName [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDxStmt [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDxLines_contract
+  [propext, Classical.choice, Quot.sound] native []
+
+/-- The `lbasis_j` name of the general set arm. -/
+def pcsLbasisName (j : Nat) : String := "lbasis_" ++ toString j
+
+/-- One `lbasis_j` update: `lbasis_j := mulmod(lbasis_j, subFrom(rot_pt_j, rot_pt_k), r)`. -/
+def pcsLbasisStmt (j : Nat) (ptj ptk : String) : Stmt EVM.Op :=
+  GenAst.yset (pcsLbasisName j)
+    (GenAst.yop EVM.Op.mulmod
+      [GenAst.yvar (pcsLbasisName j), GenAstPcs.subFrom (GenAst.yvar ptj) (GenAst.yvar ptk),
+       GenAst.yvar "r"])
+
+/-- The `let lbasis_j := 1` of a group. -/
+def pcsLbasisInit (j : Nat) : Stmt EVM.Op :=
+  GenAst.ylet (pcsLbasisName j) (GenAst.ylit 1)
+
+/-- The running product of one `lbasis_j` group. -/
+def pcsLbasisAcc (rv ptjv : U256) (p : Nat → U256) :
+    List (Nat × String) → U256 → U256
+  | [], acc => acc
+  | k :: rest, acc =>
+      pcsLbasisAcc rv ptjv p rest (wMulmodAt acc (wAddmodAt ptjv (rv - p k.1) rv) rv)
+
+/-- The final `lbasis_j` word of a group. -/
+def pcsLbasisVal (rv ptjv : U256) (p : Nat → U256) (ks : List (Nat × String)) : U256 :=
+  pcsLbasisAcc rv ptjv p ks 1
+
+set_option maxHeartbeats 800000 in
+/-- **THE `lbasis_j` SET FOLD.** Starting from `name = acc0`, every update multiplies in one
+    `rot_pt_j - rot_pt_k`; the value is `pcsLbasisAcc`, every other name is untouched and the
+    state is unchanged. -/
+theorem pcsLbasisSetFold_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (j : Nat) (ptj : String) (ks : List (Nat × String)) (ptjv rv acc0 : U256)
+    (p : Nat → U256)
+    (hnameNe : ∀ k ∈ ks, pcsLbasisName j ≠ k.2)
+    (hptNe : pcsLbasisName j ≠ ptj)
+    (hrNe : pcsLbasisName j ≠ "r") :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (ks.map (fun k => pcsLbasisStmt j ptj k.2))
+      (fun V st => VEnv.get V (pcsLbasisName j) = some acc0 ∧
+        VEnv.get V ptj = some ptjv ∧ VEnv.get V "r" = some rv ∧
+        (∀ k ∈ ks, VEnv.get V k.2 = some (p k.1)))
+      (fun V st V' st' o => o = .normal ∧
+        V' = VEnv.set V (pcsLbasisName j) (pcsLbasisAcc rv ptjv p ks acc0) ∧
+        VEnv.get V' (pcsLbasisName j) = some (pcsLbasisAcc rv ptjv p ks acc0) ∧
+        (∀ y, y ≠ pcsLbasisName j → VEnv.get V' y = VEnv.get V y) ∧ st' = st) := by
+  induction ks generalizing acc0 with
+  | nil =>
+      intro V st hpre V' st' o hrun
+      cases hrun
+      obtain ⟨hacc, hpt, hrv, _⟩ := hpre
+      refine ⟨rfl, ?_, hacc, fun y _ => rfl, rfl⟩
+      change V = VEnv.set V (pcsLbasisName j) acc0
+      rw [venv_set_eq_self (D := Bridge.Dialect c g) hacc]
+  | cons k rest ih =>
+      intro V st hpre V' st' o hrun
+      obtain ⟨hacc, hpt, hrv, hrot⟩ := hpre
+      rw [List.map_cons] at hrun
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+          ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+      · obtain ⟨ho, xv, yv, zv, rv', hx, hy, hz, hr, hV1, hst1⟩ :=
+          b1_exec_yset_mulmod_subfrom_vars hhead
+        have hxe : xv = acc0 := Option.some.inj (hx.symm.trans hacc)
+        have hye : yv = ptjv := Option.some.inj (hy.symm.trans hpt)
+        have hze : zv = p k.1 := Option.some.inj (hz.symm.trans (hrot k (by simp)))
+        have hre : rv' = rv := Option.some.inj (hr.symm.trans hrv)
+        have hV1' : V1 = VEnv.set V (pcsLbasisName j)
+            (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv) := by
+          rw [hV1, hxe, hye, hze, hre]
+        rw [hV1'] at htail
+        rw [hst1] at htail
+        have hnameNe' : ∀ k' ∈ rest, pcsLbasisName j ≠ k'.2 :=
+          fun k' hk' => hnameNe k' (List.mem_cons_of_mem _ hk')
+        have hacc' : VEnv.get (VEnv.set V (pcsLbasisName j)
+            (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv)) (pcsLbasisName j) =
+            some (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv) :=
+          venv_get_set_same (D := Bridge.Dialect c g) hacc
+        have hpt' : VEnv.get (VEnv.set V (pcsLbasisName j)
+            (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv)) ptj = some ptjv := by
+          rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := pcsLbasisName j) (y := ptj)
+            (v := _) (fun h => hptNe h.symm)]
+          exact hpt
+        have hrv' : VEnv.get (VEnv.set V (pcsLbasisName j)
+            (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv)) "r" = some rv := by
+          rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := pcsLbasisName j) (y := "r")
+            (v := _) (fun h => hrNe h.symm)]
+          exact hrv
+        have hrot' : ∀ k' ∈ rest, VEnv.get (VEnv.set V (pcsLbasisName j)
+            (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv)) k'.2 = some (p k'.1) := by
+          intro k' hk'
+          rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := pcsLbasisName j) (y := k'.2)
+            (v := _) (fun h => hnameNe k' (List.mem_cons_of_mem _ hk') h.symm)]
+          exact hrot k' (List.mem_cons_of_mem _ hk')
+        obtain ⟨ho2, hV2, hacc2, hout2, hst2⟩ :=
+          ih (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv)
+            hnameNe' _ _ ⟨hacc', hpt', hrv', hrot'⟩ V' st' o htail
+        refine ⟨ho2, ?_, hacc2, ?_, hst2⟩
+        · rw [hV2]
+          change VEnv.set (VEnv.set V (pcsLbasisName j)
+              (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv)) (pcsLbasisName j)
+              (pcsLbasisAcc rv ptjv p rest
+                (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv)) =
+            VEnv.set V (pcsLbasisName j)
+              (pcsLbasisAcc rv ptjv p rest
+                (wMulmodAt acc0 (wAddmodAt ptjv (rv - p k.1) rv) rv))
+          rw [venv_set_set (D := Bridge.Dialect c g)]
+        · intro y hy
+          rw [hout2 y hy]
+          rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := pcsLbasisName j) (y := y)
+            (v := _) hy]
+      · exact absurd (b1_exec_yset_mulmod_subfrom_vars hhead).1 hne
+
+set_option maxHeartbeats 800000 in
+/-- **ONE `lbasis_j` GROUP.** `let lbasis_j := 1` followed by the update fold; the group binds
+    `lbasis_j` at `pcsLbasisVal` and leaves the state and every other name alone. -/
+theorem pcsLbasisGroup_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (j : Nat) (ptj : String) (ks : List (Nat × String)) (ptjv rv : U256)
+    (p : Nat → U256)
+    (hnameNe : ∀ k ∈ ks, pcsLbasisName j ≠ k.2)
+    (hptNe : pcsLbasisName j ≠ ptj)
+    (hrNe : pcsLbasisName j ≠ "r") :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (pcsLbasisInit j :: ks.map (fun k => pcsLbasisStmt j ptj k.2))
+      (fun V st => (VEnv.get V (pcsLbasisName j)).isSome = false ∧
+        VEnv.get V ptj = some ptjv ∧ VEnv.get V "r" = some rv ∧
+        (∀ k ∈ ks, VEnv.get V k.2 = some (p k.1)))
+      (fun V st V' st' o => o = .normal ∧
+        V' = (pcsLbasisName j, pcsLbasisVal rv ptjv p ks) :: V ∧
+        (∀ y, y ≠ pcsLbasisName j → VEnv.get V' y = VEnv.get V y) ∧ st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hfresh, hpt, hrv, hrot⟩ := hpre
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+  · cases hhead with
+    | letVal he hlen =>
+        cases he with
+        | lit =>
+            have hacc : VEnv.get ((pcsLbasisName j, (1 : U256)) :: V) (pcsLbasisName j) =
+                some (1 : U256) := venv_get_cons_self (D := Bridge.Dialect c g) V _ _
+            have hpt' : VEnv.get ((pcsLbasisName j, (1 : U256)) :: V) ptj = some ptjv := by
+              rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName j) (y := ptj)
+                (v := (1 : U256)) (fun h => hptNe h.symm)]
+              exact hpt
+            have hrv' : VEnv.get ((pcsLbasisName j, (1 : U256)) :: V) "r" = some rv := by
+              rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName j) (y := "r")
+                (v := (1 : U256)) (fun h => hrNe h.symm)]
+              exact hrv
+            have hrot' : ∀ k ∈ ks, VEnv.get ((pcsLbasisName j, (1 : U256)) :: V) k.2 =
+                some (p k.1) := by
+              intro k hk
+              rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName j) (y := k.2)
+                (v := (1 : U256)) (fun h => hnameNe k hk h.symm)]
+              exact hrot k hk
+            obtain ⟨ho2, hV2, _hacc2, hout2, hst2⟩ :=
+              pcsLbasisSetFold_contract (c := c) (g := g) (funs := funs)
+                j ptj ks ptjv rv 1 p hnameNe hptNe hrNe
+                _ _ ⟨hacc, hpt', hrv', hrot'⟩ V' st' o htail
+            refine ⟨ho2, ?_, ?_, hst2⟩
+            · rw [hV2, venv_set_cons_same (D := Bridge.Dialect c g)]
+              rfl
+            · intro y hy
+              rw [hout2 y hy]
+              rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName j) (y := y)
+                (v := (1 : U256)) hy]
+  · cases hhead with
+    | letVal he hlen => exact absurd rfl hne
+    | letHalt he => cases he
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisName [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisStmt [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisInit [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisAcc [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisVal [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisSetFold_contract
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisGroup_contract
+  [propext, Classical.choice, Quot.sound] native []
+
+/-- The statement list of one `lbasis` group. -/
+def pcsLbasisGroupAst (j : Nat) (ptj : String) (ks : List (Nat × String)) : Block EVM.Op :=
+  pcsLbasisInit j :: ks.map (fun k => pcsLbasisStmt j ptj k.2)
+
+set_option maxHeartbeats 1200000 in
+/-- **THE `lbasisLines` FOLD.** All groups of a general set arm run normal; every `lbasis_j` ends
+    at `pcsLbasisVal`, every other name is untouched and the state is unchanged. Each group's
+    name is fresh and the groups' names are pairwise distinct. -/
+theorem pcsLbasisLines_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (gs : List (Nat × String)) (ks : Nat → List (Nat × String)) (rv : U256)
+    (p : Nat → U256)
+    (hrNe : ∀ g ∈ gs, pcsLbasisName g.1 ≠ "r")
+    (hptNe : ∀ g ∈ gs, pcsLbasisName g.1 ≠ g.2)
+    (hnameNe : ∀ g ∈ gs, ∀ k ∈ ks g.1, pcsLbasisName g.1 ≠ k.2)
+    (hrotNe : ∀ g ∈ gs, ∀ g' ∈ gs, pcsLbasisName g.1 ≠ g'.2)
+    (hrotNe2 : ∀ g ∈ gs, ∀ g' ∈ gs, ∀ k ∈ ks g'.1, pcsLbasisName g.1 ≠ k.2)
+    (hdist : ∀ g ∈ gs, ∀ g' ∈ gs, g.1 ≠ g'.1 →
+      pcsLbasisName g.1 ≠ pcsLbasisName g'.1)
+    (hidx : ∀ g ∈ gs, ∀ g' ∈ gs, g.1 ≠ g'.1) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      ((gs.map (fun g => pcsLbasisGroupAst g.1 g.2 (ks g.1))).flatten)
+      (fun V st => VEnv.get V "r" = some rv ∧
+        (∀ g ∈ gs, VEnv.get V g.2 = some (p g.1)) ∧
+        (∀ g ∈ gs, ∀ k ∈ ks g.1, VEnv.get V k.2 = some (p k.1)) ∧
+        (∀ g ∈ gs, VEnv.get V (pcsLbasisName g.1) = none))
+      (fun V st V' st' o => o = .normal ∧
+        (∀ g ∈ gs, VEnv.get V' (pcsLbasisName g.1) =
+          some (pcsLbasisVal rv (p g.1) p (ks g.1))) ∧
+        (∀ y, (∀ g ∈ gs, y ≠ pcsLbasisName g.1) → VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  induction gs with
+  | nil =>
+      intro V st hpre V' st' o hrun
+      cases hrun
+      obtain ⟨hrv, hpt, hks, hfresh⟩ := hpre
+      exact ⟨rfl, (fun g hg => absurd hg (by simp)), (fun y _ => rfl), rfl⟩
+  | cons gp rest ih =>
+      intro V st hpre V' st' o hrun
+      obtain ⟨hrv, hpt, hks, hfresh⟩ := hpre
+      rw [List.map_cons, List.flatten_cons] at hrun
+      rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+          ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+      · have hgrp := pcsLbasisGroup_contract (c := c) (g := g) (funs := funs)
+          gp.1 gp.2 (ks gp.1) (p gp.1) rv p
+          (fun k hk => hnameNe gp (by simp) k hk)
+          (hptNe gp (by simp)) (hrNe gp (by simp))
+          V st ⟨by rw [hfresh gp (by simp)]; rfl, hpt gp (by simp), hrv,
+            hks gp (by simp)⟩ V1 st1 .normal hhead
+        obtain ⟨ho, hV1, hout1, hst1⟩ := hgrp
+        rw [hV1] at htail
+        rw [hst1] at htail
+        have hrNe' : ∀ g' ∈ rest, pcsLbasisName g'.1 ≠ "r" :=
+          fun g' hg' => hrNe g' (List.mem_cons_of_mem _ hg')
+        have hptNe' : ∀ g' ∈ rest, pcsLbasisName g'.1 ≠ g'.2 :=
+          fun g' hg' => hptNe g' (List.mem_cons_of_mem _ hg')
+        have hnameNe' : ∀ g' ∈ rest, ∀ k ∈ ks g'.1, pcsLbasisName g'.1 ≠ k.2 :=
+          fun g' hg' => hnameNe g' (List.mem_cons_of_mem _ hg')
+        have hrotNe' : ∀ g' ∈ rest, ∀ g'' ∈ rest, pcsLbasisName g'.1 ≠ g''.2 :=
+          fun g' hg' g'' hg'' => hrotNe g' (List.mem_cons_of_mem _ hg')
+            g'' (List.mem_cons_of_mem _ hg'')
+        have hrotNe2' : ∀ g' ∈ rest, ∀ g'' ∈ rest, ∀ k ∈ ks g''.1,
+            pcsLbasisName g'.1 ≠ k.2 :=
+          fun g' hg' g'' hg'' => hrotNe2 g' (List.mem_cons_of_mem _ hg')
+            g'' (List.mem_cons_of_mem _ hg'')
+        have hdist' : ∀ g' ∈ rest, ∀ g'' ∈ rest, g'.1 ≠ g''.1 →
+            pcsLbasisName g'.1 ≠ pcsLbasisName g''.1 :=
+          fun g' hg' g'' hg'' => hdist g' (List.mem_cons_of_mem _ hg')
+            g'' (List.mem_cons_of_mem _ hg'')
+        have hidx' : ∀ g' ∈ rest, ∀ g'' ∈ rest, g'.1 ≠ g''.1 :=
+          fun g' hg' g'' hg'' => hidx g' (List.mem_cons_of_mem _ hg')
+            g'' (List.mem_cons_of_mem _ hg'')
+        have hrv' : VEnv.get ((pcsLbasisName gp.1, pcsLbasisVal rv (p gp.1) p (ks gp.1)) :: V)
+            "r" = some rv := by
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1) (y := "r")
+            (v := _) (fun h => hrNe gp (by simp) h.symm)]
+          exact hrv
+        have hpt' : ∀ g' ∈ rest, VEnv.get
+            ((pcsLbasisName gp.1, pcsLbasisVal rv (p gp.1) p (ks gp.1)) :: V) g'.2 =
+            some (p g'.1) := by
+          intro g' hg'
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1) (y := g'.2)
+            (v := _) (hrotNe gp (by simp) g' (List.mem_cons_of_mem _ hg')).symm]
+          exact hpt g' (List.mem_cons_of_mem _ hg')
+        have hks' : ∀ g' ∈ rest, ∀ k ∈ ks g'.1, VEnv.get
+            ((pcsLbasisName gp.1, pcsLbasisVal rv (p gp.1) p (ks gp.1)) :: V) k.2 =
+            some (p k.1) := by
+          intro g' hg' k hk
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1) (y := k.2)
+            (v := _) (hrotNe2 gp (by simp) g' (List.mem_cons_of_mem _ hg') k hk).symm]
+          exact hks g' (List.mem_cons_of_mem _ hg') k hk
+        have hfresh' : ∀ g' ∈ rest, VEnv.get
+            ((pcsLbasisName gp.1, pcsLbasisVal rv (p gp.1) p (ks gp.1)) :: V)
+            (pcsLbasisName g'.1) = none := by
+          intro g' hg'
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1)
+            (y := pcsLbasisName g'.1) (v := _)
+            (hdist gp (by simp) g' (List.mem_cons_of_mem _ hg')
+              (hidx gp (by simp) g' (List.mem_cons_of_mem _ hg'))).symm]
+          exact hfresh g' (List.mem_cons_of_mem _ hg')
+        obtain ⟨ho2, hlook2, hout2, hst2⟩ :=
+          ih hrNe' hptNe' hnameNe' hrotNe' hrotNe2' hdist' hidx'
+            _ _ ⟨hrv', hpt', hks', hfresh'⟩ V' st' o htail
+        refine ⟨ho2, ?_, ?_, hst2⟩
+        · intro g' hg'
+          rcases List.mem_cons.mp hg' with hg | hg'
+          · cases hg
+            rw [hout2 (pcsLbasisName gp.1) (fun s hs =>
+              hdist gp (by simp) s (List.mem_cons_of_mem _ hs)
+                (hidx gp (by simp) s (List.mem_cons_of_mem _ hs)))]
+            rw [venv_get_cons_self (D := Bridge.Dialect c g)]
+          · exact hlook2 g' hg'
+        · intro y hy
+          rw [hout2 y (fun g' hg' => hy g' (List.mem_cons_of_mem _ hg'))]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1) (y := y)
+            (v := _) (hy gp (by simp))]
+      · obtain ⟨ho, _, _, _, _⟩ :=
+          pcsLbasisGroup_contract (c := c) (g := g) (funs := funs)
+            gp.1 gp.2 (ks gp.1) (p gp.1) rv p
+            (fun k hk => hnameNe gp (by simp) k hk)
+            (hptNe gp (by simp)) (hrNe gp (by simp))
+            V st ⟨by rw [hfresh gp (by simp)]; rfl, hpt gp (by simp), hrv,
+              hks gp (by simp)⟩ V' st' o hhead
+        exact absurd ho hne
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisGroupAst [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisLines_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
