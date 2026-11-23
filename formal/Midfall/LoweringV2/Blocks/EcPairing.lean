@@ -669,12 +669,12 @@ theorem load_of_hv2Of_guard {c : ExternalCalls} {g : ExternalGas}
 theorem ecPairing_normal_product (product : PairingProduct)
     {c : ExternalCalls} {g : ExternalGas}
     {req : YulSemantics.EVM.CallRequest} {st4 st5 : EvmState}
-    (resp : EVM.CallResponse) (LA GB LB GN : Bytes)
+    (resp : EVM.CallResponse) (LA GB LB GN : Bytes) (scratchW : U256)
     (hcall : (permissive (callsOf product)).Call req st4 resp)
     (htarget : req.target = pairingAddress)
     (hguard1 : b2w (decide (hv1Of (c := c) (g := g) resp = 0)) = (Bridge.Dialect c g).zero)
-    (hguard2 : b2w (decide (hv2Of (c := c) (g := g) resp st5 0 = 0)) = (Bridge.Dialect c g).zero)
-    (hst5 : st5.memory = copyReturn st4.memory 0 32 resp.returndata)
+    (hguard2 : b2w (decide (hv2Of (c := c) (g := g) resp st5 scratchW.toNat = 0)) = (Bridge.Dialect c g).zero)
+    (hst5 : st5.memory = copyReturn st4.memory scratchW.toNat 32 resp.returndata)
     (hinput : ByteArray.mk req.input.toArray = pairingFrame [(LA, GB), (LB, GN)]) :
     product (pairingFrame [(LA, GB), (LB, GN)]) = true := by
   have hsucc : resp.success = true :=
@@ -683,15 +683,17 @@ theorem ecPairing_normal_product (product : PairingProduct)
     length_ge_of_hv1Of_guard (hv1 := hv1Of (c := c) (g := g) resp) rfl hguard1
   have hv1eq : hv1Of (c := c) (g := g) resp = 1 :=
     hv1_eq_of_hv1Of_guard (hv1 := hv1Of (c := c) (g := g) resp) rfl hguard1
-  have hload : loadWord st5.memory 0 = 1 :=
-    load_of_hv2Of_guard (hv2 := hv2Of (c := c) (g := g) resp st5 0) rfl hguard2 hv1eq
+  have hload : loadWord st5.memory scratchW.toNat = 1 :=
+    load_of_hv2Of_guard (hv2 := hv2Of (c := c) (g := g) resp st5 scratchW.toNat) rfl hguard2 hv1eq
   have hword : wordFrom resp.returndata 0 = 1 := by
-    have hcopy : loadWord st5.memory 0 = wordFrom resp.returndata 0 := by
+    have hcopy : loadWord st5.memory scratchW.toNat = wordFrom resp.returndata 0 := by
       rw [hst5]
-      rw [Midfall.Yul.Word.loadWord_copyReturn (h := by
-        constructor
-        · omega
-        · rw [Nat.min_eq_left hlen])]
+      rw [Midfall.Yul.Word.loadWord_copyReturn (dst := scratchW.toNat) (size := 32) (q := scratchW.toNat)
+        (h := by
+          constructor
+          · omega
+          · rw [Nat.min_eq_left hlen])]
+      simp
     rw [hcopy] at hload
     exact hload
   exact product_of_honest_staticcall (product := product) (resp := resp)
@@ -699,6 +701,281 @@ theorem ecPairing_normal_product (product : PairingProduct)
     (hsucc := hsucc) (hinput := hinput) (hword := hword)
 
 #assert_axioms Midfall.LoweringV2.Blocks.EcPairing.ecPairing_normal_product
+  [propext, Classical.choice, Quot.sound] native []
+
+/-! ## The helper's normal run: trimming the `success = 1` guard and the product leaf -/
+
+theorem iszero_ret_one_val {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {r : EResult (Bridge.Dialect c g)}
+    (hret : VEnv.get V "ret" = some (1 : U256))
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.var "ret"]) r) : r = .vals [0] st := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var hget =>
+                  simp_all [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w]
+                  exact hbi.1.symm
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var hget => simp [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h => cases h
+      | argsHeadHalt _ h => cases h
+
+theorem iszero_ret_one_ne_halts {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st₂ : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.var "ret"]) (.halt st₂)) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var _ => simp [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h => cases h
+      | argsHeadHalt _ h => cases h
+
+theorem cond_ret_one_skip {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {body : Block EVM.Op} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome}
+    (hret : VEnv.get V "ret" = some (1 : U256))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"]) body) V' st' o) :
+    V' = V ∧ st' = st ∧ o = .normal := by
+  cases h with
+  | ifTrue hc hnz _ =>
+      have h0 := iszero_ret_one_val hret hc
+      cases h0
+      exact absurd rfl hnz
+  | ifFalse hc _ =>
+      have h0 := iszero_ret_one_val hret hc
+      cases h0
+      exact ⟨rfl, rfl, rfl⟩
+  | ifHalt hc => exact (iszero_ret_one_ne_halts hc).elim
+
+theorem assign_ret_success {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign ["ret"] (Expr.var "success")) V' st' o) :
+    V' = VEnv.set V "ret" 1 ∧ st' = st ∧ o = .normal := by
+  cases h with
+  | assignVal hex hlen =>
+      cases hex with
+      | var hget =>
+          simp only [VEnv.get] at hsucc hget
+          rw [hsucc] at hget
+          cases hget
+          exact ⟨rfl, rfl, rfl⟩
+  | assignHalt hex => cases hex
+
+theorem venv_get_set_same {V : VEnv (Bridge.Dialect c g)} {x : Ident} {v w : U256}
+    (h : VEnv.get V x = some w) : VEnv.get (VEnv.set V x v) x = some v := by
+  induction V with
+  | nil => cases h
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x
+      · subst hy
+        simp [VEnv.set, VEnv.get]
+      · have hget : VEnv.get rest x = some w := by
+          have h2 : VEnv.get ((y, u) :: rest) x = some w := h
+          simpa [VEnv.get, List.find?, hy] using h2
+        have h3 := ih hget
+        simpa [VEnv.set, VEnv.get, List.find?, hy] using h3
+
+theorem ecPairing_trim_exec (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) (rest : Block EVM.Op) {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {w : U256}
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (hbound : VEnv.get V "ret" = some w)
+    (h : ExecStmts (Bridge.Dialect c g) funs V st
+      (Stmt.assign ["ret"] (Expr.var "success") ::
+        Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"]) [Stmt.leave] :: rest) V' st' o) :
+    ExecStmts (Bridge.Dialect c g) funs (VEnv.set V "ret" 1) st rest V' st' o := by
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h with ⟨V₁, st₁, h₁, hrest⟩ | ⟨h₁, hne⟩
+  · obtain ⟨hV, hst, -⟩ := assign_ret_success hsucc h₁
+    subst hV; subst hst
+    have hret1 : VEnv.get (VEnv.set V "ret" 1) "ret" = some (1 : U256) :=
+      venv_get_set_same hbound
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest with ⟨V₂, st₂, h₂, hrest₂⟩ | ⟨h₂, hne₂⟩
+    · obtain ⟨hV2, hst2, -⟩ := cond_ret_one_skip hret1 h₂
+      subst hV2; subst hst2
+      exact hrest₂
+    · obtain ⟨-, -, ho⟩ := cond_ret_one_skip hret1 h₂
+      exact absurd ho hne₂
+  · obtain ⟨-, -, ho⟩ := assign_ret_success hsucc h₁
+    exact absurd ho hne
+
+theorem ecPairingBodyLit_trim {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {rest : Block EVM.Op} {Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop}
+    {w : U256}
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (hbound : VEnv.get V "ret" = some w) :
+    AllRuns funs (VEnv.set V "ret" 1) st rest Q →
+    AllRuns funs V st
+      (Stmt.assign ["ret"] (Expr.var "success") ::
+        Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"]) [Stmt.leave] :: rest) Q :=
+  fun h V' st' o hrun => h V' st' o (ecPairing_trim_exec funs V st rest hsucc hbound hrun)
+
+set_option maxHeartbeats 200000 in
+theorem copyWithin_outside (mem : Nat → UInt8) (dst src n x : Nat)
+    (h : x < dst ∨ dst + n ≤ x) : copyWithin mem dst src n x = mem x := by
+  simp only [copyWithin]
+  rw [if_neg]
+  omega
+theorem copyReturn_outside (mem : Nat → UInt8) (dst size : Nat) (dat : List UInt8) (x : Nat)
+    (h : x < dst ∨ dst + min size dat.length ≤ x) : copyReturn mem dst size dat x = mem x := by
+  simp only [copyReturn]
+  rw [if_neg]
+  omega
+theorem copyReturn_four_outside (mem : Nat → UInt8) (dst s1 s2 s3 s4 : Nat)
+    (size : Nat) (dat : List UInt8) (x : Nat)
+    (hsize : min size dat.length ≤ 768) (h : x < dst ∨ dst + 768 ≤ x) :
+    copyReturn
+      (copyWithin
+        (copyWithin
+          (copyWithin
+            (copyWithin mem dst s1 128) (dst + 128) s2 256)
+          (dst + 384) s3 128)
+        (dst + 512) s4 256) dst size dat x = mem x := by
+  rw [copyReturn_outside _ _ _ _ _ (by omega)]
+  rw [copyWithin_outside _ _ _ _ _ (by omega)]
+  rw [copyWithin_outside _ _ _ _ _ (by omega)]
+  rw [copyWithin_outside _ _ _ _ _ (by omega)]
+  rw [copyWithin_outside _ _ _ _ _ (by omega)]
+
+set_option maxHeartbeats 200000 in
+theorem ecPairingBodyLit_product_runs (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)) (st : EvmState)
+    (hfail : ∃ cenv, lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (LA GB LB GN : Bytes)
+    (lhsW rhsW : U256) (scratch g2 neg : Nat) (gas errPre errProof : Nat)
+    (hsrc1 : bytesAt st lhsW.toNat 128 = LA)
+    (hsrc2 : bytesAt st (g2 % 2^256) 256 = GB)
+    (hsrc3 : bytesAt st rhsW.toNat 128 = LB)
+    (hsrc4 : bytesAt st (neg % 2^256) 256 = GN)
+    (hdisj1 : (scratch % 2^256) + 768 ≤ lhsW.toNat ∨ lhsW.toNat + 128 ≤ (scratch % 2^256))
+    (hdisj2 : (scratch % 2^256) + 768 ≤ (g2 % 2^256) ∨ (g2 % 2^256) + 256 ≤ (scratch % 2^256))
+    (hdisj3 : (scratch % 2^256) + 768 ≤ rhsW.toNat ∨ rhsW.toNat + 128 ≤ (scratch % 2^256))
+    (hdisj4 : (scratch % 2^256) + 768 ≤ (neg % 2^256) ∨ (neg % 2^256) + 256 ≤ (scratch % 2^256))
+    (hg2 : g2 < 2^256) (hneg : neg < 2^256) (hscratchWin : scratch + 768 < 2^256) :
+    AllRuns funs [("success", (1 : U256)), ("lhs_mptr", lhsW),
+      ("rhs_mptr", rhsW), ("ret", (0 : U256))] st
+      (ecPairingBodyLit scratch g2 neg gas 0x0f 768 32 errPre errProof)
+      (fun V' st' o => Hold (
+        (o = .halt ∧ Reverted st') ∨
+        (o = .normal ∧ VEnv.get V' "ret" = some (1 : U256) ∧
+          (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
+            st'.memory x = st.memory x) ∧
+          product (pairingFrame [(LA, GB), (LB, GN)]) = true))) := by
+  obtain ⟨cenv, hc⟩ := hfail
+  unfold ecPairingBodyLit
+  refine ecPairingBodyLit_trim (Q := fun V' st' o => Hold (
+      (o = .halt ∧ Reverted st') ∨
+      (o = .normal ∧ VEnv.get V' "ret" = some (1 : U256) ∧
+        (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
+          st'.memory x = st.memory x) ∧
+        product (pairingFrame [(LA, GB), (LB, GN)]) = true)))
+    (hsucc := rfl) (hbound := rfl) ?_
+  refine allRuns_of_wp_fail 100 ?_
+  wp_run
+  all_goals
+    first
+    | exact ⟨cenv, by change lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv); exact hc⟩
+    | (refine Hold.intro ?_
+       first
+       | exact Or.inl ⟨rfl, by assumption⟩
+       | (refine Or.inr ⟨rfl, ⟨?_, ?_⟩⟩
+          · rfl
+          · trace_state
+            refine ⟨?_, ?_⟩
+            · intro x hx
+              simp +zetaDelta only [YulSemantics.EVM.litValue, BitVec.toNat_ofNat, BitVec.toNat_add]
+              have h32 : (32 : Nat) % 2^256 = 32 := by simp
+              have h128 : (128 : Nat) % 2^256 = 128 := by simp
+              have h256 : (256 : Nat) % 2^256 = 256 := by simp
+              have h768 : (768 : Nat) % 2^256 = 768 := by simp
+              have hd128 : ((scratch % 2^256) + 128 % 2^256) % 2^256 = (scratch % 2^256) + 128 := by
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h128]
+                exact Nat.mod_eq_of_lt (by omega)
+              have hd384 : ((scratch % 2^256) + 384 % 2^256) % 2^256 = (scratch % 2^256) + 384 := by
+                have h384 : (384 : Nat) % 2^256 = 384 := by norm_num
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h384]
+                exact Nat.mod_eq_of_lt (by omega)
+              have hd512 : ((scratch % 2^256) + 512 % 2^256) % 2^256 = (scratch % 2^256) + 512 := by
+                have h512 : (512 : Nat) % 2^256 = 512 := by norm_num
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h512]
+                exact Nat.mod_eq_of_lt (by omega)
+              rw [hd128, hd384, hd512, h32, h128, h256, h768]
+              exact copyReturn_four_outside st.memory (scratch % 2^256) lhsW.toNat
+                (g2 % 2^256) rhsW.toNat (neg % 2^256) 32 resp.returndata x
+                (by omega) hx
+            · refine ecPairing_normal_product (product := product)
+                (c := permissive (callsOf product)) (g := g)
+                (LA := LA) (GB := GB) (LB := LB) (GN := GN)
+                (hcall := by assumption) (htarget := rfl)
+                (hguard1 := by assumption) (hguard2 := by assumption)
+                (hst5 := rfl) (hinput := ?_)
+              simp +zetaDelta only [YulSemantics.EVM.litValue, BitVec.toNat_ofNat, BitVec.toNat_add]
+              have h128 : (128 : Nat) % 2^256 = 128 := by simp
+              have h256 : (256 : Nat) % 2^256 = 256 := by simp
+              have h768 : (768 : Nat) % 2^256 = 768 := by simp
+              have hd128 : ((scratch % 2^256) + 128 % 2^256) % 2^256 = (scratch % 2^256) + 128 := by
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h128]
+                exact Nat.mod_eq_of_lt (by omega)
+              have hd384 : ((scratch % 2^256) + 384 % 2^256) % 2^256 = (scratch % 2^256) + 384 := by
+                have h384 : (384 : Nat) % 2^256 = 384 := by norm_num
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h384]
+                exact Nat.mod_eq_of_lt (by omega)
+              have hd512 : ((scratch % 2^256) + 512 % 2^256) % 2^256 = (scratch % 2^256) + 512 := by
+                have h512 : (512 : Nat) % 2^256 = 512 := by norm_num
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h512]
+                exact Nat.mod_eq_of_lt (by omega)
+              rw [hd128, hd384, hd512, h128, h256, h768]
+              set mem4 : Nat → UInt8 := copyWithin
+                (copyWithin
+                  (copyWithin
+                    (copyWithin st.memory (scratch % 2^256) lhsW.toNat 128)
+                    ((scratch % 2^256) + 128) (g2 % 2^256) 256)
+                  ((scratch % 2^256) + 384) rhsW.toNat 128)
+                ((scratch % 2^256) + 512) (neg % 2^256) 256 with hmem4
+              rw [readBytes_mem4_eq mem4 st.memory (scratch % 2^256) lhsW.toNat
+                (g2 % 2^256) rhsW.toNat (neg % 2^256) hmem4 hdisj1 hdisj2 hdisj3 hdisj4]
+              have hs1 : readBytes st.memory lhsW.toNat 128 = LA.data.toList := by
+                have := congrArg Array.toList (congrArg ByteArray.data hsrc1)
+                simpa [bytesAt] using this
+              have hs2 : readBytes st.memory (g2 % 2^256) 256 = GB.data.toList := by
+                have := congrArg Array.toList (congrArg ByteArray.data hsrc2)
+                simpa [bytesAt] using this
+              have hs3 : readBytes st.memory rhsW.toNat 128 = LB.data.toList := by
+                have := congrArg Array.toList (congrArg ByteArray.data hsrc3)
+                simpa [bytesAt] using this
+              have hs4 : readBytes st.memory (neg % 2^256) 256 = GN.data.toList := by
+                have := congrArg Array.toList (congrArg ByteArray.data hsrc4)
+                simpa [bytesAt] using this
+              rw [hs1, hs2, hs3, hs4]
+              rw [pairingFrame_two]
+              rw [← bytesAppend_four_left]
+              apply ByteArray.ext
+              simp [bytesAppend, List.append_assoc]
+          ))
+
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.ecPairingBodyLit_product_runs
   [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV2.Blocks.EcPairing
