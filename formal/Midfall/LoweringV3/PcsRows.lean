@@ -3044,6 +3044,54 @@ theorem b3_eval_wordExpr_halt {funs : FunEnv (Bridge.Dialect c g)}
       exact Midfall.LoweringV2.Blocks.VkLoading.vk_nh_unary (op := EVM.Op.mload)
         (fun _ _ _ hr => Midfall.LoweringV2.Blocks.VkLoading.vk_ok_mload hr)
         (fun _ _ hh => b3_eval_valueExpr_halt hh) h
+
+theorem b3_eval_x1Pow {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} (i : Nat) {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (GenAstPcs.x1Pow i) (.vals [cv] st')) :
+    ∃ pv, VEnv.get V "X1_POWERS_MPTR" = some pv ∧
+      cv = loadWord st.memory (pv + BitVec.ofNat 256 (i * 32)).toNat ∧
+      st' = touchMemory st (pv + BitVec.ofNat 256 (i * 32)).toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil harg =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨pv, hpv, hcv, hst1⟩ := b1_eval_add_var_lit_inv harg
+          rw [hst1] at hbi
+          simp only [stepOp] at hbi
+          cases hbi
+          exact ⟨pv, hpv, by rw [hcv]; rfl, by rw [hcv]; rfl⟩
+
+theorem b3_eval_x1Pow_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} (i : Nat) {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (GenAstPcs.x1Pow i) (.halt st')) : False := by
+  unfold GenAstPcs.x1Pow at h
+  exact Midfall.LoweringV2.Blocks.VkLoading.vk_nh_unary (op := EVM.Op.mload)
+    (fun _ _ _ hr => Midfall.LoweringV2.Blocks.VkLoading.vk_ok_mload hr)
+    (fun _ _ hh => b1_eval_add_var_lit_halt hh) h
+
+/-- The seed statement of the unrolled/rolled q_eval_set arm: `let q_eval_set_k := wordExpr ev`. -/
+theorem b3_exec_seed {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (k : Nat) (ev : Midfall.Generator.Word)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.ylet ("q_eval_set_" ++ toString k) (GenAstPcs.wordExpr ev)) V' st' o) :
+    o = .normal ∧ ∃ v, b3word st V ev = some v ∧
+      V' = (("q_eval_set_" ++ toString k), v) :: V ∧
+      st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨hv, hmem, henv, hhalt⟩ := b3_eval_wordExpr he
+      exact ⟨rfl, _, hv, rfl, hmem, henv, hhalt⟩
+  | letHalt he => exact (b3_eval_wordExpr_halt he).elim
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_exec_seed
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_valueExpr
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_valueExpr_halt
