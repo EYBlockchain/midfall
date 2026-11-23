@@ -401,6 +401,174 @@ theorem readFixedEvals (cs : ConstraintSystem (Fr p)) :
       · exact PresWidthSeq.pure _
   simpa using hmain
 
+/-- **`readAlgebra` width sequence.** The quotient commitments (`1` under the
+    outer single-h-commitment feature, `getQuotientPolyDegree` otherwise) are
+    `g1`s; the scalar evaluations are exactly:
+
+    * one `fr` per (instance row, instance query) pair whose query is committed
+      (`q.1.index < nbCommitted`), the rest being inner products;
+    * `adviceQueries.size` per proof;
+    * `numFixedColumns - numSimpleSelectors` fixed evals;
+    * `commitments.size` permutation-common evals;
+    * `3k - 1` per permutation product set of size `k`;
+    * `helperPolys.size + 3` per lookup;
+    * one per trashcan. -/
+theorem readAlgebra {G₁ : Type}
+    (g1 : G1Codec G₁) (feat : Features) (vk : VerifyingKey (Fr p) G₁)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p)))) :
+    PresWidthSeq
+      (List.replicate
+          (if feat.outerSingleHCommitment then 1 else vk.domain.getQuotientPolyDegree)
+          (hashableG1 g1).width
+        ++ List.replicate
+            (instances.size *
+                (vk.cs.instanceQueries.toList.filter
+                  (fun q => q.1.index < nbCommitted)).length
+              + numProofs * vk.cs.adviceQueries.size
+              + (vk.cs.numFixedColumns - vk.cs.numSimpleSelectors)
+              + vk.permutation.commitments.size
+              + (permutations.toList.map
+                  (fun pc => 3 * pc.permutationProductCommitments.size - 1)).sum
+              + (lookups.toList.map
+                  (fun row => (row.toList.map
+                    (fun l => l.helperPolys.size + 3)).sum)).sum
+              + (trashcans.toList.map (fun row => row.size)).sum)
+            (hashableFr (p := p)).width)
+      (Verifier.readAlgebra (p := p) g1 feat vk permutations lookups trashcans
+        nbCommitted numProofs instances) := by
+  rw [AlgebraWidths.combine_widths]
+  unfold Verifier.readAlgebra
+  refine PresWidthSeq.bind (PresWidthSeq.readN (hashableG1 g1) _) (fun _ => ?_)
+  refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.squeezeChallenge (p := p))
+    (fun _ => ?_)
+  refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift (Verifier.i32Abs _ _))
+    (fun _ => ?_)
+  -- instances
+  refine PresWidthSeq.bind ?_ (fun _ => ?_)
+  · rw [show List.replicate
+        (instances.size *
+          (vk.cs.instanceQueries.toList.filter
+            (fun q => q.1.index < nbCommitted)).length)
+        (hashableFr (p := p)).width
+        = (instances.toList.map (fun _ => List.replicate
+            (vk.cs.instanceQueries.toList.filter
+              (fun q => q.1.index < nbCommitted)).length
+            (hashableFr (p := p)).width)).flatten by
+      rw [AlgebraWidths.flatten_map_replicate_const, ← Array.length_toList]]
+    refine PresWidthSeq.listMapM instances.toList (wf := fun _ => List.replicate
+      (vk.cs.instanceQueries.toList.filter
+        (fun q => q.1.index < nbCommitted)).length
+      (hashableFr (p := p)).width) ?_
+    intro row
+    rw [show List.replicate
+        (vk.cs.instanceQueries.toList.filter
+          (fun q => q.1.index < nbCommitted)).length
+        (hashableFr (p := p)).width
+        = (vk.cs.instanceQueries.toList.map
+            (fun q => if q.1.index < nbCommitted
+              then [(hashableFr (p := p)).width] else [])).flatten by
+      rw [AlgebraWidths.flatten_map_ite]]
+    refine PresWidthSeq.listMapM vk.cs.instanceQueries.toList
+      (wf := fun q => if q.1.index < nbCommitted
+        then [(hashableFr (p := p)).width] else []) ?_
+    intro q
+    dsimp only
+    by_cases hq : q.1.index < nbCommitted
+    · simp only [if_pos hq]
+      exact PresWidthSeq.read (hashableFr (p := p))
+    · simp only [if_neg hq]
+      cases hcol : row[q.1.index - nbCommitted]? with
+      | none => exact PresWidthSeq.throwFault _
+      | some col =>
+          dsimp only
+          refine PresWidthSeq.ite ?_ ?_
+          all_goals first
+            | exact PresWidthSeq.lift _
+            | refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.throwFault _)
+                (fun _ => PresWidthSeq.lift _)
+  -- advice
+  refine PresWidthSeq.bind ?_ (fun _ => ?_)
+  · rw [show List.replicate (numProofs * vk.cs.adviceQueries.size)
+        (hashableFr (p := p)).width
+        = ((List.range numProofs).map (fun _ => List.replicate
+            vk.cs.adviceQueries.size (hashableFr (p := p)).width)).flatten by
+      rw [AlgebraWidths.flatten_map_replicate_const, List.length_range]]
+    refine PresWidthSeq.listMapM (List.range numProofs)
+      (wf := fun _ => List.replicate vk.cs.adviceQueries.size
+        (hashableFr (p := p)).width) ?_
+    intro _
+    exact PresWidthSeq.readN (hashableFr (p := p)) vk.cs.adviceQueries.size
+  -- fixed evals
+  refine PresWidthSeq.bind (PresWidthSeq.readFixedEvals vk.cs) (fun _ => ?_)
+  -- permutation common
+  refine PresWidthSeq.bind (PresWidthSeq.permVKevaluate vk.permutation) (fun _ => ?_)
+  -- permutation products
+  refine PresWidthSeq.bind ?_ (fun _ => ?_)
+  · rw [show List.replicate
+        ((permutations.toList.map
+          (fun pc => 3 * pc.permutationProductCommitments.size - 1)).sum)
+        (hashableFr (p := p)).width
+        = (permutations.toList.map (fun pc => List.replicate
+            (3 * pc.permutationProductCommitments.size - 1)
+            (hashableFr (p := p)).width)).flatten by
+      rw [AlgebraWidths.flatten_map_replicate]]
+    refine PresWidthSeq.listMapM permutations.toList
+      (wf := fun pc => List.replicate
+        (3 * pc.permutationProductCommitments.size - 1)
+        (hashableFr (p := p)).width) ?_
+    intro pc
+    exact PresWidthSeq.permCommittedEvaluate pc
+  -- lookups
+  refine PresWidthSeq.bind ?_ (fun _ => ?_)
+  · rw [show List.replicate
+        ((lookups.toList.map
+          (fun row => (row.toList.map
+            (fun l => l.helperPolys.size + 3)).sum)).sum)
+        (hashableFr (p := p)).width
+        = (lookups.toList.map (fun row => List.replicate
+            ((row.toList.map (fun l => l.helperPolys.size + 3)).sum)
+            (hashableFr (p := p)).width)).flatten by
+      rw [AlgebraWidths.flatten_map_replicate]]
+    refine PresWidthSeq.listMapM lookups.toList
+      (wf := fun row => List.replicate
+        ((row.toList.map (fun l => l.helperPolys.size + 3)).sum)
+        (hashableFr (p := p)).width) ?_
+    intro row
+    rw [show List.replicate
+        ((row.toList.map (fun l => l.helperPolys.size + 3)).sum)
+        (hashableFr (p := p)).width
+        = (row.toList.map (fun l => List.replicate
+            (l.helperPolys.size + 3) (hashableFr (p := p)).width)).flatten by
+      rw [AlgebraWidths.flatten_map_replicate]]
+    refine PresWidthSeq.listMapM row.toList
+      (wf := fun l => List.replicate (l.helperPolys.size + 3)
+        (hashableFr (p := p)).width) ?_
+    intro l
+    exact PresWidthSeq.logupEvaluate l
+  -- trashcans
+  refine PresWidthSeq.bind ?_ (fun _ => ?_)
+  · rw [show List.replicate
+        ((trashcans.toList.map (fun row => row.size)).sum)
+        (hashableFr (p := p)).width
+        = (trashcans.toList.map (fun row => List.replicate row.size
+            (hashableFr (p := p)).width)).flatten by
+      rw [AlgebraWidths.flatten_map_replicate]]
+    refine PresWidthSeq.listMapM trashcans.toList
+      (wf := fun row => List.replicate row.size (hashableFr (p := p)).width) ?_
+    intro row
+    rw [show List.replicate row.size (hashableFr (p := p)).width
+        = (row.toList.map (fun _ => [(hashableFr (p := p)).width])).flatten by
+      rw [AlgebraWidths.flatten_map_single, Array.length_toList]]
+    refine PresWidthSeq.listMapM row.toList
+      (wf := fun _ => [(hashableFr (p := p)).width]) ?_
+    intro t
+    exact PresWidthSeq.trashEvaluate t
+  -- the `AlgebraRead` record
+  exact PresWidthSeq.pure _
+
 end PresWidthSeq
 
 end Midfall.LoweringV3
