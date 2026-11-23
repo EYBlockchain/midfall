@@ -206,7 +206,15 @@ def fxDom : EvaluationDomain (Fr rp) :=
     `Midfall/Instances/ObligationsGates.lean`, `decodeRust_some_at_deployment`. The shape
     is the one every other constraint system in the tree already uses
     (Instances/NativeE2E.lean:96, Instances/ExponentModel.lean:496,
-    Halo2/Spec/Relation.lean:176): one advice column, phase 0. -/
+    Halo2/Spec/Relation.lean:176): one advice column, phase 0.
+
+     D-GATE7 (2026-11-22): the verifier statements quantify over
+     `VerifyingKey.WellFormed`, which now carries `advicePhaseTotal` and
+     `challengePhaseTotal` (Exec/VerifyingKey.lean). Those two clauses are exactly
+     the domain on which the Rust pre-fill and the port's `scatterIndexed` agree;
+     the fault is off-domain for the interface, and
+     `scatterIndexed_hole_is_a_fault` stays as the W12 witness for the excluded
+     VKs. -/
 def fxCs : ConstraintSystem (Fr rp) :=
   { ConstraintSystem.default with
     numFixedColumns := 1, numAdviceColumns := 1, numInstanceColumns := 2,
@@ -633,7 +641,8 @@ theorem supportedInhabited : SupportedS realSurface realSurface.o₀ := by
   · exact ⟨by native_decide, by native_decide⟩
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
-      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl,
+      by decide, by decide⟩
 
 /-- The trace render is REFUTED at the SupportedS level, not merely unprovable:
     production is a conjunct of SupportedS, so a Surface asked about a trace render
@@ -1434,7 +1443,8 @@ theorem plantedStillSupported :
   · exact ⟨by native_decide, by native_decide⟩
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
-      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl,
+      by decide, by decide⟩
 
 /-- THE PIN BITES, on R-62's own plant (D-P23, second half). -/
 theorem blkPinBitesCounterexample : ¬ BlkIsEmitter plantCounterexampleSurface := by
@@ -1654,7 +1664,8 @@ theorem plantedLagrangePlaceholderStillSupported :
   · exact ⟨by native_decide, by native_decide⟩
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
-      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl,
+      by decide, by decide⟩
 
 theorem plantedTraceReturnPlaceholderStillSupported :
     SupportedS plantTraceReturnPlaceholderSurface plantTraceReturnPlaceholderSurface.o₀ := by
@@ -1677,7 +1688,8 @@ theorem plantedTraceReturnPlaceholderStillSupported :
   · exact ⟨by native_decide, by native_decide⟩
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
-      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl,
+      by decide, by decide⟩
 
 /-- P-AST3a: the third plant, same ten bullets, same reason for being written out
     directly rather than transported. Nothing SupportedS reads mentions blk, L, lower, shell
@@ -1703,7 +1715,8 @@ theorem plantedQuotientLinPlaceholderStillSupported :
   · exact ⟨by native_decide, by native_decide⟩
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
-      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl,
+      by decide, by decide⟩
 
 /-- The plant P-AST3b makes possible: vkLoading back to its own placeholder, everything
     else the emitter's. Declared BEFORE the two KATs below because both of them name it. -/
@@ -1844,7 +1857,8 @@ theorem plantedVkLoadingPlaceholderStillSupported :
   · exact ⟨by native_decide, by native_decide⟩
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
-      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl,
+      by decide, by decide⟩
 
 /-- THE PIN BITES THE PLACEHOLDER PLANT, TRANSCRIPTPARSER (D-P23, second half for the new
     slice). Before this package the plant satisfied BlkIsEmitter outright: 'mstore(0x2100, 2)'
@@ -1925,7 +1939,8 @@ theorem plantedTranscriptParserPlaceholderStillSupported :
   · exact ⟨by native_decide, by native_decide⟩
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
-      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl,
+      by decide, by decide⟩
 
 
 /-- THE PLANT P-PLANVIEW MAKES POSSIBLE, AND THE ONE ITS PREDECESSORS COULD NOT: pcs put
@@ -2012,7 +2027,8 @@ theorem plantedPcsPlaceholderStillSupported :
   · exact ⟨by native_decide, by native_decide⟩
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
-      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl,
+      by decide, by decide⟩
 
 /-- THE LENGTH FACT for the pcs plant, stated because it is the opposite of the quotientLin
     and vkLoading plants and the same as the transcriptParser one: at the FIXTURE plan the
