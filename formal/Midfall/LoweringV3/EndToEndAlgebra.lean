@@ -1768,6 +1768,164 @@ theorem committedInstanceFilter_eq_protocol (cs : ConstraintSystem (Fr p))
   rw [hq, hnb]
   exact (filter_map_index_length cs.instanceQueries.toList nbCommitted).symm
 
+theorem readN_go_size {T : Type} (h : Midfall.Halo2.Hashable T) :
+    ∀ (n : Nat) (t : Transcript) (acc : Array T) (acc' : Array T) (t' : Transcript),
+      Transcript.readN.go h t acc n = .ok (acc', t') → acc'.size = acc.size + n := by
+  intro n
+  induction n with
+  | zero =>
+      intro t acc acc' t' hr
+      rw [Transcript.readN.go.eq_1] at hr
+      cases hr
+      simp
+  | succ m ih =>
+      intro t acc acc' t' hr
+      rw [Transcript.readN.go.eq_2] at hr
+      simp only [Bind.bind, Except.bind] at hr
+      split at hr
+      · cases hr
+      · rename_i x hx
+        obtain ⟨v, t2⟩ := x
+        have := ih t2 (acc.push v) acc' t' hr
+        simp only [Array.size_push] at this
+        omega
+
+theorem readN_size {T : Type} (h : Midfall.Halo2.Hashable T) (t : Transcript) (n : Nat)
+    {acc : Array T} {t' : Transcript} (hr : t.readN h n = .ok (acc, t')) :
+    acc.size = n := by
+  unfold Transcript.readN at hr
+  have := readN_go_size h n t #[] acc t' hr
+  simpa using this
+
+theorem tmReadN_size {T : Type} (h : Midfall.Halo2.Hashable T) (n : Nat)
+    {s : Transcript} {acc : Array T} {t' : Transcript}
+    (hr : (tmReadN h n).run s = .ok (acc, t')) : acc.size = n := by
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmReadN_run_fields h st buf pos hash log n] at hr
+      exact readN_size h _ n hr
+
+theorem permReadProductCommitments_size {G₁ : Type} (perm : PermutationArgument)
+    (csDegree : Nat) (h : Midfall.Halo2.Hashable G₁)
+    {t : Transcript} {c : Permutation.Committed G₁} {t' : Transcript}
+    (hr : (Permutation.readProductCommitments perm csDegree h).run t = .ok (c, t')) :
+    c.permutationProductCommitments.size =
+      Permutation.numChunksOf perm.columns.size (csDegree - 2) := by
+  unfold Permutation.readProductCommitments at hr
+  dsimp only at hr
+  rw [Midfall.LoweringV3.run_ite] at hr
+  by_cases hlen : csDegree - 2 > 0
+  · rw [if_pos hlen] at hr
+    obtain ⟨read, t2, hread, h2⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok hr
+    have hsz : read.size = Permutation.numChunksOf perm.columns.size (csDegree - 2) :=
+      tmReadN_size h _ hread
+    change (Except.ok (Permutation.Committed.mk read,
+      t2) : Except Fault (Permutation.Committed G₁ × Transcript)) = .ok (c, t') at h2
+    cases h2
+    exact hsz
+  · rw [if_neg hlen] at hr
+    obtain ⟨u, t1, hu, _⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok hr
+    cases hu
+
+theorem readCommitment_helperPolys_size {G₁ : Type} (cm : Logup.CommittedMultiplicities G₁)
+    (nbChunks : Nat) (h : Midfall.Halo2.Hashable G₁)
+    {t : Transcript} {c : Logup.Committed G₁} {t' : Transcript}
+    (hr : (Logup.CommittedMultiplicities.readCommitment cm nbChunks h).run t = .ok (c, t')) :
+    c.helperPolys.size = nbChunks := by
+  unfold Logup.CommittedMultiplicities.readCommitment at hr
+  obtain ⟨helpers, t1, hh, h1⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok hr
+  obtain ⟨acc, t2, ha, h2⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok h1
+  have hsz : helpers.size = nbChunks := tmReadN_size h _ hh
+  change (Except.ok (Logup.Committed.mk cm.multiplicities helpers acc,
+      t2) : Except Fault (Logup.Committed G₁ × Transcript)) = .ok (c, t') at h2
+  cases h2
+  exact hsz
+
+theorem foldlM_push_size {α β : Type} (l : List α) (f : α → TranscriptM β) :
+    ∀ (seed : Array β) (out : Array β) (t t' : Transcript),
+      (l.foldlM (fun (acc : Array β) x => do let y ← f x; pure (acc.push y)) seed).run t = .ok (out, t') →
+      out.size = seed.size + l.length := by
+  induction l with
+  | nil =>
+      intro seed out t t' h
+      rw [List.foldlM_nil] at h
+      cases h
+      simp
+  | cons a as ih =>
+      intro seed out t t' h
+      rw [List.foldlM_cons] at h
+      obtain ⟨p, t1, hf, h1⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok h
+      obtain ⟨y, t2, hfy, h2⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok hf
+      change (Except.ok (seed.push y, t2) :
+        Except Fault (Array β × Transcript)) = .ok (p, t1) at h2
+      have hp : p = seed.push y := (Prod.mk.inj (Except.ok.inj h2)).1.symm
+      have ht : t1 = t2 := (Prod.mk.inj (Except.ok.inj h2)).2.symm
+      subst p
+      subst t1
+      have hrest := ih (seed.push y) out t2 t' h1
+      simp only [Array.size_push, List.length_cons] at hrest ⊢
+      omega
+
+theorem foldlM_push_prop {α β : Type} (l : List α) (f : α → TranscriptM β) (P : β → Prop)
+    (hf : ∀ x t y t', (f x).run t = .ok (y, t') → P y) :
+    ∀ (seed : Array β), (∀ y ∈ seed.toList, P y) →
+      ∀ (out : Array β) (t t' : Transcript),
+        (l.foldlM (fun (acc : Array β) x => do let y ← f x; pure (acc.push y)) seed).run t = .ok (out, t') →
+        ∀ y ∈ out.toList, P y := by
+  induction l with
+  | nil =>
+      intro seed hseed out t t' h
+      rw [List.foldlM_nil] at h
+      cases h
+      exact hseed
+  | cons a as ih =>
+      intro seed hseed out t t' h
+      rw [List.foldlM_cons] at h
+      obtain ⟨p, t1, hstep, h1⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok h
+      obtain ⟨y, t2, hfy, h2⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok hstep
+      change (Except.ok (seed.push y, t2) :
+        Except Fault (Array β × Transcript)) = .ok (p, t1) at h2
+      have hp : p = seed.push y := (Prod.mk.inj (Except.ok.inj h2)).1.symm
+      have ht : t1 = t2 := (Prod.mk.inj (Except.ok.inj h2)).2.symm
+      have hy : P y := hf a t y t2 hfy
+      subst p
+      subst t1
+      apply ih (seed.push y) _ out t2 t' h1
+      intro z hz
+      rw [Array.toList_push, List.mem_append, List.mem_singleton] at hz
+      rcases hz with hz | rfl
+      · exact hseed z hz
+      · exact hy
+
+theorem foldlM_push_map {α β γ : Type} (l : List α) (f : α → TranscriptM β)
+    (g : α → γ) (h : β → γ)
+    (hf : ∀ x t y t', (f x).run t = .ok (y, t') → h y = g x) :
+    ∀ (seed : Array β) (out : Array β) (t t' : Transcript),
+      (l.foldlM (fun (acc : Array β) x => do let y ← f x; pure (acc.push y)) seed).run t
+        = .ok (out, t') →
+      out.toList.map h = seed.toList.map h ++ l.map g := by
+  induction l with
+  | nil =>
+      intro seed out t t' hr
+      rw [List.foldlM_nil] at hr
+      cases hr
+      simp
+  | cons a as ih =>
+      intro seed out t t' hr
+      rw [List.foldlM_cons] at hr
+      obtain ⟨p, t1, hstep, h1⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok hr
+      obtain ⟨y, t2, hfy, h2⟩ := Midfall.LoweringV3.PresWidthSeq.run_bind_ok hstep
+      change (Except.ok (seed.push y, t2) :
+        Except Fault (Array β × Transcript)) = .ok (p, t1) at h2
+      have hp : p = seed.push y := (Prod.mk.inj (Except.ok.inj h2)).1.symm
+      have ht : t1 = t2 := (Prod.mk.inj (Except.ok.inj h2)).2.symm
+      have hy : h y = g a := hf a t y t2 hfy
+      subst p
+      subst t1
+      have hrest := ih (seed.push y) out t2 t' h1
+      rw [hrest, Array.toList_push, List.map_append, List.map_cons, List.map_nil, hy]
+      simp
+
 end Composition
 
 end Midfall.LoweringV3
