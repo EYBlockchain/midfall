@@ -1841,6 +1841,23 @@ theorem fwdProd_zmod_inv (mem : Nat → UInt8) (a k : Nat)
   wMulmodAt_zmod_inv _ hx0 hx
 
 
+theorem ofNat_sub_two_blsR :
+    ((BitVec.ofNat 256 Midfall.Yul.blsR : U256) - 2) =
+      BitVec.ofNat 256 (Midfall.Yul.blsR - 2) := by
+  apply BitVec.eq_of_toNat_eq
+  have hb : (BitVec.ofNat 256 Midfall.Yul.blsR : U256).toNat = Midfall.Yul.blsR := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]
+  have h2 : (2 : U256).toNat = 2 := rfl
+  have hb2 : (BitVec.ofNat 256 (Midfall.Yul.blsR - 2) : U256).toNat = Midfall.Yul.blsR - 2 := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]
+  rw [BitVec.toNat_sub, hb, h2, hb2]
+  have hbge : 2 ≤ Midfall.Yul.blsR := by decide
+  have hb_lt : Midfall.Yul.blsR < 2 ^ 256 := by decide
+  have hsum : 2 ^ 256 - 2 + Midfall.Yul.blsR = 2 ^ 256 + (Midfall.Yul.blsR - 2) := by omega
+  rw [hsum, Nat.add_mod_left, Nat.mod_eq_of_lt (by omega : Midfall.Yul.blsR - 2 < 2 ^ 256)]
+
+
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -1912,6 +1929,7 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms bi_prelude_main [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_zmod_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdProd_zmod_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms ofNat_sub_two_blsR [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_args_litvar_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_staticcall_args [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_staticcall_inv [propext, Classical.choice, Quot.sound]
