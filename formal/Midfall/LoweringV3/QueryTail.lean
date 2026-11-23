@@ -81,4 +81,11 @@ theorem queries_last_rotation (meta_ : ConstraintSystemMeta) (data : Data)
   rw [queries_getLast?_some meta_ data qs hq hsrc hqr]
   rfl
 
+theorem queryFromPlan_linearization (meta_ : ConstraintSystemMeta) (data : Data) :
+    queryFromPlan .linearization meta_ data =
+      .ok (Query.new data.computedQuotientComm 0 data.computedQuotientEval) := rfl
+
+theorem PcsQuerySource.rotation_linearization (rotationLast : Int) :
+    PcsQuerySource.linearization.rotation rotationLast = 0 := rfl
+
 end Midfall.LoweringV3
