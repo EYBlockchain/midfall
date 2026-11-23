@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `9e0e25ad` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
+**As of:** `50cdf6d8` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
 PlanMeta later re-pinned the closure at **5252 declarations / digest `fa2cfd35f9d64826`**; a final
 full gate is owed on the current tree. Current report: root **11 / sound 5**, register
 **94 rows / 11 ROOT / 21 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
@@ -250,6 +250,10 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 At `7a55dc8d` (2026-11-23): register **96 rows / 11 ROOT / 22 CERT**, 0 REFUTED, 1 legacy VACUOUS
 (`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
 620 external leaves / digest 209cde2f48115a76**; quick gate green.
+
+**D-GATE15 (signed, 2026-11-23)**: `WellFormed` gains the `readAlgebra` totality bundle: fixed
+insert bound (`fixedQueries.size ≤ numFixedColumns` + simple-selector coverage), rotation-not-`i32::MIN`,
+and the instance slice-window bound. VK sanity clauses, not row/root hypotheses.
 
 **D-GATE14 (signed, 2026-11-23)**: `WellFormed` gains `fixedSelectorBound :
 numSimpleSelectors ≤ numFixedColumns`, the `readFixedEvals` no-throw precondition needed by the
