@@ -1945,6 +1945,149 @@ theorem exec_guard_ret0_false {funs : FunEnv (Bridge.Dialect c g)}
   | ifHalt hc => exact (hne _ hc).elim
 
 
+theorem bi_prelude_form (consts : Inline.Consts) :
+    ∃ body : Block EVM.Op,
+      seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 2 8 =
+        [ GenAst.yif (Expr.builtin EVM.Op.lt [Expr.var "mptr_end", Expr.var "mptr_start"])
+            [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave],
+          GenAst.ylet "count_bytes" (GenAst.yop EVM.Op.sub
+            [GenAst.yvar "mptr_end", GenAst.yvar "mptr_start"]),
+          GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "count_bytes"]) [Stmt.leave],
+          GenAst.yif (Expr.builtin EVM.Op.eq [Expr.var "count_bytes", Expr.lit (Literal.number 32)]) body,
+          GenAst.ylet "gp_mptr" (GenAst.yvar "scratch_mptr"),
+          GenAst.ylet "gp" (GenAst.yop EVM.Op.mload [GenAst.yvar "mptr_start"]),
+          GenAst.yif (GenAst.yop EVM.Op.iszero
+            [GenAst.yop EVM.Op.lt [GenAst.yvar "gp", GenAst.yvar "r"]])
+            [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave],
+          GenAst.ylet "mptr" (GenAst.yop EVM.Op.add
+            [GenAst.yvar "mptr_start", GenAst.ylit 32]) ] := by
+  refine ⟨(match seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 2 8 with
+    | [_, _, _, Stmt.cond _ body, _, _, _, _] => body
+    | _ => []), ?_⟩
+  kernel_rfl
+
+theorem ofNat_sub_of_le (a e : Nat) (hae : a ≤ e) (he : e < 2 ^ 256) :
+    ((BitVec.ofNat 256 e : U256) - BitVec.ofNat 256 a) = BitVec.ofNat 256 (e - a) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_sub, BitVec.toNat_ofNat, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt he, Nat.mod_eq_of_lt (by omega : a < 2 ^ 256),
+    Nat.mod_eq_of_lt (by omega : e - a < 2 ^ 256)]
+  omega
+
+theorem ofNat_ne_zero_of_pos {n : Nat} (h : 0 < n) (hn : n < 2 ^ 256) : (BitVec.ofNat 256 n : U256) ≠ 0 := by
+  intro hz
+  have := congrArg BitVec.toNat hz
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hn] at this
+  simp at this
+  omega
+
+theorem ofNat_ne_of_ne {n m : Nat} (h : n ≠ m) (hn : n < 2 ^ 256) (hm : m < 2 ^ 256) :
+    (BitVec.ofNat 256 n : U256) ≠ BitVec.ofNat 256 m := by
+  intro he
+  have := congrArg BitVec.toNat he
+  rw [BitVec.toNat_ofNat, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hn, Nat.mod_eq_of_lt hm] at this
+  exact h this
+
+theorem exec_guard_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {cond : Expr EVM.Op} {body : Block EVM.Op}
+    (hfalse : ∀ st1 cv, EvalExpr (Bridge.Dialect c g) funs V st cond (.vals [cv] st1) → cv = 0)
+    (hstate : ∀ st1 cv, EvalExpr (Bridge.Dialect c g) funs V st cond (.vals [cv] st1) → st1 = st)
+    (hne : ∀ st1, EvalExpr (Bridge.Dialect c g) funs V st cond (.halt st1) → False)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.cond cond body) V' st' o) :
+    o = .normal ∧ V' = V ∧ st' = st := by
+  cases h with
+  | ifTrue hc hnz hbody => exact absurd (hfalse _ _ hc) hnz
+  | ifFalse hc hz => exact ⟨rfl, rfl, hstate _ _ hc⟩
+  | ifHalt hc => exact (hne _ hc).elim
+
+theorem ofNat_ult_ofNat_false (a e : Nat) (h : a ≤ e) (he : e < 2 ^ 256) :
+    (BitVec.ofNat 256 e).ult (BitVec.ofNat 256 a) = false := by
+  rw [BitVec.ult]
+  have hlt : ¬ (BitVec.ofNat 256 e).toNat < (BitVec.ofNat 256 a).toNat := by
+    rw [BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+      Nat.mod_eq_of_lt (by omega : e < 2 ^ 256),
+      Nat.mod_eq_of_lt (by omega : a < 2 ^ 256)]
+    omega
+  exact decide_eq_false hlt
+
+theorem ult_of_toNat_lt {x y : U256} (h : x.toNat < y.toNat) : x.ult y = true := by
+  rw [BitVec.ult]
+  exact decide_eq_true h
+
+theorem exec_guard_ret0_lt_vars_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x y : String} {xv yv : U256}
+    (hx : VEnv.get V x = some xv) (hy : VEnv.get V y = some yv)
+    (hfalse : xv.ult yv = false)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.lt [Expr.var x, Expr.var y])
+        [Stmt.assign ["ret"] (Expr.lit (Literal.number 0)), Stmt.leave]) V' st' o) :
+    o = .normal ∧ V' = V ∧ st' = st := by
+  refine exec_guard_ret0_false ?_ ?_ ?_ h
+  · intro st0 cv hc
+    obtain ⟨x0, y0, hx0, hy0, hcv, hst0⟩ := eval_lt_vars_inv hc
+    rw [hx] at hx0; rw [hy] at hy0
+    injection hx0 with h1; injection hy0 with h2
+    subst h1 h2
+    rw [hcv, hfalse]
+    rfl
+  · intro st0 cv hc
+    obtain ⟨-, -, -, -, -, hst0⟩ := eval_lt_vars_inv hc
+    exact hst0
+  · intro st0 hc
+    exact eval_lt_halt_false hc
+
+theorem exec_guard_ret0_iszero_lt_vars_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x y : String} {xv yv : U256}
+    (hx : VEnv.get V x = some xv) (hy : VEnv.get V y = some yv)
+    (hlt : xv.ult yv = true)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Expr.builtin Op.lt [Expr.var x, Expr.var y]])
+        [Stmt.assign ["ret"] (Expr.lit (Literal.number 0)), Stmt.leave]) V' st' o) :
+    o = .normal ∧ V' = V ∧ st' = st := by
+  refine exec_guard_ret0_false ?_ ?_ ?_ h
+  · intro st0 cv hc
+    obtain ⟨x0, y0, hx0, hy0, hcv, hst0⟩ := eval_iszero_lt_vars_inv hc
+    rw [hx] at hx0; rw [hy] at hy0
+    injection hx0 with h1; injection hy0 with h2
+    subst h1 h2
+    rw [hcv, hlt]
+    rfl
+  · intro st0 cv hc
+    obtain ⟨-, -, -, -, -, hst0⟩ := eval_iszero_lt_vars_inv hc
+    exact hst0
+  · intro st0 hc
+    exact eval_iszero_lt_vars_no_halt hc
+
+theorem b2w_eq_false_of_ne {x y : U256} (h : x ≠ y) : b2w (x = y) = 0 := by
+  rw [b2w, decide_eq_false h]
+  rfl
+
+theorem exec_guard_false_eq_var_lit {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x : String} {k : Nat} {xv : U256} {body : Block EVM.Op}
+    (hx : VEnv.get V x = some xv) (hne : xv ≠ BitVec.ofNat 256 k)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.eq [Expr.var x, Expr.lit (Literal.number k)]) body)
+      V' st' o) :
+    o = .normal ∧ V' = V ∧ st' = st := by
+  cases h with
+  | ifTrue hc hnz hbody =>
+      obtain ⟨x0, hx0, hcv, hst0⟩ := eval_eq_var_lit_inv hc
+      rw [hx] at hx0
+      injection hx0 with h1
+      subst h1
+      rw [hcv, b2w_eq_false_of_ne hne] at hnz
+      exact absurd rfl hnz
+  | ifFalse hc hz =>
+      obtain ⟨-, -, -, hst0⟩ := eval_eq_var_lit_inv hc
+      exact ⟨rfl, rfl, hst0⟩
+  | ifHalt hc => exact (eval_eq_var_lit_no_halt hc).elim
+
+
+
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
@@ -1964,6 +2107,17 @@ theorem exec_guard_ret0_false {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms eval_iszero_lt_vars_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_iszero_lt_vars_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_ret0_false [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_prelude_form [propext, Classical.choice, Quot.sound]
+#assert_axioms ofNat_sub_of_le [propext, Classical.choice, Quot.sound]
+#assert_axioms ofNat_ne_zero_of_pos [propext, Classical.choice, Quot.sound]
+#assert_axioms ofNat_ne_of_ne [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_false [propext, Classical.choice, Quot.sound]
+#assert_axioms ofNat_ult_ofNat_false [propext, Classical.choice, Quot.sound]
+#assert_axioms ult_of_toNat_lt [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_ret0_lt_vars_false [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_ret0_iszero_lt_vars_false [propext, Classical.choice, Quot.sound]
+#assert_axioms b2w_eq_false_of_ne [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_false_eq_var_lit [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
