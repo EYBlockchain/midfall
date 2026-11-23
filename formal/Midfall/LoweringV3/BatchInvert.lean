@@ -2342,6 +2342,21 @@ theorem exec_guard_ret0_iszero_var_false {funs : FunEnv (Bridge.Dialect c g)}
     exact eval_iszero_var_no_halt hc
 
 
+theorem bi_bridge_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10 =
+      [GenAst.ylet "x_last" (GenAst.yop EVM.Op.mload [GenAst.yvar "mptr"]),
+        GenAst.yif (GenAst.yop EVM.Op.iszero
+          [GenAst.yop EVM.Op.lt [GenAst.yvar "x_last", GenAst.yvar "r"]])
+          [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave],
+        GenAst.yset "gp" (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar "gp", GenAst.yvar "x_last", GenAst.yvar "r"]),
+        GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "gp"])
+          [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave]] ++
+        seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 15 6 := by
+  rw [bi_bridge_stores_form]
+  kernel_rfl
+
+
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
@@ -2376,6 +2391,7 @@ theorem exec_guard_ret0_iszero_var_false {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms exec_mstore_add_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms ofNat_add_ofNat_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_bridge_stores_form [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_form [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_mstore_add_var_inv_val [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_vars_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_vars_no_halt [propext, Classical.choice, Quot.sound]
