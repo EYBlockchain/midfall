@@ -1877,4 +1877,149 @@ theorem LagP14_store {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
     rw [show mem = st.memory from hmemEq.symm]
     exact hms a ha hb hs
 
+
+set_option maxHeartbeats 2000000 in
+/-- **SLOT 22 (`X_N_MPTR`).** -/
+theorem lag_slot22 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hS : consts.lookup "X_N_MPTR" = some C.aXN) (haS : C.aXN + 32 < 2 ^ 256)
+    (ret pf : U256) (inv : Nat → U256) (st0 : EvmState)
+    (mem0 mem mem' : Nat → UInt8) (hmem' : mem' = storeWord mem C.aXN (wPow2 C.rw k C.xw))
+    (hq : C.aXN + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ C.aXN) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 22 1)
+      (fun V st => LagP14 C ret pf inv st0 mem0 mem V st)
+      (fun _ _ V' st' o => o = .normal ∧ LagP14 C ret pf inv st0 mem0 mem' V' st') := by
+  intro V st hg V' st' o hrun
+  have hg' := hg
+  obtain ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := hg
+  obtain ⟨ho, hst, hV⟩ := lag_stmt22_contract (funs := funs) (consts := consts) (k := k) (n := n) (m := m)
+    (aS := C.aXN) hS (by omega) (wPow2 C.rw k C.xw) V st hxn V' st' o hrun
+  rw [hV]
+  refine ⟨ho, ?_⟩
+  simpa only [hmem'] using
+    LagP14_store (C := C) (st := st) (st' := st') hg' C.aXN (wPow2 C.rw k C.xw) (by simp [lagSlots]) hq
+      (by rw [hst, hmemEq]) (by rw [hst]; exact henv) (by rw [hst]; exact hhalt)
+
+
+set_option maxHeartbeats 2000000 in
+/-- **SLOT 23 (`X_N_MINUS_1_INV_MPTR`).** -/
+theorem lag_slot23 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hS : consts.lookup "X_N_MINUS_1_INV_MPTR" = some C.aXN1) (haS : C.aXN1 + 32 < 2 ^ 256)
+    (ret pf : U256) (inv : Nat → U256) (st0 : EvmState)
+    (mem0 mem mem' : Nat → UInt8) (hmem' : mem' = storeWord mem C.aXN1 (loadWord mem0 (C.D + 32 * (n + m))))
+    (hq : C.aXN1 + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ C.aXN1) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 23 1)
+      (fun V st => LagP14 C ret pf inv st0 mem0 mem V st)
+      (fun _ _ V' st' o => o = .normal ∧ LagP14 C ret pf inv st0 mem0 mem' V' st') := by
+  intro V st hg V' st' o hrun
+  have hg' := hg
+  obtain ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := hg
+  obtain ⟨ho, hst, hV⟩ := lag_stmt23_contract (funs := funs) (consts := consts) (k := k) (n := n) (m := m)
+    (aS := C.aXN1) hS (by omega) (loadWord mem0 (C.D + 32 * (n + m))) V st hxi V' st' o hrun
+  rw [hV]
+  refine ⟨ho, ?_⟩
+  simpa only [hmem'] using
+    LagP14_store (C := C) (st := st) (st' := st') hg' C.aXN1 (loadWord mem0 (C.D + 32 * (n + m))) (by simp [lagSlots]) hq
+      (by rw [hst, hmemEq]) (by rw [hst]; exact henv) (by rw [hst]; exact hhalt)
+
+
+set_option maxHeartbeats 2000000 in
+/-- **SLOT 24 (`L_LAST_MPTR`).** -/
+theorem lag_slot24 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hS : consts.lookup "L_LAST_MPTR" = some C.aLL) (haS : C.aLL + 32 < 2 ^ 256)
+    (ret pf : U256) (inv : Nat → U256) (st0 : EvmState)
+    (mem0 mem mem' : Nat → UInt8) (hmem' : mem' = storeWord mem C.aLL (loadWord mem0 C.D))
+    (hq : C.aLL + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ C.aLL) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 24 1)
+      (fun V st => LagP14 C ret pf inv st0 mem0 mem V st)
+      (fun _ _ V' st' o => o = .normal ∧ LagP14 C ret pf inv st0 mem0 mem' V' st') := by
+  intro V st hg V' st' o hrun
+  have hg' := hg
+  obtain ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := hg
+  obtain ⟨ho, hst, hV⟩ := lag_stmt24_contract (funs := funs) (consts := consts) (k := k) (n := n) (m := m)
+    (aS := C.aLL) hS (by omega) (loadWord mem0 C.D) V st hll V' st' o hrun
+  rw [hV]
+  refine ⟨ho, ?_⟩
+  simpa only [hmem'] using
+    LagP14_store (C := C) (st := st) (st' := st') hg' C.aLL (loadWord mem0 C.D) (by simp [lagSlots]) hq
+      (by rw [hst, hmemEq]) (by rw [hst]; exact henv) (by rw [hst]; exact hhalt)
+
+
+set_option maxHeartbeats 2000000 in
+/-- **SLOT 25 (`L_BLIND_MPTR`).** -/
+theorem lag_slot25 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hS : consts.lookup "L_BLIND_MPTR" = some C.aLB) (haS : C.aLB + 32 < 2 ^ 256)
+    (ret pf : U256) (inv : Nat → U256) (st0 : EvmState)
+    (mem0 mem mem' : Nat → UInt8) (hmem' : mem' = storeWord mem C.aLB (wSum C.rw (fun i => loadWord mem0 (C.D + 64 + 32 * i)) (m - 2) (loadWord mem0 (C.D + 32))))
+    (hq : C.aLB + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ C.aLB) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 25 1)
+      (fun V st => LagP14 C ret pf inv st0 mem0 mem V st)
+      (fun _ _ V' st' o => o = .normal ∧ LagP14 C ret pf inv st0 mem0 mem' V' st') := by
+  intro V st hg V' st' o hrun
+  have hg' := hg
+  obtain ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := hg
+  obtain ⟨ho, hst, hV⟩ := lag_stmt25_contract (funs := funs) (consts := consts) (k := k) (n := n) (m := m)
+    (aS := C.aLB) hS (by omega) (wSum C.rw (fun i => loadWord mem0 (C.D + 64 + 32 * i)) (m - 2) (loadWord mem0 (C.D + 32))) V st hlb V' st' o hrun
+  rw [hV]
+  refine ⟨ho, ?_⟩
+  simpa only [hmem'] using
+    LagP14_store (C := C) (st := st) (st' := st') hg' C.aLB (wSum C.rw (fun i => loadWord mem0 (C.D + 64 + 32 * i)) (m - 2) (loadWord mem0 (C.D + 32))) (by simp [lagSlots]) hq
+      (by rw [hst, hmemEq]) (by rw [hst]; exact henv) (by rw [hst]; exact hhalt)
+
+
+set_option maxHeartbeats 2000000 in
+/-- **SLOT 26 (`L_0_MPTR`).** -/
+theorem lag_slot26 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hS : consts.lookup "L_0_MPTR" = some C.aL0) (haS : C.aL0 + 32 < 2 ^ 256)
+    (ret pf : U256) (inv : Nat → U256) (st0 : EvmState)
+    (mem0 mem mem' : Nat → UInt8) (hmem' : mem' = storeWord mem C.aL0 (loadWord mem0 (C.D + 32 * m)))
+    (hq : C.aL0 + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ C.aL0) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 26 1)
+      (fun V st => LagP14 C ret pf inv st0 mem0 mem V st)
+      (fun _ _ V' st' o => o = .normal ∧ LagP14 C ret pf inv st0 mem0 mem' V' st') := by
+  intro V st hg V' st' o hrun
+  have hg' := hg
+  obtain ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := hg
+  obtain ⟨ho, hst, hV⟩ := lag_stmt26_contract (funs := funs) (consts := consts) (k := k) (n := n) (m := m)
+    (aS := C.aL0) hS (by omega) (loadWord mem0 (C.D + 32 * m)) V st hl0 V' st' o hrun
+  rw [hV]
+  refine ⟨ho, ?_⟩
+  simpa only [hmem'] using
+    LagP14_store (C := C) (st := st) (st' := st') hg' C.aL0 (loadWord mem0 (C.D + 32 * m)) (by simp [lagSlots]) hq
+      (by rw [hst, hmemEq]) (by rw [hst]; exact henv) (by rw [hst]; exact hhalt)
+
+
+set_option maxHeartbeats 2000000 in
+/-- **SLOT 27 (`INSTANCE_EVAL_MPTR`).** -/
+theorem lag_slot27 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hS : consts.lookup "INSTANCE_EVAL_MPTR" = some C.aIE) (haS : C.aIE + 32 < 2 ^ 256)
+    (ret pf : U256) (inv : Nat → U256) (st0 : EvmState)
+    (mem0 mem mem' : Nat → UInt8) (hmem' : mem' = storeWord mem C.aIE (wSum C.rw (fun j => wMulmodAt (loadWord mem0 (C.D + 32 * m + 32 * j)) (cdWord cd (C.aI + 32 * j)) C.rw) n 0))
+    (hq : C.aIE + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ C.aIE) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 27 1)
+      (fun V st => LagP14 C ret pf inv st0 mem0 mem V st)
+      (fun _ _ V' st' o => o = .normal ∧ LagP14 C ret pf inv st0 mem0 mem' V' st') := by
+  intro V st hg V' st' o hrun
+  have hg' := hg
+  obtain ⟨hsucc, hpf, hom, hxn, hxi, hll, hlb, hl0, hie, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := hg
+  obtain ⟨ho, hst, hV⟩ := lag_stmt27_contract (funs := funs) (consts := consts) (k := k) (n := n) (m := m)
+    (aS := C.aIE) hS (by omega) (wSum C.rw (fun j => wMulmodAt (loadWord mem0 (C.D + 32 * m + 32 * j)) (cdWord cd (C.aI + 32 * j)) C.rw) n 0) V st hie V' st' o hrun
+  rw [hV]
+  refine ⟨ho, ?_⟩
+  simpa only [hmem'] using
+    LagP14_store (C := C) (st := st) (st' := st') hg' C.aIE (wSum C.rw (fun j => wMulmodAt (loadWord mem0 (C.D + 32 * m + 32 * j)) (cdWord cd (C.aI + 32 * j)) C.rw) n 0) (by simp [lagSlots]) hq
+      (by rw [hst, hmemEq]) (by rw [hst]; exact henv) (by rw [hst]; exact hhalt)
+
+
 end Midfall.LoweringV3.LagrangeBlock
