@@ -1567,6 +1567,164 @@ structure VkReservationState where
   quotientProgramWords : Nat
   build : Option VkQuotientBuild
 
+private theorem reserve_except_bind_ok {ε α β : Type} {x : Except ε α}
+    {f : α → Except ε β} {b : β} (h : (x >>= f) = .ok b) :
+    ∃ a, x = .ok a ∧ f a = .ok b := by
+  cases x with
+  | error e => cases h
+  | ok a => exact ⟨a, rfl, h⟩
+
+/-- One iteration of the VK reservation loop, named so its length invariant can be stated. -/
+def reserveStep (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
+    (st : VkReservationState) (_ : Nat) : Except Fault VkReservationState := do
+  if st.build.isSome then Except.ok st else do
+    let zeroFilled := st.vk.constants.take headerWords
+      ++ List.replicate st.quotientConstWords ("quotient_const", 0)
+      ++ List.replicate st.quotientProgramWords ("quotient_program", 0)
+    let vkZ0 : Halo2VerifyingKey := { st.vk with constants := zeroFilled }
+    let vkZ : Halo2VerifyingKey :=
+      { vkZ0 with
+        quotientConstOffsetWords := none, quotientConstWords := 0,
+        quotientProgramOffsetWords := none, quotientProgramWords := 0 }
+    let (_, meta_, data, _) ← metaDataForStableStaticLayoutInputs feat env inputs vkZ
+    let candidate ← env.compactQuotientProgramFor meta_ data
+    let candidateConstWords := candidate.consts.length
+    let candidateProgramWords := PackedProgramCodec.wordLenForBytes candidate.bytes.size
+    if candidateConstWords ≤ st.quotientConstWords &&
+        candidateProgramWords ≤ st.quotientProgramWords then
+      Except.ok
+        { vk := vkZ, quotientConstWords := st.quotientConstWords,
+          quotientProgramWords := st.quotientProgramWords, build := some candidate }
+    else
+      Except.ok
+        { vk := vkZ,
+          quotientConstWords := max st.quotientConstWords candidateConstWords,
+          quotientProgramWords := max st.quotientProgramWords candidateProgramWords,
+          build := none }
+
+theorem reserveStep_ge (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
+    (st st' : VkReservationState) (x : Nat)
+    (h : reserveStep feat env inputs headerWords st x = .ok st')
+    (hge : headerWords ≤ st.vk.constants.length) :
+    headerWords ≤ st'.vk.constants.length := by
+  unfold reserveStep at h
+  by_cases hb : st.build.isSome
+  · simp only [hb, if_true] at h
+    cases h
+    exact hge
+  · simp only [hb, if_false, Bool.false_eq_true] at h
+    obtain ⟨_meta, _, h⟩ := reserve_except_bind_ok h
+    obtain ⟨_cand, _, h⟩ := reserve_except_bind_ok h
+    split at h <;> cases h
+    all_goals
+      simp only [List.length_append, List.length_take, List.length_replicate] at *
+      omega
+
+theorem foldlM_reserve_ge (l : List Nat) (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
+    (init st : VkReservationState)
+    (h : l.foldlM (reserveStep feat env inputs headerWords) init = .ok st)
+    (hge : headerWords ≤ init.vk.constants.length) :
+    headerWords ≤ st.vk.constants.length := by
+  induction l generalizing init with
+  | nil =>
+      change Except.ok init = Except.ok st at h
+      injection h with hst
+      subst hst
+      exact hge
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : reserveStep feat env inputs headerWords init x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          exact ih s1 h (reserveStep_ge feat env inputs headerWords init s1 x hs hge)
+
+def fillConstStep (offset : Nat) (vk : Halo2VerifyingKey) (pair : Word256 × Nat) :
+    Except Fault Halo2VerifyingKey := do
+  let (value, i) := pair
+  let cs ← listSetMut vk.constants (offset + i) ("quotient_const", value)
+    "proofs/solidity-verifier/src/lowering/vk.rs:444"
+  Except.ok ({ vk with constants := cs } : Halo2VerifyingKey)
+
+/-- One program write-back step of `generateVk`. -/
+def fillProgramStep (offset : Nat) (vk : Halo2VerifyingKey) (pair : Word256 × Nat) :
+    Except Fault Halo2VerifyingKey := do
+  let (value, i) := pair
+  let cs ← listSetMut vk.constants (offset + i) ("quotient_program", value)
+    "proofs/solidity-verifier/src/lowering/vk.rs:447"
+  Except.ok ({ vk with constants := cs } : Halo2VerifyingKey)
+theorem listSetMut_length {α : Type} (xs : List α) (i : Nat) (v : α) (site : String)
+    (xs' : List α) (h : listSetMut xs i v site = .ok xs') : xs'.length = xs.length := by
+  unfold listSetMut at h
+  split at h
+  · cases h
+    simp only [List.length_append, List.length_take, List.length_drop, List.length_cons,
+      List.length_nil]
+    omega
+  · cases h
+
+theorem fillConstStep_ge (offset : Nat) (vk vk' : Halo2VerifyingKey) (pair : Word256 × Nat)
+    (h : fillConstStep offset vk pair = .ok vk') (hge : 11 ≤ vk.constants.length) :
+    11 ≤ vk'.constants.length := by
+  unfold fillConstStep at h
+  obtain ⟨value, i⟩ := pair
+  obtain ⟨cs, hcs, h⟩ := reserve_except_bind_ok h
+  cases h
+  change 11 ≤ cs.length
+  have := listSetMut_length vk.constants (offset + i) (("quotient_const", value) : String × Word256)
+    "proofs/solidity-verifier/src/lowering/vk.rs:444" cs hcs
+  omega
+
+theorem fillProgramStep_ge (offset : Nat) (vk vk' : Halo2VerifyingKey) (pair : Word256 × Nat)
+    (h : fillProgramStep offset vk pair = .ok vk') (hge : 11 ≤ vk.constants.length) :
+    11 ≤ vk'.constants.length := by
+  unfold fillProgramStep at h
+  obtain ⟨value, i⟩ := pair
+  obtain ⟨cs, hcs, h⟩ := reserve_except_bind_ok h
+  cases h
+  change 11 ≤ cs.length
+  have := listSetMut_length vk.constants (offset + i) (("quotient_program", value) : String × Word256)
+    "proofs/solidity-verifier/src/lowering/vk.rs:447" cs hcs
+  omega
+theorem foldlM_fillConst_ge (l : List (Word256 × Nat)) (offset : Nat)
+    (init st : Halo2VerifyingKey)
+    (h : l.foldlM (fillConstStep offset) init = .ok st)
+    (hge : 11 ≤ init.constants.length) : 11 ≤ st.constants.length := by
+  induction l generalizing init with
+  | nil =>
+      change Except.ok init = Except.ok st at h
+      injection h with hst
+      subst hst
+      exact hge
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : fillConstStep offset init x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          exact ih s1 h (fillConstStep_ge offset init s1 x hs hge)
+
+theorem foldlM_fillProgram_ge (l : List (Word256 × Nat)) (offset : Nat)
+    (init st : Halo2VerifyingKey)
+    (h : l.foldlM (fillProgramStep offset) init = .ok st)
+    (hge : 11 ≤ init.constants.length) : 11 ≤ st.constants.length := by
+  induction l generalizing init with
+  | nil =>
+      change Except.ok init = Except.ok st at h
+      injection h with hst
+      subst hst
+      exact hge
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : fillProgramStep offset init x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          exact ih s1 h (fillProgramStep_ge offset init s1 x hs hge)
+
 /-- rust: VK:353-472 (VerifierBuildInputs::generate_vk) @formal-baseline.
     HAZARD 5 lives at VK:434-437: the assert that the quotient const table did not
     exceed the VK payload reservation. It is ported as a Fault.panic at that site.
@@ -1584,39 +1742,7 @@ def generateVk (feat : Features) (env : VkBuildEnv Plan)
   let init : VkReservationState :=
     { vk := vk0, quotientConstWords := 0, quotientProgramWords := 0, build := none }
   -- VK:367-393
-  let st ← (List.range 8).foldlM (fun st _ => do
-    if st.build.isSome then Except.ok st else do
-      -- VK:368-372: truncate to the header, then zero-fill the two reservations.
-      let zeroFilled := st.vk.constants.take headerWords
-        ++ List.replicate st.quotientConstWords ("quotient_const", 0)
-        ++ List.replicate st.quotientProgramWords ("quotient_program", 0)
-      let vkZ0 : Halo2VerifyingKey := { st.vk with constants := zeroFilled }
-      -- VK:373-376: the four reservation fields are reset. The label and header
-      -- tables are NOT reset, because the Rust does not reset them either.
-      let vkZ : Halo2VerifyingKey :=
-        { vkZ0 with
-          quotientConstOffsetWords := none, quotientConstWords := 0,
-          quotientProgramOffsetWords := none, quotientProgramWords := 0 }
-      -- VK:378-382
-      let (_, meta_, data, _) ← metaDataForStableStaticLayoutInputs feat env inputs vkZ
-      let candidate ← env.compactQuotientProgramFor meta_ data
-      let candidateConstWords := candidate.consts.length
-      let candidateProgramWords := PackedProgramCodec.wordLenForBytes candidate.bytes.size
-      -- VK:384-392
-      if candidateConstWords ≤ st.quotientConstWords &&
-          candidateProgramWords ≤ st.quotientProgramWords then
-        let settled : VkReservationState :=
-          { vk := vkZ, quotientConstWords := st.quotientConstWords,
-            quotientProgramWords := st.quotientProgramWords, build := some candidate }
-        Except.ok settled
-      else
-        let grown : VkReservationState :=
-          { vk := vkZ,
-            quotientConstWords := max st.quotientConstWords candidateConstWords,
-            quotientProgramWords := max st.quotientProgramWords candidateProgramWords,
-            build := none }
-        Except.ok grown)
-    init
+  let st ← (List.range 8).foldlM (reserveStep feat env inputs headerWords) init
   -- VK:395-399
   let quotientProgramBuild ← match st.build with
     | some b => Except.ok b
@@ -1656,19 +1782,9 @@ def generateVk (feat : Features) (env : VkBuildEnv Plan)
   -- so an out-of-range write is a panic in both profiles (rule R4) even though the
   -- two asserts above make it unreachable.
   let vkFilled ← quotientProgramBuild.consts.zipIdx.foldlM
-    (fun vk pair => do
-      let (value, i) := pair
-      let cs ← listSetMut vk.constants (quotientConstOffsetWords + i)
-        ("quotient_const", value) "proofs/solidity-verifier/src/lowering/vk.rs:444"
-      Except.ok ({ vk with constants := cs } : Halo2VerifyingKey))
-    st.vk
+    (fillConstStep quotientConstOffsetWords) st.vk
   let vkFilled2 ← quotientProgramChunks.zipIdx.foldlM
-    (fun vk pair => do
-      let (value, i) := pair
-      let cs ← listSetMut vk.constants (quotientProgramOffsetWords + i)
-        ("quotient_program", value) "proofs/solidity-verifier/src/lowering/vk.rs:447"
-      Except.ok ({ vk with constants := cs } : Halo2VerifyingKey))
-    vkFilled
+    (fillProgramStep quotientProgramOffsetWords) vkFilled
   -- VK:450-455
   let (_, finalMeta, finalData, _) ←
     metaDataForStableStaticLayoutInputs feat env inputs vkFilled2
