@@ -2772,6 +2772,33 @@ theorem inv_pcs_pairing_pins {calls : ExternalCalls} {gas : ExternalGas}
         exact ByteArray.ext (beq_iff_eq.mp hh)
 
 
+
+/-- **THE VK PAYLOAD PIN AT `.pcs`.** The `.vk` arm's first conjunct,
+    `bytesAt st (ptrAddr vkMptr) vk.len = vk.bytes`, is leaf 4 of the `InvAt` chain. Extracted by
+    descending the right spine of the Bool `&&` with `Bool.and_eq_true_iff.mp`, so no giant `simp`
+    normalisation is needed. -/
+theorem inv_pcs_vk_payload {calls : ExternalCalls} {gas : ExternalGas}
+    {E : VerifierEnv p G₁ G₂ Gₜ} {params : ParamsVerifierKZG G₁ G₂}
+    {PV : PlanView} {S : Snapshot p G₁ G₂ Gₜ} {V : VEnv (Bridge.Dialect calls gas)}
+    {st : EvmState}
+    (h : Midfall.Lowering.Inv E params Checkpoint.pcs PV S V st) :
+    bytesAt st (ptrAddr PV.memory.vkMptr) PV.vk.len = PV.vk.bytes := by
+  have h1 := h
+  unfold Midfall.Lowering.Inv at h1
+  simp only [InvAt] at h1
+  simp only [Midfall.Lowering.checkpoint_le_def, Checkpoint.idx] at h1
+  have h15 : (1 : Nat) ≤ 5 := by decide
+  have h25 : (2 : Nat) ≤ 5 := by decide
+  have h35 : (3 : Nat) ≤ 5 := by decide
+  have h45 : (4 : Nat) ≤ 5 := by decide
+  have h55 : (5 : Nat) ≤ 5 := by decide
+  have hpcs : (Checkpoint.pcs == Checkpoint.pairing) = false := by decide
+  simp only [h15, h25, h35, h45, h55, ite_true, hpcs, Bool.false_eq_true, ite_false] at h1
+  simp only [Bool.and_eq_true] at h1
+  have hh := h1.1.1.1.1.1.2.1.1
+  change ((bytesAt st (ptrAddr PV.memory.vkMptr) PV.vk.len).data == PV.vk.bytes.data) = true at hh
+  exact ByteArray.ext (beq_iff_eq.mp hh)
+
 /-- `Frame` reads the state only through `env.calldata`, `env.keccakOf` and `env.extCodeOf`,
     so an environment-preserving transition keeps it. -/
 theorem Frame_env_congr {R : Render p G₁ G₂ Gₜ} {H : Hash} {vkAddr : U256} {cd : Bytes}
@@ -3101,9 +3128,6 @@ theorem block_live_finalPairing_clean_of_body
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
     (vkAddr : U256) (cd : Bytes)
     (hbody : FpBodyRun R product)
-    (hpayload : ∀ V st, StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
-        R H vkAddr cd Checkpoint.pcs V st →
-      bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes)
     (hfitR : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr)).toNat =
       ptrAddr R.pv.memory.pairingRhsMptr)
     (hfitL : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)).toNat =
@@ -3130,8 +3154,12 @@ theorem block_live_finalPairing_clean_of_body
         obtain ⟨hRpin, hLpin⟩ := inv_pcs_pairing_pins
           (calls := callsOf product) (gas := ExternalGas.ofFun fun _ => 0)
           (E := R.E) (params := R.params) (PV := R.pv) (S := S) hinv
+        have hpayload : bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes :=
+          inv_pcs_vk_payload (calls := callsOf product)
+            (gas := ExternalGas.ofFun fun _ => 0) (E := R.E) (params := R.params)
+            (PV := R.pv) (S := S) hinv
         have hframe := fpActualFrame_eq_fpWireFrame R hR product hpc S st
-          (hpayload V st hclean) hptr hRpin hLpin hfitR hfitL
+          hpayload hptr hRpin hLpin hfitR hfitL
         rw [← hframe]
         exact hprod))
 
@@ -3143,9 +3171,6 @@ theorem block_live_finalPairing_of_body
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
     (vkAddr : U256) (cd : Bytes)
     (hbody : FpBodyRun R product)
-    (hpayload : ∀ V st, StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
-        R H vkAddr cd Checkpoint.pcs V st →
-      bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes)
     (hfitR : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr)).toNat =
       ptrAddr R.pv.memory.pairingRhsMptr)
     (hfitL : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)).toNat =
@@ -3154,7 +3179,7 @@ theorem block_live_finalPairing_of_body
   intro V st hpre
   rcases hpre with hclean | hpois
   · exact block_live_finalPairing_clean_of_body R product hR hpc H vkAddr cd hbody
-      hpayload hfitR hfitL V st hclean
+      hfitR hfitL V st hclean
   · exact block_live_finalPairing_poison R product hR H vkAddr cd V st hpois
 
 theorem ec_gate_halts {c : ExternalCalls} {g : ExternalGas}
