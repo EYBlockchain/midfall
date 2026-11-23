@@ -1725,6 +1725,36 @@ def reserveStep (feat : Features) (env : VkBuildEnv Plan)
           quotientProgramWords := max st.quotientProgramWords candidateProgramWords,
           build := none }
 
+theorem listSetMut_getD_lt {α : Type} (xs : List α) (i : Nat) (v : α) (site : String)
+    (xs' : List α) (h : listSetMut xs i v site = .ok xs') (k : Nat) (hk : k < i) (d : α) :
+    xs'.getD k d = xs.getD k d := by
+  unfold listSetMut at h
+  split at h
+  · injection h with hb
+    subst hb
+    rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD]
+    rw [update_get?_other xs i v (by assumption) k (by omega)]
+  · cases h
+
+theorem reserveStep_getD (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
+    (st st' : VkReservationState) (x : Nat)
+    (h : reserveStep feat env inputs headerWords st x = .ok st') (k : Nat) (hk : k < headerWords)
+    (hlen : headerWords ≤ st.vk.constants.length) (d : String × Word256) :
+    st'.vk.constants.getD k d = st.vk.constants.getD k d := by
+  unfold reserveStep at h
+  by_cases hb : st.build.isSome
+  · simp only [hb, if_true] at h; cases h; rfl
+  · simp only [hb, if_false, Bool.false_eq_true] at h
+    obtain ⟨_meta, _, h⟩ := reserve_except_bind_ok h
+    obtain ⟨_cand, _, h⟩ := reserve_except_bind_ok h
+    split at h <;> cases h
+    all_goals
+      rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD]
+      rw [List.append_assoc]
+      rw [List.getElem?_append_left (by rw [List.length_take]; omega)]
+      rw [List.getElem?_take_of_lt hk]
+
 theorem reserveStep_ge (feat : Features) (env : VkBuildEnv Plan)
     (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
     (st st' : VkReservationState) (x : Nat)
@@ -1743,6 +1773,29 @@ theorem reserveStep_ge (feat : Features) (env : VkBuildEnv Plan)
     all_goals
       simp only [List.length_append, List.length_take, List.length_replicate] at *
       omega
+
+theorem foldlM_reserve_getD (l : List Nat) (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
+    (init st : VkReservationState)
+    (h : l.foldlM (reserveStep feat env inputs headerWords) init = .ok st)
+    (k : Nat) (hk : k < headerWords) (hlen : headerWords ≤ init.vk.constants.length)
+    (d : String × Word256) :
+    st.vk.constants.getD k d = init.vk.constants.getD k d := by
+  induction l generalizing init with
+  | nil =>
+      change Except.ok init = Except.ok st at h
+      injection h with hst
+      subst hst
+      rfl
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : reserveStep feat env inputs headerWords init x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          have hge : headerWords ≤ s1.vk.constants.length :=
+            reserveStep_ge feat env inputs headerWords init s1 x hs hlen
+          rw [ih s1 h hge, reserveStep_getD feat env inputs headerWords init s1 x hs k hk hlen d]
 
 theorem foldlM_reserve_ge (l : List Nat) (feat : Features) (env : VkBuildEnv Plan)
     (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
@@ -1778,6 +1831,68 @@ def fillProgramStep (offset : Nat) (vk : Halo2VerifyingKey) (pair : Word256 × N
   let cs ← listSetMut vk.constants (offset + i) ("quotient_program", value)
     "proofs/solidity-verifier/src/lowering/vk.rs:447"
   Except.ok ({ vk with constants := cs } : Halo2VerifyingKey)
+theorem fillConstStep_getD (offset : Nat) (vk vk' : Halo2VerifyingKey)
+    (pair : Word256 × Nat) (h : fillConstStep offset vk pair = .ok vk')
+    (k : Nat) (hk : k < offset) (d : String × Word256) :
+    vk'.constants.getD k d = vk.constants.getD k d := by
+  unfold fillConstStep at h
+  obtain ⟨value, i⟩ := pair
+  obtain ⟨cs, hcs, h⟩ := reserve_except_bind_ok h
+  cases h
+  change cs.getD k d = vk.constants.getD k d
+  exact listSetMut_getD_lt vk.constants (offset + i) (("quotient_const", value) : String × Word256)
+    "proofs/solidity-verifier/src/lowering/vk.rs:444" cs hcs k (by omega) d
+
+theorem fillProgramStep_getD (offset : Nat) (vk vk' : Halo2VerifyingKey)
+    (pair : Word256 × Nat) (h : fillProgramStep offset vk pair = .ok vk')
+    (k : Nat) (hk : k < offset) (d : String × Word256) :
+    vk'.constants.getD k d = vk.constants.getD k d := by
+  unfold fillProgramStep at h
+  obtain ⟨value, i⟩ := pair
+  obtain ⟨cs, hcs, h⟩ := reserve_except_bind_ok h
+  cases h
+  change cs.getD k d = vk.constants.getD k d
+  exact listSetMut_getD_lt vk.constants (offset + i) (("quotient_program", value) : String × Word256)
+    "proofs/solidity-verifier/src/lowering/vk.rs:447" cs hcs k (by omega) d
+
+theorem foldlM_fillConst_getD (l : List (Word256 × Nat)) (offset : Nat)
+    (init st : Halo2VerifyingKey)
+    (h : l.foldlM (fillConstStep offset) init = .ok st)
+    (k : Nat) (hk : k < offset) (d : String × Word256) :
+    st.constants.getD k d = init.constants.getD k d := by
+  induction l generalizing init with
+  | nil =>
+      change Except.ok init = Except.ok st at h
+      injection h with hst
+      subst hst
+      rfl
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : fillConstStep offset init x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          rw [ih s1 h, fillConstStep_getD offset init s1 x hs k hk d]
+
+theorem foldlM_fillProgram_getD (l : List (Word256 × Nat)) (offset : Nat)
+    (init st : Halo2VerifyingKey)
+    (h : l.foldlM (fillProgramStep offset) init = .ok st)
+    (k : Nat) (hk : k < offset) (d : String × Word256) :
+    st.constants.getD k d = init.constants.getD k d := by
+  induction l generalizing init with
+  | nil =>
+      change Except.ok init = Except.ok st at h
+      injection h with hst
+      subst hst
+      rfl
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : fillProgramStep offset init x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          rw [ih s1 h, fillProgramStep_getD offset init s1 x hs k hk d]
+
 theorem listSetMut_length {α : Type} (xs : List α) (i : Nat) (v : α) (site : String)
     (xs' : List α) (h : listSetMut xs i v site = .ok xs') : xs'.length = xs.length := by
   unfold listSetMut at h
