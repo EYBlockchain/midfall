@@ -4470,6 +4470,47 @@ theorem pcsEvalAcc_congr (rv : U256) (ev1 ev2 dxinv lbinv : Nat → U256) (m : N
         h k (by omega)]
 
 set_option maxHeartbeats 16000000 in
+
+set_option maxHeartbeats 2000000 in
+theorem pcs_find?_append_of_forall_false {α : Type} {xs ys : List α} {p : α → Bool}
+    (h : ∀ x ∈ xs, p x = false) :
+    (xs ++ ys).find? p = ys.find? p := by
+  induction xs with
+  | nil => rfl
+  | cons a as ih =>
+      simp only [List.cons_append, List.find?_cons, h a (by simp), ite_false]
+      exact ih (fun x hx => h x (by simp [hx]))
+
+/-- `restore` keeps an outer binding when the dropped block-local prefix does not bind it. -/
+theorem pcs_venv_get_restore_of_names {V V' : VEnv (Bridge.Dialect c g)} {extra : List Ident}
+    {x : Ident} {v : U256}
+    (hnames : V'.map Prod.fst = extra ++ V.map Prod.fst)
+    (hx : x ∉ extra)
+    (hget : VEnv.get V' x = some v) :
+    VEnv.get (restore V V') x = some v := by
+  unfold VEnv.get at hget ⊢
+  have hlen : V'.length - V.length = extra.length := by
+    have h := congrArg List.length hnames
+    simp only [List.length_map, List.length_append] at h
+    omega
+  rw [show restore V V' = V'.drop (V'.length - V.length) from rfl, hlen]
+  have htake : (V'.take extra.length).map Prod.fst = extra := by
+    rw [List.map_take, hnames, List.take_left]
+  have hpre : ∀ p ∈ V'.take extra.length,
+      (fun p : Ident × U256 => decide (p.1 = x)) p = false := by
+    intro p hp
+    have hp' : p.1 ∈ (V'.take extra.length).map Prod.fst := List.mem_map_of_mem hp
+    rw [htake] at hp'
+    have hne : p.1 ≠ x := fun hxx => hx (hxx ▸ hp')
+    simp [hne]
+  have hfind : V'.find? (fun p : Ident × U256 => decide (p.1 = x)) =
+      (V'.drop extra.length).find? (fun p => decide (p.1 = x)) := by
+    conv_lhs => rw [← List.take_append_drop extra.length V']
+    exact pcs_find?_append_of_forall_false hpre
+  rw [hfind] at hget
+  exact hget
+
+set_option maxHeartbeats 16000000 in
 theorem pcsGenBody_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
     {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
