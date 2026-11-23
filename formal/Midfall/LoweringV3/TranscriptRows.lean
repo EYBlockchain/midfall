@@ -62,6 +62,7 @@
 -- [propext, Classical.choice, Quot.sound] (the last only where 'List.find?'/'decide' needs it);
 -- no 'native_decide' (D-P17); no 'maxHeartbeats'/'maxRecDepth' raise.
 import Midfall.LoweringV3.QuotientRows
+import Midfall.Yul.VKP
 import Midfall.LoweringV3.VkWindow
 import Midfall.LoweringV3.MemoryPairs
 import Midfall.Lowering.GenAst
@@ -4478,6 +4479,222 @@ theorem commonG1_inline (consts : Inline.Consts) (err hi lo : Nat)
     he, Option.map_some, Option.map_none, List.map_cons, List.map_nil]
   simp [Inline.shadowed]
 
+section CommonG1InlineRuns
+
+open Midfall.Yul.WpTac Midfall.Yul.VKP Midfall.LoweringV2.Blocks Midfall.Yul.Word
+
+/-- A 256-bit right shift by 128 is zero exactly when the word fits in 128 bits. -/
+theorem ushr128_eq_zero_iff (x : U256) : x >>> 128 = (0 : U256) ↔ x.toNat < 2 ^ 128 := by
+  constructor
+  · intro h
+    have h2 := congrArg BitVec.toNat h
+    simp only [BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow, Nat.zero_mod] at h2
+    rcases Nat.div_eq_zero_iff.mp h2 with hz | hlt
+    · exact absurd hz (by norm_num)
+    · exact hlt
+  · intro h
+    rw [BitVec.toNat_eq]
+    rw [BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow, Nat.div_eq_of_lt h]
+    rfl
+
+/-- Masking with the low 128 bits is the identity on a word below `2^128`. -/
+theorem and_mask128_eq_self (x : U256) (h : x.toNat < 2 ^ 128) :
+    x &&& BitVec.ofNat 256 (2 ^ 128 - 1) = x := by
+  rw [BitVec.toNat_eq]
+  rw [BitVec.toNat_and, BitVec.toNat_ofNat]
+  rw [Nat.mod_eq_of_lt (by norm_num : 2 ^ 128 - 1 < 2 ^ 256)]
+  exact Nat.and_two_pow_sub_one_of_lt_two_pow h
+
+/-- Pointer-plus-literal at the word level: `(p + ofNat k).toNat = p.toNat + k` below the wrap. -/
+theorem toNat_add_ofNat (p : U256) (k : Nat) (hk : p.toNat + k < 2 ^ 256) :
+    (p + BitVec.ofNat 256 k).toNat = p.toNat + k := by
+  rw [BitVec.toNat_add, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt (by omega : k < 2 ^ 256), Nat.mod_eq_of_lt hk]
+
+/-- The `iszero(or(lt, and(eq, iszero(gt))))` guard in the exact redex form the wp engine
+    leaves it in equals the `b2w`-Bool form `coordCheck_to_nat` reads. -/
+theorem guard_bridge {xh xl hi lo : U256} :
+    (fun a => b2w (decide (a = 0)))
+      ((fun x1 x2 => x1 ||| x2)
+        ((fun a b => b2w (BitVec.ult a b)) xh hi)
+        ((fun x1 x2 => x1 &&& x2)
+          ((fun a b => b2w (decide (a = b))) xh hi)
+          ((fun a => b2w (decide (a = 0)))
+            ((fun a b => b2w (BitVec.ult b a)) xl lo))))
+    = b2w (decide (b2w (xh.ult hi || ((xh == hi) && !(lo.ult xl))) = 0)) := by
+  have hnot : decide (b2w (lo.ult xl) = 0) = !(lo.ult xl) := by
+    cases lo.ult xl <;> rfl
+  have hbeq : decide (xh = hi) = (xh == hi) := by
+    rw [show (xh == hi) = decide (xh = hi) from rfl]
+  dsimp only
+  simp only [b2w_and_b2w, b2w_or_b2w, hnot, hbeq]
+
+/-- The coordinate range check as the word the helper's `if` tests. -/
+def coordGuard (xh xl hi lo : U256) : U256 :=
+  b2w (decide (b2w (xh.ult hi || ((xh == hi) && !(lo.ult xl))) = 0))
+
+/-- The coordinate-check guard at `(hi, lo)`, lifted from the 256-bit literals back to the
+    `Nat` split the range-check arithmetic uses. -/
+theorem coordCheck_lift (xh xl : U256) (hi lo : Nat) :
+    (xh.toNat < (BitVec.ofNat 256 hi).toNat ∨
+        (xh.toNat = (BitVec.ofNat 256 hi).toNat ∧ xl.toNat ≤ (BitVec.ofNat 256 lo).toNat)) →
+      (xh.toNat < hi ∨ (xh.toNat = hi ∧ xl.toNat ≤ lo)) := by
+  rw [BitVec.toNat_ofNat, BitVec.toNat_ofNat]
+  intro h
+  rcases h with h | ⟨h1, h2⟩
+  · rcases Nat.lt_or_ge hi (2 ^ 256) with hlt | hge
+    · exact Or.inl (by rwa [Nat.mod_eq_of_lt hlt] at h)
+    · have hmod : hi % 2 ^ 256 < 2 ^ 256 := Nat.mod_lt _ (by norm_num)
+      exact Or.inl (by omega)
+  · rcases Nat.lt_or_ge hi (2 ^ 256) with hlt | hge
+    · have hhi : hi % 2 ^ 256 = hi := Nat.mod_eq_of_lt hlt
+      have hlo : lo % 2 ^ 256 ≤ lo := Nat.mod_le _ _
+      rw [hhi] at h1
+      exact Or.inr ⟨h1, by omega⟩
+    · have hmod : hi % 2 ^ 256 < 2 ^ 256 := Nat.mod_lt _ (by norm_num)
+      exact Or.inl (by omega)
+
+set_option maxRecDepth 100000 in
+/-- **THE `common_uncompressed_g1` HELPER'S RUN CONTRACT.** Every run of the inlined helper
+    body, from the CALLEE environment `params ++ [ret := 0]`, either halts reverted or exits
+    normally having returned `buf_len + 128`, copied the 128-byte calldata frame to `buf_len`,
+    passed the `g1WordsOk` range gate, and left `env`/`halted`/memory outside the frame alone.
+    The `(hi, lo)` split identity is the caller's `hkey`; `cd.size < 2^256` keeps the helper's
+    word-pointer additions from wrapping. -/
+theorem commonG1Inline_runs {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState) (cd : Bytes)
+    (buf cptr : U256) (err hi lo : Nat)
+    (hfail : ∃ cenv, lookupFun funs "fail" = some (TraceReturn.failFDecl, cenv))
+    (hcd : st.env.calldata = cd.data.toList)
+    (hlen : cptr.toNat + 128 ≤ cd.data.toList.length)
+    (hcdsize : cd.size < 2 ^ 256)
+    (hkey : hi * 2^256 + lo + 1 = Midfall.Assumptions.pBase) :
+    AllRuns funs [("buf_len", buf), ("cptr", cptr), ("ret", (0 : U256))] st
+      (commonG1Inline err hi lo)
+      (fun V' st' o => Hold (
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+        (o = .normal ∧ VEnv.get V' "ret" = some (buf + 128) ∧
+          st'.env = st.env ∧ st'.halted = st.halted ∧
+          bytesAt st' buf.toNat 128 = cdSlice cd cptr.toNat 128 ∧
+          (∀ x, (x < buf.toNat ∨ buf.toNat + 128 ≤ x) → st'.memory x = st.memory x) ∧
+          g1WordsOk cd cptr.toNat = true))) := by
+  obtain ⟨cenv, hc⟩ := hfail
+  -- the calldata is shorter than a machine word, so the four pointer additions do not wrap
+  have hlenLt : cd.data.toList.length < 2 ^ 256 := by
+    have h : cd.data.toList.length = cd.size := by
+      show cd.data.toList.length = cd.data.size
+      exact Array.length_toList
+    omega
+  have h32 : cptr.toNat + 32 < 2 ^ 256 := by omega
+  have h64 : cptr.toNat + 64 < 2 ^ 256 := by omega
+  have h96 : cptr.toNat + 96 < 2 ^ 256 := by omega
+  refine allRuns_of_wp_fail 100 ?_
+  set_option wpLets false in
+  wp_run
+  -- the normal exit
+  · rename_i hxshr hyshr hxcc hycc
+    refine Hold.intro (Or.inr ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩)
+    · rfl
+    · rfl
+    · rfl
+    · show bytesAt { touchMemory st buf.toNat 128 with
+          memory := copyInto st.memory buf.toNat cptr.toNat 128 st.env.calldata }
+          buf.toNat 128 = cdSlice cd cptr.toNat 128
+      rw [bytesAt_calldatacopy_cdSlice st cd buf.toNat cptr.toNat 128 hcd hlen]
+    · intro x hx
+      show copyInto st.memory buf.toNat cptr.toNat 128 st.env.calldata x = st.memory x
+      simp only [copyInto]
+      rw [if_neg]
+      omega
+    · -- the four helper words are the four calldata words
+      have hword1 : (cdWord cd cptr.toNat).toNat
+          = (wordFrom st.env.calldata (BitVec.toNat cptr)).toNat := by
+        rw [hcd, wordFrom_eq_cdWord]
+      have hword2 : (cdWord cd (cptr.toNat + 32)).toNat
+          = (wordFrom st.env.calldata
+              (BitVec.toNat (cptr + (Bridge.Dialect c g).litValue (Literal.number 32)))).toNat := by
+        rw [hcd, wordFrom_eq_cdWord, litValue_number_nat, toNat_add_ofNat cptr 32 h32]
+      have hword3 : (cdWord cd (cptr.toNat + 64)).toNat
+          = (wordFrom st.env.calldata
+              (BitVec.toNat (cptr + (Bridge.Dialect c g).litValue (Literal.number 64)))).toNat := by
+        rw [hcd, wordFrom_eq_cdWord, litValue_number_nat, toNat_add_ofNat cptr 64 h64]
+      have hword4 : (cdWord cd (cptr.toNat + 96)).toNat
+          = (wordFrom st.env.calldata
+              (BitVec.toNat (cptr + (Bridge.Dialect c g).litValue (Literal.number 96)))).toNat := by
+        rw [hcd, wordFrom_eq_cdWord, litValue_number_nat, toNat_add_ofNat cptr 96 h96]
+      -- the two high words fit in 128 bits (the `shr 128` guards)
+      have hxh : (wordFrom st.env.calldata (BitVec.toNat cptr)).toNat < 2 ^ 128 :=
+        ushr128_eq_zero_iff _ |>.mp hxshr
+      have hyh : (wordFrom st.env.calldata
+          (BitVec.toNat (cptr + (Bridge.Dialect c g).litValue (Literal.number 64)))).toNat
+            < 2 ^ 128 :=
+        ushr128_eq_zero_iff _ |>.mp hyshr
+      -- masking the low 128 bits does not change a fitting word
+      have hmaskX : (fun x1 x2 : U256 => x1 &&& x2) (wordFrom st.env.calldata (BitVec.toNat cptr))
+          ((Bridge.Dialect c g).litValue
+            (Literal.number 340282366920938463463374607431768211455))
+          = wordFrom st.env.calldata (BitVec.toNat cptr) := by
+        rw [show (Bridge.Dialect c g).litValue
+          (Literal.number 340282366920938463463374607431768211455) =
+            BitVec.ofNat 256 (2 ^ 128 - 1) from rfl]
+        exact and_mask128_eq_self _ hxh
+      have hmaskY : (fun x1 x2 : U256 => x1 &&& x2)
+          (wordFrom st.env.calldata
+            (BitVec.toNat (cptr + (Bridge.Dialect c g).litValue (Literal.number 64))))
+          ((Bridge.Dialect c g).litValue
+            (Literal.number 340282366920938463463374607431768211455))
+          = wordFrom st.env.calldata
+              (BitVec.toNat (cptr + (Bridge.Dialect c g).litValue (Literal.number 64))) := by
+        rw [show (Bridge.Dialect c g).litValue
+          (Literal.number 340282366920938463463374607431768211455) =
+            BitVec.ofNat 256 (2 ^ 128 - 1) from rfl]
+        exact and_mask128_eq_self _ hyh
+      -- the two coordinate range checks, at the raw high words
+      have hxcoord : coordGuard (wordFrom st.env.calldata (BitVec.toNat cptr))
+          (wordFrom st.env.calldata
+            (BitVec.toNat (cptr + (Bridge.Dialect c g).litValue (Literal.number 32))))
+          (BitVec.ofNat 256 hi) (BitVec.ofNat 256 lo) = (0 : U256) := by
+        rw [show (Bridge.Dialect c g).litValue (Literal.number hi) =
+              BitVec.ofNat 256 hi from rfl,
+            show (Bridge.Dialect c g).litValue (Literal.number lo) =
+              BitVec.ofNat 256 lo from rfl,
+            show (Bridge.Dialect c g).zero = (0 : U256) from rfl] at hxcc
+        rw [guard_bridge] at hxcc
+        rw [hmaskX] at hxcc
+        simpa only [coordGuard] using hxcc
+      have hycoord : coordGuard (wordFrom st.env.calldata
+          (BitVec.toNat (cptr + (Bridge.Dialect c g).litValue (Literal.number 64))))
+          (wordFrom st.env.calldata
+            (BitVec.toNat (cptr + (Bridge.Dialect c g).litValue (Literal.number 96))))
+          (BitVec.ofNat 256 hi) (BitVec.ofNat 256 lo) = (0 : U256) := by
+        rw [show (Bridge.Dialect c g).litValue (Literal.number hi) =
+              BitVec.ofNat 256 hi from rfl,
+            show (Bridge.Dialect c g).litValue (Literal.number lo) =
+              BitVec.ofNat 256 lo from rfl,
+            show (Bridge.Dialect c g).zero = (0 : U256) from rfl] at hycc
+        rw [guard_bridge] at hycc
+        rw [hmaskY] at hycc
+        simpa only [coordGuard] using hycc
+      have hxcheck := coordCheck_lift _ _ hi lo
+        ((coordCheck_to_nat _ _ (BitVec.ofNat 256 hi) (BitVec.ofNat 256 lo)).mp
+          (by simpa only [coordGuard] using hxcoord))
+      have hycheck := coordCheck_lift _ _ hi lo
+        ((coordCheck_to_nat _ _ (BitVec.ofNat 256 hi) (BitVec.ofNat 256 lo)).mp
+          (by simpa only [coordGuard] using hycoord))
+      exact g1WordsOk_of_checks cd cptr.toNat _ _ _ _ hi lo
+        hword1 hword2 hword3 hword4 hxh hyh
+        (BitVec.isLt _) (BitVec.isLt _) hkey hxcheck hycheck
+  -- the four guarded `fail` sites: the scope obligation, then the revert arm
+  all_goals
+    first
+    | exact ⟨cenv, by
+        change lookupFun funs "fail" = some (TraceReturn.failFDecl, cenv)
+        exact hc⟩
+    | exact Hold.intro (Or.inl ⟨rfl, by assumption⟩)
+
+
+end CommonG1InlineRuns
+
 /-- **THE WALK LOOP (all runs), ONE LEMMA FOR SIX SECTIONS.** Bound = `j`, the section's frame
     count. Every run reverts (a frame fails the range check), or ends normally having absorbed the
     `j` frames, copied them to the walk window, and advanced the three cursors; every frame passed
@@ -4828,6 +5045,11 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wordFrom_eq_cdWord [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.coordCheck_to_nat [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonG1_inline [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.commonG1Inline_runs [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.ushr128_eq_zero_iff [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.and_mask128_eq_self [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.toNat_add_ofNat [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.coordCheck_lift [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_calldatacopy_cdSlice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSize_of_envelope [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_length_of_envelope [propext, Classical.choice, Quot.sound] native []
