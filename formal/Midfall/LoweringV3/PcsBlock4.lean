@@ -355,6 +355,93 @@ theorem b1_eval_sub_from_cdl_mload_inv {funs : FunEnv (Bridge.Dialect c g)}
                   rw [hsubVal, hcdlVal, hrvEq2]
                   rfl
 
+theorem b1_eval_mulmod_subfrom_cdl_mload_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {qc qe inv : String}
+    {offc offe : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [subFrom
+          (GenAst.yop EVM.Op.calldataload
+            [GenAst.yop EVM.Op.add [GenAst.yvar qc, GenAst.ylit offc]])
+          (GenAst.yop EVM.Op.mload
+            [GenAst.yop EVM.Op.add [GenAst.yvar qe, GenAst.ylit offe]]),
+         GenAst.yvar inv, GenAst.yvar "r"]) (.vals [cv] st')) :
+    ∃ cptr qep rv invv subv,
+      VEnv.get V qc = some cptr ∧ VEnv.get V qe = some qep ∧
+      VEnv.get V inv = some invv ∧ VEnv.get V "r" = some rv ∧
+      subv = wAddmodAt
+        (wordFrom st.env.calldata (cptr + BitVec.ofNat 256 offc).toNat)
+        (rv - loadWord st.memory (qep + BitVec.ofNat 256 offe).toNat) rv ∧
+      cv = wMulmodAt subv invv rv := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hsub =>
+      cases hrest with
+      | argsCons hrest2 hinv =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨rv0, hrv0, hstr⟩ := b1_eval_var_vals hr
+                  obtain ⟨invv, hinvv, hstinv⟩ := b1_eval_var_vals hinv
+                  obtain ⟨cptr, qep, rvS, cdlv, hcptr, hqep, hrvS, hcdl, hsubVal⟩ :=
+                    b1_eval_sub_from_cdl_mload_inv hsub
+                  rw [hstinv, hstr] at hsubVal hcdl
+                  have hrvEq := Option.some.inj (hrvS.symm.trans hrv0)
+                  obtain ⟨hinvProj, _⟩ := b1_eval_var_inv hinv
+                  rw [hinvv] at hinvProj
+                  cases hinvProj
+                  obtain ⟨hrProj, _⟩ := b1_eval_var_inv hr
+                  rw [hrv0] at hrProj
+                  cases hrProj
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  refine ⟨cptr, qep, _, _, _, hcptr, hqep, hinvv, hrv0, ?_, rfl⟩
+                  rw [hsubVal, hcdl, hrvEq]
+
+theorem b1_eval_addmod_mulmod_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {f x2 ev : String}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.addmod
+        [GenAst.yop EVM.Op.mulmod
+           [GenAst.yvar f, GenAst.yvar x2, GenAst.yvar "r"],
+         GenAst.yvar ev, GenAst.yvar "r"]) (.vals [cv] st')) :
+    ∃ fv x2v evv rv, VEnv.get V f = some fv ∧ VEnv.get V x2 = some x2v ∧
+      VEnv.get V ev = some evv ∧ VEnv.get V "r" = some rv ∧
+      cv = wAddmodAt (wMulmodAt fv x2v rv) evv rv ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hf =>
+      cases hrest with
+      | argsCons hrest2 hev =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨rv0, hrv0, hstr⟩ := b1_eval_var_vals hr
+                  obtain ⟨evv, hevv, hstev⟩ := b1_eval_var_vals hev
+                  obtain ⟨fv, x2v, rvS, hfv, hx2v, hrvS, hmul, hstmul⟩ :=
+                    b1_eval_mulmod_vars_inv hf
+                  have hrvEq := Option.some.inj (hrvS.symm.trans hrv0)
+                  obtain ⟨hrProj, _⟩ := b1_eval_var_inv hr
+                  rw [hrv0] at hrProj
+                  cases hrProj
+                  obtain ⟨hevProj, _⟩ := b1_eval_var_inv hev
+                  rw [hevv] at hevProj
+                  cases hevProj
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  refine ⟨fv, x2v, _, _, hfv, hx2v, hevv, hrv0, ?_, ?_⟩
+                  · rw [hmul, hrvEq]
+                    rfl
+                  · rw [hstmul, hstev, hstr]
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mulmod_subfrom_cdl_mload_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_addmod_mulmod_vars_inv
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_from_cdl_mload_inv
   [propext, Classical.choice, Quot.sound] native []
 
