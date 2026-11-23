@@ -1,4 +1,4 @@
-# closure_fingerprint: 5252 project declarations, 620 external leaves, digest d649cbf363f653cf
+# closure_fingerprint: 5252 project declarations, 620 external leaves, digest 9e5029e30b13fc82
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws inductive 0e89d3fd0bde015d 0000000000000000
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws.mk ctor 8c653d323d8fefae 0000000000000000
 DECL Midfall.Assumptions.CurvePairing Midfall.Assumptions.bls12_381Pairing axiom 3d246dc502557acb 0000000000000000
@@ -3709,7 +3709,7 @@ DECL Midfall.Halo2.Exec.Verifier Midfall.Halo2.scatterIndexed.match_1 def f89cbc
 DECL Midfall.Halo2.Exec.VerifyingKey Midfall.Halo2.VerifyingKey inductive a6f37373da711a7d 0000000000000000
 DECL Midfall.Halo2.Exec.VerifyingKey Midfall.Halo2.VerifyingKey.WellFormed inductive 7437af3b23260715 0000000000000000
 DECL Midfall.Halo2.Exec.VerifyingKey Midfall.Halo2.VerifyingKey.WellFormed.match_1 def 51bc7c6a518968a9 5477245658352dd2
-DECL Midfall.Halo2.Exec.VerifyingKey Midfall.Halo2.VerifyingKey.WellFormed.mk ctor 3d373f6e2abe37b9 0000000000000000
+DECL Midfall.Halo2.Exec.VerifyingKey Midfall.Halo2.VerifyingKey.WellFormed.mk ctor 5ce794a39b92c3ce 0000000000000000
 DECL Midfall.Halo2.Exec.VerifyingKey Midfall.Halo2.VerifyingKey.cs def 4d6bfd86b016854e e76c275565f237fc
 DECL Midfall.Halo2.Exec.VerifyingKey Midfall.Halo2.VerifyingKey.csDegree def 21868591084c5a33 5b17a1474977ff86
 DECL Midfall.Halo2.Exec.VerifyingKey Midfall.Halo2.VerifyingKey.domain def c9400c0f750cf9d3 18719a88d7a2018e
