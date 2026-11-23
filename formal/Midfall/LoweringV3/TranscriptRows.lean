@@ -3041,6 +3041,68 @@ theorem runsAll_readFixedEvals (E : VerifierEnv p G₁ G₂ Gₜ)
       (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) :=
   (runsAllP_readFixedEvals E vk hf qs hlen).toRunsAll
 
+theorem runsAll_read_fr (E : VerifierEnv p G₁ G₂ Gₜ) (q : Fr p) :
+    RunsAll E (Midfall.Halo2.tmRead (Midfall.Halo2.hashableFr (p := p)))
+      ([Msg.fr q] : List (Msg (Fr p) G₁)) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  have hbuf' : t.buffer = pref ++ msgWire E (Msg.fr q) ++ rest := by
+    simpa only [wireMsgs_cons, wireMsgs, ByteArray.append_empty, bytes_empty_append_local,
+      ByteArray.append_assoc] using hbuf
+  have hbt : bytesTake t.buffer t.pos 32 = some (frToRepr (p := p) q) := by
+    rw [hbuf', hpos, ← Nat.add_zero (ByteArray.size pref), ByteArray.append_assoc]
+    simp only [msgWire]
+    rw [bytesTake_append_right pref (frToRepr (p := p) q ++ rest) 0 32 (by
+      rw [ByteArray.size_append, frToRepr_size]; omega)]
+    rw [bytesTake_append_left (frToRepr (p := p) q) rest 0 32 (by
+      rw [frToRepr_size])]
+    rw [← frToRepr_size q, bytesTake_whole]
+  obtain ⟨t', hrun, hpos', hbuf'⟩ :=
+    tmRead_run_ok (Midfall.Halo2.hashableFr (p := p)) t (frToRepr (p := p) q) q hbt
+      (by rw [hashableFr_readRepr?]; exact frOfRepr_frToRepr hp q)
+  refine ⟨q, t', hrun, hbuf', ?_⟩
+  rw [hpos', hashableFr_width, hpos]
+  show pref.size + 32 = pref.size + (([Msg.fr q] : List (Msg (Fr p) G₁)).map
+    (fun m => (msgWire E m).size)).sum
+  simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, msgWire,
+    frToRepr_size]
+  omega
+
+theorem runsAll_permutationCommon (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : Midfall.Halo2.VerifyingKey (Fr p) G₁) (qs : List (Fr p))
+    (hlen : qs.length = vk.permutation.commitments.size) :
+    RunsAll E (Permutation.VerifyingKey.evaluate (p := p) vk.permutation)
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+  unfold Permutation.VerifyingKey.evaluate
+  have hb := RunsAllP.toRunsAll E (runsAllP_tmReadN_fr E vk.permutation.commitments.size qs hlen)
+  have hb2 := RunsAll.bind E (ms₁ := qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) (ms₂ := [])
+    hb (fun arr => RunsAll.pure E ({ permutationEvals := arr } : Permutation.CommonEvaluated (Fr p)))
+  rw [List.append_nil] at hb2
+  exact hb2
+
+theorem runsAll_trashEval (E : VerifierEnv p G₁ G₂ Gₜ) (t : Trash.Committed G₁)
+    (q : Fr p) :
+    RunsAll E (Trash.Committed.evaluate (p := p) t)
+      ([Msg.fr q] : List (Msg (Fr p) G₁)) := by
+  unfold Trash.Committed.evaluate
+  have hb := RunsAll.bind E (ms₁ := ([Msg.fr q] : List (Msg (Fr p) G₁))) (ms₂ := [])
+    (runsAll_read_fr E q)
+    (fun e => RunsAll.pure E
+      ({ committed := t, evaluated := { trashEval := e } } : Trash.Evaluated (Fr p) G₁))
+  rw [List.append_nil] at hb
+  exact hb
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -5059,6 +5121,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_fixed_fold [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_readFixedEvals [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readFixedEvals [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_read_fr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_permutationCommon [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashEval [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
