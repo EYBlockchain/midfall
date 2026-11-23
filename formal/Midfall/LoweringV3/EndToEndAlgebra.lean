@@ -3764,6 +3764,11 @@ theorem end_to_end_of_tpEvents (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
 /-! ### Gates for the two named residuals -/
 
 #check @ParseTraceSchedule
+#check @AdvicePhaseCountFit
+#check @parseTrace_widths
+#check @protocol_parseCounts
+#check @parseTraceSchedule_of_advicePhase
+#check @PrepareLogSlots_of_advicePhase
 #check @KzgMultiPrepareWidths
 #check @PrepareLogSlots_of_A6_KZG
 #check @PrepareLogSlots_of_tpEvents
@@ -3780,6 +3785,18 @@ open Midfall.Tools.Done in
 open Midfall.Tools.Done in
 #assert_axioms Midfall.LoweringV3.PrepareLogSlots_of_tpEvents
   [propext, Classical.choice, Quot.sound, sorryAx] native []
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV3.parseTrace_widths
+  [propext, Classical.choice, Quot.sound] native []
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV3.protocol_parseCounts
+  [propext, Classical.choice, Quot.sound] native []
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV3.parseTraceSchedule_of_advicePhase
+  [propext, Classical.choice, Quot.sound] native []
 
 open Midfall.Tools.Done in
 #assert_axioms Midfall.LoweringV3.end_to_end_of_A6_KZG
