@@ -4121,6 +4121,118 @@ theorem bytesAt_calldatacopy_cdSlice (st : EvmState) (cd : Bytes) (dst src n : N
   congr 1
   rw [show src + (dst - dst) = src from by omega]
 
+set_option maxRecDepth 100000
+
+theorem nat_lor_mul_two_pow (X b : Nat) (hb : b < 2 ^ 8) :
+    X * 2 ^ 8 ||| b = X * 2 ^ 8 + b := by
+  apply Nat.eq_of_testBit_eq
+  intro k
+  rw [Nat.testBit_or, Nat.testBit_mul_two_pow]
+  by_cases hk : k < 8
+  · have h8 : ¬ (8 ≤ k) := by omega
+    have hsum : (X * 2 ^ 8 + b).testBit k = b.testBit k := by
+      have hmod : (X * 2 ^ 8 + b) % 2 ^ 8 = b := by omega
+      conv_rhs => rw [← hmod]
+      rw [Nat.testBit_mod_two_pow]
+      simp [hk]
+    rw [hsum]
+    simp [h8]
+  · have h8 : 8 ≤ k := by omega
+    have hk' : k = (k - 8) + 8 := by omega
+    have hsum : (X * 2 ^ 8 + b).testBit k = X.testBit (k - 8) := by
+      conv_lhs => rw [hk']
+      rw [Nat.testBit_add]
+      have hdiv : (X * 2 ^ 8 + b) / 2 ^ 8 = X := by omega
+      rw [hdiv]
+    have hb0 : b.testBit k = false := by
+      conv_lhs => rw [hk']
+      rw [Nat.testBit_add]
+      have hdiv : b / 2 ^ 8 = 0 := by omega
+      rw [hdiv, Nat.zero_testBit]
+    rw [hsum, hb0]
+    simp [h8]
+
+theorem bv_shift_or_step (X b : Nat) (hX : X < 2 ^ 248) (hb : b < 256) :
+    (BitVec.ofNat 256 X <<< 8) ||| BitVec.ofNat 256 b = BitVec.ofNat 256 (X * 256 + b) := by
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_or, BitVec.toNat_shiftLeft, BitVec.toNat_ofNat,
+      BitVec.toNat_ofNat, BitVec.toNat_ofNat]
+  have hXmod : X % 2 ^ 256 = X := Nat.mod_eq_of_lt (by omega)
+  have hbmod : b % 2 ^ 256 = b := Nat.mod_eq_of_lt (by omega)
+  have hsh : X <<< 8 % 2 ^ 256 = X * 2 ^ 8 := by
+    rw [Nat.shiftLeft_eq, Nat.mod_eq_of_lt (by omega)]
+  have hsummod : (X * 256 + b) % 2 ^ 256 = X * 256 + b := by
+    apply Nat.mod_eq_of_lt; omega
+  rw [hXmod, hbmod, hsh, hsummod]
+  exact nat_lor_mul_two_pow X b (by omega)
+
+
+theorem foldl_shift_or_eq_gen (l : List Nat) (N X : Nat) (hN : N ≤ 32)
+    (hlen : l.length ≤ N) (hb : ∀ b ∈ l, b < 256) (hX : X < 256 ^ (N - l.length)) :
+    List.foldl (fun (acc : BitVec 256) (b : Nat) => (acc <<< 8) ||| BitVec.ofNat 256 b)
+        (BitVec.ofNat 256 X) l
+      = BitVec.ofNat 256
+          (List.foldl (fun (acc : Nat) (b : Nat) => acc * 256 + b) X l) := by
+  induction l generalizing N X with
+  | nil => rfl
+  | cons a as ih =>
+      simp only [List.length_cons] at hX hlen
+      have ha : a < 256 := hb a (by simp)
+      have hbas : ∀ b ∈ as, b < 256 := fun b hbm => hb b (by simp [hbm])
+      have hlen1 : as.length + 1 ≤ N := by simpa using hlen
+      have hlen' : as.length ≤ N := by omega
+      have hX248 : X < 2 ^ 248 := by
+        have hle : N - (as.length + 1) ≤ 31 := by omega
+        have h1 : (256 : Nat) ^ (N - (as.length + 1)) ≤ 256 ^ 31 :=
+          Nat.pow_le_pow_right (by decide) hle
+        have h2 : (256 : Nat) ^ 31 = 2 ^ 248 := by norm_num
+        omega
+      rw [List.foldl_cons, bv_shift_or_step X a hX248 ha]
+      refine ih N (X * 256 + a) hN hlen' hbas ?_
+      have hm : N - as.length = (N - (as.length + 1)) + 1 := by omega
+      have hpows : (256 : Nat) ^ (N - as.length) = 256 ^ (N - (as.length + 1)) * 256 := by
+        rw [hm, Nat.pow_succ]
+      have hXle : X + 1 ≤ 256 ^ (N - (as.length + 1)) := by omega
+      have hmult : (X + 1) * 256 ≤ 256 ^ (N - (as.length + 1)) * 256 :=
+        Nat.mul_le_mul_right _ hXle
+      have ha' : a ≤ 255 := by omega
+      nlinarith
+
+theorem wordFrom_eq_cdWord (cd : Bytes) (p : Nat) :
+    wordFrom cd.data.toList p = cdWord cd p := by
+  have hbyte : ∀ i, (byteFrom cd.data.toList i).toNat
+      = ((cd.data.toList.drop i).head?.map UInt8.toNat).getD 0 := by
+    intro i
+    unfold byteFrom
+    rw [List.getD_eq_getElem?_getD, ← List.head?_drop]
+    cases (cd.data.toList.drop i).head? <;> rfl
+  show (List.range 32).foldl (fun (acc : BitVec 256) (i : Nat) =>
+      (acc <<< 8) ||| BitVec.ofNat 256 (byteFrom cd.data.toList (p + i)).toNat) (0 : BitVec 256)
+    = BitVec.ofNat 256 (List.foldl (fun (acc : Nat) (j : Nat) =>
+        acc * 256 + (Option.map UInt8.toNat (List.drop (p + j) cd.data.toList).head?).getD 0)
+        0 (List.range 32))
+  rw [← List.foldl_map (f := fun i => (byteFrom cd.data.toList (p + i)).toNat)
+    (g := fun (acc : BitVec 256) (b : Nat) => (acc <<< 8) ||| BitVec.ofNat 256 b)]
+  change List.foldl (fun (acc : BitVec 256) (b : Nat) => (acc <<< 8) ||| BitVec.ofNat 256 b)
+      (BitVec.ofNat 256 0) (List.map (fun i => (byteFrom cd.data.toList (p + i)).toNat) (List.range 32))
+    = _
+  rw [foldl_shift_or_eq_gen ((List.range 32).map (fun i => (byteFrom cd.data.toList (p + i)).toNat))
+    32 0 (by decide) (by simp)
+    (by intro b hb; obtain ⟨i, _, rfl⟩ := List.mem_map.mp hb; exact UInt8.toNat_lt _)
+    (by norm_num)]
+  congr 1
+  have hcongr : ∀ (l : List Nat) (i : Nat),
+      l.foldl (fun acc j => acc * 256 + (byteFrom cd.data.toList (p + j)).toNat) i
+        = l.foldl (fun acc j =>
+            acc * 256 + (Option.map UInt8.toNat (List.drop (p + j) cd.data.toList).head?).getD 0) i := by
+    intro l
+    induction l with
+    | nil => intro i; rfl
+    | cons a as ih =>
+        intro i
+        rw [List.foldl_cons, List.foldl_cons, hbyte (p + a), ih]
+  exact hcongr (List.range 32) 0
+
 /-- **THE WALK'S RANGE CHECK, PURE.** A coordinate whose high word is below `2^128`
     and whose `(hi, lo)` split passes `common_uncompressed_g1`'s range check is
     below `pBase`: `hi * 2^256 + lo + 1 = pBase` (the contract's `BLS_P_HI |
@@ -4580,6 +4692,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 
 #assert_axioms Midfall.LoweringV3.TranscriptRows.coordLt_pBase [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1WordsOk_of_checks [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.wordFrom_eq_cdWord [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonG1_inline [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_calldatacopy_cdSlice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSize_of_envelope [propext, Classical.choice, Quot.sound] native []
