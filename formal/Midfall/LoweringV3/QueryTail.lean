@@ -7,11 +7,14 @@
 -- `PcsQuerySource.linearization`, the last generator query has rotation 0.
 -- `mapM_getLast?_some` is the generic `List.mapM` last-element projection.
 import Midfall.LoweringV3.KzgQueryMap
+import Midfall.LoweringV3.PcsOrder
 
 set_option autoImplicit false
 
 open Midfall Midfall.Halo2 Midfall.Generator
 namespace Midfall.LoweringV3
+
+variable {p : ℕ} [Fact (Nat.Prime p)]
 
 theorem mapM_getLast?_some {α β ε : Type} {f : α → Except ε β} :
     ∀ (l : List α) (l' : List β), l.mapM f = .ok l' →
@@ -230,5 +233,57 @@ theorem queryFromPlan_linearization (meta_ : ConstraintSystemMeta) (data : Data)
 
 theorem PcsQuerySource.rotation_linearization (rotationLast : Int) :
     PcsQuerySource.linearization.rotation rotationLast = 0 := rfl
+
+
+/-- Splitting a successful `mapM` over an append. -/
+theorem mapM_append_ok {α β ε : Type} {f : α → Except ε β} :
+    ∀ (l₁ l₂ : List α) (out : List β),
+      (l₁ ++ l₂).mapM f = .ok out →
+      ∃ o₁ o₂, l₁.mapM f = .ok o₁ ∧ l₂.mapM f = .ok o₂ ∧ out = o₁ ++ o₂ := by
+  intro l₁ l₂ out h
+  rw [List.mapM_append] at h
+  obtain ⟨o₁, h₁, h⟩ := except_bind_ok h
+  obtain ⟨o₂, h₂, h₃⟩ := except_bind_ok h
+  cases h₃
+  exact ⟨o₁, o₂, h₁, h₂, rfl⟩
+
+/-- A successful `mapM` over a flattened block list splits into one successful
+    `mapM` per block, preserving the block order. -/
+theorem mapM_flatten_ok {α β ε : Type} {f : α → Except ε β} :
+    ∀ (blocks : List (List α)) (out : List β),
+      blocks.flatten.mapM f = .ok out →
+      ∃ outs, blocks.mapM (fun b => b.mapM f) = .ok outs ∧ out = outs.flatten := by
+  intro blocks
+  induction blocks with
+  | nil =>
+      intro out h
+      cases h
+      exact ⟨[], rfl, rfl⟩
+  | cons b bs ih =>
+      intro out h
+      rw [List.flatten_cons] at h
+      obtain ⟨o, obs, ho, hobs, hout⟩ := mapM_append_ok b bs.flatten out h
+      obtain ⟨outs, hmap, hfl⟩ := ih obs hobs
+      rw [List.mapM_cons]
+      refine ⟨o :: outs, ?_, ?_⟩
+      · rw [ho, hmap]
+        rfl
+      · rw [hout, hfl]
+        rfl
+
+/-- **The generator's query list is the eight-block spine.** If the plan's
+    `pcsQueries` is the literal block list, then a successful `Generator.queries`
+    produces exactly one query list per block, in the block order, whose
+    flattening is the output. -/
+theorem queries_pcsBlocks (meta_ : ConstraintSystemMeta) (data : Data)
+    (qs : List Query) (hq : queries meta_ data = .ok qs)
+    (cs : ConstraintSystem (Fr p)) (nb dg : Nat) (lc : List Nat)
+    (hPcs : meta_.protocol.pcsQueries = pcsBlockList cs nb dg lc) :
+    ∃ outs, (pcsBlocks cs nb dg lc).mapM
+        (fun b => b.mapM (fun source => queryFromPlan source meta_ data)) = .ok outs ∧
+      qs = outs.flatten := by
+  obtain ⟨qs0, hmap, rfl⟩ := queries_mapM_ok meta_ data qs hq
+  rw [hPcs, pcsBlockList] at hmap
+  exact mapM_flatten_ok _ _ hmap
 
 end Midfall.LoweringV3

@@ -21,8 +21,8 @@ open Midfall Midfall.Halo2
     values it depends on made parameters: the degree `dg` (`cs.degree`) and the
     flattened lookup chunk counts `lc` (`mapExceptArray ... |>.toList`).
     Everything else is a pure function of `cs` and `nbCommittedInstances`. -/
-def pcsBlockList {F : Type} (cs : ConstraintSystem F) (nbCommittedInstances dg : Nat)
-    (lc : List Nat) : List PcsQuerySource :=
+def pcsBlocks {F : Type} (cs : ConstraintSystem F) (nbCommittedInstances dg : Nat)
+    (lc : List Nat) : List (List PcsQuerySource) :=
   let numPermutationZs :=
     if cs.permutation.getColumns.toList.isEmpty then 0
     else divCeil cs.permutation.getColumns.toList.length (dg - 2)
@@ -59,8 +59,13 @@ def pcsBlockList {F : Type} (cs : ConstraintSystem F) (nbCommittedInstances dg :
   let pcsFixed := nonSimpleFixedQueryList.map PcsQuerySource.fixed
   let pcsPermutationCommon :=
     cs.permutation.getColumns.toList.map PcsQuerySource.permutationCommon
-  pcsAdvice ++ pcsCommittedInstances ++ pcsPermutationZ.flatten ++ pcsLookup.flatten
-    ++ pcsTrash ++ pcsFixed ++ pcsPermutationCommon ++ [PcsQuerySource.linearization]
+  [pcsAdvice, pcsCommittedInstances, pcsPermutationZ.flatten, pcsLookup.flatten,
+    pcsTrash, pcsFixed, pcsPermutationCommon, [PcsQuerySource.linearization]]
+
+/-- The flat form of `pcsBlocks`: the eight-block spine the KZG lane compares. -/
+def pcsBlockList {F : Type} (cs : ConstraintSystem F) (nbCommittedInstances dg : Nat)
+    (lc : List Nat) : List PcsQuerySource :=
+  (pcsBlocks cs nbCommittedInstances dg lc).flatten
 
 theorem cert_except_bind_ok {ε α β : Type} {x : Except ε α} {f : α → Except ε β} {b : β}
     (h : (x >>= f) = .ok b) : ∃ a, x = .ok a ∧ f a = .ok b := by
@@ -87,7 +92,7 @@ theorem ProtocolPlan.fromConstraintSystem_pcsQueries {F : Type} (feat : Features
   · split at h
     · cases h
       refine ⟨dg, lc, hdg, ?_⟩
-      simp only [pcsBlockList, List.append_assoc]
+      simp [pcsBlockList, pcsBlocks, List.append_assoc]
     · cases h
   · cases h
 

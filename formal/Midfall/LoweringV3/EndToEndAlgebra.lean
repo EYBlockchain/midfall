@@ -4645,6 +4645,12 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Midfall.LoweringV3.fromConstraintSystem_pcsQueries
   [propext, Classical.choice, Quot.sound]
+#assert_axioms mapM_append_ok
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms mapM_flatten_ok
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queries_pcsBlocks
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
