@@ -38,6 +38,7 @@
    5. `generator_correct` (hypothetical root) and `generator_correct_V3` (real root)
 -/
 import Midfall.LoweringV3.GeneratorTheorem
+import Midfall.LoweringV3.ParseGas
 import Midfall.Generator.Vk
 import Midfall.Generator.Quotient.QuotientBlocks
 import Midfall.Generator.Quotient.VmBuilder
