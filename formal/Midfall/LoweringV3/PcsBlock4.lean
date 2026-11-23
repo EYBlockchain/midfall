@@ -1695,6 +1695,43 @@ theorem pcsBpLines_contract {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpLines_contract
   [propext, Classical.choice, Quot.sound] native []
 
+/-- `let bq := scalar_inv(bp_{n-1})`: the one scalar inverse of the general set arm. -/
+def pcsBqStmt (prev : String) : Stmt EVM.Op :=
+  GenAst.ylet "bq" (GenAst.ycall "scalar_inv" [GenAst.yvar prev])
+
+/-- The `bq` call: binds `bq` at `SIInv bpv` and preserves memory outside the scratch and the env. -/
+theorem pcsBq_contract {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (scratch n gasN selN selP : Nat) (prev : String) (bpv : U256)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch n gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hn : BitVec.ofNat 256 n = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some (failFDecl, cenv')) :
+    StmtContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (pcsBqStmt prev)
+      (fun V st => VEnv.get V prev = some bpv ∧ 0 < bpv.toNat ∧
+        bpv.toNat < Midfall.Yul.blsR)
+      (fun V st V' st' o =>
+        (o = .normal ∧ V' = ("bq", SIInv bpv) :: V ∧
+          MemSameOutside st st' scratch 192 ∧ st'.env = st.env) ∨
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hprev, h0, hR⟩ := hpre
+  exact b3_exec_ylet_scalar_inv_var (product := product) (funs := funs)
+    scratch n gasN selN selP bpv
+    hlook hbody hparams hrets hn hscratch hscratch256 hfail prev "bq"
+    V st V' st' o hprev h0 hR hrun
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqStmt [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBq_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
