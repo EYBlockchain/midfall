@@ -467,4 +467,43 @@ theorem collectQueries_perProof_point (nbCommitted : Nat) (vk : VerifyingKey (Fr
     exact ⟨a.2.2, fixedQueryFn_point vk x fixedEvals a q hfbody⟩
 
 
+theorem collectQueries_single_blocks (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ci ac : G₁) (ie ae : Fr p)
+    (pe : Permutation.Evaluated (Fr p) G₁)
+    (le : Logup.Evaluated (Fr p) G₁)
+    (te : Trash.Evaluated (Fr p) G₁)
+    (fixedEvals : Array (Fr p)) (permutationsCommon : Permutation.CommonEvaluated (Fr p))
+    (linCom : VerifierQuery (Fr p) G₁) (queries : Array (VerifierQuery (Fr p) G₁))
+    (h : Verifier.collectQueries nbCommitted vk x #[#[ci]] #[#[ac]]
+      #[#[ie]] #[#[ae]] #[pe] #[#[le]] #[#[te]]
+      fixedEvals permutationsCommon linCom = .ok queries) :
+    ∃ (adv inst : List (List (VerifierQuery (Fr p) G₁)))
+      (perm : Array (VerifierQuery (Fr p) G₁))
+      (fixed : List (VerifierQuery (Fr p) G₁)),
+      queries.toList = adv.flatten ++ inst.flatten ++ perm.toList ++
+        (le.queries vk.domain x 0 0).toList ++ (te.queries x 0 0).toList ++
+        fixed ++ (permutationsCommon.queries vk.permutation x).toList ++ [linCom] := by
+  unfold Verifier.collectQueries at h
+  dsimp only at h
+  simp only [List.zip_cons_cons, List.zip_nil_right,
+    List.length_cons, List.length_nil] at h
+  obtain ⟨perProof, hper, h1⟩ := except_bind_ok h
+  obtain ⟨fixed, _hfixed, h2⟩ := except_bind_ok h1
+  cases h2
+  simp only [Nat.zero_add, List.range_one, List.zip_cons_cons, List.zip_nil_right] at hper
+  rw [List.mapM_cons, List.mapM_nil] at hper
+  obtain ⟨out, hout, h3⟩ := except_bind_ok hper
+  obtain ⟨tail, htail, h4⟩ := except_bind_ok h3
+  cases htail
+  cases h4
+  dsimp only at hout
+  obtain ⟨adv, _hadv, h1⟩ := except_bind_ok hout
+  obtain ⟨inst, _hinst, h2⟩ := except_bind_ok h1
+  obtain ⟨bf, _hbf, h3⟩ := except_bind_ok h2
+  obtain ⟨perm, _hperm, h4⟩ := except_bind_ok h3
+  cases h4
+  refine ⟨adv, inst, perm, fixed, ?_⟩
+  simp [List.flatten_cons]
+
+
 end Midfall.LoweringV3
