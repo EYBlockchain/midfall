@@ -1689,6 +1689,234 @@ theorem block_live_vkLoading (R : Render p G₁ G₂ Gₜ) (product : PairingPro
   block_live_vkLoading_of_exists R product hR H vkAddr cd
     (fun V st hpre => vk_run_exists R product hR H vkAddr cd hpre)
 
+theorem memoryLifetimeIntersects_perm_left (l : MemoryLifetime) :
+    memoryLifetimeIntersects MemoryLifetime.permanent l = true := by
+  cases l <;> rfl
+
+theorem memoryLifetimeIntersects_perm_right (l : MemoryLifetime) :
+    memoryLifetimeIntersects l MemoryLifetime.permanent = true := by
+  cases l <;> rfl
+
+theorem memoryRegionsPairwiseDisjoint_perm_any
+    {regions : List MemoryRegion} {lhs rhs : MemoryRegion}
+    (h : memoryRegionsPairwiseDisjoint regions = true)
+    (hl : regions.find? (fun r => r.name == lhs.name) = some lhs)
+    (hr : regions.find? (fun r => r.name == rhs.name) = some rhs)
+    (hne : lhs.name ≠ rhs.name)
+    (hpl : lhs.lifetime = MemoryLifetime.permanent) :
+    lhs.overlaps rhs = false := by
+  induction regions with
+  | nil => cases hl
+  | cons x rest ih =>
+      have h1 := h
+      simp only [memoryRegionsPairwiseDisjoint, Bool.and_eq_true] at h1
+      obtain ⟨hall, hrest⟩ := h1
+      rw [List.all_eq_true] at hall
+      cases hx : x.name == lhs.name with
+      | true =>
+        simp only [List.find?, hx] at hl
+        have hlhs : x = lhs := Option.some.inj hl
+        cases hx2 : x.name == rhs.name with
+        | true =>
+          exact (hne ((congrArg MemoryRegion.name hlhs).symm.trans
+            ((beq_iff_eq (a := x.name) (b := rhs.name)).mp hx2))).elim
+        | false =>
+          simp only [List.find?, hx2] at hr
+          have hthis := hall rhs (MemoryPairs.mem_find hr)
+          rw [hlhs] at hthis
+          rw [hpl, memoryLifetimeIntersects_perm_left rhs.lifetime] at hthis
+          simpa using hthis
+      | false =>
+        simp only [List.find?, hx] at hl
+        cases hx2 : x.name == rhs.name with
+        | true =>
+          simp only [List.find?, hx2] at hr
+          have hxr : x = rhs := Option.some.inj hr
+          have hthis := hall lhs (MemoryPairs.mem_find hl)
+          rw [hxr] at hthis
+          rw [hpl, memoryLifetimeIntersects_perm_right rhs.lifetime] at hthis
+          have hs : rhs.overlaps lhs = false := by simpa using hthis
+          rw [MemoryPairs.overlaps_symm lhs rhs]
+          exact hs
+        | false =>
+          simp only [List.find?, hx2] at hr
+          exact ih hrest hl hr
+
+theorem wellFormed_pair_disjoint_of_perm {map : MemoryMap} {lhs rhs : MemoryRegion}
+    (h : map.WellFormed)
+    (hl : map.region lhs.name = some lhs)
+    (hr : map.region rhs.name = some rhs)
+    (hne : lhs.name ≠ rhs.name)
+    (hpl : lhs.lifetime = MemoryLifetime.permanent) :
+    lhs.overlaps rhs = false :=
+  memoryRegionsPairwiseDisjoint_perm_any (MemoryPairs.wellFormed_regions_disjoint h) hl hr hne hpl
+
+/-- **PG-FPSCRATCH: THE INVARIANT THE FINALPAIRING CLEAN ARM NEEDS.** The `ec_pairing` helper's
+    four `mcopy`s write `pairingStaticWorkingWords * wordBytes` bytes (768 of them at the default
+    template) at `finalPairingScratchMptr`. `Inv`'s memory clauses read (i) the theta window - the
+    root of every theta slot, `g1_identity`, `q_eval_cptr`, the commitment run and the selector
+    accumulators, at non-negative word offsets from it - and (ii) the vk payload. This says those
+    two windows are separated from the scratch window; a `loadWord`/`bytesAt` transport across the
+    write needs exactly this, plus the read-window containment of each clause. -/
+def FpScratchSeparated (pv : PlanView) : Prop :=
+  (ptrAddr pv.memory.thetaMptr +
+        ThetaWindowLayout.compatibility.rotPointsWord * Midfall.Generator.wordBytes ≤
+      pv.memory.finalPairingScratchMptr ∨
+    pv.memory.finalPairingScratchMptr +
+        Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes ≤
+      ptrAddr pv.memory.thetaMptr) ∧
+  (pv.vk.len = 0 ∨
+    ptrAddr pv.memory.vkMptr + pv.vk.len ≤ pv.memory.finalPairingScratchMptr ∨
+    pv.memory.finalPairingScratchMptr +
+        Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes ≤
+      ptrAddr pv.memory.vkMptr)
+
+/-- **THE THETA HALF OF THE REDUCTION.** `theta_scalar_and_g1_slots` is `permanent` and
+    `final_pairing_scratch` is a phase, so a permanent lifetime intersects the other and
+    `WellFormed`'s pairwise predicate orders the two windows. This is the content a generator-side
+    region lemma has to instantiate. -/
+theorem fpScratchThetaSeparated_of_map {map : MemoryMap} {thetaStart fpStart : Nat}
+    (hWF : map.WellFormed)
+    (hth : map.region "theta_scalar_and_g1_slots" =
+      some (memoryRegionNew "theta_scalar_and_g1_slots" thetaStart
+        (ThetaWindowLayout.compatibility.rotPointsWord * Midfall.Generator.wordBytes)
+        MemoryLifetime.permanent))
+    (hfp : map.region "final_pairing_scratch" =
+      some (memoryRegionNew "final_pairing_scratch" fpStart
+        (Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes)
+        (MemoryLifetime.phase MemoryPhase.finalPairing))) :
+    thetaStart + ThetaWindowLayout.compatibility.rotPointsWord * Midfall.Generator.wordBytes ≤ fpStart ∨
+      fpStart + Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes ≤
+        thetaStart := by
+  have hne : ("theta_scalar_and_g1_slots" : String) ≠ "final_pairing_scratch" := by decide
+  have hd := wellFormed_pair_disjoint_of_perm (map := map)
+    (lhs := memoryRegionNew "theta_scalar_and_g1_slots" thetaStart
+      (ThetaWindowLayout.compatibility.rotPointsWord * Midfall.Generator.wordBytes)
+      MemoryLifetime.permanent)
+    (rhs := memoryRegionNew "final_pairing_scratch" fpStart
+      (Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes)
+      (MemoryLifetime.phase MemoryPhase.finalPairing)) hWF hth hfp hne (by rfl)
+  have hthLen : (memoryRegionNew "theta_scalar_and_g1_slots" thetaStart
+      (ThetaWindowLayout.compatibility.rotPointsWord * Midfall.Generator.wordBytes)
+      MemoryLifetime.permanent).len ≠ 0 := by
+    simp only [memoryRegionNew]
+    decide
+  have hfpLen : (memoryRegionNew "final_pairing_scratch" fpStart
+      (Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes)
+      (MemoryLifetime.phase MemoryPhase.finalPairing)).len ≠ 0 := by
+    simp only [memoryRegionNew]
+    decide
+  have hsep := MemoryPairs.not_overlaps_sep hd hthLen hfpLen
+  simpa only [memoryRegionNew] using hsep
+
+/-- **THE VK HALF OF THE REDUCTION.** Same mechanism; the empty-payload case is carried explicitly
+    because `MemoryRegion.overlaps` exempts zero-length regions, so an empty vk window is trivially
+    separated and `not_overlaps_sep` does not apply. -/
+theorem fpScratchVkSeparated_of_map {map : MemoryMap} {fpStart vkStart vkLen : Nat}
+    (hWF : map.WellFormed)
+    (hfp : map.region "final_pairing_scratch" =
+      some (memoryRegionNew "final_pairing_scratch" fpStart
+        (Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes)
+        (MemoryLifetime.phase MemoryPhase.finalPairing)))
+    (hvk : map.region "vk_payload" =
+      some (memoryRegionNew "vk_payload" vkStart vkLen MemoryLifetime.permanent)) :
+    vkLen = 0 ∨ vkStart + vkLen ≤ fpStart ∨
+      fpStart + Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes ≤
+        vkStart := by
+  by_cases hv : vkLen = 0
+  · exact Or.inl hv
+  · have hne : ("vk_payload" : String) ≠ "final_pairing_scratch" := by decide
+    have hd := wellFormed_pair_disjoint_of_perm (map := map)
+      (lhs := memoryRegionNew "vk_payload" vkStart vkLen MemoryLifetime.permanent)
+      (rhs := memoryRegionNew "final_pairing_scratch" fpStart
+        (Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes)
+        (MemoryLifetime.phase MemoryPhase.finalPairing)) hWF hvk hfp hne (by rfl)
+    have hvLen : (memoryRegionNew "vk_payload" vkStart vkLen
+        MemoryLifetime.permanent).len ≠ 0 := by simpa only [memoryRegionNew] using hv
+    have hfpLen : (memoryRegionNew "final_pairing_scratch" fpStart
+        (Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes)
+        (MemoryLifetime.phase MemoryPhase.finalPairing)).len ≠ 0 := by
+      simp only [memoryRegionNew]
+      decide
+    have hsep := MemoryPairs.not_overlaps_sep hd hvLen hfpLen
+    refine Or.inr ?_
+    simpa only [memoryRegionNew] using hsep
+
+/-- The registered scratch region is at least the 768 bytes the four `mcopy`s write, so separation
+    from the region is separation from the write. -/
+theorem fpScratch_write_le_region :
+    Midfall.Generator.finalPairingScratchStart + 768 ≤
+      Midfall.Generator.finalPairingScratchStart +
+        Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes := by
+  decide
+
+/-! ### 3. THE WITNESSES: WHAT `validate` CATCHES, AND WHAT THE PHASE RULE ACCEPTS -/
+
+/-- A payload with no constants and no commitments: the smallest `vk.len` the type allows. Used by
+    the near-miss below; it is not claimed to be a `ValidV3` payload. -/
+def emptyVkForScratch : Halo2VerifyingKey :=
+  { constructorPayloadMptr := 0, constants := [], fixedComms := [], permutationComms := [],
+    quotientConstOffsetWords := none, quotientConstWords := 0,
+    quotientProgramOffsetWords := none, quotientProgramWords := 0,
+    quotientConstLabels := [], quotientConstHeaders := [] }
+
+/-- **THE NEAR-MISS PLAN.** `vkMptr = 0x1100` makes `scalar_inv_scratch` land exactly on the spill
+    floor `0x1000`, and puts the theta block at `0x1100` - inside the finalPairing scratch
+    `[0x1240, 0x1560)`. This is the closest a plan can get to the overlap `PG-FPSCRATCH` proposed. -/
+def pgFpScratchCandidate : VerifierMemoryLayout :=
+  VerifierMemoryLayout.new constraintSystemMetaDefault emptyVkForScratch
+    (ptrMemory (valueFromNat 0x1100)) verifierMemoryLayoutConfigDefault
+
+theorem pgFpScratchCandidate_scratch : pgFpScratchCandidate.finalPairingScratchMptr = 0x1240 := rfl
+
+theorem pgFpScratchCandidate_theta : ptrAddr pgFpScratchCandidate.thetaMptr = 0x1100 := rfl
+
+/-- The theta window `[0x1100, 0x1780)` straddles the scratch start `0x1240`. -/
+theorem pgFpScratchCandidate_thetaWindow_straddles :
+    ptrAddr pgFpScratchCandidate.thetaMptr < 0x1240 ∧
+      0x1240 < ptrAddr pgFpScratchCandidate.thetaMptr +
+        ThetaWindowLayout.compatibility.rotPointsWord * Midfall.Generator.wordBytes := by
+  decide
+
+/-- **`validate` REFUTES THE INV-READ FALSIFIER, AND THE REFUTATION IS THE PROOF.** The requested
+    falsifier (a `validate`-accepted plan whose pairing scratch overlaps an `Inv`-read window)
+    CANNOT exist for the theta window: `theta_scalar_and_g1_slots` is `permanent`, so its lifetime
+    intersects the scratch's phase and `MemoryMap.validate`'s pairwise loop orders the two windows.
+    This candidate is rejected, and the message names the first overlap in registration order. -/
+theorem pgFpScratchCandidate_rejected :
+    pgFpScratchCandidate.validate =
+      .error ("memory region constructor_smoke_scratch [0x1000..0x1300) overlaps "
+        ++ "theta_scalar_and_g1_slots [0x1100..0x1780)") := by
+  decide
+
+/-- **WHAT THE PHASE RULE DOES ACCEPT** (and why the `PG-FPSCRATCH` premise looked plausible):
+    `memoryLifetimeIntersects` compares two phases by equality, so two DIFFERENT phase scratches may
+    overlap. In the reference layout the constructor-smoke scratch `[0x1000, 0x1300)` does overlap
+    the finalPairing scratch `[0x1240, 0x1560)` in `[0x1240, 0x1300)`, and `validate` accepts the
+    layout. This overlap is harmless (the phases never coexist and neither window is `Inv`-read),
+    but it is exactly the rule that a `PG-FPSCRATCH` falsifier would have to exploit - and the
+    permanent theta/vk windows are what keep that from reaching `Inv`. -/
+theorem fpScratch_phaseOverlap_accepted :
+    Midfall.Generator.LayoutMemoryKats.referenceLayout.constructorSmokeScratchMptr = 0x1000 ∧
+    Midfall.Generator.LayoutMemoryKats.referenceLayout.finalPairingScratchMptr = 0x1240 ∧
+    0x1240 < Midfall.Generator.LayoutMemoryKats.referenceLayout.constructorSmokeScratchMptr +
+      Midfall.Generator.pairingTwoPairBytes ∧
+    Midfall.Generator.LayoutMemoryKats.referenceLayout.validate.isOk = true := by
+  refine ⟨rfl, rfl, by decide, by decide⟩
+
+/-- **THE REDUCTION'S HYPOTHESIS IS DISCHARGED FROM `ValidV3`, NOT ADDED TO IT.** `SupportedV2`'s
+    `layout` clause already carries `R.plan.memory.map.WellFormed` (and `memory.validate = .ok`), so
+    the pairwise facts `fpScratchThetaSeparated_of_map` / `fpScratchVkSeparated_of_map` consume are
+    free at every render. What is missing for `FpScratchSeparated` is only the four
+    `map.region` equations - a generator-side naming lemma, not a clause. -/
+theorem fpScratchWellFormed_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.pv.memory.map.WellFormed :=
+  hR.supported.layout.1
+
+theorem fpScratchValidated_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.pv.memory.validate.isOk = true :=
+  hR.supported.layout.2
+
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
     answering at the four precompile addresses, and the block's all-runs row to classify the
