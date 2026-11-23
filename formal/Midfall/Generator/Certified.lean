@@ -3370,6 +3370,47 @@ theorem divCeil32_le_succ (a : Nat) : Midfall.Generator.QuotientFoldCompute.divC
   have h : a + 31 ≤ 32 * (a + 1) := by nlinarith
   exact Nat.div_le_of_le_mul h
 
+set_option maxRecDepth 100000 in
+set_option maxHeartbeats 2000000 in
+/-- A `fromProofLayout` transcript has fewer than `2 ^ 90` words once the advice prefix, G1
+    census and scalar byte lengths fit `proofLen`. -/
+theorem fromProofLayout_words_lt (proof : ProofCalldataLayout) (numInstances : Nat)
+    (phase : List Nat)
+    (hpre : (((List.range proof.advicePhases.length).zip proof.advicePhases).foldl
+      (fun st pair =>
+        let (p, sect) := pair
+        if st.snd then st else (st.fst + sect.itemCount, (phase.getD p 0) > 0))
+      (0, false)).1 ≤ 2 ^ 64)
+    (hPL : proof.proofLen < 2 ^ 80)
+    (htot : proof.totalG1Count * 128 ≤ proof.proofLen)
+    (hbytes : proof.quotientLimbs.byteLen + proof.evals.byteLen + proof.qEvals.byteLen
+      ≤ proof.proofLen)
+    (hNI : numInstances < 2 ^ 64) :
+    (TranscriptBufferLayout.fromProofLayout proof numInstances phase).words < 2 ^ 83 := by
+  unfold TranscriptBufferLayout.fromProofLayout
+  set pre := (((List.range proof.advicePhases.length).zip proof.advicePhases).foldl
+    (fun st pair =>
+      let (p, sect) := pair
+      if st.snd then st else (st.fst + sect.itemCount, (phase.getD p 0) > 0))
+    (0, false)).1 with hpredef
+  set initial := 32 + 128 + 32 + numInstances * 32 + pre * 128 + 1024 with hinit
+  set evalR := proof.quotientLimbs.byteLen + proof.evals.byteLen + proof.qEvals.byteLen
+    + 1024 with heval
+  set totalR := 32 + proof.totalG1Count * 128
+    + (proof.evals.byteLen + proof.qEvals.byteLen) + 1024 + 1024 with htotal
+  have hpre' : pre ≤ 2 ^ 64 := by simpa [hpredef] using hpre
+  have hinit' : initial < 2 ^ 72 := by rw [hinit]; nlinarith
+  have heval' : evalR < 2 ^ 81 := by rw [heval]; nlinarith
+  have htotal' : totalR < 2 ^ 82 := by rw [htotal]; nlinarith
+  have hmax : max (max initial evalR) totalR < 2 ^ 82 := by
+    exact max_lt (max_lt (by omega) (by omega)) (by omega)
+  have hwords : Midfall.Generator.QuotientFoldCompute.divCeil
+      (max (max initial evalR) totalR) 32 ≤ max (max initial evalR) totalR + 1 :=
+    divCeil32_le_succ _
+  change Midfall.Generator.QuotientFoldCompute.divCeil
+    (max (max initial evalR) totalR) 32 < 2 ^ 83
+  omega
+
 /-- The render's proof layout length bound, from the count clause. -/
 theorem plan_proofLen_lt {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut}
     (hg : Generates gi o) (hs : SupportedInput gi) :
