@@ -34,6 +34,7 @@ import Midfall.LoweringV3.QueryBlockShape
 import Midfall.LoweringV3.PcsOrder
 import Midfall.LoweringV3.UpstreamSets
 import Midfall.LoweringV3.QuotientFresh
+import Midfall.LoweringV3.RenderFresh
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -4696,6 +4697,12 @@ open Midfall.Tools.Done in
 #assert_axioms listGetMut_mem
   [propext, Classical.choice, Quot.sound]
 #assert_axioms hashMapGet_mem
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_comm_numericOrG1_of_ne_linearization
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_comm_ne_quotient
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms plan_data_commsNumericOrIdentity
   [propext, Classical.choice, Quot.sound]
 #assert_axioms kzgCommitBeq_linear_onePiece
   [propext, Classical.choice, Quot.sound]
