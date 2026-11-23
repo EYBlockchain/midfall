@@ -557,6 +557,14 @@ rebuilds the sources in upstream order
 `queryFromPlan` over them, and checks that the point sets and commitments agree
 with the generator order.
 
+The order algebra is now PROVED: `permZBlock`/`permZUpstream` pin the two
+three-set lists (`permZBlock_three`, `permZUpstream_three`,
+`permZBlock_three_beq_upstream`), and `upstreamBlock_permZBlock` proves that
+filtering the generator block to `cur/next`, reversing its `last` openings, and
+concatenating gives exactly `permZUpstream` - the verifier's
+`head.flatten ++ tail.flatten` order. `upstreamBlock` is the `KZ:159-186`
+reordering.
+
 The correct next unit is therefore: invert a successful
 `assertPermutationQueryOrderIsUpstreamEquivalent` to expose `upstreamQueries`
 and the equality of `constructIntermediateSetsImpl` point sets, then pair the
