@@ -45,6 +45,7 @@ import Midfall.Generator.Quotient.VmRecognizers
 import Midfall.Generator.Quotient.VmCertify
 import Midfall.Generator.Quotient.FoldCompute
 import Midfall.LoweringV2.Consts
+import Midfall.Lowering.VkDigest
 set_option autoImplicit false
 
 namespace Midfall.Generator.Certified
@@ -658,53 +659,6 @@ theorem env_nG2 (hg : Generates gi o) (hs : SupportedInput gi) :
   show gi.srs.g2⁻¹ = P.g₂⁻¹
   rw [hg2]
 
-theorem payload_header (hg : Generates gi o) (hs : SupportedInput gi) :
-    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.vkDigest = frWord gi.vk.transcriptRepr ∧
-    (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numInstances).toNat = gi.cfg.numInstances ∧
-    (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.k).toNat = gi.vk.domain.k ∧
-    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.nInv =
-      frWord (((2 ^ gi.vk.domain.k : ℕ) : Fr p)⁻¹) ∧
-    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.omega = frWord gi.vk.domain.omega ∧
-    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.omegaInv = frWord gi.vk.domain.omegaInv ∧
-    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.omegaInvToL =
-      frWord (gi.vk.domain.omegaInv ^ (renderOf gi o).plan.meta_.rotationLast.natAbs) ∧
-    ((Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.hasAccumulator).toNat,
-      (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.accOffset).toNat,
-      (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numAccLimbs).toNat,
-      (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numAccLimbBits).toNat) =
-      accWordsOfEncoding gi.cfg.accumulator := by
-  sorry -- CERT.6
-
-theorem env_vkDigest (hg : Generates gi o) (hs : SupportedInput gi) :
-    ((renderOf gi o).pv.vk.constants.getD 0 ("", 0)).2 = frWord gi.vk.transcriptRepr := by
-  show Midfall.LoweringV3.payloadWord (renderOf gi o).pv
-    Midfall.Generator.vkHeaderTemplateSlotsDefault.vkDigest = frWord gi.vk.transcriptRepr
-  exact (payload_header hg hs).1
-
-/-! ### K: payload (`PayloadAgrees`), five groups -/
-
-theorem payload_g1Base (hg : Generates gi o) (hs : SupportedInput gi) :
-    Midfall.Lowering.vkG1Words (renderOf gi o).pv Midfall.Lowering.vkG1BaseSlot =
-      gi.E.g1.toEip (AdmissiblePairing.g₁ (G₂ := G₂) (Gₜ := Gₜ)) := by
-  sorry -- CERT.7
-
-theorem payload_g2Base (hg : Generates gi o) (hs : SupportedInput gi) :
-    Midfall.Lowering.vkG2Words (renderOf gi o).pv Midfall.Lowering.vkG2BaseSlot =
-      gi.encG2 (AdmissiblePairing.g₂ (G₁ := G₁) (Gₜ := Gₜ)) := by
-  sorry -- CERT.7
-
-theorem payload_negSG2 (hg : Generates gi o) (hs : SupportedInput gi) :
-    Midfall.Lowering.vkG2Words (renderOf gi o).pv Midfall.Lowering.vkNegSG2BaseSlot =
-      gi.encG2 (renderOf gi o).sG2gen⁻¹ := by
-  sorry -- CERT.7
-
-theorem payload_comms (hg : Generates gi o) (hs : SupportedInput gi) :
-    (renderOf gi o).plan.vk.fixedComms.map Midfall.LoweringV2.g1WordsBytes =
-      gi.vk.fixedCommitments.toList.map gi.E.g1.toEip ∧
-    (renderOf gi o).plan.vk.permutationComms.map Midfall.LoweringV2.g1WordsBytes =
-      gi.vk.permutation.commitments.toList.map gi.E.g1.toEip := by
-  sorry -- CERT.7
-
 /-- D-CERT1 extension (D-GATE1's `PayloadAgrees.constantsLength`): the generated payload carries
     the eleven header constants the window reads. -/
 theorem generateBaseVkHeader_length {inputs : VerifierBuildInputs p G₁ G₂}
@@ -1041,6 +995,550 @@ theorem payload_constantsLength (hg : Generates gi o) (hs : SupportedInput gi) :
   change 11 ≤ o.out.plan.vk.constants.length
   rw [hv]
   exact hlen
+
+/-! ## CERT.6/7 helpers: the payload layout, the header prefix, and the codec words -/
+
+/-- The section list `forVk` reserves, in order. PROVED. -/
+theorem forVk_sections (headerWords quotientConstWords quotientProgramWords
+    fixedCommitments permutationCommitments : Nat) (l : VkPayloadLayout)
+    (h : VkPayloadLayout.forVk headerWords quotientConstWords quotientProgramWords
+      fixedCommitments permutationCommitments = .ok l) :
+    l.sections = [
+      { kind := PayloadSectionKind.header, wordOffset := 0, wordLen := headerWords },
+      { kind := PayloadSectionKind.quotientConstants, wordOffset := headerWords,
+        wordLen := quotientConstWords },
+      { kind := PayloadSectionKind.quotientProgram, wordOffset := headerWords + quotientConstWords,
+        wordLen := quotientProgramWords },
+      { kind := PayloadSectionKind.fixedCommitments,
+        wordOffset := headerWords + quotientConstWords + quotientProgramWords,
+        wordLen := fixedCommitments * 4 },
+      { kind := PayloadSectionKind.permutationCommitments,
+        wordOffset := headerWords + quotientConstWords + quotientProgramWords + fixedCommitments * 4,
+        wordLen := permutationCommitments * 4 }] := by
+  unfold VkPayloadLayout.forVk at h
+  simp only [VkPayloadLayout.new, vkPayloadLayoutDefault,
+    VkPayloadLayout.reserve, VkPayloadLayout.reserveG1, Bind.bind, Except.bind] at h
+  simp (config := { decide := true }) at h
+  split at h
+  · cases h
+  · injection h with hl
+    subst hl
+    rfl
+
+/-- The constant table starts at the header section's end. PROVED. -/
+theorem forVk_constOffset (headerWords quotientConstWords quotientProgramWords
+    fixedCommitments permutationCommitments : Nat) (l : VkPayloadLayout)
+    (h : VkPayloadLayout.forVk headerWords quotientConstWords quotientProgramWords
+      fixedCommitments permutationCommitments = .ok l) :
+    l.wordOffset PayloadSectionKind.quotientConstants = .ok headerWords := by
+  unfold VkPayloadLayout.wordOffset VkPayloadLayout.requireSection VkPayloadLayout.section
+  rw [forVk_sections headerWords quotientConstWords quotientProgramWords
+    fixedCommitments permutationCommitments l h]
+  rfl
+
+/-- The program section starts past the header section. PROVED. -/
+theorem forVk_programOffset (headerWords quotientConstWords quotientProgramWords
+    fixedCommitments permutationCommitments : Nat) (l : VkPayloadLayout)
+    (h : VkPayloadLayout.forVk headerWords quotientConstWords quotientProgramWords
+      fixedCommitments permutationCommitments = .ok l) :
+    l.wordOffset PayloadSectionKind.quotientProgram = .ok (headerWords + quotientConstWords) := by
+  unfold VkPayloadLayout.wordOffset VkPayloadLayout.requireSection VkPayloadLayout.section
+  rw [forVk_sections headerWords quotientConstWords quotientProgramWords
+    fixedCommitments permutationCommitments l h]
+  rfl
+
+/-- The two quotient section offsets are at or past the header word count, because
+    `forVk` reserves the header first. PROVED. -/
+theorem generateVkLayoutChecks_offsets {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {inputs : VerifierBuildInputs p G₁ G₂} {headerWords : Nat} {st : VkReservationState}
+    {lc : VkLayoutChecked}
+    (h : generateVkLayoutChecks feat env inputs headerWords st = .ok lc) :
+    headerWords ≤ lc.constOffset ∧ headerWords ≤ lc.programOffset := by
+  simp only [generateVkLayoutChecks] at h
+  cases hb : st.build with
+  | none =>
+      simp only [hb] at h
+      cases h
+  | some b =>
+      simp only [hb, Bind.bind, Except.bind] at h
+      obtain ⟨pl, hpl, h⟩ := cert_except_bind_ok h
+      obtain ⟨co, hco, h⟩ := cert_except_bind_ok h
+      obtain ⟨po, hpo, h⟩ := cert_except_bind_ok h
+      obtain ⟨qcLen, _hqcLen, h⟩ := cert_except_bind_ok h
+      have hco' : pl.wordOffset PayloadSectionKind.quotientConstants = .ok co :=
+        Midfall.Generator.unwrapAt_ok hco
+      have hpo' : pl.wordOffset PayloadSectionKind.quotientProgram = .ok po :=
+        Midfall.Generator.unwrapAt_ok hpo
+      have hcoE : co = headerWords := by
+        rw [forVk_constOffset _ _ _ _ _ pl (Midfall.Generator.unwrapAt_ok hpl)] at hco'
+        exact (Except.ok.inj hco').symm
+      have hpoE : po = headerWords + st.quotientConstWords := by
+        rw [forVk_programOffset _ _ _ _ _ pl (Midfall.Generator.unwrapAt_ok hpl)] at hpo'
+        exact (Except.ok.inj hpo').symm
+      split at h
+      · obtain ⟨_qpLen, _hqpLen, h⟩ := cert_except_bind_ok h
+        split at h
+        · split at h
+          · split at h
+            · split at h
+              · injection h with hlc
+                cases hlc
+                simp only
+                omega
+              · cases h
+            · cases h
+          · cases h
+        · cases h
+      · cases h
+
+/-- **THE HEADER PREFIX OF `generateVk`.** Slots below the base VK's constant count survive
+    the reservation loop (`foldlM_reserve_getD`) and the two write-back loops
+    (`foldlM_fillConst_getD`, `foldlM_fillProgram_getD`), whose offsets are at or above that
+    count by `generateVkLayoutChecks_offsets`. PROVED. -/
+theorem generateVk_getD_lt {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {codecs : VkPointCodecs G₁ G₂} {inputs : VerifierBuildInputs p G₁ G₂}
+    {payload : Halo2VerifyingKey}
+    (h : generateVk feat env codecs inputs = .ok payload)
+    (vk0 : Halo2VerifyingKey) (hbase : generateBaseVk codecs inputs = .ok vk0)
+    (k : Nat) (hk : k < vk0.constants.length) (d : String × Word256) :
+    payload.constants.getD k d = vk0.constants.getD k d := by
+  simp only [generateVk] at h
+  obtain ⟨vk0', hbase', h⟩ := cert_except_bind_ok h
+  have hvk : vk0' = vk0 := Except.ok.inj (hbase'.symm.trans hbase)
+  subst hvk
+  obtain ⟨st, hfold, hfin⟩ := cert_except_bind_ok h
+  have h1 : st.vk.constants.getD k d = vk0'.constants.getD k d :=
+    foldlM_reserve_getD (List.range 8) feat env inputs vk0'.constants.length
+      { vk := vk0', quotientConstWords := 0, quotientProgramWords := 0, build := none } st
+      hfold k hk (le_refl _) d
+  simp only [generateVkFinalize] at hfin
+  obtain ⟨lc, hlc, hfill⟩ := cert_except_bind_ok hfin
+  have hlcg := generateVkLayoutChecks_offsets hlc
+  simp only [generateVkFillAndFinal] at hfill
+  obtain ⟨vkFilled, hfill1, h⟩ := cert_except_bind_ok hfill
+  obtain ⟨vkFilled2, hfill2, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fm, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fp, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fb, _, h⟩ := cert_except_bind_ok h
+  split at h
+  · split at h
+    · obtain ⟨_u, _, h⟩ := cert_except_bind_ok h
+      cases h
+      have h2 : vkFilled.constants.getD k d = st.vk.constants.getD k d :=
+        foldlM_fillConst_getD lc.qbuild.consts.zipIdx lc.constOffset st.vk vkFilled hfill1 k
+          (by omega) d
+      have h3 : vkFilled2.constants.getD k d = vkFilled.constants.getD k d :=
+        foldlM_fillProgram_getD lc.chunks.zipIdx lc.programOffset vkFilled vkFilled2 hfill2 k
+          (by omega) d
+      change vkFilled2.constants.getD k d = vk0'.constants.getD k d
+      rw [h3, h2, h1]
+    · cases h
+  · cases h
+
+/-- An eight-element list is eight named elements. PROVED. -/
+private theorem cert_length_eq_eight {α : Type} {l : List α} :
+    l.length = 8 ↔ ∃ a b c d e f g h, l = [a,b,c,d,e,f,g,h] := by
+  constructor
+  · intro hl
+    match l, hl with
+    | [a,b,c,d,e,f,g,h], _ => exact ⟨a,b,c,d,e,f,g,h,rfl⟩
+  · rintro ⟨a,b,c,d,e,f,g,h,rfl⟩
+    rfl
+
+/-- The G1 base slot's header names, in `vkHeaderFields` order. -/
+def vkG1BaseNames : List String := ["g1_x_hi", "g1_x_lo", "g1_y_hi", "g1_y_lo"]
+
+/-- The G2 base slot's header names, in `vkHeaderFields` order. -/
+def vkG2BaseNames : List String := ["g2_x_c0_hi", "g2_x_c0_lo", "g2_x_c1_hi", "g2_x_c1_lo",
+  "g2_y_c0_hi", "g2_y_c0_lo", "g2_y_c1_hi", "g2_y_c1_lo"]
+
+/-- The `neg_s_g2` base slot's header names, in `vkHeaderFields` order. -/
+def vkNegSG2BaseNames : List String := ["neg_s_g2_x_c0_hi", "neg_s_g2_x_c0_lo",
+  "neg_s_g2_x_c1_hi", "neg_s_g2_x_c1_lo", "neg_s_g2_y_c0_hi", "neg_s_g2_y_c0_lo",
+  "neg_s_g2_y_c1_hi", "neg_s_g2_y_c1_lo"]
+
+private theorem g1Base_word : VkHeaderSlot.word .g1Base = 11 := by decide
+private theorem g2Base_word : VkHeaderSlot.word .g2Base = 15 := by decide
+private theorem negSG2Base_word : VkHeaderSlot.word .negSG2Base = 23 := by decide
+
+/-- `generateBaseVkHeader` supplies its three point-insert builders and the final header. PROVED. -/
+theorem generateBaseVkHeader_parts {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    {g1Words g2Words negSG2Words : List Word256}
+    {constants : List (String × Word256)}
+    (h : generateBaseVkHeader inputs pre g1Words g2Words negSG2Words = .ok constants) :
+    ∃ (h11 h12 h13 h14 : Midfall.Generator.VkHeaderBuilder),
+      Midfall.Generator.headerG1Insert h11 "proofs/solidity-verifier/src/lowering/vk.rs:225"
+          .g1Base vkG1BaseNames g1Words = .ok h12 ∧
+      Midfall.Generator.headerG2Insert h12 "proofs/solidity-verifier/src/lowering/vk.rs:231"
+          .g2Base vkG2BaseNames g2Words = .ok h13 ∧
+      Midfall.Generator.headerG2Insert h13 "proofs/solidity-verifier/src/lowering/vk.rs:247"
+          .negSG2Base vkNegSG2BaseNames negSG2Words = .ok h14 ∧
+      h14.words.length = 31 ∧
+      Midfall.Generator.unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:264"
+        h14.finish = .ok constants := by
+  simp only [Midfall.Generator.generateBaseVkHeader] at h
+  obtain ⟨h1, hb1, h⟩ := cert_except_bind_ok h
+  obtain ⟨h2, hb2, h⟩ := cert_except_bind_ok h
+  obtain ⟨h3, hb3, h⟩ := cert_except_bind_ok h
+  obtain ⟨h4, hb4, h⟩ := cert_except_bind_ok h
+  obtain ⟨h5, hb5, h⟩ := cert_except_bind_ok h
+  obtain ⟨h6, hb6, h⟩ := cert_except_bind_ok h
+  obtain ⟨h7, hb7, h⟩ := cert_except_bind_ok h
+  obtain ⟨h8, hb8, h⟩ := cert_except_bind_ok h
+  obtain ⟨h9, hb9, h⟩ := cert_except_bind_ok h
+  obtain ⟨h10, hb10, h⟩ := cert_except_bind_ok h
+  obtain ⟨h11, hb11, h⟩ := cert_except_bind_ok h
+  obtain ⟨h12, hb12, h⟩ := cert_except_bind_ok h
+  obtain ⟨h13, hb13, h⟩ := cert_except_bind_ok h
+  obtain ⟨h14, hb14, h⟩ := cert_except_bind_ok h
+  have hconst : Midfall.Generator.unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:264"
+      h14.finish = .ok constants := h
+  have l1 : h1.words.length = Midfall.Generator.VkHeaderLayout.builder.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb1
+  have l2 : h2.words.length = h1.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb2
+  have l3 : h3.words.length = h2.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb3
+  have l4 : h4.words.length = h3.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb4
+  have l5 : h5.words.length = h4.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb5
+  have l6 : h6.words.length = h5.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb6
+  have l7 : h7.words.length = h6.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb7
+  have l8 : h8.words.length = h7.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb8
+  have l9 : h9.words.length = h8.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb9
+  have l10 : h10.words.length = h9.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb10
+  have l11 : h11.words.length = h10.words.length :=
+    Midfall.Generator.headerScalarInsert_length _ _ _ _ _ _ hb11
+  have l12 : h12.words.length = h11.words.length :=
+    Midfall.Generator.headerG1Insert_length _ _ _ _ _ _ hb12
+  have l13 : h13.words.length = h12.words.length :=
+    Midfall.Generator.headerG2Insert_length _ _ _ _ _ _ hb13
+  have l14 : h14.words.length = h13.words.length :=
+    Midfall.Generator.headerG2Insert_length _ _ _ _ _ _ hb14
+  have hlen14 : h14.words.length = 31 := by
+    rw [l14, l13, l12, l11, l10, l9, l8, l7, l6, l5, l4, l3, l2, l1]
+    decide
+  exact ⟨h11, h12, h13, h14, hb12, hb13, hb14, hlen14, hconst⟩
+
+/-- Slots 11–14 of the base VK header: the G1 generator's four words. PROVED. -/
+theorem generateBaseVkHeader_g1Base_get {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    {g1Words g2Words negSG2Words : List Word256}
+    {constants : List (String × Word256)}
+    (h : generateBaseVkHeader inputs pre g1Words g2Words negSG2Words = .ok constants)
+    (hg1 : g1Words.length = 4) :
+    ∀ j, j < 4 → constants.getD (VkHeaderSlot.word .g1Base + j) ("", 0) =
+      (vkG1BaseNames.getD j "", g1Words.getD j 0) := by
+  obtain ⟨h11, h12, h13, h14, hb12, hb13, hb14, hlen14, hconst⟩ :=
+    generateBaseVkHeader_parts h
+  have hb13' := hb13
+  have hb14' := hb14
+  intro j hj
+  obtain ⟨a, b, c, d, rfl⟩ := List.length_eq_four.mp hg1
+  have hg : h12.words[VkHeaderSlot.word .g1Base + j]? =
+      some (some (vkG1BaseNames.getD j "", [a, b, c, d].getD j 0)) := by
+    apply Midfall.Generator.headerG1Insert_get h11 _ _ _ _ h12 hb12
+    interval_cases j <;> rfl
+  have hw14 : h14.words[VkHeaderSlot.word .g1Base + j]? =
+      some (some (vkG1BaseNames.getD j "", [a, b, c, d].getD j 0)) := by
+    rw [Midfall.Generator.headerG2Insert_frame _ _ _ _ _ _ hb14' _
+      (by left; rw [negSG2Base_word, g1Base_word]; omega)]
+    rw [Midfall.Generator.headerG2Insert_frame _ _ _ _ _ _ hb13' _
+      (by left; rw [g2Base_word, g1Base_word]; omega)]
+    exact hg
+  change constants.getD (VkHeaderSlot.word .g1Base + j) ("", 0) =
+    (vkG1BaseNames.getD j "", [a, b, c, d].getD j 0)
+  rw [Midfall.Generator.VkHeaderBuilder.finish_getD h14 constants
+    (Midfall.Generator.unwrapAt_ok hconst) _
+    (by rw [hlen14, g1Base_word]; omega) hw14 ("", 0)]
+
+/-- Slots 15–22 of the base VK header: the G2 generator's eight words. PROVED. -/
+theorem generateBaseVkHeader_g2Base_get {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    {g1Words g2Words negSG2Words : List Word256}
+    {constants : List (String × Word256)}
+    (h : generateBaseVkHeader inputs pre g1Words g2Words negSG2Words = .ok constants)
+    (hg2 : g2Words.length = 8) :
+    ∀ j, j < 8 → constants.getD (VkHeaderSlot.word .g2Base + j) ("", 0) =
+      (vkG2BaseNames.getD j "", g2Words.getD j 0) := by
+  obtain ⟨h11, h12, h13, h14, hb12, hb13, hb14, hlen14, hconst⟩ :=
+    generateBaseVkHeader_parts h
+  have hb14' := hb14
+  intro j hj
+  obtain ⟨a, b, c, d, e, f, g, k, rfl⟩ := cert_length_eq_eight.mp hg2
+  have hg : h13.words[VkHeaderSlot.word .g2Base + j]? =
+      some (some (vkG2BaseNames.getD j "", [a, b, c, d, e, f, g, k].getD j 0)) := by
+    apply Midfall.Generator.headerG2Insert_get h12 _ _ _ _ h13 hb13
+    interval_cases j <;> rfl
+  have hw14 : h14.words[VkHeaderSlot.word .g2Base + j]? =
+      some (some (vkG2BaseNames.getD j "", [a, b, c, d, e, f, g, k].getD j 0)) := by
+    rw [Midfall.Generator.headerG2Insert_frame _ _ _ _ _ _ hb14' _
+      (by left; rw [negSG2Base_word, g2Base_word]; omega)]
+    exact hg
+  change constants.getD (VkHeaderSlot.word .g2Base + j) ("", 0) =
+    (vkG2BaseNames.getD j "", [a, b, c, d, e, f, g, k].getD j 0)
+  rw [Midfall.Generator.VkHeaderBuilder.finish_getD h14 constants
+    (Midfall.Generator.unwrapAt_ok hconst) _
+    (by rw [hlen14, g2Base_word]; omega) hw14 ("", 0)]
+
+/-- Slots 23–30 of the base VK header: the negated SRS `s_g2`'s eight words. PROVED. -/
+theorem generateBaseVkHeader_negSG2_get {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    {g1Words g2Words negSG2Words : List Word256}
+    {constants : List (String × Word256)}
+    (h : generateBaseVkHeader inputs pre g1Words g2Words negSG2Words = .ok constants)
+    (hneg : negSG2Words.length = 8) :
+    ∀ j, j < 8 → constants.getD (VkHeaderSlot.word .negSG2Base + j) ("", 0) =
+      (vkNegSG2BaseNames.getD j "", negSG2Words.getD j 0) := by
+  obtain ⟨h11, h12, h13, h14, hb12, hb13, hb14, hlen14, hconst⟩ :=
+    generateBaseVkHeader_parts h
+  intro j hj
+  obtain ⟨a, b, c, d, e, f, g, k, rfl⟩ := cert_length_eq_eight.mp hneg
+  have hw14 : h14.words[VkHeaderSlot.word .negSG2Base + j]? =
+      some (some (vkNegSG2BaseNames.getD j "", [a, b, c, d, e, f, g, k].getD j 0)) := by
+    apply Midfall.Generator.headerG2Insert_get h13 _ _ _ _ h14 hb14
+    interval_cases j <;> rfl
+  change constants.getD (VkHeaderSlot.word .negSG2Base + j) ("", 0) =
+    (vkNegSG2BaseNames.getD j "", [a, b, c, d, e, f, g, k].getD j 0)
+  rw [Midfall.Generator.VkHeaderBuilder.finish_getD h14 constants
+    (Midfall.Generator.unwrapAt_ok hconst) _
+    (by rw [hlen14, negSG2Base_word]; omega) hw14 ("", 0)]
+
+/-- A fold of a word-byte append over pairs equals the same fold over the second components. -/
+theorem foldl_wordBytes_eq_of_snd (a : Bytes) {l : List (String × Word256)} {ws : List Word256}
+    (hlen : l.length = ws.length)
+    (h : ∀ j, j < ws.length → (l[j]?).map Prod.snd = ws[j]?) :
+    l.foldl (fun acc p => ByteArray.append acc (wordToBytesBE p.2)) a =
+      ws.foldl (fun acc w => ByteArray.append acc (wordToBytesBE w)) a := by
+  induction ws generalizing l a with
+  | nil =>
+      have hl : l = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hl
+      rfl
+  | cons w ws ih =>
+      cases l with
+      | nil => simp at hlen
+      | cons p ps =>
+          obtain ⟨name, pw⟩ := p
+          have h0 := h 0 (by simp)
+          simp only [List.getElem?_cons_zero, Option.map_some, Option.some.injEq] at h0
+          have hlen' : ps.length = ws.length := by simpa using hlen
+          have h' : ∀ j, j < ws.length → (ps[j]?).map Prod.snd = ws[j]? := by
+            intro j hj
+            have := h (j + 1) (by simp [hj])
+            simpa using this
+          simp only [List.foldl_cons, h0]
+          exact ih _ hlen' h'
+
+/-- **THE HEADER WORDS ARE THE LIST'S WORDS.** `vkHeaderBytes` reads `n` consecutive
+    constant words starting at `i`; when their second components are `ws`, the bytes are the
+    fold of `wordToBytesBE` over `ws`. PROVED. -/
+theorem vkHeaderBytes_eq_words {PV : PlanView} {i n : Nat} {ws : List Word256}
+    (hlen : i + n ≤ PV.vk.constants.length) (hws : ws.length = n)
+    (hget : ∀ j, j < n → (PV.vk.constants.getD (i + j) ("", 0)).2 = ws.getD j 0) :
+    Midfall.Lowering.vkHeaderBytes PV i n =
+      ws.foldl (init := Bytes.empty)
+        (fun acc w => ByteArray.append acc (wordToBytesBE w)) := by
+  unfold Midfall.Lowering.vkHeaderBytes
+  apply foldl_wordBytes_eq_of_snd Bytes.empty
+  · rw [List.length_take, List.length_drop]
+    omega
+  · intro j hj
+    rw [List.getElem?_take, if_pos (by omega)]
+    rw [List.getElem?_drop]
+    rw [List.getElem?_eq_getElem (by omega : i + j < PV.vk.constants.length)]
+    rw [List.getElem?_eq_getElem (by omega : j < ws.length)]
+    have h1 := hget j (by omega)
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem
+      (by omega : i + j < PV.vk.constants.length)] at h1
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem
+      (by omega : j < ws.length)] at h1
+    simp only [Option.getD_some] at h1
+    simpa only [Option.map_some, Option.some.injEq] using h1
+
+/-- `generateBaseVk` splits into the prefix and the body. PROVED. -/
+theorem generateBaseVk_parts {codecs : VkPointCodecs G₁ G₂}
+    {inputs : VerifierBuildInputs p G₁ G₂} {payload : Halo2VerifyingKey}
+    (h : generateBaseVk codecs inputs = .ok payload) :
+    ∃ pre, generateBaseVkPrefix inputs = .ok pre ∧
+      generateBaseVkBody codecs inputs pre = .ok payload := by
+  simp only [generateBaseVk] at h
+  obtain ⟨pre, hpre, h⟩ := cert_except_bind_ok h
+  exact ⟨pre, hpre, h⟩
+
+/-- `generateBaseVkBody` exposes its encodings, header words and commitment mapMs. PROVED. -/
+theorem generateBaseVkBody_parts {codecs : VkPointCodecs G₁ G₂}
+    {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    {payload : Halo2VerifyingKey} (h : generateBaseVkBody codecs inputs pre = .ok payload) :
+    ∃ (g1Words g2Words negSG2Words : List Word256) (constants : List (String × Word256))
+      (fixedComms permComms : List Midfall.Generator.G1Words),
+      generateBaseVkEncodings codecs inputs = .ok (g1Words, g2Words, negSG2Words) ∧
+      generateBaseVkHeader inputs pre g1Words g2Words negSG2Words = .ok constants ∧
+      inputs.vk.fixedCommitments.toList.mapM
+        (fun g => g1ToU256s (codecs.g1Repr g) >>= vkG1WordsOf) = .ok fixedComms ∧
+      inputs.vk.permutation.commitments.toList.mapM
+        (fun g => g1ToU256s (codecs.g1Repr g) >>= vkG1WordsOf) = .ok permComms ∧
+      payload.constants = constants ∧ payload.fixedComms = fixedComms ∧
+      payload.permutationComms = permComms := by
+  simp only [generateBaseVkBody] at h
+  obtain ⟨⟨g1Words, g2Words, negSG2Words⟩, henc, h⟩ := cert_except_bind_ok h
+  obtain ⟨constants, hhdr, h⟩ := cert_except_bind_ok h
+  obtain ⟨fixedComms, hfix, h⟩ := cert_except_bind_ok h
+  obtain ⟨permComms, hperm, h⟩ := cert_except_bind_ok h
+  obtain ⟨_u, _, h⟩ := cert_except_bind_ok h
+  cases h
+  exact ⟨g1Words, g2Words, negSG2Words, constants, fixedComms, permComms,
+    henc, hhdr, hfix, hperm, rfl, rfl, rfl⟩
+
+/-- `generateBaseVkPrefix` returns the five field elements its five `feToU256` calls built. PROVED. -/
+theorem generateBaseVkPrefix_components {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    (h : generateBaseVkPrefix inputs = .ok pre) :
+    feToU256 (bytesToNats (frToRepr inputs.vk.transcriptRepr)) = .ok pre.1 ∧
+    (∃ nInvField, invert ((2 ^ inputs.vk.domain.k : ℕ) : Fr p) = some nInvField ∧
+      feToU256 (bytesToNats (frToRepr nInvField)) = .ok pre.2.1) ∧
+    feToU256 (bytesToNats (frToRepr (EvaluationDomain.getOmega inputs.vk.domain))) =
+      .ok pre.2.2.1 ∧
+    feToU256 (bytesToNats (frToRepr (EvaluationDomain.getOmegaInv inputs.vk.domain))) =
+      .ok pre.2.2.2.1 ∧
+    feToU256 (bytesToNats (frToRepr
+      (powVartime (EvaluationDomain.getOmegaInv inputs.vk.domain)
+        (Int.natAbs inputs.meta_.rotationLast)))) = .ok pre.2.2.2.2 := by
+  simp only [generateBaseVkPrefix, Bind.bind, Except.bind] at h
+  generalize h1 : feToU256 (bytesToNats (frToRepr inputs.vk.transcriptRepr)) = fe1 at h
+  cases fe1 with
+  | error e => cases h
+  | ok v1 =>
+    dsimp only at h
+    generalize h2 : invert ((2 ^ inputs.vk.domain.k : ℕ) : Fr p) = o2 at h
+    cases o2 with
+    | none => cases h
+    | some x2 =>
+      dsimp only at h
+      generalize h3 : feToU256 (bytesToNats (frToRepr x2)) = fe3 at h
+      cases fe3 with
+      | error e => cases h
+      | ok v3 =>
+        dsimp only at h
+        generalize h4 : feToU256 (bytesToNats (frToRepr
+          (EvaluationDomain.getOmega inputs.vk.domain))) = fe4 at h
+        cases fe4 with
+        | error e => cases h
+        | ok v4 =>
+          dsimp only at h
+          generalize h5 : feToU256 (bytesToNats (frToRepr
+            (EvaluationDomain.getOmegaInv inputs.vk.domain))) = fe5 at h
+          cases fe5 with
+          | error e => cases h
+          | ok v5 =>
+            dsimp only at h
+            generalize h6 : feToU256 (bytesToNats (frToRepr
+                (powVartime (EvaluationDomain.getOmegaInv inputs.vk.domain)
+                  (Int.natAbs inputs.meta_.rotationLast)))) = fe6 at h
+            cases fe6 with
+            | error e => cases h
+            | ok v6 =>
+              dsimp only at h
+              generalize hg1 : decideBool (P.decEqG₁
+                (List.foldl (fun acc g => acc * g) 1 inputs.params.gLagrange) P.g₁) = b1 at h
+              cases b1 with
+              | false => cases h
+              | true =>
+                generalize hg2 : (inputs.params.g2 == P.g₂) = b2 at h
+                cases b2 with
+                | false => cases h
+                | true =>
+                  simp only [reduceIte] at h
+                  cases h
+                  dsimp only
+                  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+                  · rw [← h1]
+                  · exact ⟨x2, rfl, h3⟩
+                  · rw [← h4]
+                  · rw [← h5]
+                  · rw [← h6]
+
+/-- `newFromVk`'s plan meta keeps the raw meta's rotation. PROVED. -/
+theorem newFromVk_rotationLast {F : Type} [BEq F] (feat : Features) (field : FieldCtx F)
+    (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding)
+    (payload : Halo2VerifyingKey) (plan : LoweringPlan Unit Unit)
+    (h : Midfall.Generator.PlanNew.newFromVk feat field cs rawMeta numInstances accEncoding
+        payload = .ok plan) :
+    plan.meta_.rotationLast = rawMeta.rotationLast := by
+  simp only [Midfall.Generator.PlanNew.newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨q, hq, h1⟩ := cert_except_bind_ok h
+  obtain ⟨_proofLayout, _, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨_qplan, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨_build, _, h4⟩ := cert_except_bind_ok h3
+  obtain ⟨_nw, _, h5⟩ := cert_except_bind_ok h4
+  obtain ⟨_pcs, _, h6⟩ := cert_except_bind_ok h5
+  obtain ⟨_acc, _, h7⟩ := cert_except_bind_ok h6
+  obtain ⟨_memory, _, h8⟩ := cert_except_bind_ok h7
+  obtain ⟨_op, _, h9⟩ := cert_except_bind_ok h8
+  obtain ⟨_trip, _, h10⟩ := cert_except_bind_ok h9
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals
+    change q.2.1.rotationLast = rawMeta.rotationLast
+    exact Midfall.Generator.metaDataForStableStaticLayout_rotationLast hq
+
+
+theorem payload_header (hg : Generates gi o) (hs : SupportedInput gi) :
+    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.vkDigest = frWord gi.vk.transcriptRepr ∧
+    (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numInstances).toNat = gi.cfg.numInstances ∧
+    (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.k).toNat = gi.vk.domain.k ∧
+    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.nInv =
+      frWord (((2 ^ gi.vk.domain.k : ℕ) : Fr p)⁻¹) ∧
+    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.omega = frWord gi.vk.domain.omega ∧
+    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.omegaInv = frWord gi.vk.domain.omegaInv ∧
+    Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.omegaInvToL =
+      frWord (gi.vk.domain.omegaInv ^ (renderOf gi o).plan.meta_.rotationLast.natAbs) ∧
+    ((Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.hasAccumulator).toNat,
+      (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.accOffset).toNat,
+      (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numAccLimbs).toNat,
+      (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numAccLimbBits).toNat) =
+      accWordsOfEncoding gi.cfg.accumulator := by
+  sorry -- CERT.6
+
+theorem env_vkDigest (hg : Generates gi o) (hs : SupportedInput gi) :
+    ((renderOf gi o).pv.vk.constants.getD 0 ("", 0)).2 = frWord gi.vk.transcriptRepr := by
+  show Midfall.LoweringV3.payloadWord (renderOf gi o).pv
+    Midfall.Generator.vkHeaderTemplateSlotsDefault.vkDigest = frWord gi.vk.transcriptRepr
+  exact (payload_header hg hs).1
+
+/-! ### K: payload (`PayloadAgrees`), five groups -/
+
+theorem payload_g1Base (hg : Generates gi o) (hs : SupportedInput gi) :
+    Midfall.Lowering.vkG1Words (renderOf gi o).pv Midfall.Lowering.vkG1BaseSlot =
+      gi.E.g1.toEip (AdmissiblePairing.g₁ (G₂ := G₂) (Gₜ := Gₜ)) := by
+  sorry -- CERT.7
+
+theorem payload_g2Base (hg : Generates gi o) (hs : SupportedInput gi) :
+    Midfall.Lowering.vkG2Words (renderOf gi o).pv Midfall.Lowering.vkG2BaseSlot =
+      gi.encG2 (AdmissiblePairing.g₂ (G₁ := G₁) (Gₜ := Gₜ)) := by
+  sorry -- CERT.7
+
+theorem payload_negSG2 (hg : Generates gi o) (hs : SupportedInput gi) :
+    Midfall.Lowering.vkG2Words (renderOf gi o).pv Midfall.Lowering.vkNegSG2BaseSlot =
+      gi.encG2 (renderOf gi o).sG2gen⁻¹ := by
+  sorry -- CERT.7
+
+theorem payload_comms (hg : Generates gi o) (hs : SupportedInput gi) :
+    (renderOf gi o).plan.vk.fixedComms.map Midfall.LoweringV2.g1WordsBytes =
+      gi.vk.fixedCommitments.toList.map gi.E.g1.toEip ∧
+    (renderOf gi o).plan.vk.permutationComms.map Midfall.LoweringV2.g1WordsBytes =
+      gi.vk.permutation.commitments.toList.map gi.E.g1.toEip := by
+  sorry -- CERT.7
 
 /-! ### S: the one scope clause that mentions the plan -/
 
