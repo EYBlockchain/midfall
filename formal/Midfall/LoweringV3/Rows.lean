@@ -696,6 +696,31 @@ theorem fp_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
 #assert_axioms Midfall.LoweringV3.fp_blockSim
   [propext, Classical.choice, Quot.sound] native []
 
+/-- `callsOf` is functional: every honest answer is the unique `honestOf` result. -/
+theorem callsOf_functional (product : PairingProduct) : (callsOf product).Functional :=
+  honestCalls_functional product 0 (fun _ _ _ => False)
+    (fun _ _ _ _ h => h.elim) (by decide)
+
+/-- **DETERMINISM OF THE FINALPAIRING SLICE** under the honest precompiles and the
+    zero gas oracle: two runs from the same boundary agree on environment, state and
+    outcome. -/
+theorem fp_slice_det (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    {V : VEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))}
+    {st : EvmState}
+    {V₁ : VEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))}
+    {st₁ : EvmState} {o₁ : Outcome}
+    {V₂ : VEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))}
+    {st₂ : EvmState} {o₂ : Outcome}
+    (h₁ : ExecStmts (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (R.slice Partial.finalPairing) V₁ st₁ o₁)
+    (h₂ : ExecStmts (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (R.slice Partial.finalPairing) V₂ st₂ o₂) :
+    V₁ = V₂ ∧ st₁ = st₂ ∧ o₁ = o₂ :=
+  ExecStmts.det (dialect_deterministic (callsOf_functional product)
+    (ofFun_functional (fun _ => 0))) h₁ h₂
+
 /-- **LEAF (ROW.FP, WP A11): the finalPairing progress row.** Evidence `GeneratorRows.lean:1083`. -/
 theorem fp_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
