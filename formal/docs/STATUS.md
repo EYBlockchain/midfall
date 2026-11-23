@@ -237,7 +237,7 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `ef90d28`: D2 is merged and five generation peels are closed; the register is **109 sorried
+At `99295c8`: D2 is merged and five generation peels are closed; the register is **109 sorried
 declarations / 11 ROOT / 36 CERT / 0 REFUTED** (109 rows in `SORRY.md`). A4's `runBody_mono` (ST.13)
 is **PROVED**; A5's 8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, and bridge
 modulus arithmetic are merged; A9's PCS block-1/block-2/block-3-seed semantics, generator Word
@@ -249,26 +249,31 @@ leaf, call inversion/VK wire, `FpWire`, selector-bucket monotonicity, and the fu
 exact reduction `ValidV3 R ↔ ValidV3ExceptPayload R ∧ PayloadPointHalf R`; B4's
 `ValidV3SyntheticInhabitant.exists_validV3` proves `∃ R, ValidV3 R` at a synthetic render, so the
 **generic root is non-vacuous**, and B4's DG.4 `GeneratorDone`/`Done`/`not_done_today` card is merged.
-B3's `PayloadPointsF1` supplies the resourced 19/8 commitments and the point half; the F1-real
-residual is exactly `hpay : vkG2Words f1Pv vkNegSG2BaseSlot = g2foldToEip (g2foldExp n)` (the
-payload's neg-S-G2 exponent), which B3 is checking against the tracked SRS/params. The D2 KAT is
-green (**1648 annotated checks / 120 files**), quick gate and `checks.sh` are green, and the
+B3's `PayloadPointsF1` supplies the resourced 19/8 commitments and the point half; the test-SRS
+exponent is `n = blsR - sTest`, but the production F1 NEG_S_G2 scalar is in no tracked file. The
+F1-real `ValidV3` at `f1PointRenderCN n` is therefore conditional on
+`hpay : vkG2Words f1Pv vkNegSG2BaseSlot = g2foldToEip (g2foldExp n)`; `ValidV3F1Real` proves it from
+that data input. B4's DG.4 `Done` card is merged; a positive F1 `Done` remains blocked on a concrete
+codec law, a render-correct `Done` statement, `TotalV3`, and `ArtifactEq`. The D2 KAT is green
+(**1648 annotated checks / 120 files**), quick gate and `checks.sh` are green, and the
 `ChallengesGood.xNonzero` statement pin is in place.
 
 The vacuity report is the non-vacuity ledger: the generic V3 root is now **NON-VACUOUS (synthetic)**
 via `exists_validV3`, but **VACUOUS at F1** (`f1_ValidV3_false`), and `0 REFUTED / 1 VACUOUS` is not
-a non-vacuity certificate. The shortest path still runs **the F1-real `ValidV3` (B3) and the root
-rows together**; the `end_to_end` and generator layers follow the same dependencies.
+a non-vacuity certificate. The F1-real `ValidV3` is conditional on the production SRS `hpay`; the
+shortest path to the fully verified **generic** verifier is the root rows plus `EndToEnd`/generator,
+with the F1-specific `Done` recorded as data-blocked.
 
 ### Six-lane critical path (user cap)
 
 Phase 1 (live now):
-- **B4** `Done`/DG.4: synthetic `ValidV3` witness merged; now the V3 `Done` gate/record and `not_done_today`, with the F1-real point half waiting on B3.
-- **B3** payload point fields: real `g1Base`/`g2Base`/`negSG2`, the commitment decoder/`vkF1` re-source, and `sG2gen` bridge.
-- **A5** `batch_invert_summary` / `BatchInvertPost` at `r = ofNat blsR` (unblocks lag).
-- **A11** `ec_pairing` call inversion → G1/G2 wire → `fp_blockSim`/`fp_blockProgS`.
-- **A6** transcriptParser: `readGroupSeq` run equalities → per-phase counts → `tp_agrees`.
-- **A9** PCS blocks 3/4/5/6 + fault arms + `decode_exists` coverage.
+- **A5** six-store bridge composition + `count_bytes = 32` + `BatchInvertPost`.
+- **A9** PCS block-3 folds/list folds + block 4–6.
+- **A11** finalPairing clean arm (scratch-window, literal call, rows).
+- **A12** `block_live` remaining 5 cases.
+- **D1A** `EndToEndAlgebra` readAlgebra/multiPrepare widths.
+- **D2** CERT derivable leaves.
+Paused: A6 TP accessor, A4 lag, B3/B4 F1-real/Done residual, port audit D-GATE6/7, calldata, CERT2.
 
 Phase 2, as A5/A11 close: **A4** lag fixed segments/rows, **D1P/D1A** `EndToEnd` widths,
 then **A12** `block_live` (2/7 done) and the port audit D-GATE6 bridge.
