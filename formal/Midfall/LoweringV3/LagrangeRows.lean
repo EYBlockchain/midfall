@@ -3767,3 +3767,29 @@ theorem lag_stmt1_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline
                 rcases he with rfl
                 rw [hsite] at hh
                 exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) hargs).elim
+
+theorem lag_stmt2_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 2 1 = [GenAst.ylet "x_n" (GenAst.yvar "x")] := by
+  kernel_rfl
+
+theorem lag_stmt2_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m : Nat) (x : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 2 1)
+      (fun V _ => VEnv.get V "x" = some x)
+      (fun V st V' st' o => o = .normal ∧ st' = st ∧ V' = ("x_n", x) :: V) := by
+  rw [lag_stmt2_form]
+  intro V st hx V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              cases he with
+              | var hget =>
+                  have hv : _ = x := Option.some.inj (hget.symm.trans hx)
+                  subst hv
+                  simp
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => cases he
