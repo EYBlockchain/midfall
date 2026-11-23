@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `7a55dc8d` (2026-11-23). **Full gate GREEN at `b171a8a9`** (`verify.sh: ok (full)`,
+**As of:** `ba79708c` (2026-11-23). **Full gate GREEN at `b171a8a9`** (`verify.sh: ok (full)`,
 KAT 1648/119, closure 5251/620 digest `da67ab3de31b92e9`). The only later change is A11's
 `fp_blockProgS` closure (a proof term; the closure digest is unchanged). Current report: root **11 / sound 5**,
 register **96 rows / 11 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
@@ -292,6 +292,10 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
   `parseTraceSchedule : ValidV3 R → ParseTraceSchedule R` (D-GATE7's `advicePhaseTotal` closes the
   phase-count pin); `Rows.tp_blockSim` is closed. The five TP leaves remain, blocked on the
   `common_uncompressed_g1` call summary and SIM.10's `xcript_total`.
+- A11b: `xcript_total` is NOT derivable from the current facts; landed the exact clause
+  `XcriptAlgebraRun` + `tp_agrees_of_xcript`, reducing `tp_agrees` to the parser/`readAlgebra` run
+  existence and the `Inv .transcript` assembly. `tp_agrees`/the TP leaves remain the five registered
+  holes.
 - A12: the resourced-codec F1 render `f1PointRenderCCN` and the fixture gate inputs
   (`decode`/`snapshot`/`SoundSide`/`CompleteSide`/deployment/entry) are proved; `LeanAccepts` is
   REFUTED for the tracked test-SRS calldata at the production key, so a positive F1 `DoneAt` needs a
