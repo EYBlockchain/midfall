@@ -4676,6 +4676,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms upstreamSources_filter_pcsBlockList
   [propext, Classical.choice, Quot.sound]
+#assert_axioms exists_pairQueries
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgQueryMapData.ofPairQueries
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Data.new_computedQuotientComm
