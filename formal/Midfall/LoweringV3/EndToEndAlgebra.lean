@@ -3023,6 +3023,41 @@ theorem parseTrace_widths {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G�
   simp only [List.nil_append, List.append_nil, List.append_assoc,
     List.replicate_append_replicate, Array.length_toList]
 
+theorem option_mapM_length {α β : Type} (f : α → Option β) :
+    ∀ (l : List α) (l' : List β), l.mapM f = some l' → l'.length = l.length := by
+  intro l
+  induction l with
+  | nil =>
+      intro l' h
+      cases h
+      rfl
+  | cons a as ih =>
+      intro l' h
+      simp only [List.mapM_cons] at h
+      cases ha : f a with
+      | none => rw [ha] at h; cases h
+      | some b =>
+          rw [ha] at h
+          cases hrest : as.mapM f with
+          | none => rw [hrest] at h; cases h
+          | some l0 =>
+              rw [hrest] at h
+              injection h with h
+              subst h
+              simp only [List.length_cons]
+              rw [ih l0 hrest]
+
+theorem chunkedOf_length {F : Type} (deg : Nat) (l : List (LogupBatchedArgument F))
+    {cl : List (LogupChunkedArgument F)} (h : chunkedOf deg l = some cl) :
+    cl.length = l.length := by
+  unfold chunkedOf at h
+  exact option_mapM_length _ l cl h
+
+theorem sumNat_eq_sum (l : List Nat) : Midfall.Lowering.sumNat l = l.sum := by
+  induction l with
+  | nil => rfl
+  | cons a as ih => rw [Midfall.Lowering.sumNat_cons, List.sum_cons, ih]
+
 theorem map_add_three_map {α : Type} (l : List α) (f : α → Nat) :
     (l.map f).map (fun x => x + 3) = l.map (fun x => f x + 3) := by
   induction l with
@@ -3366,7 +3401,7 @@ theorem readAlgebraEvalCount_parseTrace_eq_numMainEvals {G₁ : Type} (g1 : G1Co
             (List.range vk.cs.numFixedColumns)).length :=
         validate_numSimpleSelectors hval
       have hdegEq : csDegree = vk.csDegree := by
-        rw [hf.csDegreeMatches] at hdeg
+        simp only [hf.csDegreeMatches] at hdeg
         exact (Except.ok.inj hdeg).symm
       obtain ⟨cl, hcl, hchunks⟩ := mapExceptArray_chunk csDegree vk.cs.lookups hlu
       rw [hdegEq] at hcl
@@ -3489,6 +3524,137 @@ def ParseTraceSchedule (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) : Prop :
     nParse + readAlgebraQuotientCount Features.solidity R.vk =
       (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
         R.plan.proofLayout).prefixG1Count
+
+set_option maxHeartbeats 4000000 in
+/-- **THE PROTOCOL'S PARSER COUNTS**, read off the successful
+    `fromConstraintSystem`: the lookup count and chunk list, the permutation-product
+    count, the trashcan count, the quotient-limb count and the advice-phase vector's
+    total. -/
+theorem protocol_parseCounts {G₁ : Type} (vk : VerifyingKey (Fr p) G₁)
+    (hf : vk.WellFormed Features.solidity) {plan : ProtocolPlan}
+    (hplan : ProtocolPlan.fromConstraintSystem Features.solidity vk.cs 1 = .ok plan) :
+    plan.numLookups = vk.cs.lookups.size ∧
+    (∃ cl, chunkedOf vk.csDegree vk.cs.lookups.toList = some cl ∧
+      plan.lookupChunks = cl.map LogupChunkedArgument.numChunks) ∧
+    plan.numPermutationZs =
+      Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) ∧
+    plan.numTrashcans = vk.cs.trashcans.size ∧
+    plan.numQuotients = readAlgebraQuotientCount Features.solidity vk ∧
+    Midfall.Lowering.sumNat plan.numUserAdvices = vk.cs.adviceColumnPhase.size := by
+  unfold ProtocolPlan.fromConstraintSystem at hplan
+  simp only [Bind.bind] at hplan
+  obtain ⟨csDegree, hdeg, hp1⟩ := AlgebraWidths.except_bind_ok hplan
+  obtain ⟨lookupChunks, hlu, hp2⟩ := AlgebraWidths.except_bind_ok hp1
+  obtain ⟨⟨adv, advIdx⟩, hAdv, hp3⟩ := AlgebraWidths.except_bind_ok hp2
+  obtain ⟨⟨ch, chIdx⟩, hCh, hp4⟩ := AlgebraWidths.except_bind_ok hp3
+  obtain ⟨bl, hbl, hp5⟩ := AlgebraWidths.except_bind_ok hp4
+  split at hp5
+  · rename_i hfix
+    split at hp5
+    · rename_i hval
+      cases hp5
+      have hdegEq : csDegree = vk.csDegree := by
+        simp only [hf.csDegreeMatches] at hdeg
+        exact (Except.ok.inj hdeg).symm
+      obtain ⟨cl, hcl, hchunks⟩ := mapExceptArray_chunk csDegree vk.cs.lookups hlu
+      have hclLen : cl.length = vk.cs.lookups.size := by
+        rw [chunkedOf_length csDegree _ hcl, Array.length_toList]
+      have hquot : (if Features.solidity.outerSingleHCommitment then 1
+          else csDegree - 1) = readAlgebraQuotientCount Features.solidity vk := by
+        rw [readAlgebraQuotientCount, hdegEq,
+          show vk.domain.getQuotientPolyDegree = vk.csDegree - 1 from hf.domainConsistent.2]
+      refine ⟨?_, ⟨cl, ?_, ?_⟩, ?_, rfl, hquot, ?_⟩
+      · rw [hchunks, List.length_map, hclLen]
+      · rw [← hdegEq]; exact hcl
+      · exact hchunks
+      · rw [if_list_isEmpty_divCeil, hdegEq]
+        unfold Permutation.numChunksOf
+        rw [show vk.cs.permutation.getColumns.toList.length =
+            vk.cs.permutation.columns.size from by
+          rw [PermutationArgument.getColumns, Array.length_toList]]
+      · rw [TranscriptRows.remapping_nums_sum _ _ hAdv]
+        simp [ConstraintSystem.adviceColumnPhaseNats, Array.length_toList]
+    · cases hp5
+  · cases hp5
+
+/-- **THE MISSING vk-TO-PLAN PHASE PIN, NAMED.** The parser's phase loop reads one
+    `g1` per advice column of every phase; this is the advice-column count exactly
+    when the key's advice-phase vector covers its advice columns. `Obligations`'
+    `readScheduleAgrees` records the same gap for the emitted schedule: a vk whose
+    phase vector is shorter than its advice-column count makes `parseTrace` read a
+    different number of commitments than `fromProtocol` reserved. The natural
+    Rust invariant is `adviceColumnPhase.size = numAdviceColumns`; nothing in
+    `ValidV3` (or `WellFormed`) carries it. -/
+def AdvicePhaseCountFit {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : VerifyingKey (Fr p) G₁) : Prop :=
+  adviceReadCount vk.cs 1 = vk.cs.adviceColumnPhase.size
+
+set_option maxHeartbeats 4000000 in
+/-- **`ParseTraceSchedule` FROM THE PHASE PIN.** The width walk
+    (`parseTrace_widths`), the protocol counts (`protocol_parseCounts`), the layout
+    peel (`tp_fromProtocol`) and the group-sum identity
+    (`sum_commitmentReadGroups`) assemble into the schedule outright: every
+    committed group contributes exactly its parser reads. The single input not
+    derived from `ValidV3` is `AdvicePhaseCountFit`. -/
+theorem parseTraceSchedule_of_advicePhase {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hpin : AdvicePhaseCountFit R.vk) :
+    ParseTraceSchedule R := by
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hL, _hc1, _hc2, _hc3,
+    _hc4, _hc5, _hc6, _hc7, _hc8, _hup, _huser, _hnInst, _htrunc, _hnLook, _hnPerm,
+    _hnTrash, _hLH⟩ := TranscriptRows.tp_planFacts (G₁ := G₁) hR
+  have facts := TranscriptRows.tp_fromProtocol hL
+  have hcounts := protocol_parseCounts (p := p) R.vk hR.supported.wf
+    (plan_protocol_fromConstraintSystem R hR)
+  rw [hmeta] at hcounts
+  obtain ⟨hLook, ⟨cl, hcl, hChunks⟩, hPerm, hTrash, hQuot, hAdvSum⟩ := hcounts
+  -- the five group identifications
+  have eA : adviceReadCount R.vk.cs 1
+      = Midfall.Lowering.sumNat (L.advicePhases.map (fun s => s.itemCount)) := by
+    rw [hpin, ← hAdvSum, ← facts.adviceSum]
+  have eM : R.vk.cs.lookups.size = L.lookupMultiplicities.itemCount := by
+    rw [facts.lookupM, hLook]
+  have eP : Permutation.numChunksOf R.vk.cs.permutation.columns.size
+        (R.vk.csDegree - 2) = L.permutationProducts.itemCount := by
+    rw [facts.permZ, hPerm]
+  have eT : R.vk.cs.trashcans.size = L.trash.itemCount := by
+    rw [facts.trash, hTrash]
+  have eQ : readAlgebraQuotientCount Features.solidity R.vk
+      = L.quotientLimbs.itemCount := by
+    rw [facts.quotient, hQuot]
+  have eS : lookupCommitReadCount R.vk.csDegree R.vk.cs.lookups.toList
+      = Midfall.Lowering.sumNat (L.lookups.map (fun lk =>
+          lk.helpers.itemCount + lk.accumulator.itemCount)) := by
+    rw [facts.lookupSum, hChunks]
+    have hmap := zip_range_snd_map (cl.map LogupChunkedArgument.numChunks)
+      (fun c => c + 1)
+    rw [hmap, List.map_map]
+    unfold lookupCommitReadCount
+    rw [hcl]
+    simp only [Option.getD_some]
+    exact (sumNat_eq_sum _).symm
+  refine ⟨parseTraceReadCount R.vk, ?_, ?_⟩
+  · intro inst t t' tr h
+    exact parseTrace_widths R.E.g1 R.vk 1 inst.toList.toArray h
+  · have hprefix : (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).prefixG1Count = L.commitmentG1Count := by
+      rw [hlay]
+      show (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).g1Groups.foldl
+        (fun acc n => acc + n) 0 = L.commitmentG1Count
+      rw [show (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).g1Groups
+        = L.commitmentReadGroups from rfl]
+      exact Midfall.Lowering.sum_commitmentReadGroups L
+    rw [hprefix]
+    unfold ProofCalldataLayout.commitmentG1Count ProofCalldataLayout.nonQuotientG1Count
+    dsimp only
+    unfold parseTraceReadCount
+    rw [eA, eM, eP, eS, eT, eQ]
+    unfold Midfall.Lowering.sumNat
+    dsimp only
 
 /-- **THE KZG RESIDUAL, NAMED (multiPrepare's scalar block).** `multiPrepare`
     appends `[g1]`, one scalar per quotient-opening point set, `[g1]`; the count
