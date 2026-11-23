@@ -2780,6 +2780,67 @@ theorem i32Abs_ok_of_ne_min (x : Int) (h : x ≠ -2147483648) (site : String) :
   · rw [if_pos hx]; exact ⟨_, rfl⟩
   · rw [if_neg hx]; exact ⟨_, rfl⟩
 
+
+theorem listInsertAt_ok_of_le {α : Type} (xs : List α) (i : Nat) (v : α) (site : String)
+    (h : i ≤ xs.length) : ∃ ys, Midfall.Halo2.Verifier.listInsertAt xs i v site = .ok ys := by
+  unfold Midfall.Halo2.Verifier.listInsertAt
+  rw [if_neg (by omega)]
+  exact ⟨_, rfl⟩
+
+theorem countP_take_le {α : Type} (l : List α) (p : α → Bool) (k : Nat) :
+    (l.take k).countP p ≤ l.countP p := by
+  have h : l.countP p = (l.take k).countP p + (l.drop k).countP p := by
+    rw [← List.countP_append, List.take_append_drop]
+  omega
+
+theorem countP_not_add {α : Type} (l : List α) (p : α → Bool) :
+    l.countP p + l.countP (fun x => !p x) = l.length := by
+  induction l with
+  | nil => rfl
+  | cons a as ih =>
+      simp only [List.countP_cons]
+      cases hp : p a <;> simp [hp] at * <;> omega
+
+theorem i32Abs_zero (site : String) : Midfall.Halo2.Verifier.i32Abs 0 site = .ok 0 := by
+  unfold Midfall.Halo2.Verifier.i32Abs
+  rw [if_neg (by decide), if_neg (by decide)]
+
+/-- The fold-step predicate of `readFixedEvals`. -/
+def fpSimple? {p : ℕ} [Fact (Nat.Prime p)] (cs : ConstraintSystem (Fr p))
+    (s : Nat × (Column × Rotation)) : Bool :=
+  cs.hasSimpleSelectorCol s.2.1.index
+
+/-- The range-index property of the steps list. -/
+theorem zip_range_fst {α : Type} (l : List α) {k : Nat} (hk : k < l.length) :
+    (List.zip (List.range l.length) l)[k]?.map Prod.fst = some k := by
+  have hzip : (List.zip (List.range l.length) l)[k]? = some (k, l[k]) := by
+    rw [List.getElem?_zip_eq_some]
+    exact ⟨List.getElem?_range hk, List.getElem?_eq_getElem hk⟩
+  rw [hzip]
+  rfl
+
+def fpInsertStep (cs : ConstraintSystem (Fr p)) (acc : List (Fr p))
+    (s : Nat × (Column × Rotation)) : TranscriptM (List (Fr p)) :=
+  if cs.hasSimpleSelectorCol s.2.1.index then
+    StateT.lift (Midfall.Halo2.Verifier.listInsertAt acc s.1 1
+      "proofs/src/plonk/verifier.rs:410")
+  else pure acc
+
+theorem fpInsertStep_length (cs : ConstraintSystem (Fr p)) (acc : List (Fr p))
+    (s : Nat × (Column × Rotation)) :
+    (if cs.hasSimpleSelectorCol s.2.1.index then 1 else 0) +
+      acc.length ≤ acc.length + 1 := by
+  by_cases h : cs.hasSimpleSelectorCol s.2.1.index <;> simp [h] <;> omega
+
+theorem fpSimple_filter_cons (cs : ConstraintSystem (Fr p))
+    (s : Nat × (Column × Rotation)) (ss : List (Nat × (Column × Rotation))) :
+    ((s :: ss).filter (fpSimple? cs)).length =
+      (if fpSimple? cs s then 1 else 0) + (ss.filter (fpSimple? cs)).length := by
+  unfold fpSimple?
+  by_cases h : cs.hasSimpleSelectorCol s.2.1.index
+  · simp only [List.filter_cons, h, if_true, List.length_cons]; omega
+  · simp only [List.filter_cons, h, Bool.false_eq_true, if_false, List.length_cons]; omega
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -4787,6 +4848,12 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.readFixedEvals_guard [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_readFixedEvalsRead [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.i32Abs_ok_of_ne_min [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.listInsertAt_ok_of_le [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.countP_take_le [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.countP_not_add [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.i32Abs_zero [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.zip_range_fst [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.fpSimple_filter_cons [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
