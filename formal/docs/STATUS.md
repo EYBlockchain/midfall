@@ -237,18 +237,20 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `ec33847`: D2 is merged and the next generation peels are closed (`env_nG2`, `prog_noDirect`,
+At `9712ba6`: D2 is merged and the next generation peels are closed (`env_nG2`, `prog_noDirect`,
 `env_vkDigest`, `v3_payload`); the register is **105 sorried declarations / 11 ROOT / 32 CERT /
-0 REFUTED** (105 rows in `SORRY.md`); D1A's exact `readAlgebra` width sequence and `multiPrepare`
-phase A/B/C widths are merged. A4's
-`runBody_mono` (ST.13), lag statements 0–6, and the `litValue_number_nat` helper are merged; A5's
+0 REFUTED** (105 rows in `SORRY.md`); D1A's exact `readAlgebra` width sequence, `multiPrepare`
+phase A/B/C widths, and `PrepareLogSlots` composition layer are merged. A4's
+`runBody_mono` (ST.13), lag statements 0–27 except the batch-invert call 10, the five loop
+contracts, and the `litValue_number_nat` helper are merged; A5's
 8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, bridge modulus arithmetic, six-store
 frame composition, and bridge 11–20 form are merged; A9's PCS block-1/block-2/block-3-seed
 semantics, generator Word bridge, complete block-1 ROT_POINTS table spec, block-3 straight-line
-list folds, and rolled-arm nested-mload inversions are merged; A11's guard helpers, trim, normal leaf, call inversion/VK wire, `FpWire`, selector-bucket
+list folds, rolled-arm nested-mload inversions, and body/iteration contracts are merged; A11's guard helpers, trim, normal leaf, call inversion/VK wire, `FpWire`, selector-bucket
 monotonicity, and the full `Inv .pcs → Inv .pairing` transfer are merged; A6's `GroupsMatch` split,
 state-threaded fold, and `phaseCols` are in its branch; A12's `block_live` traceReturn/vkLoading
-cases, finalPairing poison arm, and loop-existence rule are merged (3 of 7 block-cases). B4's `ValidV3InhabitationF1Completion` proves `f1GeneratedRender_notValidV3` and the
+cases, finalPairing poison arm, loop-existence rule, and `FpScratchSeparated` at every render are
+merged (3 of 7 block-cases). B4's `ValidV3InhabitationF1Completion` proves `f1GeneratedRender_notValidV3` and the
 exact reduction `ValidV3 R ↔ ValidV3ExceptPayload R ∧ PayloadPointHalf R`; B4's
 `ValidV3SyntheticInhabitant.exists_validV3` proves `∃ R, ValidV3 R` at a synthetic render, so the
 **generic root is non-vacuous**, and B4's DG.4 `GeneratorDone`/`Done`/`not_done_today` card is merged.
