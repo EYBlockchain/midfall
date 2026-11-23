@@ -17,19 +17,17 @@
     the same fact split in two, and `planMetaStable_of_generated` derives it for every generated
     render, so it is no longer an assumed clause.
 
-  * `v3_cdBound` — **NEEDS CLAUSE.** No generator check bounds `proofEnd` or `numInstances`:
-    `proofEnd` is a sum of commitment/evaluation section lengths built by
-    `ProofCalldataLayout.fromProtocol` from the circuit's counts, and `SupportedInput.sizeBound`
-    bounds only `numInstances < 2^64` and `k < 64`. `cdBoundB` is a conjunct of the current
-    `programOk`, so it is an OUTPUT obligation (registered as `v3_cdBound`, CERT.1/CERT.6), not a
-    consequence of generation. The candidate clause below is the fit itself; the input-only form
-    needs bounds on the circuit's commitment and evaluation counts (the exact arithmetic route is
-    the CERT.6 builder lemma). `cdBoundB_of_candidate` typechecks the bridge to the program bundle.
+  * `v3_cdBound` — **CLOSED by D-GATE11.** `proofEnd` is a sum of commitment/evaluation section
+    lengths built by `ProofCalldataLayout.fromProtocol` from the circuit's counts, so the input
+    needed those counts bounded. D-GATE11 added `SupportedInput.countBound`
+    (`Midfall.Generator.Certified`), and `Midfall.Generator.Certified.v3_cdBound` now proves the
+    fit from it. The candidate clause below is retained as the OUTPUT-side probe: it is the fit
+    stated on the render, and `cdBoundB_of_candidate` keeps the bridge to `programOkB`. It is no
+    longer an assumed clause.
 
-  `CdBoundCandidate` remains a candidate clause, NOT an edit to `SupportedInput`: the structure of
-  record is `Midfall.Generator.Certified.SupportedInput`, unchanged. `PlanMetaStable` is now
-  derived, not assumed (`planMetaStable_of_generated`), and `planMeta_of_stable` keeps the
-  sufficiency direction certified.
+  `SupportedInput` HAS changed (D-GATE11's `countBound`); `CdBoundCandidate` itself is not a field
+  of it. `PlanMetaStable` is derived, not assumed (`planMetaStable_of_generated`), and
+  `planMeta_of_stable` keeps the sufficiency direction certified.
 -/
 import Midfall.Generator.Certified
 set_option autoImplicit false
@@ -95,8 +93,9 @@ theorem planMetaStable_of_generated {R : Render p G₁ G₂ Gₜ}
 
 /-! ## v3_cdBound: the output fit, and its Bool face -/
 
-/-- **CANDIDATE CLAUSE for `v3_cdBound`.** Output-side by construction: `proofEnd` is computed by
-    `fromProtocol` from the circuit's counts, which `SupportedInput` does not bound. -/
+/-- **OUTPUT-SIDE FORM of `v3_cdBound`.** The fit stated on the render rather than on the input.
+    D-GATE11 proves the `Prop` from `SupportedInput.countBound`; this structure and its bridge are
+    retained because output-side statements (e.g. the entry frame) consume the fit directly. -/
 structure CdBoundCandidate (R : Render p G₁ G₂ Gₜ) : Prop where
   bound : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 256
 
