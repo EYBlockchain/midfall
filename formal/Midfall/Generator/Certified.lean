@@ -3089,6 +3089,41 @@ theorem batchInvertScratchFits_of_generated {gi : GenInput p G₁ G₂ Gₜ} {o 
   rw [hbatch]
   omega
 
+/-- **D-GATE16 corollary: the generated build's stack fits the payload reservation.** The
+    generated-build stack clause (`SupportedInput.stackBound`) and `build_bytes_size_le` together
+    give `build.maxStack ≤ 32 * vk.quotientProgramWords`, the bound `quotientStackWordsForBuild`
+    consumes. PROVED. -/
+theorem generated_build_stack_words_le {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut}
+    (hg : Generates gi o) (hs : SupportedInput gi) :
+    ∀ b, quotientBuildOf (renderOf gi o).plan = some b →
+      b.maxStack ≤ 32 * (renderOf gi o).plan.vk.quotientProgramWords := by
+  obtain ⟨rawMeta, plan, hraw, hpl, hp⟩ :=
+    Midfall.LoweringV3.MemoryPairs.plan_of_generated (generated_of hg)
+  obtain ⟨q, _memory, _vkMptr, _constOff, _progOff, _meta2, _config,
+    hq, _hmem, _hnew, _hco, _hpo, _hfit, hvg, _hcm, _hsm, _hguards⟩ :=
+    Midfall.LoweringV3.MemoryPairs.newFromVk_windows Features.solidity
+      (frFieldCtx gi.E.delta) gi.vk.cs rawMeta gi.cfg.numInstances gi.cfg.accumulator
+      (renderOf gi o).plan.vk plan hpl
+  intro b hb
+  have hp' : o.out.plan = plan := by simpa [renderOf] using hp
+  have hbq : b = q.build := by
+    have hb' : Option.map (fun q => q.build) plan.quotient = some b := by
+      simp only [renderOf] at hb
+      rw [hp'] at hb
+      exact hb
+    rw [hq] at hb'
+    exact (Option.some.inj (by simpa using hb')).symm
+  subst hbq
+  have hstack := hs.stackBound o hg q.build (by
+    change quotientBuildOf (renderOf gi o).plan = some q.build
+    simpa [quotientBuildOf, renderOf, hp'] using (show quotientBuildOf plan = some q.build by
+      unfold quotientBuildOf
+      rw [hq]
+      rfl))
+  have hbytes := build_bytes_size_le plan.vk q.build (by
+    simpa [← hp] using hvg)
+  simpa [renderOf, hp'] using Nat.le_trans hstack hbytes
+
 /-- D-CERT1 / CERT.6: the address-fit invariant (D-QVM1), VK window and quotient interpreter.
 
     D-GATE11 reduced the `v3_cdBound` half, the point-set census, and `batchInvertScratchFits`

@@ -270,7 +270,9 @@ stack clause: for every successful output, the plan's quotient build satisfies
 `build.bytes` is compacted, so this is not a builder-state invariant (`pushStackAcct` emits no
 byte). The clause is an input predicate over the generator's own outputs; F1 witnesses its
 concrete content (`CertMeasure.f1StackOk_true`, `native_decide`). The quotient byte size is
-already proved from `vkCarriesBuild` (`build_bytes_size_le`).
+already proved from `vkCarriesBuild` (`build_bytes_size_le`), and
+`generated_build_stack_words_le` combines it with the stack clause:
+`build.maxStack ≤ 32 * vk.quotientProgramWords` for the generated plan.
 
 **D-GATE14 (signed, 2026-11-23)**: `WellFormed` gains `fixedSelectorBound :
 numSimpleSelectors ≤ numFixedColumns`, the `readFixedEvals` no-throw precondition needed by the
