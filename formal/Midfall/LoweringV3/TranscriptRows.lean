@@ -4025,6 +4025,110 @@ theorem runsAll_parseTraceAdviceBlock (E : VerifierEnv p G₁ G₂ Gₜ)
   rw [List.append_nil] at hb
   simpa only [f] using hb.toRunsAll
 
+def lookupChunkNum (deg : Nat) (l : LogupBatchedArgument (Fr p)) : Nat :=
+  match l.chunkByDegree deg with
+  | .ok c => c.numChunks
+  | .error _ => 0
+
+def ledgerPairs (row : Array (Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p))) : Nat :=
+  (row.toList.map (fun p => p.2.numChunks + 1)).sum
+
+def ledgerRows (rows : Array (Array (Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p)))) : Nat :=
+  (rows.toList.map ledgerPairs).sum
+
+theorem ledgerPairs_push (row : Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p))) (x : Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)) :
+    ledgerPairs (row.push x) = ledgerPairs row + (x.2.numChunks + 1) := by
+  unfold ledgerPairs
+  rw [Array.toList_push, List.map_append, List.sum_append]
+  simp
+
+theorem ledgerRows_push (rows : Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) (row : Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p))) :
+    ledgerRows (rows.push row) = ledgerRows rows + ledgerPairs row := by
+  unfold ledgerRows
+  rw [Array.toList_push, List.map_append, List.sum_append]
+  simp
+
+theorem chunkNum_eq (deg : Nat) (l : LogupBatchedArgument (Fr p))
+    (c : LogupChunkedArgument (Fr p)) (hc : l.chunkByDegree deg = .ok c) :
+    c.numChunks = lookupChunkNum deg l := by
+  unfold lookupChunkNum
+  rw [hc]
+
+theorem runsAllP_lookupMultiplicities_fold (E : VerifierEnv p G₁ G₂ Gₜ)
+    (deg : Nat) :
+    ∀ (ls : List (LogupBatchedArgument (Fr p)))
+      (acc : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+      (Qs : List G₁),
+      (∀ l ∈ ls, ∃ c, l.chunkByDegree deg = .ok c) →
+      Qs.length = ls.length →
+      RunsAllP E (ls.foldlM (init := acc) fun acc' l => do
+          let chunked ← StateT.lift (l.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc'.push (m, chunked))) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun row => ledgerPairs row = ledgerPairs acc +
+          (ls.map (fun l => lookupChunkNum deg l + 1)).sum) := by
+  intro ls
+  induction ls with
+  | nil =>
+      intro acc Qs hs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      refine RunsAllP.pure E acc _ ?_
+      simp
+  | cons l ls ih =>
+      intro acc Qs hs hlen
+      obtain ⟨Q, Qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      obtain ⟨c, hc⟩ := hs l (by simp)
+      rw [List.foldlM_cons]
+      have hhead : RunsAllP E
+          ((fun acc => do
+            let chunked ← StateT.lift (l.chunkByDegree deg)
+            let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+            pure (acc.push (m, chunked))) acc)
+          ([Msg.g1 Q] : List (Msg (Fr p) G₁))
+          (fun row => ledgerPairs row = ledgerPairs acc + (lookupChunkNum deg l + 1)) := by
+        have hstep := RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+          (ms₂ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (RunsAllP.lift_ok E c (fun chunked => l.chunkByDegree deg = .ok chunked) hc)
+          (fun chunked hchunked =>
+            RunsAllP.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁))) (ms₂ := [])
+              (RunsAll.toRunsAllP E (runsAll_logup_readMultiplicities E chunked Q))
+              (fun m _ => RunsAllP.pure E (acc.push (m, chunked))
+                (fun row => ledgerPairs row = ledgerPairs acc + (lookupChunkNum deg l + 1))
+                (by
+                  rw [ledgerPairs_push, chunkNum_eq deg l chunked hchunked])))
+        simpa only [List.nil_append, hc] using hstep
+      have hb : RunsAllP E
+          ((fun acc => do
+            let chunked ← StateT.lift (l.chunkByDegree deg)
+            let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+            pure (acc.push (m, chunked))) acc >>= fun acc' =>
+              ls.foldlM (init := acc') fun acc' l => do
+                let chunked ← StateT.lift (l.chunkByDegree deg)
+                let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+                pure (acc'.push (m, chunked)))
+          ([Msg.g1 Q] ++ Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (fun row => ∃ acc', ledgerPairs acc' = ledgerPairs acc +
+              (lookupChunkNum deg l + 1) ∧
+            ledgerPairs row = ledgerPairs acc' +
+              (ls.map (fun l => lookupChunkNum deg l + 1)).sum) :=
+        RunsAllP.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (ms₂ := Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          hhead (fun acc' hacc' => by
+            have hb2 := ih acc' Qs' (fun l' hl' => hs l' (by simp [hl'])) (by simpa using hlen)
+            exact RunsAllP.mono E hb2 (fun row hrow => ⟨acc', hacc', hrow⟩))
+      refine RunsAllP.mono E hb ?_
+      intro row hrow
+      obtain ⟨acc', hacc', hrow'⟩ := hrow
+      rw [hrow', hacc', List.map_cons, List.sum_cons]
+      omega
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -6106,6 +6210,13 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhases_cover_all [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_adviceScatter [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceAdviceBlock [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.lookupChunkNum [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.ledgerPairs [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.ledgerRows [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.ledgerPairs_push [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.ledgerRows_push [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.chunkNum_eq [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
