@@ -1994,6 +1994,57 @@ theorem runsAll_parseTraceLookupMultiplicities_one (E : VerifierEnv p G₁ G₂ 
   rw [List.append_nil] at hb
   exact hb
 
+/-! #### D-GATE12 - the clause spent
+
+`WellFormed.lookupChunkable` is the exact success+nonzero form; these two lemmas turn it into the
+success of `nbParallelLookupsPerChunk` and of `chunkByDegree` itself, and the multiplicity run then
+drops its hypothesis. -/
+
+/-- **D-GATE12, EXISTENTIAL FORM.** The decidable clause gives the `∃ nb` with `0 < nb`. -/
+theorem nbParallelLookupsPerChunk_ok_of_wf {vk : VerifyingKey (Fr p) G₁}
+    (hf : vk.WellFormed Features.solidity) {l : LogupBatchedArgument (Fr p)}
+    (hl : l ∈ vk.cs.lookups.toList) :
+    ∃ nb, l.nbParallelLookupsPerChunk vk.csDegree = .ok nb ∧ 0 < nb := by
+  have h := hf.lookupChunkable l hl
+  cases hb : l.nbParallelLookupsPerChunk vk.csDegree with
+  | error e => rw [hb] at h; cases h
+  | ok nb =>
+      rw [hb] at h
+      exact ⟨nb, rfl, of_decide_eq_true h⟩
+
+/-- `rustChunks` succeeds exactly when the chunk count is nonzero (`logup.rs:329` panics at zero). -/
+theorem rustChunks_ok {α : Type} (n : Nat) (hn : 0 < n) (site : String) (xs : Array α) :
+    ∃ ys, rustChunks n site xs = .ok ys := by
+  unfold rustChunks
+  rw [if_neg (Nat.ne_of_gt hn)]
+  exact ⟨_, rfl⟩
+
+/-- **`chunkByDegree` SUCCEEDS AT EVERY LOOKUP OF A WELL-FORMED KEY.** Both panic sites are
+    excluded: the zero input degree by the `nbParallelLookupsPerChunk` success, the zero chunk
+    count by its positivity. -/
+theorem chunkByDegree_ok_of_wf {vk : VerifyingKey (Fr p) G₁}
+    (hf : vk.WellFormed Features.solidity) {l : LogupBatchedArgument (Fr p)}
+    (hl : l ∈ vk.cs.lookups.toList) :
+    ∃ c, l.chunkByDegree vk.csDegree = .ok c := by
+  obtain ⟨nb, hnb, hpos⟩ := nbParallelLookupsPerChunk_ok_of_wf hf hl
+  unfold LogupBatchedArgument.chunkByDegree
+  rw [hnb]
+  simp only [Except.bind, bind, Except.pure, pure]
+  obtain ⟨ys, hys⟩ := rustChunks_ok nb hpos _ l.inputExpressions
+  rw [hys]
+  exact ⟨_, rfl⟩
+
+/-- **THE MULTIPLICITY RUN, UNCONDITIONAL.** Same statement as
+    `runsAll_parseTraceLookupMultiplicities_one`, with the chunkability hypothesis discharged by
+    `WellFormed.lookupChunkable`. -/
+theorem runsAll_parseTraceLookupMultiplicities_one_of_wf (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (Qs : List G₁) (hlen : Qs.length = vk.cs.lookups.size) :
+    RunsAll E (parseTraceLookupMultiplicities E vk 1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) :=
+  runsAll_parseTraceLookupMultiplicities_one E vk
+    (fun l hl => chunkByDegree_ok_of_wf hf hl) Qs hlen
+
 theorem runsAll_logup_readCommitment (E : VerifierEnv p G₁ G₂ Gₜ)
     (cm : Logup.CommittedMultiplicities G₁) (n : Nat) (Qs : List G₁)
     (hlen : Qs.length = n + 1) :
@@ -2256,6 +2307,131 @@ theorem runsAll_parseTraceAdvicePhases_one (E : VerifierEnv p G₁ G₂ Gₜ)
     RunsAll E (parseTraceAdvicePhases E vk)
       (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) :=
   runsAll_parseTraceAdvicePhases E vk hsp vk.cs.phases _ Qs hlen
+
+theorem runsAll_fmap (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    {m : TranscriptM α} {f : α → β} {ms : List (Msg (Fr p) G₁)}
+    (hm : RunsAll E m ms) :
+    RunsAll E (f <$> m) ms := by
+  have hb := RunsAll.bind E (ms₁ := ms) (ms₂ := []) hm (fun a => RunsAll.pure E (f a))
+  rw [List.append_nil] at hb
+  exact hb
+
+theorem runsAll_hashInto (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁) :
+    RunsAll E vk.hashInto [] := by
+  show RunsAll E (tmCommon hashableFr vk.transcriptRepr) []
+  exact RunsAll.common E hashableFr _
+
+theorem runsAll_tmCommon_yield (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type}
+    (h : Midfall.Halo2.Hashable T) (x : T) (b : PUnit) :
+    RunsAll E (do tmCommon h x; pure (ForInStep.yield b)) [] := by
+  show RunsAll E (tmCommon h x >>= fun _ => pure (ForInStep.yield b)) []
+  exact RunsAll.bind E (RunsAll.common E h x) (fun _ => RunsAll.pure E _)
+
+theorem runsAll_fold_forIn (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} :
+    ∀ (xs : List α) (g : α → β → TranscriptM (ForInStep β)),
+      (∀ a b, RunsAll E (g a b) []) →
+      ∀ (init : ForInStep β),
+        RunsAll E (xs.foldlM (fun b a =>
+          match b with
+          | .yield b => g a b
+          | .done b => (pure (.done b) : TranscriptM (ForInStep β))) init) [] := by
+  intro xs
+  induction xs with
+  | nil =>
+      intro g hg init
+      simpa only [List.foldlM_nil] using RunsAll.pure E init
+  | cons a as ih =>
+      intro g hg init
+      rw [List.foldlM_cons]
+      cases init with
+      | done b =>
+          have hb : RunsAll E ((match (ForInStep.done b : ForInStep β) with
+              | .yield b => g a b
+              | .done b => (pure (.done b) : TranscriptM (ForInStep β)))) [] := by
+            exact RunsAll.pure E _
+          refine RunsAll.bind E hb (fun step => ?_)
+          exact ih g hg step
+      | yield b =>
+          refine RunsAll.bind E (hg a b) (fun step => ?_)
+          exact ih g hg step
+
+theorem runsAll_list_forIn_nil (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    (xs : List α) (init : β) (g : α → β → TranscriptM (ForInStep β))
+    (hg : ∀ a b, RunsAll E (g a b) []) :
+    RunsAll E (forIn xs init g) [] := by
+  rw [List.forIn_eq_foldlM]
+  exact runsAll_fmap E (runsAll_fold_forIn E xs g hg (.yield init))
+
+theorem runsAll_array_forIn_nil (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    (xs : Array α) (init : β) (g : α → β → TranscriptM (ForInStep β))
+    (hg : ∀ a b, RunsAll E (g a b) []) :
+    RunsAll E (forIn xs init g) [] := by
+  rw [← Array.forIn_toList]
+  exact runsAll_list_forIn_nil E xs.toList init g hg
+
+theorem runsAll_absorb_g1_row (E : VerifierEnv p G₁ G₂ Gₜ) (Qs : Array G₁) :
+    RunsAll E (forIn Qs PUnit.unit fun com __s => do
+        tmCommon (hashableG1 E.g1) com
+        pure (ForInStep.yield PUnit.unit)) [] :=
+  runsAll_array_forIn_nil E Qs PUnit.unit _ (fun com _ => runsAll_tmCommon_yield E _ com _)
+
+theorem runsAll_absorb_committed (E : VerifierEnv p G₁ G₂ Gₜ) (rows : Array (Array G₁)) :
+    RunsAll E (forIn rows PUnit.unit fun row __s => do
+        forIn row PUnit.unit fun com __s => do
+          tmCommon (hashableG1 E.g1) com
+          pure (ForInStep.yield PUnit.unit)
+        pure (ForInStep.yield PUnit.unit)) [] :=
+  runsAll_array_forIn_nil E rows PUnit.unit _ (fun row _ => by
+    show RunsAll E ((forIn row PUnit.unit fun com __s => do
+        tmCommon (hashableG1 E.g1) com
+        pure (ForInStep.yield PUnit.unit)) >>= fun _ => pure (ForInStep.yield PUnit.unit)) []
+    exact RunsAll.bind E (runsAll_absorb_g1_row E row)
+      (fun _ => RunsAll.pure E _))
+
+theorem runsAll_absorb_fr_row (E : VerifierEnv p G₁ G₂ Gₜ) (xs : Array (Fr p)) :
+    RunsAll E (forIn xs PUnit.unit fun v __s => do
+        tmCommon (hashableFr (p := p)) v
+        pure (ForInStep.yield PUnit.unit)) [] :=
+  runsAll_array_forIn_nil E xs PUnit.unit _ (fun v _ => runsAll_tmCommon_yield E _ v _)
+
+theorem runsAll_absorb_instance_col (E : VerifierEnv p G₁ G₂ Gₜ) (col : Array (Fr p)) :
+    RunsAll E (forIn col PUnit.unit fun v __s => do
+        tmCommon (hashableFr (p := p)) v
+        pure (ForInStep.yield PUnit.unit)) [] :=
+  runsAll_array_forIn_nil E col PUnit.unit _ (fun v _ => runsAll_tmCommon_yield E _ v _)
+
+theorem runsAll_absorb_instance_body (E : VerifierEnv p G₁ G₂ Gₜ) (col : Array (Fr p)) :
+    RunsAll E (do
+        tmCommon (hashableFr (p := p)) (Nat.cast col.size : Fr p)
+        forIn col PUnit.unit fun v __s => do
+          tmCommon (hashableFr (p := p)) v
+          pure (ForInStep.yield PUnit.unit)
+        pure (ForInStep.yield PUnit.unit)) [] := by
+  have hb := RunsAll.bind E (ms₁ := []) (ms₂ := [])
+    (RunsAll.common E (hashableFr (p := p)) (Nat.cast col.size : Fr p))
+    (fun _ => RunsAll.bind E (ms₁ := []) (ms₂ := [])
+      (runsAll_absorb_instance_col E col)
+      (fun _ => RunsAll.pure E (ForInStep.yield PUnit.unit)))
+  rw [List.append_nil] at hb
+  exact hb
+
+theorem runsAll_absorb_instance (E : VerifierEnv p G₁ G₂ Gₜ)
+    (rows : Array (Array (Array (Fr p)))) :
+    RunsAll E (forIn rows PUnit.unit fun row __s => do
+        forIn row PUnit.unit fun col __s => do
+          tmCommon (hashableFr (p := p)) (Nat.cast col.size)
+          forIn col PUnit.unit fun v __s => do
+            tmCommon (hashableFr (p := p)) v
+            pure (ForInStep.yield PUnit.unit)
+          pure (ForInStep.yield PUnit.unit)
+        pure (ForInStep.yield PUnit.unit)) [] :=
+  runsAll_array_forIn_nil E rows PUnit.unit _ (fun row _ => by
+    have hb := RunsAll.bind E (ms₁ := []) (ms₂ := [])
+      (runsAll_array_forIn_nil E row PUnit.unit _
+        (fun col _ => runsAll_absorb_instance_body E col))
+      (fun _ => RunsAll.pure E (ForInStep.yield PUnit.unit))
+    rw [List.append_nil] at hb
+    exact hb)
 
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
@@ -4138,6 +4314,14 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_logup_readMultiplicities [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupMultiplicities_fold [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.nbParallelLookupsPerChunk_ok_of_wf [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.rustChunks_ok [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.chunkByDegree_ok_of_wf [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_hashInto [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_absorb_committed [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_absorb_instance [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_logup_readCommitment [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupCommitments_row [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupCommitments_rows [propext, Classical.choice, Quot.sound] native []
