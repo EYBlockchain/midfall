@@ -1896,6 +1896,104 @@ theorem runsAll_parseTracePermutations_one (E : VerifierEnv p G₁ G₂ Gₜ)
   rw [List.append_nil] at hb
   exact hb
 
+
+/-- `Logup.readMultiplicities` is one G1 read followed by a pure record. -/
+theorem runsAll_logup_readMultiplicities (E : VerifierEnv p G₁ G₂ Gₜ)
+    (chunked : LogupChunkedArgument (Fr p)) (Q : G₁) :
+    RunsAll E (Logup.readMultiplicities chunked (hashableG1 E.g1))
+      ([Msg.g1 Q] : List (Msg (Fr p) G₁)) := by
+  show RunsAll E ((Midfall.Halo2.tmRead (hashableG1 E.g1)) >>= fun c =>
+    (pure { multiplicities := c } : TranscriptM (Logup.CommittedMultiplicities G₁)))
+    ([Msg.g1 Q] : List (Msg (Fr p) G₁))
+  exact RunsAll.bind E (runsAll_read_g1 E Q) (fun _ => RunsAll.pure E _)
+
+/-- The lookup-multiplicity fragment of `parseTrace`, verbatim: chunk, then one G1 read per lookup,
+    per proof. -/
+def parseTraceLookupMultiplicities (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (numProofs : Nat) :
+    TranscriptM (Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) :=
+  (List.range numProofs).foldlM
+    (init := #[]) fun acc _ => do
+      let row ← vk.cs.lookups.toList.foldlM (init := #[]) fun acc' l => do
+        let chunked ← StateT.lift (l.chunkByDegree vk.csDegree)
+        let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+        pure (acc'.push (m, chunked))
+      pure (acc.push row)
+
+/-- The inner lookup fold: one G1 read per lookup, GIVEN that each lookup chunks successfully.
+    `chunkByDegree` is not total: `logup.rs:237` panics when a lookup's input degree is `0`, and
+    `rustChunks` panics when the chunk count is `0`. `WellFormed` does NOT pin either, so this is
+    the first genuinely missing static fact of the walk, stated as the exact success hypothesis. -/
+theorem runsAll_lookupMultiplicities_fold (E : VerifierEnv p G₁ G₂ Gₜ)
+    (deg : Nat) :
+    ∀ (ls : List (LogupBatchedArgument (Fr p)))
+      (acc : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+      (Qs : List G₁),
+      (∀ l ∈ ls, ∃ c, l.chunkByDegree deg = .ok c) →
+      Qs.length = ls.length →
+      RunsAll E (ls.foldlM (init := acc) fun acc' l => do
+          let chunked ← StateT.lift (l.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc'.push (m, chunked))) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  intro ls
+  induction ls with
+  | nil =>
+      intro acc Qs hs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      simpa only [List.foldlM_nil, List.map_nil] using RunsAll.pure E acc
+  | cons l ls ih =>
+      intro acc Qs hs hlen
+      obtain ⟨Q, Qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      obtain ⟨c, hc⟩ := hs l (by simp)
+      rw [List.foldlM_cons]
+      have hlift : RunsAll E ((fun acc => do
+          let chunked ← StateT.lift (l.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc.push (m, chunked))) acc) ([Msg.g1 Q] : List (Msg (Fr p) G₁)) := by
+        have hb := RunsAll.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+          (ms₂ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (RunsAll.lift_ok E c) (fun chunked =>
+            RunsAll.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁))) (ms₂ := [])
+              (runsAll_logup_readMultiplicities E chunked Q)
+              (fun m => RunsAll.pure E (acc.push (m, chunked))))
+        rw [List.nil_append] at hb
+        simpa only [hc] using hb
+      have hb := RunsAll.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+        (ms₂ := Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        hlift (fun init => ih init Qs' (fun l' hl' => hs l' (by simp [hl'])) (by simpa using hlen))
+      exact hb
+
+/-- **THE LOOKUP-MULTIPLICITY RUN.** At the deployed profile, `parseTrace`'s multiplicity pass
+    reads one G1 commitment per lookup, in order. The chunkability hypothesis is the static fact
+    `WellFormed` does not carry (see `runsAll_lookupMultiplicities_fold`). -/
+theorem runsAll_parseTraceLookupMultiplicities_one (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (Qs : List G₁) (hlen : Qs.length = vk.cs.lookups.size) :
+    RunsAll E (parseTraceLookupMultiplicities E vk 1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  rw [parseTraceLookupMultiplicities]
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil]
+  have hA : RunsAll E
+      ((fun acc => do
+        let row ← vk.cs.lookups.toList.foldlM (init := #[]) fun acc' l => do
+          let chunked ← StateT.lift (l.chunkByDegree vk.csDegree)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc'.push (m, chunked))
+        pure (acc.push row)) #[])
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+    have hb := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+      (runsAll_lookupMultiplicities_fold E vk.csDegree vk.cs.lookups.toList #[] Qs hs hlen)
+      (fun row => RunsAll.pure E (#[].push row))
+    rw [List.append_nil] at hb
+    exact hb
+  have hb := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+    hA (fun acc => RunsAll.pure E acc)
+  rw [List.append_nil] at hb
+  exact hb
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -3774,6 +3872,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_tmReadN_g1 [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_perm_readProductCommitments [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTracePermutations_one [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_logup_readMultiplicities [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupMultiplicities_fold [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_at [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_of_algebraRun [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_at [propext, Classical.choice, Quot.sound] native []
