@@ -60,7 +60,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Generator.Certified.v3_exitDiscipline | Midfall.Generator.Certified | theorem | OPEN | - | `1fd03addccdcce61` | V3 CERT.5 - exit-scan lemma per emitter |
 | Midfall.Generator.Certified.v3_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `3fceb6a2ff594db0` | V3 CERT.5 - top-level binder scan, as prog_noShadow |
 | Midfall.Generator.Certified.v3_pins_of_valid | Midfall.Generator.Certified | theorem | OPEN | - | `8649414d6a6af241` | V3 CERT.6 - the pin bundles are consequences of the one ValidV3, not of generation |
-| Midfall.Generator.Certified.v3_planMeta | Midfall.Generator.Certified | theorem | OPEN | - | `9f526c3d549e8a4d` | V3 CERT.1 probe - NEEDS CLAUSE: Data.new gets the FINAL memory in the port, the pre-point-set memory in Rust; candidate stability clause in Instances/CertProbes.lean |
 | Midfall.Halo2.Spec.accepts | Midfall.Halo2.Spec.Piop | def | OPEN | - | `6db1418cbda599b6` | Phase 4 (spec layer) |
 | Midfall.Instances.PoseidonV2.poseidon_quotient_block | Midfall.Instances.PoseidonV2 | theorem | OPEN | - | `f2571a03d4164a52` | V3 ROW.Q - the quotient row: the one block the generic hinge does not cover |
 | Midfall.Instances.PoseidonV2.poseidon_rejects | Midfall.Instances.PoseidonV2 | theorem | OPEN | - | `3e7a72dcd164821a` | V3 PL.H via rejectsV3_of_rows - V2 C.3 staged rejection contracts |

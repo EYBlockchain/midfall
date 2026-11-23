@@ -1799,6 +1799,157 @@ private theorem meta_except_bind_ok {ε α β : Type} {x : Except ε α}
   | error e => cases h
   | ok a => exact ⟨a, rfl, h⟩
 
+/-! ### `meta_data_for_vk`'s three passes, decomposed (CERT.1)
+
+  `PlanMeta` (`LoweringV3/Statements.lean:595`) asks for `Data.new meta1 vk plan.memory`, where
+  `plan.memory` is the FINAL layout (`plan.rs:259-270`, PCS/quotient config, meta after
+  `set_num_point_sets`). `meta_data_for_vk` builds its `Data` against the SECOND layout
+  (`vk.rs:512-514`, default config, meta before `set_num_point_sets`). The two layouts are not
+  syntactically equal, so the equation is not a rewrite; `LayoutMemory`'s
+  `new_dataBases_setNumPointSets` supplies the ten pointer equalities `Data.new` actually reads.
+  The lemmas below peel the three passes so that the stability fact can be applied to the real
+  bind chain instead of a hand-written one. -/
+
+/-- `memoryLayoutFor` returns the concrete constructor: it fills `transcriptWords` and
+    `numInstances` and calls `env.newVerifierMemoryLayout`, which `envOf` spells
+    `VerifierMemoryLayout.new`. PROVED. -/
+theorem memoryLayoutFor_new (env : VkBuildEnv Plan) (meta_ : ConstraintSystemMeta)
+    (numInstances : Nat) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    (config : VerifierMemoryLayoutConfig) {mem : VerifierMemoryLayout}
+    (h : memoryLayoutFor env meta_ numInstances vk vkMptr config = .ok mem) :
+    ∃ cfg' : VerifierMemoryLayoutConfig,
+      mem = env.newVerifierMemoryLayout meta_ vk vkMptr cfg' := by
+  unfold memoryLayoutFor at h
+  simp only [Bind.bind] at h
+  obtain ⟨t, _, h1⟩ := meta_except_bind_ok h
+  let cfg' : VerifierMemoryLayoutConfig :=
+    { transcriptWords := t.words, numInstances := numInstances,
+      quotientStateWords := config.quotientStateWords,
+      quotientStackWords := config.quotientStackWords,
+      accMsmTerms := config.accMsmTerms, pcs := config.pcs }
+  exact ⟨cfg', (Except.ok.inj h1).symm⟩
+
+/-- **`meta_data_for_vk` AT `Features.solidity` (VK:474-523).** With `outer-fewer-point-sets`
+    off the dummy-eval count is the literal `0` (VK:507-509), so the meta the `Data` is built
+    from is `meta_.setNumDummyEvals 0`; the returned meta is that value after
+    `setNumPointSets n` (VK:519-522), the returned data is the SECOND pass's `Data.new`, and the
+    second and third layouts are the concrete constructor on those two metas. Every fact
+    `PlanMeta` needs except the layout-stability equation is exposed here. PROVED. -/
+theorem metaDataForVk_parts (feat : Features) (env : VkBuildEnv Plan)
+    (m : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    (hfew : feat.outerFewerPointSets = false)
+    {meta' : ConstraintSystemMeta} {dat : Data} {mem : VerifierMemoryLayout}
+    (h : metaDataForVk feat env m numInstances vk vkMptr = .ok (meta', dat, mem)) :
+    ∃ (rawMemory memory : VerifierMemoryLayout) (rawData data0 : Data) (n : Nat),
+      memoryLayoutFor env m numInstances vk vkMptr
+          verifierMemoryLayoutConfigDefault = .ok rawMemory ∧
+      Data.new m vk rawMemory = .ok rawData ∧
+      memoryLayoutFor env (m.setNumDummyEvals 0) numInstances vk vkMptr
+          verifierMemoryLayoutConfigDefault = .ok memory ∧
+      Data.new (m.setNumDummyEvals 0) vk memory = .ok data0 ∧
+      dat = data0 ∧
+      numPointSets (m.setNumDummyEvals 0) dat = .ok n ∧
+      meta' = (m.setNumDummyEvals 0).setNumPointSets n ∧
+      memoryLayoutFor env meta' numInstances vk vkMptr
+          verifierMemoryLayoutConfigDefault = .ok mem := by
+  unfold metaDataForVk at h
+  simp only [Bind.bind, hfew, Bool.false_eq_true, ite_false] at h
+  obtain ⟨rawMemory, hrm, h1⟩ := meta_except_bind_ok h
+  obtain ⟨rawData, hrd, h2⟩ := meta_except_bind_ok h1
+  obtain ⟨nDummy, hnd, h3⟩ := meta_except_bind_ok h2
+  cases hnd
+  obtain ⟨memory, hmem, h4⟩ := meta_except_bind_ok h3
+  obtain ⟨data0, hdata0, h5⟩ := meta_except_bind_ok h4
+  simp only [Nat.lt_irrefl, ite_false] at h5
+  obtain ⟨n, hn, h6⟩ := meta_except_bind_ok h5
+  obtain ⟨memory2, hmem2, h7⟩ := meta_except_bind_ok h6
+  have hval : ((m.setNumDummyEvals 0).setNumPointSets n, data0, memory2) = (meta', dat, mem) :=
+    Except.ok.inj h7
+  simp only [Prod.mk.injEq] at hval
+  obtain ⟨hmeta', hdat', hmem'⟩ := hval
+  exact ⟨rawMemory, memory, rawData, data0, n, hrm, hrd, hmem, hdata0, hdat'.symm, by
+      rw [← hdat']; exact hn, hmeta'.symm, by rw [← hmem', ← hmeta']; exact hmem2⟩
+
+/-- One stabilisation step: if it settles, its witness is `metaDataForVk` at the pointer
+    stored in the step's state (`VK:537-544` returns `(vk_mptr, metaOut, data, memory)`). -/
+theorem metaDataReservationStep_metaDataForVk {feat : Features} {env : VkBuildEnv Plan}
+    {meta_ : ConstraintSystemMeta} {numInstances : Nat} {vk : Halo2VerifyingKey}
+    {st st' : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr}
+    (x : Nat) (h : metaDataReservationStep feat env meta_ numInstances vk st x = .ok st')
+    (hinv : ∀ r, st.1 = some r →
+      metaDataForVk feat env meta_ numInstances vk r.1 = .ok (r.2.1, r.2.2.1, r.2.2.2)) :
+    ∀ r, st'.1 = some r →
+      metaDataForVk feat env meta_ numInstances vk r.1 = .ok (r.2.1, r.2.2.1, r.2.2.2) := by
+  unfold metaDataReservationStep at h
+  by_cases hb : st.1.isSome
+  · simp only [hb, ite_true] at h
+    cases h
+    exact hinv
+  · simp only [hb, ite_false, Bool.false_eq_true] at h
+    obtain ⟨md, hmd, h⟩ := meta_except_bind_ok h
+    obtain ⟨_planned, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_cur, _, h⟩ := meta_except_bind_ok h
+    split at h
+    · cases h
+      intro r hr
+      simp only [Option.some.injEq] at hr
+      obtain ⟨rfl, rfl⟩ := hr
+      exact hmd
+    · cases h
+      intro r hr
+      simp at hr
+
+/-- The stabilisation fold keeps the witness property: a settled result is `metaDataForVk`
+    at its own pointer. -/
+theorem foldlM_metaDataReservationStep_metaDataForVk (l : List Nat)
+    {feat : Features} {env : VkBuildEnv Plan}
+    {meta_ : ConstraintSystemMeta} {numInstances : Nat} {vk : Halo2VerifyingKey}
+    (st st' : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr)
+    (h : l.foldlM (metaDataReservationStep feat env meta_ numInstances vk) st = .ok st')
+    (hinv : ∀ r, st.1 = some r →
+      metaDataForVk feat env meta_ numInstances vk r.1 = .ok (r.2.1, r.2.2.1, r.2.2.2)) :
+    ∀ r, st'.1 = some r →
+      metaDataForVk feat env meta_ numInstances vk r.1 = .ok (r.2.1, r.2.2.1, r.2.2.2) := by
+  induction l generalizing st with
+  | nil =>
+      change Except.ok st = Except.ok st' at h
+      injection h with hst
+      subst hst
+      exact hinv
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : metaDataReservationStep feat env meta_ numInstances vk st x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          exact ih s1 h (metaDataReservationStep_metaDataForVk x hs hinv)
+
+/-- **THE INTERMEDIATE Layout AND THE FINAL ONE COME FROM ONE `meta_data_for_vk` CALL.**
+    `meta_data_for_stable_static_layout` (VK:525-547) only iterates `meta_data_for_vk` with the
+    same `meta_`, so the tuple it returns is one call's result: the data and the meta are those
+    of the same two passes that built the plan's payload. This is what lets `PlanMeta`'s
+    `Data.new` equation be checked against a layout the constructor actually produced. PROVED. -/
+theorem metaDataForStableStaticLayout_metaDataForVk {feat : Features} {env : VkBuildEnv Plan}
+    {meta_ : ConstraintSystemMeta} {numInstances : Nat} {vk : Halo2VerifyingKey}
+    {vkMptr : Ptr} {metaOut : ConstraintSystemMeta} {dat : Data}
+    {memory : VerifierMemoryLayout}
+    (h : metaDataForStableStaticLayout feat env meta_ numInstances vk =
+      .ok (vkMptr, metaOut, dat, memory)) :
+    metaDataForVk feat env meta_ numInstances vk vkMptr = .ok (metaOut, dat, memory) := by
+  simp only [metaDataForStableStaticLayout] at h
+  obtain ⟨start, _, h⟩ := meta_except_bind_ok h
+  obtain ⟨⟨result, lastPtr⟩, hres, h⟩ := meta_except_bind_ok h
+  cases result with
+  | none =>
+      simp only at h
+      cases h
+  | some r =>
+      cases h
+      exact foldlM_metaDataReservationStep_metaDataForVk (List.range 3)
+        (none, ptrMemory (valueFromNat start))
+        (some (vkMptr, metaOut, dat, memory), lastPtr) hres
+        (by intro q hq; simp at hq) (vkMptr, metaOut, dat, memory) rfl
+
 /-- `metaDataForVk` changes `numEvals`, `numDummyEvals` and `numPointSets` only, so the
     rotation survives. PROVED. -/
 theorem metaDataForVk_rotationLast {feat : Features} {env : VkBuildEnv Plan}

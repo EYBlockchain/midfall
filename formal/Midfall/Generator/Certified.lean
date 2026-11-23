@@ -2139,9 +2139,21 @@ theorem supported_layout (hg : Generates gi o) (hs : SupportedInput gi) :
 
 /-! ### The 18-clause text lemmas (scratch section 5) -/
 
+/-- **CERT.1: THE PLAN META, CLOSED.** `PlanMeta` asks for
+    `Data.new meta1 vk R.plan.memory = .ok R.plan.data`, and the two sides come from DIFFERENT
+    layouts: the constructor's `Data` is built on `meta_data_for_vk`'s intermediate default-config
+    layout (VK:512-514, meta before `set_num_point_sets`), while `R.plan.memory` is the plan's
+    final layout (PL:259-270, PCS/quotient config, meta after it). The exact stability fact is
+    `LayoutMemory.new_dataBases_setNumPointSets`: `VerifierMemoryLayout::new` computes the ten
+    bases `Data.new` reads from `(vk_mptr, vk.len, challenge_indices.length, num_evals, the
+    commitment census)` only, none of which the point-set count changes, and the PCS overrides
+    only move regions allocated after the commitment run; `Data.new_congr` then transfers the
+    equation. `MemoryPairs.planMeta_of_generated` assembles the three-pass decomposition
+    (`metaDataForVk_parts`) and the stability step. The `SupportedInput` hypotheses are not needed:
+    the clause follows from generation alone. PROVED. -/
 theorem v3_planMeta (hg : Generates gi o) (hs : SupportedInput gi) :
-    Midfall.LoweringV3.PlanMeta (renderOf gi o) := by
-  sorry -- CERT.1 (suspect: final vs intermediate memory layout)
+    Midfall.LoweringV3.PlanMeta (renderOf gi o) :=
+  Midfall.LoweringV3.MemoryPairs.planMeta_of_generated (generated_of hg)
 
 /-- `newFromVk`'s plan carries the meta and proof layout its own second bind produced. PROVED. -/
 theorem newFromVk_plan_meta_proofLayout {F : Type} [BEq F] (feat : Features)
@@ -2509,6 +2521,10 @@ end Midfall.Generator.Certified
 #check @Midfall.Generator.Certified.generator_certified
 #check @Midfall.Generator.Certified.generator_correct_V3
 #print axioms Midfall.Generator.Certified.generate_spec
+#print axioms Midfall.Generator.Certified.v3_planMeta
+#assert_axioms Midfall.Generator.Certified.v3_planMeta
+  [propext, Classical.choice, Quot.sound] native []
+#cone_sorries Midfall.Generator.Certified.v3_planMeta
 #print axioms Midfall.Generator.Certified.generator_certified
 #print axioms Midfall.Generator.Certified.generator_correct_V3
 #cone_sorries Midfall.Generator.Certified.generator_certified
