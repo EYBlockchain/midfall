@@ -565,4 +565,140 @@ theorem readBytes_mem4_eq (mem4 : Nat → UInt8) (base : Nat → UInt8) (dst s1 
 #assert_axioms Midfall.LoweringV2.Blocks.EcPairing.readBytes_mem4_eq
   [propext, Classical.choice, Quot.sound] native []
 
+
+/-! ## Emitter-form guard helpers (the opaque `hv1`/`hv2` locals) -/
+
+def hv1Of {c : ExternalCalls} {g : ExternalGas} (resp : EVM.CallResponse) : U256 :=
+  ("ret", (resp.flag &&& b2w (decide (BitVec.ofNat 256 resp.returndata.length =
+    (Bridge.Dialect c g).litValue (Literal.number 32))))).2
+
+def hv2Of {c : ExternalCalls} {g : ExternalGas} (resp : EVM.CallResponse)
+    (st : EvmState) (scratch : Nat) : U256 :=
+  ("ret", (hv1Of (c := c) (g := g) resp &&& b2w (decide (loadWord st.memory scratch =
+    (Bridge.Dialect c g).litValue (Literal.number 1))))).2
+
+theorem success_of_hv1Of_guard {c : ExternalCalls} {g : ExternalGas}
+    {resp : EVM.CallResponse} (hv1 : U256)
+    (hdef : hv1 = hv1Of (c := c) (g := g) resp)
+    (h : b2w (decide (hv1 = 0)) = (Bridge.Dialect c g).zero) :
+    resp.success = true := by
+  rw [hdef] at h
+  unfold hv1Of at h
+  have h32 : (Bridge.Dialect c g).litValue (Literal.number 32) = (32 : U256) := wlit_val 32
+  have hz : (Bridge.Dialect c g).zero = (0 : U256) := by
+    show (Bridge.Dialect c g).litValue (Literal.number 0) = 0
+    exact wlit_val 0
+  rw [h32, hz] at h
+  exact success_of_flag_guard h
+
+theorem length_ge_of_hv1Of_guard {c : ExternalCalls} {g : ExternalGas}
+    {resp : EVM.CallResponse} (hv1 : U256)
+    (hdef : hv1 = hv1Of (c := c) (g := g) resp)
+    (h : b2w (decide (hv1 = 0)) = (Bridge.Dialect c g).zero) :
+    32 ≤ resp.returndata.length := by
+  rw [hdef] at h
+  unfold hv1Of at h
+  have h32 : (Bridge.Dialect c g).litValue (Literal.number 32) = (32 : U256) := wlit_val 32
+  have hz : (Bridge.Dialect c g).zero = (0 : U256) := by
+    show (Bridge.Dialect c g).litValue (Literal.number 0) = 0
+    exact wlit_val 0
+  rw [h32, hz] at h
+  exact length_ge_of_flag_guard_bv h
+
+theorem hv1_eq_of_hv1Of_guard {c : ExternalCalls} {g : ExternalGas}
+    {resp : EVM.CallResponse} (hv1 : U256)
+    (hdef : hv1 = hv1Of (c := c) (g := g) resp)
+    (h : b2w (decide (hv1 = 0)) = (Bridge.Dialect c g).zero) :
+    hv1Of (c := c) (g := g) resp = 1 := by
+  have h32 : (Bridge.Dialect c g).litValue (Literal.number 32) = (32 : U256) := wlit_val 32
+  have hz : (Bridge.Dialect c g).zero = (0 : U256) := by
+    show (Bridge.Dialect c g).litValue (Literal.number 0) = 0
+    exact wlit_val 0
+  have hv1_ne : hv1 ≠ 0 := by
+    intro h0
+    rw [h0] at h
+    simp [b2w, hz] at h
+  have hv1_ne' : (resp.flag &&& b2w (decide (BitVec.ofNat 256 resp.returndata.length =
+      BitVec.ofNat 256 32))) ≠ 0 := by
+    intro h0
+    have hzero : hv1 = 0 := by
+      rw [hdef]
+      change (resp.flag &&& b2w (decide (BitVec.ofNat 256 resp.returndata.length =
+        (Bridge.Dialect c g).litValue (Literal.number 32)))) = 0
+      rw [h32]
+      exact h0
+    exact hv1_ne hzero
+  have hflagbit : resp.flag = 0 ∨ resp.flag = 1 := by
+    cases resp.success <;> simp [CallResponse.flag]
+  have hlenbit : b2w (decide (BitVec.ofNat 256 resp.returndata.length = BitVec.ofNat 256 32)) = 0 ∨
+      b2w (decide (BitVec.ofNat 256 resp.returndata.length = BitVec.ofNat 256 32)) = 1 := by
+    by_cases heq : BitVec.ofNat 256 resp.returndata.length = BitVec.ofNat 256 32
+    · right; simp [heq, b2w]
+    · left; simp [decide_eq_false heq, b2w]
+  have hand := and_eq_one_of_ne_zero hflagbit hlenbit hv1_ne'
+  simpa [hv1Of] using hv1_eq_of_hand (c := c) (g := g)
+    (len := resp.returndata.length) hand
+
+theorem load_of_hv2Of_guard {c : ExternalCalls} {g : ExternalGas}
+    {resp : EVM.CallResponse} {st : EvmState} {scratch : Nat} (hv2 : U256)
+    (hdef : hv2 = hv2Of (c := c) (g := g) resp st scratch)
+    (h : b2w (decide (hv2 = 0)) = (Bridge.Dialect c g).zero)
+    (hv1eq : hv1Of (c := c) (g := g) resp = 1) :
+    loadWord st.memory scratch = 1 := by
+  rw [hdef] at h
+  unfold hv2Of at h
+  have h1 : (Bridge.Dialect c g).litValue (Literal.number 1) = (1 : U256) := wlit_val 1
+  have hz : (Bridge.Dialect c g).zero = (0 : U256) := by
+    show (Bridge.Dialect c g).litValue (Literal.number 0) = 0
+    exact wlit_val 0
+  rw [h1, hz] at h
+  exact load_of_and_guard hv1eq h
+
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.success_of_hv1Of_guard
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.length_ge_of_hv1Of_guard
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.hv1_eq_of_hv1Of_guard
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.load_of_hv2Of_guard
+  [propext, Classical.choice, Quot.sound] native []
+
+
+/-- **THE NORMAL LEAF, PRODUCT PART.** All the guard work is in the four helpers above; this
+    lemma is the assembly T.4 needs. `hinput` is the four-copy frame identification. -/
+theorem ecPairing_normal_product (product : PairingProduct)
+    {c : ExternalCalls} {g : ExternalGas}
+    {req : YulSemantics.EVM.CallRequest} {st4 st5 : EvmState}
+    (resp : EVM.CallResponse) (LA GB LB GN : Bytes)
+    (hcall : (permissive (callsOf product)).Call req st4 resp)
+    (htarget : req.target = pairingAddress)
+    (hguard1 : b2w (decide (hv1Of (c := c) (g := g) resp = 0)) = (Bridge.Dialect c g).zero)
+    (hguard2 : b2w (decide (hv2Of (c := c) (g := g) resp st5 0 = 0)) = (Bridge.Dialect c g).zero)
+    (hst5 : st5.memory = copyReturn st4.memory 0 32 resp.returndata)
+    (hinput : ByteArray.mk req.input.toArray = pairingFrame [(LA, GB), (LB, GN)]) :
+    product (pairingFrame [(LA, GB), (LB, GN)]) = true := by
+  have hsucc : resp.success = true :=
+    success_of_hv1Of_guard (hv1 := hv1Of (c := c) (g := g) resp) rfl hguard1
+  have hlen : 32 ≤ resp.returndata.length :=
+    length_ge_of_hv1Of_guard (hv1 := hv1Of (c := c) (g := g) resp) rfl hguard1
+  have hv1eq : hv1Of (c := c) (g := g) resp = 1 :=
+    hv1_eq_of_hv1Of_guard (hv1 := hv1Of (c := c) (g := g) resp) rfl hguard1
+  have hload : loadWord st5.memory 0 = 1 :=
+    load_of_hv2Of_guard (hv2 := hv2Of (c := c) (g := g) resp st5 0) rfl hguard2 hv1eq
+  have hword : wordFrom resp.returndata 0 = 1 := by
+    have hcopy : loadWord st5.memory 0 = wordFrom resp.returndata 0 := by
+      rw [hst5]
+      rw [Midfall.Yul.Word.loadWord_copyReturn (h := by
+        constructor
+        · omega
+        · rw [Nat.min_eq_left hlen])]
+    rw [hcopy] at hload
+    exact hload
+  exact product_of_honest_staticcall (product := product) (resp := resp)
+    (input := pairingFrame [(LA, GB), (LB, GN)]) (hcall := hcall) (htarget := htarget)
+    (hsucc := hsucc) (hinput := hinput) (hword := hword)
+
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.ecPairing_normal_product
+  [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV2.Blocks.EcPairing
