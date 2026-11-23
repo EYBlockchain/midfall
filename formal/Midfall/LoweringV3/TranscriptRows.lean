@@ -3766,6 +3766,227 @@ theorem runsAll_instanceEvals (E : VerifierEnv p G₁ G₂ Gₜ)
       rw [List.append_nil] at hb
       exact hb
 
+theorem mem_phaseCols_of_adviceColumnPhase {p : Nat} [Fact (Nat.Prime p)]
+    (cs : Midfall.Halo2.ConstraintSystem (Fr p)) (i : Nat) (ph : Midfall.Halo2.Phase)
+    (hi : i < cs.numAdviceColumns)
+    (hp : cs.adviceColumnPhase[i]? = some ph) :
+    i ∈ phaseCols cs ph := by
+  unfold phaseCols
+  rw [List.mem_filterMap]
+  refine ⟨i, by rw [List.mem_range]; omega, ?_⟩
+  rw [hp]
+  simp
+
+theorem adviceCols_cover (vk : VerifyingKey (Fr p) G₁)
+    (hf : vk.WellFormed Features.solidity) {i : Nat}
+    (hi : i < vk.cs.numAdviceColumns) :
+    ∃ ph ∈ vk.cs.phases, i ∈ phaseCols vk.cs ph := by
+  have hsize : i < vk.cs.adviceColumnPhase.size := by
+    rw [hf.advicePhaseTotal]; exact hi
+  have hp : vk.cs.adviceColumnPhase[i]? = some vk.cs.adviceColumnPhase[i] :=
+    Array.getElem?_eq_getElem hsize
+  refine ⟨vk.cs.adviceColumnPhase[i], ?_, mem_phaseCols_of_adviceColumnPhase vk.cs i _ hi hp⟩
+  unfold Midfall.Halo2.ConstraintSystem.phases
+  rw [List.mem_map]
+  refine ⟨vk.cs.adviceColumnPhase[i].val, ?_, ?_⟩
+  · rw [List.mem_range]
+    have hbound : ∀ x ∈ vk.cs.adviceColumnPhase.toList,
+        x.val ≤ vk.cs.adviceColumnPhase.foldl (fun acc p => max acc p.val) 0 := by
+      intro x hx
+      rw [← Array.foldl_toList, ← List.foldl_map]
+      have hx' : x.val ∈ vk.cs.adviceColumnPhase.toList.map (fun p => p.val) :=
+        List.mem_map.mpr ⟨x, hx, rfl⟩
+      exact le_foldl_max_of_mem_or_le _ _ _ (Or.inr hx')
+    have hmem : vk.cs.adviceColumnPhase[i] ∈ vk.cs.adviceColumnPhase.toList :=
+      Array.mem_toList_iff.mpr (Array.mem_iff_getElem?.mpr ⟨i, hp⟩)
+    have := hbound _ hmem
+    omega
+  · rfl
+
+
+
+theorem runsAllP_parseTraceAdviceProofRead_cover (E : VerifierEnv p G₁ G₂ Gₜ)
+    (cols : List Nat) (row : List (Nat × G₁)) (Qs : List G₁)
+    (hlen : Qs.length = cols.length) :
+    RunsAllP E (parseTraceAdviceProofRead E cols [row])
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun st1' => ∀ pairs ∈ st1',
+        (∀ i ∈ cols, ∃ v, (i, v) ∈ pairs) ∧
+        (∀ (i : Nat) (v : G₁), (i, v) ∈ row → (i, v) ∈ pairs)) := by
+  rw [parseTraceAdviceProofRead]
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil, bind_assoc, pure_bind]
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨reads, t', hrun, hbuf', hpos', hsize⟩ :=
+    runsAllP_tmReadN_g1 E cols.length Qs hlen t pref rest hbuf hpos hp henc hwidth
+  refine ⟨List.take 0 [row] ++
+      [[row][0]?.getD [] ++ List.zip cols reads.toList] ++
+      List.drop (0 + 1) [row], t', ?_, hbuf', hpos', ?_⟩
+  · simp only [StateT.run_bind, hrun, StateT.run_pure]
+    rfl
+  · intro pairs hpairs
+    have hpairs' : pairs = row ++ List.zip cols reads.toList := by
+      simpa using hpairs
+    subst hpairs'
+    constructor
+    · intro i hi
+      have hle : cols.length ≤ reads.toList.length := by
+        rw [Array.length_toList]
+        exact le_of_eq hsize.symm
+      obtain ⟨a, ha⟩ := mem_zip_of_mem cols reads.toList hle hi
+      exact ⟨a, List.mem_append.mpr (Or.inr ha)⟩
+    · intro i v hv
+      exact List.mem_append.mpr (Or.inl hv)
+
+
+
+theorem parseTraceAdviceProofRead_singleton (E : VerifierEnv p G₁ G₂ Gₜ)
+    (cols : List Nat) (row : List (Nat × G₁)) :
+    parseTraceAdviceProofRead E cols [row] =
+      (do let reads ← tmReadN (hashableG1 E.g1) cols.length
+          pure [row ++ List.zip cols reads.toList]) := by
+  rw [parseTraceAdviceProofRead]
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil, bind_assoc, pure_bind]
+  rfl
+
+theorem parseTraceAdvicePhase_zero_eq (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0)
+    (row : List (Nat × G₁)) (ph : Phase) :
+    parseTraceAdvicePhase E vk ([row], []) ph =
+      (do let reads ← tmReadN (hashableG1 E.g1) (phaseCols vk.cs ph).length
+          pure ([row ++ List.zip (phaseCols vk.cs ph) reads.toList], [])) := by
+  rw [parseTraceAdvicePhase, hsp]
+  simp only [List.range_zero, List.zip_nil_left, List.foldlM_nil, bind_assoc, pure_bind]
+  rw [parseTraceAdviceProofRead_singleton]
+  simp only [bind_assoc, pure_bind]
+
+theorem runsAllP_parseTraceAdvicePhase_cover (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0)
+    (row : List (Nat × G₁)) (ph : Phase) (Qs : List G₁)
+    (hlen : Qs.length = (phaseCols vk.cs ph).length) :
+    RunsAllP E (parseTraceAdvicePhase E vk ([row], []) ph)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun st => ∃ row', st = ([row'], []) ∧
+        (∀ (i : Nat) (v : G₁), (i, v) ∈ row → (i, v) ∈ row') ∧
+        (∀ i ∈ phaseCols vk.cs ph, ∃ v, (i, v) ∈ row')) := by
+  rw [parseTraceAdvicePhase_zero_eq E vk hsp row ph]
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨reads, t', hrun, hbuf', hpos', hsize⟩ :=
+    runsAllP_tmReadN_g1 E (phaseCols vk.cs ph).length Qs hlen t pref rest hbuf hpos hp
+      henc hwidth
+  refine ⟨([row ++ List.zip (phaseCols vk.cs ph) reads.toList], []), t', ?_, hbuf', hpos', ?_⟩
+  · simp only [StateT.run_bind, hrun, StateT.run_pure]
+    rfl
+  · refine ⟨row ++ List.zip (phaseCols vk.cs ph) reads.toList, rfl, ?_, ?_⟩
+    · intro i v hv
+      exact List.mem_append.mpr (Or.inl hv)
+    · intro i hi
+      have hle : (phaseCols vk.cs ph).length ≤ reads.toList.length := by
+        rw [Array.length_toList]
+        exact le_of_eq hsize.symm
+      obtain ⟨a, ha⟩ := mem_zip_of_mem (phaseCols vk.cs ph) reads.toList hle hi
+      exact ⟨a, List.mem_append.mpr (Or.inr ha)⟩
+
+theorem runsAllP_parseTraceAdvicePhases_cover (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0) :
+    ∀ (phs : List Phase) (row : List (Nat × G₁)) (Qs : List G₁),
+      Qs.length = (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum →
+      RunsAllP E (phs.foldlM (parseTraceAdvicePhase E vk) ([row], []))
+        (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun st => ∃ row', st = ([row'], []) ∧
+          (∀ (i : Nat) (v : G₁), (i, v) ∈ row → (i, v) ∈ row') ∧
+          (∀ ph ∈ phs, ∀ i ∈ phaseCols vk.cs ph, ∃ v, (i, v) ∈ row')) := by
+  intro phs
+  induction phs with
+  | nil =>
+      intro row Qs hlen
+      have h0 : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst h0
+      simpa only [List.foldlM_nil, List.map_nil] using
+        (RunsAllP.pure E ([row], []) _ ⟨row, rfl, fun _ _ h => h, by intro ph h; simp at h⟩)
+  | cons ph phs ih =>
+      intro row Qs hlen
+      have hsum : Qs.length = (phaseCols vk.cs ph).length +
+          (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum := by
+        simpa only [List.map_cons, List.sum_cons] using hlen
+      set n := (phaseCols vk.cs ph).length with hn
+      have hlen1 : (Qs.take n).length = n := by rw [List.length_take]; omega
+      have hlen2 : (Qs.drop n).length =
+          (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum := by
+        rw [List.length_drop, hsum]; omega
+      have hsplit : Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.foldlM_cons, hsplit]
+      refine RunsAllP.bind E
+        (ms₁ := (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (ms₂ := (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (runsAllP_parseTraceAdvicePhase_cover E vk hsp row ph (Qs.take n)
+          (by rw [hlen1, hn])) ?_
+      intro st hst
+      obtain ⟨row1, rfl, hpres, hcov⟩ := hst
+      refine RunsAllP.mono E (ih row1 (Qs.drop n) hlen2) ?_
+      intro st2 hst2
+      obtain ⟨row2, hst2eq, hpres2, hcov2⟩ := hst2
+      subst hst2eq
+      refine ⟨row2, rfl, ?_, ?_⟩
+      · intro i v hv
+        exact hpres2 i v (hpres i v hv)
+      · intro ph' hph' i hi
+        rw [List.mem_cons] at hph'
+        rcases hph' with rfl | hph'
+        · obtain ⟨v, hv⟩ := hcov i hi
+          exact ⟨v, hpres2 i v hv⟩
+        · exact hcov2 ph' hph' i hi
+
+
+
+theorem runsAllP_parseTraceAdvicePhases_cover_all (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (hsp : vk.cs.numChallenges = 0) (Qs : List G₁)
+    (hlen : Qs.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum) :
+    RunsAllP E (parseTraceAdvicePhases E vk)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun st => ∀ i < vk.cs.numAdviceColumns, ∃ v, (i, v) ∈ st.1[0]?.getD []) := by
+  refine RunsAllP.mono E
+    (runsAllP_parseTraceAdvicePhases_cover E vk hsp vk.cs.phases [] Qs (by simpa using hlen)) ?_
+  intro st hst
+  obtain ⟨row', hst, _, hcov⟩ := hst
+  subst hst
+  intro i hi
+  obtain ⟨ph, hph, hiph⟩ := adviceCols_cover vk hf hi
+  simpa using hcov ph hph i hiph
+
+theorem runsAll_adviceScatter (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) :
+    ∀ (rows : List (List (Nat × G₁))) (acc : Array (Array G₁)),
+      (∀ pairs ∈ rows, ∀ i < vk.cs.numAdviceColumns, ∃ a, (i, a) ∈ pairs) →
+      RunsAll E (rows.foldlM (init := acc) fun acc pairs => do
+        let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+          "proofs/src/plonk/verifier.rs:118")
+        pure (acc.push row)) [] := by
+  intro rows
+  induction rows with
+  | nil =>
+      intro acc hcov
+      simpa only [List.foldlM_nil] using RunsAll.pure E acc
+  | cons pairs rest ih =>
+      intro acc hcov
+      have hcov' : ∀ pairs' ∈ rest, ∀ i < vk.cs.numAdviceColumns, ∃ a, (i, a) ∈ pairs' :=
+        fun p hp => hcov p (by simp [hp])
+      obtain ⟨xs, hxs⟩ := scatterIndexed_ok_of_cover vk.cs.numAdviceColumns pairs
+        "proofs/src/plonk/verifier.rs:118" (fun i hi => hcov pairs (by simp) i hi)
+      rw [List.foldlM_cons]
+      have hstep : RunsAll E ((StateT.lift (Midfall.Halo2.scatterIndexed
+          vk.cs.numAdviceColumns pairs "proofs/src/plonk/verifier.rs:118")) >>= fun row =>
+            pure (acc.push row)) [] := by
+        rw [hxs]
+        exact RunsAll.bind E (RunsAll.lift_ok E xs) (fun row => RunsAll.pure E (acc.push row))
+      have hb := RunsAll.bind E (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := [])
+        hstep (fun acc' => ih acc' hcov')
+      rw [List.append_nil] at hb
+      exact hb
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -5837,6 +6058,15 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.readAlgebra_rotations_zero [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.lIS_slice_length [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.readAlgebra_instanceSlice_safe [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.mem_phaseCols_of_adviceColumnPhase [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.adviceCols_cover [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdviceProofRead_cover [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceAdviceProofRead_singleton [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceAdvicePhase_zero_eq [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhase_cover [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhases_cover [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhases_cover_all [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_adviceScatter [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
