@@ -4390,3 +4390,254 @@ theorem lag_stmt21_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inlin
       | letVal _ _ => simp at hne
       | letHalt he => exact (eval_mload_add_lit_halt_false (c := c) (g := g)
           (funs := funs) (V := V) (a := aD) (b := m * 32) he).elim
+
+theorem eval_mstore_lit_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {a : Nat} {y : String}
+    {st' : EvmState} (ha : a < 2 ^ 256)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mstore [Expr.lit (.number a), Expr.var y]) (.vals [] st')) :
+    ∃ w, VEnv.get V y = some w ∧
+      st' = { touchMemory st a 32 with memory := storeWord st.memory a w } := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest haddr =>
+      cases hrest with
+      | argsCons hnil hval =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hw, rfl⟩ := eval_var_inv hval
+              obtain ⟨hv, rfl⟩ := eval_lit_inv haddr
+              have hp : (BitVec.ofNat 256 a).toNat = a := by
+                rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt ha]
+              subst hv
+              simp only [Bridge.Dialect, builtinWithExternal, stepOp, hp] at hbi
+              cases hbi
+              exact ⟨_, hw, rfl⟩
+
+theorem eval_mstore_lit_var_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {a : Nat} {y : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mstore [Expr.lit (.number a), Expr.var y]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.lit (.number a), Expr.var y],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [Bridge.Dialect, builtinWithExternal, stepOp] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
+
+theorem lag_stmt22_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 22 1 =
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [Blocks.VkLoading.vkSite "X_N_MPTR" consts, GenAst.yvar "x_n"])] := by
+  kernel_rfl
+
+theorem lag_stmt22_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aS : Nat) (hS : consts.lookup "X_N_MPTR" = some aS) (haS : aS < 2 ^ 256)
+    (w : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 22 1)
+      (fun V _ => VEnv.get V "x_n" = some w)
+      (fun V st V' st' o => o = .normal ∧
+        st' = { touchMemory st aS 32 with memory := storeWord st.memory aS w } ∧ V' = V) := by
+  rw [lag_stmt22_form]
+  simp only [Blocks.VkLoading.vkSite, hS]
+  intro V st hw V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | exprStmt he =>
+              obtain ⟨w', hw', hst⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+                (funs := funs) (V := V) (a := aS) haS he
+              have hwv : w' = w := Option.some.inj (hw'.symm.trans hw)
+              subst hwv
+              exact ⟨rfl, hst, rfl⟩
+  | seqStop h1 hne => cases h1 with
+      | exprStmt he =>
+          obtain ⟨w', _, _⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+            (funs := funs) (V := V) (a := aS) haS he
+          exact absurd rfl hne
+      | exprStmtHalt he => exact (eval_mstore_lit_var_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) (a := aS) (y := "x_n") he).elim
+
+theorem lag_stmt23_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 23 1 =
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [Blocks.VkLoading.vkSite "X_N_MINUS_1_INV_MPTR" consts, GenAst.yvar "x_n_minus_1_inv"])] := by
+  kernel_rfl
+
+theorem lag_stmt23_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aS : Nat) (hS : consts.lookup "X_N_MINUS_1_INV_MPTR" = some aS) (haS : aS < 2 ^ 256)
+    (w : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 23 1)
+      (fun V _ => VEnv.get V "x_n_minus_1_inv" = some w)
+      (fun V st V' st' o => o = .normal ∧
+        st' = { touchMemory st aS 32 with memory := storeWord st.memory aS w } ∧ V' = V) := by
+  rw [lag_stmt23_form]
+  simp only [Blocks.VkLoading.vkSite, hS]
+  intro V st hw V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | exprStmt he =>
+              obtain ⟨w', hw', hst⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+                (funs := funs) (V := V) (a := aS) haS he
+              have hwv : w' = w := Option.some.inj (hw'.symm.trans hw)
+              subst hwv
+              exact ⟨rfl, hst, rfl⟩
+  | seqStop h1 hne => cases h1 with
+      | exprStmt he =>
+          obtain ⟨w', _, _⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+            (funs := funs) (V := V) (a := aS) haS he
+          exact absurd rfl hne
+      | exprStmtHalt he => exact (eval_mstore_lit_var_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) (a := aS) (y := "x_n_minus_1_inv") he).elim
+
+theorem lag_stmt24_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 24 1 =
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [Blocks.VkLoading.vkSite "L_LAST_MPTR" consts, GenAst.yvar "l_last"])] := by
+  kernel_rfl
+
+theorem lag_stmt24_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aS : Nat) (hS : consts.lookup "L_LAST_MPTR" = some aS) (haS : aS < 2 ^ 256)
+    (w : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 24 1)
+      (fun V _ => VEnv.get V "l_last" = some w)
+      (fun V st V' st' o => o = .normal ∧
+        st' = { touchMemory st aS 32 with memory := storeWord st.memory aS w } ∧ V' = V) := by
+  rw [lag_stmt24_form]
+  simp only [Blocks.VkLoading.vkSite, hS]
+  intro V st hw V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | exprStmt he =>
+              obtain ⟨w', hw', hst⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+                (funs := funs) (V := V) (a := aS) haS he
+              have hwv : w' = w := Option.some.inj (hw'.symm.trans hw)
+              subst hwv
+              exact ⟨rfl, hst, rfl⟩
+  | seqStop h1 hne => cases h1 with
+      | exprStmt he =>
+          obtain ⟨w', _, _⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+            (funs := funs) (V := V) (a := aS) haS he
+          exact absurd rfl hne
+      | exprStmtHalt he => exact (eval_mstore_lit_var_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) (a := aS) (y := "l_last") he).elim
+
+theorem lag_stmt25_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 25 1 =
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [Blocks.VkLoading.vkSite "L_BLIND_MPTR" consts, GenAst.yvar "l_blind"])] := by
+  kernel_rfl
+
+theorem lag_stmt25_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aS : Nat) (hS : consts.lookup "L_BLIND_MPTR" = some aS) (haS : aS < 2 ^ 256)
+    (w : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 25 1)
+      (fun V _ => VEnv.get V "l_blind" = some w)
+      (fun V st V' st' o => o = .normal ∧
+        st' = { touchMemory st aS 32 with memory := storeWord st.memory aS w } ∧ V' = V) := by
+  rw [lag_stmt25_form]
+  simp only [Blocks.VkLoading.vkSite, hS]
+  intro V st hw V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | exprStmt he =>
+              obtain ⟨w', hw', hst⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+                (funs := funs) (V := V) (a := aS) haS he
+              have hwv : w' = w := Option.some.inj (hw'.symm.trans hw)
+              subst hwv
+              exact ⟨rfl, hst, rfl⟩
+  | seqStop h1 hne => cases h1 with
+      | exprStmt he =>
+          obtain ⟨w', _, _⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+            (funs := funs) (V := V) (a := aS) haS he
+          exact absurd rfl hne
+      | exprStmtHalt he => exact (eval_mstore_lit_var_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) (a := aS) (y := "l_blind") he).elim
+
+theorem lag_stmt26_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 26 1 =
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [Blocks.VkLoading.vkSite "L_0_MPTR" consts, GenAst.yvar "l_0"])] := by
+  kernel_rfl
+
+theorem lag_stmt26_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aS : Nat) (hS : consts.lookup "L_0_MPTR" = some aS) (haS : aS < 2 ^ 256)
+    (w : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 26 1)
+      (fun V _ => VEnv.get V "l_0" = some w)
+      (fun V st V' st' o => o = .normal ∧
+        st' = { touchMemory st aS 32 with memory := storeWord st.memory aS w } ∧ V' = V) := by
+  rw [lag_stmt26_form]
+  simp only [Blocks.VkLoading.vkSite, hS]
+  intro V st hw V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | exprStmt he =>
+              obtain ⟨w', hw', hst⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+                (funs := funs) (V := V) (a := aS) haS he
+              have hwv : w' = w := Option.some.inj (hw'.symm.trans hw)
+              subst hwv
+              exact ⟨rfl, hst, rfl⟩
+  | seqStop h1 hne => cases h1 with
+      | exprStmt he =>
+          obtain ⟨w', _, _⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+            (funs := funs) (V := V) (a := aS) haS he
+          exact absurd rfl hne
+      | exprStmtHalt he => exact (eval_mstore_lit_var_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) (a := aS) (y := "l_0") he).elim
+
+theorem lag_stmt27_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 27 1 =
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [Blocks.VkLoading.vkSite "INSTANCE_EVAL_MPTR" consts, GenAst.yvar "instance_eval"])] := by
+  kernel_rfl
+
+theorem lag_stmt27_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aS : Nat) (hS : consts.lookup "INSTANCE_EVAL_MPTR" = some aS) (haS : aS < 2 ^ 256)
+    (w : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 27 1)
+      (fun V _ => VEnv.get V "instance_eval" = some w)
+      (fun V st V' st' o => o = .normal ∧
+        st' = { touchMemory st aS 32 with memory := storeWord st.memory aS w } ∧ V' = V) := by
+  rw [lag_stmt27_form]
+  simp only [Blocks.VkLoading.vkSite, hS]
+  intro V st hw V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | exprStmt he =>
+              obtain ⟨w', hw', hst⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+                (funs := funs) (V := V) (a := aS) haS he
+              have hwv : w' = w := Option.some.inj (hw'.symm.trans hw)
+              subst hwv
+              exact ⟨rfl, hst, rfl⟩
+  | seqStop h1 hne => cases h1 with
+      | exprStmt he =>
+          obtain ⟨w', _, _⟩ := eval_mstore_lit_var_inv (c := c) (g := g)
+            (funs := funs) (V := V) (a := aS) haS he
+          exact absurd rfl hne
+      | exprStmtHalt he => exact (eval_mstore_lit_var_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) (a := aS) (y := "instance_eval") he).elim
+
