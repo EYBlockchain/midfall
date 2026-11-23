@@ -1671,7 +1671,7 @@ theorem bi_prelude_main (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
         VEnv.get V' "r" = some rw ∧ VEnv.get V' "ret" = some succ ∧
         VEnv.get V' "precompile_failed" = some 0 ∧
         VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a) ∧
-        st'.memory = st.memory) := by
+        st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted) := by
   obtain ⟨body, hform⟩ := bi_prelude_form (consts := consts)
   rw [hform]
   intro V st hpre V' st' o hrun
@@ -1771,7 +1771,7 @@ theorem bi_prelude_main (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
                   injection hget8 with hv8
                   subst hv8 hV8
                   cases hrest8
-                  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+                  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
                   · -- mptr
                     simp [VEnv.get, List.find?]
                     rw [ofNat_add_32 a (by omega : a + 32 < 2 ^ 256)]
@@ -1814,6 +1814,12 @@ theorem bi_prelude_main (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
                       Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "count_bytes") (y := "mptr_start") (by decide)]
                     exact hstart
                   · -- memory
+                    rw [hst8, hst7, hst6, hst5, hst4, hst3, hst2, hst1]
+                    rfl
+                  · -- env
+                    rw [hst8, hst7, hst6, hst5, hst4, hst3, hst2, hst1]
+                    rfl
+                  · -- halted
                     rw [hst8, hst7, hst6, hst5, hst4, hst3, hst2, hst1]
                     rfl
                 · obtain ⟨-, -, ho8, -, -⟩ := exec_let_add_var_lit_inv (x := "mptr") (y := "mptr_start") (k := 32) h8
@@ -2571,6 +2577,16 @@ theorem copyReturn_outside' (mem : Nat → UInt8) (dst size : Nat) (dat : List U
   simp only [copyReturn]
   rw [if_neg]
   omega
+theorem copyReturn_mxMem_pointwise (M : Nat → UInt8) (p q : Nat) (x : U256)
+    (rd : List UInt8) (hq : q < p ∨ p + 192 ≤ q) :
+    copyReturn (mxMem M p x) p 32 rd q = M q := by
+  rcases hq with h | h
+  · rw [copyReturn_outside' (mxMem M p x) p 32 rd q (Or.inl h)]
+    exact mxMem_outside M p x q (Or.inl h)
+  · rw [copyReturn_outside' (mxMem M p x) p 32 rd q (Or.inr (by
+      have hmin := Nat.min_le_left 32 rd.length
+      omega))]
+    exact mxMem_outside M p x q (Or.inr h)
 
 theorem eval_staticcall_args_var {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
     {st : EvmState} {gas : Nat} {vp : U256} (v : String)
@@ -4007,6 +4023,17 @@ theorem prime_BlsR_toNat : Nat.Prime (BitVec.ofNat 256 Midfall.Yul.blsR).toNat :
     rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]]
   exact Fact.out (p := Nat.Prime Midfall.Yul.blsR)
 
+theorem wMulmodAt_ne_zero_right {r x y : U256}
+    (h : Midfall.LoweringV3.QuotientRows.wMulmodAt x y r = 1) : y ≠ 0 := by
+  intro hy
+  have hzero : Midfall.LoweringV3.QuotientRows.wMulmodAt x 0 r = 0 := by
+    by_cases hr : r = 0
+    · rw [hr, Midfall.LoweringV3.QuotientRows.wMulmodAt, ite_eq_left rfl]
+    · rw [Midfall.LoweringV3.QuotientRows.wMulmodAt, ite_eq_right hr]
+      simp
+  rw [hy, hzero] at h
+  exact absurd h (by decide : (0 : U256) ≠ 1)
+
 /-- The backward pass's pre, with the front's memory facts already discharged. -/
 structure BackPre (M : Nat → UInt8) (a k s : Nat) (invval : U256)
     (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop where
@@ -4042,12 +4069,12 @@ def BackPost (M : Nat → UInt8) (a k s : Nat) (st : EvmState)
 
 set_option maxHeartbeats 4000000 in
 theorem fwdSucc_to_backPre (M fmem : Nat → UInt8) (a k s : Nat) (x : U256)
-    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (V : VEnv (Bridge.Dialect c g)) (st st' : EvmState)
     (hk2 : 2 ≤ k) (hdisj192 : a + 32 * k ≤ s ∨ s + 32 * k + 192 ≤ a)
-    (h : FwdSucc (c := c) (g := g) M fmem a k s x st V st .normal) :
+    (h : FwdSucc (c := c) (g := g) M fmem a k s x st V st' .normal) :
     BackPre (c := c) (g := g) M a k s
       (BitVec.ofNat 256 (((fwdProd M a (BitVec.ofNat 256 Midfall.Yul.blsR) (k - 1)).toNat :
-        ZMod Midfall.Yul.blsR)⁻¹).val) V st := by
+        ZMod Midfall.Yul.blsR)⁻¹).val) V st' := by
   obtain ⟨-, hmptr, hgpm, hall, hfirst, hsecond, hmstart, hr, hgp, hret, hpf, -, -, hx, hx0,
     hcanon, hmem, hfmem, hscratch⟩ := h
   have hxne : (fwdProd M a (BitVec.ofNat 256 Midfall.Yul.blsR) (k - 1)).toNat ≠ 0 := by
@@ -4058,7 +4085,7 @@ theorem fwdSucc_to_backPre (M fmem : Nat → UInt8) (a k s : Nat) (x : U256)
     obtain ⟨j, hj⟩ : ∃ j, k - 1 = j + 1 := ⟨k - 2, by omega⟩
     rw [hj, fwdProd_succ]
     exact wMulmodAt_toNat_lt (by decide : (BitVec.ofNat 256 Midfall.Yul.blsR) ≠ 0)
-  have hbatch : ∀ i, i < k → loadWord st.memory (a + 32 * i) = loadWord M (a + 32 * i) := by
+  have hbatch : ∀ i, i < k → loadWord st'.memory (a + 32 * i) = loadWord M (a + 32 * i) := by
     intro i hi
     rw [hmem]
     have hq : a + 32 * i < s ∨ s + 32 * k + 192 ≤ a + 32 * i := by
@@ -4073,7 +4100,7 @@ theorem fwdSucc_to_backPre (M fmem : Nat → UInt8) (a k s : Nat) (x : U256)
       refine Midfall.Yul.Word.loadWord_congr _ _ _ (fun j _ => ?_)
       exact hfmem (a + 32 * i + j) (Or.inr (by omega))
   have hfwd : ∀ j, j ≤ k - 1 →
-      fwdProd st.memory a (BitVec.ofNat 256 Midfall.Yul.blsR) j =
+      fwdProd st'.memory a (BitVec.ofNat 256 Midfall.Yul.blsR) j =
         fwdProd M a (BitVec.ofNat 256 Midfall.Yul.blsR) j := by
     intro j hj
     induction j with
@@ -4081,7 +4108,7 @@ theorem fwdSucc_to_backPre (M fmem : Nat → UInt8) (a k s : Nat) (x : U256)
     | succ j ih =>
         rw [fwdProd_succ, fwdProd_succ, ih (by omega), hbatch (j + 1) (by omega)]
   have hscratch' : ∀ i, i < k - 2 →
-      loadWord st.memory (s + 32 * i) =
+      loadWord st'.memory (s + 32 * i) =
         fwdProd M a (BitVec.ofNat 256 Midfall.Yul.blsR) (i + 1) := by
     intro i hi
     rw [hmem]
@@ -4296,6 +4323,308 @@ theorem bi_back_tail (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g
         V st ⟨by rw [hmptr], hsecond⟩ V' st' o hloop
       exact absurd hid.1 hne
 
+set_option maxHeartbeats 4000000 in
+/-- **THE `batch_invert` SUMMARY at `r = BitVec.ofNat 256 blsR`**, over the prelude's
+    statement-9 canonicality of the first word (the non-canonical first-word exit is recorded
+    as a residual: it needs a split prelude lemma, `PG-BATCHINVERT(3)`), and with the scratch
+    pointer above 32 (so that `gp_mptr - 32` does not wrap). -/
+theorem batch_invert_summary (consts : Inline.Consts) (product : PairingProduct)
+    (g : ExternalGas) (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (gas : Nat) (hgas : consts.lookup "MODEXP_GAS" = some gas)
+    (succ : U256) (a e s : Nat)
+    (ha : a + 32 < 2 ^ 256) (hae : a ≤ e) (hal : (e - a) % 32 = 0) (he : e < 2 ^ 256)
+    (hs : s + (e - a) + 192 < 2 ^ 256)
+    (hdisj : e ≤ s ∨ s + (e - a) + 192 ≤ a)
+    (hsp : 32 ≤ s) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt)
+      (fun V st =>
+        VEnv.get V "success" = some succ ∧
+        VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "mptr_end" = some (BitVec.ofNat 256 e) ∧
+        VEnv.get V "scratch_mptr" = some (BitVec.ofNat 256 s) ∧
+        VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+        VEnv.get V "ret" = some 0 ∧ VEnv.get V "precompile_failed" = some 0 ∧
+        (loadWord st.memory a).toNat < Midfall.Yul.blsR)
+      (fun _ st V' st' o => (o = .normal ∨ o = .leave) ∧
+        BatchInvertPost (c := permissive (callsOf product)) (g := g) st succ a e s
+          (BitVec.ofNat 256 Midfall.Yul.blsR) V' st') := by
+  have hlen : (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).length = 34 :=
+    Midfall.LoweringV3.BatchInvert.helperBody_length consts
+  have hbody : helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt =
+      seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 0 34 := by
+    simp only [seg, List.drop_zero]
+    rw [← hlen, List.take_length]
+  have hsplit : seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 0 34 =
+      seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 0 2 ++
+        (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 2 8 ++
+          (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 10 19 ++
+            seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 29 5)) := by
+    simp only [seg]
+    rw [List.drop_zero]
+    rw [show (34 : Nat) = 2 + 32 by norm_num, List.take_add]
+    rw [show (32 : Nat) = 8 + 24 by norm_num, List.take_add]
+    rw [show ((helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 2).drop 8 =
+        (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 10 by
+      rw [List.drop_drop]]
+    rw [show (24 : Nat) = 19 + 5 by norm_num, List.take_add]
+    rw [show ((helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 10).drop 19 =
+        (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 29 by
+      rw [List.drop_drop]]
+  rw [hbody, hsplit]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hsuccess, hstart, hend, hscratch, hr, hret0, hpf0, hcanon0⟩ := hpre
+  rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrun with
+    ⟨V1, st1, hhead, hrest⟩ | ⟨hhead, hne⟩
+  · have hh := bi_prelude_head (consts := consts) (c := permissive (callsOf product)) (g := g)
+      funs succ 0 V st ⟨hsuccess, hret0⟩ V1 st1 .normal hhead
+    rcases hh with ⟨hsuccne, -, hV1, hst1⟩ | ⟨hsucc0, ho0, hV1, hst1⟩
+    · -- succ ≠ 0
+      have hretV1 : VEnv.get V1 "ret" = some succ := by
+        rw [hV1]
+        exact Midfall.LoweringV3.LagrangeRows.venv_get_set_same (D := Bridge.Dialect (permissive (callsOf product)) g) hret0
+      have hpfV1 : VEnv.get V1 "precompile_failed" = some 0 := by
+        rw [hV1]
+        exact (Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+          (x := "ret") (y := "precompile_failed") (by decide)).trans hpf0
+      have hstartV1 : VEnv.get V1 "mptr_start" = some (BitVec.ofNat 256 a) := by
+        rw [hV1]
+        exact (Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+          (x := "ret") (y := "mptr_start") (by decide)).trans hstart
+      have hendV1 : VEnv.get V1 "mptr_end" = some (BitVec.ofNat 256 e) := by
+        rw [hV1]
+        exact (Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+          (x := "ret") (y := "mptr_end") (by decide)).trans hend
+      have hscrV1 : VEnv.get V1 "scratch_mptr" = some (BitVec.ofNat 256 s) := by
+        rw [hV1]
+        exact (Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+          (x := "ret") (y := "scratch_mptr") (by decide)).trans hscratch
+      have hrV1 : VEnv.get V1 "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) := by
+        rw [hV1]
+        exact (Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+          (x := "ret") (y := "r") (by decide)).trans hr
+      have hcanonV1 : (loadWord st1.memory a).toNat <
+          (BitVec.ofNat 256 Midfall.Yul.blsR).toNat := by
+        rw [hst1]
+        rw [show (BitVec.ofNat 256 Midfall.Yul.blsR).toNat = Midfall.Yul.blsR from by
+          rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]]
+        exact hcanon0
+      have hpre1 : VEnv.get V1 "mptr_start" = some (BitVec.ofNat 256 a) ∧
+          VEnv.get V1 "mptr_end" = some (BitVec.ofNat 256 e) ∧
+          VEnv.get V1 "scratch_mptr" = some (BitVec.ofNat 256 s) ∧
+          VEnv.get V1 "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+          VEnv.get V1 "ret" = some succ ∧
+          VEnv.get V1 "precompile_failed" = some 0 ∧
+          (loadWord st1.memory a).toNat < (BitVec.ofNat 256 Midfall.Yul.blsR).toNat :=
+        ⟨hstartV1, hendV1, hscrV1, hrV1, hretV1, hpfV1, hcanonV1⟩
+      rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g)
+        hrest with ⟨V2, st2, hprel, hrest2⟩ | ⟨hprel, hne2⟩
+      · -- the prelude reached its normal exit: the general (count ≥ 64) branch
+        have hgt : a + 32 < e := by
+          by_contra h
+          have hle : e - a ≤ 32 := by omega
+          obtain ⟨c, hc⟩ := Nat.dvd_of_mod_eq_zero hal
+          have hc2 : c = 0 ∨ c = 1 := by omega
+          rcases hc2 with rfl | rfl
+          · have hea : e = a := by omega
+            have hpre1a : VEnv.get V1 "mptr_start" = some (BitVec.ofNat 256 a) ∧
+                VEnv.get V1 "mptr_end" = some (BitVec.ofNat 256 a) ∧
+                VEnv.get V1 "scratch_mptr" = some (BitVec.ofNat 256 s) ∧
+                VEnv.get V1 "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+                VEnv.get V1 "ret" = some succ ∧
+                VEnv.get V1 "precompile_failed" = some 0 :=
+              ⟨hstartV1, by simpa [hea] using hendV1, hscrV1, hrV1, hretV1, hpfV1⟩
+            have hp0 := bi_prelude_empty (consts := consts)
+              (c := permissive (callsOf product)) (g := g) funs
+              (BitVec.ofNat 256 Midfall.Yul.blsR) a s succ V1 st1 hpre1a V2 st2 .normal hprel
+            exact absurd hp0.1 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+          · have hsingle' : e = a + 32 := by omega
+            subst hsingle'
+            have hp1 := bi_prelude_single (consts := consts) (product := product) (g := g)
+              funs gas hgas succ a s hsuccne (by omega) (by omega) V1 st1
+              ⟨hstartV1, hendV1, hscrV1, hrV1, hretV1, hpfV1⟩ V2 st2 .normal hprel
+            exact absurd hp1.1 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+        have hp := bi_prelude_main (consts := consts) (c := permissive (callsOf product))
+          (g := g) funs (rw := BitVec.ofNat 256 Midfall.Yul.blsR) a e s succ hsuccne
+          hgt hal he V1 st1 hpre1 V2 st2 .normal hprel
+        obtain ⟨ho2, hmptr2, hmend2, hgpm2, hgp2, hr2, hret2, hpf2, hmstart2, hmem2,
+          henv2, hhalt2⟩ := hp
+        have hk2le : 2 ≤ (e - a) / 32 := by
+          obtain ⟨c, hc⟩ := Nat.dvd_of_mod_eq_zero hal
+          have hcge : 2 ≤ c := by omega
+          rw [hc, Nat.mul_div_right c (by norm_num : 0 < 32)]
+          exact hcge
+        have hk : e - a = 32 * ((e - a) / 32) := by
+          obtain ⟨c, hc⟩ := Nat.dvd_of_mod_eq_zero hal
+          rw [hc, Nat.mul_div_right c (by norm_num : 0 < 32)]
+        have hae64 : a + 64 ≤ e := by omega
+        have hdisjf : e ≤ s ∨ s + (e - a) ≤ a := by
+          rcases hdisj with h | h
+          · left; exact h
+          · right; omega
+        have hdisjK : a + 32 * ((e - a) / 32) ≤ s ∨
+            s + 32 * ((e - a) / 32) + 192 ≤ a := by
+          rcases hdisj with h | h
+          · left; omega
+          · right; omega
+        have hmem2' : st2.memory = st.memory := by rw [hmem2, hst1]
+        have hgp2' : VEnv.get V2 "gp" = some (loadWord st.memory a) := by
+          rw [hgp2, hst1]
+        have hgp2'' : VEnv.get V2 "gp" = some (loadWord st2.memory a) := by
+          rw [hmem2']
+          exact hgp2'
+        have hfront := bi_front (consts := consts) (product := product) (g := g) funs gas hgas
+          succ a e s ((e - a) / 32) (st.memory) hk hae64 hal he (by omega) hs hdisjf hdisj hsp
+        rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g)
+          hrest2 with ⟨V3, st3, hfrontrun, htailrun⟩ | ⟨hfrontrun, hne3⟩
+        · have hf := hfront V2 st2
+            ⟨hmptr2, hmend2, hgpm2, hgp2'', hr2, hmstart2, hret2, hpf2, hmem2',
+              hcanon0⟩ V3 st3 .normal hfrontrun
+          rcases hf with hfail | ⟨x, fmem, hsucc3⟩
+          · exact absurd hfail.1 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+          · let invval : U256 := BitVec.ofNat 256
+              (((fwdProd (st.memory) a (BitVec.ofNat 256 Midfall.Yul.blsR)
+                ((e - a) / 32 - 1)).toNat : ZMod Midfall.Yul.blsR)⁻¹).val
+            have hbp : BackPre (c := permissive (callsOf product)) (g := g) (st.memory) a
+                ((e - a) / 32) s invval V3 st3 := by
+              have h := fwdSucc_to_backPre (c := permissive (callsOf product)) (g := g)
+                (st.memory) fmem a ((e - a) / 32) s x V3 st2 st3 hk2le hdisjK hsucc3
+              simpa [invval] using h
+            have hbt := bi_back_tail (consts := consts)
+              (c := permissive (callsOf product)) (g := g) funs a ((e - a) / 32) s
+              (st.memory) invval hk2le (by omega) (by omega) (by omega) hsp
+              (by
+                rcases hdisj with h | h
+                · left; omega
+                · right; omega)
+              V3 st3 hbp V' st' o htailrun
+            obtain ⟨hob, henvb, hhaltb, hretb, hpfb, houtb, hcanonb, hinvb⟩ := hbt
+            have hfrontOut : ∀ q, (q < a ∨ e ≤ q) →
+                (q < s ∨ s + 32 * ((e - a) / 32) + 192 ≤ q) →
+                st3.memory q = st.memory q := by
+              intro q hq hq2
+              rw [hsucc3.hmem]
+              have hq' : q < s + 32 * ((e - a) / 32 - 2) ∨
+                  s + 32 * ((e - a) / 32 - 2) + 192 ≤ q := by
+                rcases hq2 with h | h <;> omega
+              rcases hq' with h | h
+              · rw [copyReturn_mxMem_pointwise fmem (s + 32 * ((e - a) / 32 - 2)) q x
+                  (bytesNatBE ((x.toNat : ZMod Midfall.Yul.blsR)⁻¹).val 32).data.toList (Or.inl h)]
+                exact hsucc3.hfmem q (Or.inl (by omega))
+              · rw [copyReturn_mxMem_pointwise fmem (s + 32 * ((e - a) / 32 - 2)) q x
+                  (bytesNatBE ((x.toNat : ZMod Midfall.Yul.blsR)⁻¹).val 32).data.toList (Or.inr h)]
+                exact hsucc3.hfmem q (Or.inr (by omega))
+            have hcanonIn : ∀ i, a + 32 * i < e →
+                (loadWord st.memory (a + 32 * i)).toNat <
+                    (BitVec.ofNat 256 Midfall.Yul.blsR).toNat ∧
+                  loadWord st.memory (a + 32 * i) ≠ 0 := by
+              intro i hi
+              have hik : i < (e - a) / 32 := by omega
+              have hc := hsucc3.hcanon i hik
+              have hne : loadWord (st.memory) (a + 32 * i) ≠ 0 :=
+                wMulmodAt_ne_zero_right (hinvb i (by omega))
+              refine ⟨?_, hne⟩
+              rw [show (BitVec.ofNat 256 Midfall.Yul.blsR).toNat = Midfall.Yul.blsR from by
+                rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]]
+              exact hc
+            have hinvPost : ∀ i, a + 32 * i < e →
+                (loadWord st'.memory (a + 32 * i)).toNat <
+                    (BitVec.ofNat 256 Midfall.Yul.blsR).toNat ∧
+                  Midfall.LoweringV3.QuotientRows.wMulmodAt
+                    (loadWord st'.memory (a + 32 * i)) (loadWord st.memory (a + 32 * i))
+                    (BitVec.ofNat 256 Midfall.Yul.blsR) = 1 := by
+              intro i hi
+              refine ⟨?_, hinvb i (by omega)⟩
+              rw [show (BitVec.ofNat 256 Midfall.Yul.blsR).toNat = Midfall.Yul.blsR from by
+                rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]]
+              exact hcanonb i (by omega)
+            exact ⟨Or.inl hob, BatchInvertPost_succ_any (c := permissive (callsOf product))
+              (g := g) succ (BitVec.ofNat 256 Midfall.Yul.blsR) 1 a e s hsuccne
+              (by decide) hretb hpfb
+              (henvb.trans (hsucc3.henv.trans (henv2.trans (by rw [hst1]))))
+              (hhaltb.trans (hsucc3.hhalt.trans (hhalt2.trans (by rw [hst1]))))
+              (by
+                intro q hq hq2
+                have hqK : q < a ∨ a + 32 * ((e - a) / 32) ≤ q := by omega
+                have hq2K : q < s ∨ s + 32 * ((e - a) / 32) + 192 ≤ q := by omega
+                rw [houtb q hqK hq2K]
+                exact hfrontOut q hq (by
+                  rcases hq2 with h | h
+                  · left; exact h
+                  · right; omega))
+              hcanonIn hinvPost⟩
+        · have hf := hfront V2 st2
+            ⟨hmptr2, hmend2, hgpm2, hgp2'', hr2, hmstart2, hret2, hpf2, hmem2',
+              hcanon0⟩ V' st' o hfrontrun
+          rcases hf with hfail | ⟨x, fmem, hsucc3⟩
+          · obtain ⟨hol, hretf, hpfs, henvf, hhaltf, houtf⟩ := hfail
+            exact ⟨Or.inr hol, BatchInvertPost_zero (c := permissive (callsOf product)) (g := g)
+              succ (BitVec.ofNat 256 Midfall.Yul.blsR) a e s hsuccne hretf hpfs
+              (by rw [henvf, henv2, hst1]) (by rw [hhaltf, hhalt2, hst1])
+              (by
+                intro q hq hq2
+                have hqBig : q < s ∨ s + 32 * ((e - a) / 32) + 192 ≤ q := by omega
+                rw [houtf q (by omega), hmem2'])⟩
+          · exact absurd hsucc3.hok hne3
+      · -- the prelude's own exit: empty, single, or the (excluded) non-canonical guard
+        by_cases hempty : e = a
+        · have hea : e = a := hempty
+          have hpre1a : VEnv.get V1 "mptr_start" = some (BitVec.ofNat 256 a) ∧
+              VEnv.get V1 "mptr_end" = some (BitVec.ofNat 256 a) ∧
+              VEnv.get V1 "scratch_mptr" = some (BitVec.ofNat 256 s) ∧
+              VEnv.get V1 "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+              VEnv.get V1 "ret" = some succ ∧
+              VEnv.get V1 "precompile_failed" = some 0 :=
+            ⟨hstartV1, by simpa [hea] using hendV1, hscrV1, hrV1, hretV1, hpfV1⟩
+          have hp := bi_prelude_empty (consts := consts) (c := permissive (callsOf product))
+            (g := g) funs (BitVec.ofNat 256 Midfall.Yul.blsR) a s succ V1 st1 hpre1a V' st' o hprel
+          obtain ⟨hol, hretl, hpfl, henvl, hhaltl, hmeml⟩ := hp
+          refine ⟨Or.inr hol, ?_⟩
+          rw [hea]
+          refine BatchInvertPost_succ_any (c := permissive (callsOf product))
+            (g := g) succ (BitVec.ofNat 256 Midfall.Yul.blsR) succ a a s hsuccne hsuccne
+            hretl hpfl ?_ ?_ ?_ ?_ ?_
+          · rw [henvl, hst1]
+          · rw [hhaltl, hst1]
+          · intro x _ _
+            rw [hmeml, hst1]
+          · intro i hi; omega
+          · intro i hi; omega
+        · by_cases hsingle : e = a + 32
+          · have hp := bi_prelude_single (consts := consts) (product := product) (g := g) funs
+              gas hgas succ a s hsuccne (by omega) (by omega) V1 st1
+              ⟨hstartV1, by simpa [hsingle] using hendV1, hscrV1, hrV1, hretV1, hpfV1⟩
+              V' st' o hprel
+            refine ⟨Or.inr hp.1, ?_⟩
+            rw [hsingle]
+            simpa [hst1] using hp.2
+          · have hgt : a + 32 < e := by omega
+            have hp := bi_prelude_main (consts := consts) (c := permissive (callsOf product))
+              (g := g) funs (rw := BitVec.ofNat 256 Midfall.Yul.blsR) a e s succ hsuccne hgt
+              hal he V1 st1 hpre1 V' st' o hprel
+            exact absurd hp.1 hne2
+    · -- succ = 0 is impossible in the normal-head branch
+      exact absurd ho0 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+  · -- the head stopped: succ = 0
+    have hh := bi_prelude_head (consts := consts) (c := permissive (callsOf product)) (g := g)
+      funs succ 0 V st ⟨hsuccess, hret0⟩ V' st' o hhead
+    rcases hh with ⟨hsuccne, ho, -⟩ | ⟨hsucc0, ho, hV, hst⟩
+    · exact absurd ho hne
+    · have hretV : VEnv.get V' "ret" = some 0 := by
+        rw [hV]
+        exact Midfall.LoweringV3.LagrangeRows.venv_get_set_same (D := Bridge.Dialect (permissive (callsOf product)) g) hret0
+      have hpfV : VEnv.get V' "precompile_failed" = some 0 := by
+        rw [hV]
+        exact (Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+          (x := "ret") (y := "precompile_failed") (by decide)).trans hpf0
+      exact ⟨Or.inr ho, BatchInvertPost_head0 (c := permissive (callsOf product)) (g := g)
+        succ (BitVec.ofNat 256 Midfall.Yul.blsR) a e s hretV hpfV (by rw [hst]) (by rw [hst])
+        (by rw [hst])⟩
+
+#assert_axioms batch_invert_summary [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_prelude_empty [propext, Classical.choice, Quot.sound]
+#assert_axioms copyReturn_mxMem_pointwise [propext, Classical.choice, Quot.sound]
+#assert_axioms wMulmodAt_ne_zero_right [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_toNat_lt_blsR [propext, Classical.choice, Quot.sound]
 #assert_axioms gp_shift [propext, Classical.choice, Quot.sound]
 #assert_axioms prime_BlsR_toNat [propext, Classical.choice, Quot.sound]
