@@ -39,21 +39,17 @@ gate tool, so it carries the word `sorry` in the message strings it prints, and 
 comments but not string literals. The environment scan needs no exemption.
 
 | declaration | module | kind | status | cone | statement | removed by |
-| Midfall.Generator.Certified.env_negLagranges | Midfall.Generator.Certified | theorem | OPEN | - | `b0cfe1fd7ad3a1fe` | V3 CERT.6 - ART builder from the plan meta; meta = ConstraintSystemMeta.new |
 | Midfall.Generator.Certified.prog_callsResolved | Midfall.Generator.Certified | theorem | OPEN | - | `e754e48eb935790e` | V3 CERT.5 - call-site lemma per emitter plus the helper signature table |
 | Midfall.Generator.Certified.prog_closed | Midfall.Generator.Certified | theorem | OPEN | - | `4d4e1b3f8d88ecd5` | V3 CERT.5 - from constsDeclared/constTable plus the inlineContractConstants free-name lemma |
 | Midfall.Generator.Certified.prog_codegenStruct | Midfall.Generator.Certified | theorem | OPEN | - | `d29d03ed48643742` | V3 CERT.2 - route A: the emitted tree is the generator text (today false until WP-G1 is certified) |
 | Midfall.Generator.Certified.prog_constLinesLiteral | Midfall.Generator.Certified | theorem | OPEN | - | `f714a0aaa04763f0` | V3 CERT.6 - every Constants.sol line has a literal RHS; disappears when CERT.3 prints the table |
 | Midfall.Generator.Certified.prog_constTable | Midfall.Generator.Certified | theorem | OPEN | - | `4287b2db65b94696` | V3 CERT.6 with CERT.3 - constTableOf is expectedConsts once Constants.sol is printed from the table |
 | Midfall.Generator.Certified.prog_constsDeclared | Midfall.Generator.Certified | theorem | OPEN | - | `79e6f660fe752b8d` | V3 CERT.5 - free-name lemma per emitter against the fixed constant name list |
-| Midfall.Generator.Certified.prog_g1IdentityFloor | Midfall.Generator.Certified | theorem | OPEN | - | `5c78e657386a2555` | V3 CERT.6 (D4, D-CERT1) - PG-G1ID: the g1_identity window lies above 0x80 |
 | Midfall.Generator.Certified.prog_gasCallOk | Midfall.Generator.Certified | theorem | OPEN | - | `3aa1cf4cf841a791` | V3 CERT.5 (D3, D-CERT1) - gas() occurs only as a call gas argument |
 | Midfall.Generator.Certified.prog_gasFree | Midfall.Generator.Certified | theorem | OPEN | - | `14ce060d6970fece` | V3 CERT.5 (D3, D-CERT1) - the whole program executes no gas() (D-GATE1) |
 | Midfall.Generator.Certified.prog_hasMultiPointSet | Midfall.Generator.Certified | theorem | OPEN | - | `3faca9d12edc289e` | V3 CERT.6 (D4, D-CERT1) - intermediateSets has a point set of size at least two |
-| Midfall.Generator.Certified.prog_negLagrangesFloor | Midfall.Generator.Certified | theorem | OPEN | - | `bd485dd368546fea` | V3 CERT.6 (D4, D-CERT1) - PG-NEGLAG: at least two Lagrange denominators |
 | Midfall.Generator.Certified.prog_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `ff281295813cb0cf` | V3 CERT.5 - every-binder scan: binder lemma per emitter (the tree name is noShadowProg) |
 | Midfall.Generator.Certified.prog_noWriters | Midfall.Generator.Certified | theorem | OPEN | - | `f3dfc04a7d459e38` | V3 CERT.5 - scan lemma per emitter; inlining substitutes literals only |
-| Midfall.Generator.Certified.prog_permCommMatchRepaired | Midfall.Generator.Certified | theorem | OPEN | - | `d63f9dbb0b7608f5` | V3 CERT.6 (D4, D-CERT1) - D-P59 repair: one sigma commitment per permutation column |
 | Midfall.Generator.Certified.prog_programFits | Midfall.Generator.Certified | theorem | OPEN | - | `fa1814585da48f98` | V3 CERT.6 (D4, D-CERT1) - D-QVM1 address-fit: VK window and quotient interpreter |
 | Midfall.Generator.Certified.prog_transcriptFloor | Midfall.Generator.Certified | theorem | OPEN | - | `90eb320a88e57a0f` | V3 CERT.4 - memory.validate pins transcript_mptr = TRANSCRIPT_BUFFER_START |
 | Midfall.Generator.Certified.prog_transcriptRegionOk | Midfall.Generator.Certified | theorem | OPEN | - | `03cc061fe5e69770` | V3 CERT.6 (D4, D-CERT1) - PG-TPBUF: transcript window holds the longest absorb run and meets no walk window |
