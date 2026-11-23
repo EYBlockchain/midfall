@@ -318,6 +318,19 @@ theorem identList_hno : ∀ (fuel : Nat) (toks : List String) {xs : List String}
               exact fun u hu => hno u (by simp [hu])
           · cases h
 
+/-- `parseStmt` on an empty token stream is `none`. PROVED. -/
+theorem parseStmt_nil (fuel : Nat) : parseStmt fuel ([] : List String) = none := by
+  cases fuel with
+  | zero => rw [parseStmt.eq_1]
+  | succ k =>
+      rw [parseStmt.eq_13 [] k
+        (by intro r hr; cases hr) (by intro n r hr; cases hr)
+        (by intro r hr; cases hr) (by intro r hr; cases hr)
+        (by intro r hr; cases hr) (by intro r hr; cases hr)
+        (by intro r hr; cases hr) (by intro r hr; cases hr)
+        (by intro r hr; cases hr)]
+      cases k <;> simp [identList, parseExpr]
+
 /-! ### The parser -/
 
 mutual
