@@ -1132,11 +1132,9 @@ def generateBaseVkPrefix (inputs : VerifierBuildInputs p G₁ G₂) :
     throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:180")
   Except.ok (vkDigest, nInv, omega, omegaInv, omegaInvToL)
 
-def generateBaseVkBody (codecs : VkPointCodecs G₁ G₂)
-    (inputs : VerifierBuildInputs p G₁ G₂)
-    (pre : Word256 × Word256 × Word256 × Word256 × Word256) :
-    Except Fault Halo2VerifyingKey := do
-  let (vkDigest, nInv, omega, omegaInv, omegaInvToL) := pre
+def generateBaseVkEncodings (codecs : VkPointCodecs G₁ G₂)
+    (inputs : VerifierBuildInputs p G₁ G₂) :
+    Except Fault (List Word256 × List Word256 × List Word256) := do
   let domain := inputs.vk.domain
   -- VK:110-111: U256::from(usize) for the instance count and the domain exponent.
   let numInstancesW : Word256 := BitVec.ofNat 256 inputs.numInstances
@@ -1168,6 +1166,28 @@ def generateBaseVkBody (codecs : VkPointCodecs G₁ G₂)
   -- VK:210-264: the header builder. Every .unwrap() is its own Rust line and so
   -- its own panic site; the messages are lost with Fault.panic's payload
   -- (F-P08-3).
+  pure (g1Words, g2Words, negSG2Words)
+
+def generateBaseVkHeader (inputs : VerifierBuildInputs p G₁ G₂)
+    (pre : Word256 × Word256 × Word256 × Word256 × Word256)
+    (g1Words g2Words negSG2Words : List Word256) :
+    Except Fault (List (String × Word256)) := do
+  let (vkDigest, nInv, omega, omegaInv, omegaInvToL) := pre
+  let domain := inputs.vk.domain
+  -- VK:110-111: U256::from(usize) for the instance count and the domain exponent.
+  let numInstancesW : Word256 := BitVec.ofNat 256 inputs.numInstances
+  let kW : Word256 := BitVec.ofNat 256 domain.k
+  -- VK:119-131: the accumulator quadruple; unwrap_or_default() is the zero word.
+  let hasAccumulator : Word256 := BitVec.ofNat 256 (if inputs.accEncoding.isSome then 1 else 0)
+  let accOffset : Word256 := match inputs.accEncoding with
+    | some e => BitVec.ofNat 256 e.offset
+    | none => 0
+  let numAccLimbs : Word256 := match inputs.accEncoding with
+    | some e => BitVec.ofNat 256 e.numLimbs
+    | none => 0
+  let numAccLimbBits : Word256 := match inputs.accEncoding with
+    | some e => BitVec.ofNat 256 e.numLimbBits
+    | none => 0
   let h0 := VkHeaderLayout.builder
   let h1 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:211"
     (h0.scalar .vkDigest "vk_digest" vkDigest)
@@ -1201,6 +1221,14 @@ def generateBaseVkBody (codecs : VkPointCodecs G₁ G₂)
       "neg_s_g2_x_c1_lo", "neg_s_g2_y_c0_hi", "neg_s_g2_y_c0_lo", "neg_s_g2_y_c1_hi",
       "neg_s_g2_y_c1_lo"] negSG2Words)
   let constants ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:264" (h14.finish)
+  pure constants
+
+def generateBaseVkBody (codecs : VkPointCodecs G₁ G₂)
+    (inputs : VerifierBuildInputs p G₁ G₂)
+    (pre : Word256 × Word256 × Word256 × Word256 × Word256) :
+    Except Fault Halo2VerifyingKey := do
+  let (g1Words, g2Words, negSG2Words) ← generateBaseVkEncodings codecs inputs
+  let constants ← generateBaseVkHeader inputs pre g1Words g2Words negSG2Words
   -- VK:267-279: the commitment vectors. chain! with ONE argument is the identity
   -- iterator (itertools' chain! over a single iterable), so nothing is flattened;
   -- that is worth saying because a reader may look for a second iterator.
@@ -1228,7 +1256,6 @@ def generateBaseVkBody (codecs : VkPointCodecs G₁ G₂)
       quotientConstLabels := []
       quotientConstHeaders := [] }
   Except.ok vkBase
-
 
 def generateBaseVk (codecs : VkPointCodecs G₁ G₂)
     (inputs : VerifierBuildInputs p G₁ G₂) : Except Fault Halo2VerifyingKey := do
