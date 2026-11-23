@@ -9,6 +9,7 @@
 import Midfall.Halo2.Exec.Permutation
 import Midfall.Halo2.Exec.Verifier
 import Midfall.LoweringV3.KzgQueryMap
+import Midfall.LoweringV3.LinearizeEntry
 import Midfall.Halo2.Exec.Logup
 import Midfall.Halo2.Exec.Trash
 
@@ -306,6 +307,164 @@ theorem Permutation.Evaluated.queries_point
         rw [hql]
         refine Or.inr (Or.inr ?_)
         rw [VerifierQuery.new_point]
+
+
+/-! ## The per-proof block
+
+The body of `collectQueries`'s per-proof `mapM`: advice, committed instance,
+permutation product, lookups, trashcans.  Factored out so the append
+decomposition and the per-block point shapes can be stated and composed. -/
+def perProofQueries (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (proof : Nat) (ci : Array G₁) (ie : Array (Fr p))
+    (ac : Array G₁) (ae : Array (Fr p))
+    (pe : Permutation.Evaluated (Fr p) G₁)
+    (le : Array (Logup.Evaluated (Fr p) G₁))
+    (te : Array (Trash.Evaluated (Fr p) G₁)) :
+    Except Fault (List (VerifierQuery (Fr p) G₁)) := do
+  let adv ← (List.zip (List.range vk.cs.adviceQueries.size)
+      vk.cs.adviceQueries.toList).mapM (adviceQueryFn vk x ac ae proof)
+  let inst ← (List.zip (List.range vk.cs.instanceQueries.size)
+      vk.cs.instanceQueries.toList).mapM (instanceQueryFn nbCommitted vk x ci ie proof)
+  let bf ← vk.cs.blindingFactors
+  let perm ← pe.queries (p := p) vk.domain bf x proof
+  let lk := (List.zip (List.range le.size) le.toList).flatMap fun (l, lq) =>
+    (lq.queries (p := p) vk.domain x proof l).toList
+  let tr := (List.zip (List.range te.size) te.toList).flatMap fun (i, tq) =>
+    (tq.queries (p := p) x proof i).toList
+  pure (adv.flatten ++ inst.flatten ++ perm.toList ++ lk ++ tr)
+
+theorem perProofQueries_parts (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (proof : Nat) (ci : Array G₁) (ie : Array (Fr p))
+    (ac : Array G₁) (ae : Array (Fr p))
+    (pe : Permutation.Evaluated (Fr p) G₁)
+    (le : Array (Logup.Evaluated (Fr p) G₁))
+    (te : Array (Trash.Evaluated (Fr p) G₁))
+    (out : List (VerifierQuery (Fr p) G₁))
+    (h : perProofQueries nbCommitted vk x proof ci ie ac ae pe le te = .ok out) :
+    ∃ (adv inst : List (List (VerifierQuery (Fr p) G₁)))
+      (bf : Nat) (perm : Array (VerifierQuery (Fr p) G₁))
+      (lk tr : List (VerifierQuery (Fr p) G₁)),
+      (List.zip (List.range vk.cs.adviceQueries.size)
+          vk.cs.adviceQueries.toList).mapM (adviceQueryFn vk x ac ae proof) = .ok adv ∧
+      (List.zip (List.range vk.cs.instanceQueries.size)
+          vk.cs.instanceQueries.toList).mapM
+          (instanceQueryFn nbCommitted vk x ci ie proof) = .ok inst ∧
+      vk.cs.blindingFactors = .ok bf ∧
+      pe.queries (p := p) vk.domain bf x proof = .ok perm ∧
+      lk = (List.zip (List.range le.size) le.toList).flatMap (fun (l, lq) =>
+        (lq.queries (p := p) vk.domain x proof l).toList) ∧
+      tr = (List.zip (List.range te.size) te.toList).flatMap (fun (i, tq) =>
+        (tq.queries (p := p) x proof i).toList) ∧
+      out = adv.flatten ++ inst.flatten ++ perm.toList ++ lk ++ tr := by
+  unfold perProofQueries at h
+  obtain ⟨adv, hadv, h1⟩ := except_bind_ok h
+  obtain ⟨inst, hinst, h2⟩ := except_bind_ok h1
+  obtain ⟨bf, hbf, h3⟩ := except_bind_ok h2
+  obtain ⟨perm, hperm, h4⟩ := except_bind_ok h3
+  cases h4
+  exact ⟨adv, inst, bf, perm, _, _, hadv, hinst, hbf, hperm, rfl, rfl, rfl⟩
+
+theorem lookupBlock_point (vk : VerifyingKey (Fr p) G₁) (x : Fr p) (proof : Nat)
+    (le : Array (Logup.Evaluated (Fr p) G₁)) :
+    ∀ q ∈ (List.zip (List.range le.size) le.toList).flatMap (fun (l, lq) =>
+        (lq.queries (p := p) vk.domain x proof l).toList),
+      q.point = x ∨ q.point = vk.domain.rotateOmega x Rotation.next := by
+  intro q hq
+  rw [List.mem_flatMap] at hq
+  obtain ⟨a, _ha, hq⟩ := hq
+  exact Logup.Evaluated.queries_point a.2 vk.domain x proof a.1 q hq
+
+theorem trashBlock_point (vk : VerifyingKey (Fr p) G₁) (x : Fr p) (proof : Nat)
+    (te : Array (Trash.Evaluated (Fr p) G₁)) :
+    ∀ q ∈ (List.zip (List.range te.size) te.toList).flatMap (fun (i, tq) =>
+        (tq.queries (p := p) x proof i).toList), q.point = x := by
+  intro q hq
+  rw [List.mem_flatMap] at hq
+  obtain ⟨a, _ha, hq⟩ := hq
+  exact Trash.Evaluated.queries_point a.2 x proof a.1 q hq
+
+theorem perProofQueries_point (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (proof : Nat) (ci : Array G₁) (ie : Array (Fr p))
+    (ac : Array G₁) (ae : Array (Fr p))
+    (pe : Permutation.Evaluated (Fr p) G₁)
+    (le : Array (Logup.Evaluated (Fr p) G₁))
+    (te : Array (Trash.Evaluated (Fr p) G₁))
+    (out : List (VerifierQuery (Fr p) G₁))
+    (h : perProofQueries nbCommitted vk x proof ci ie ac ae pe le te = .ok out) :
+    ∀ q ∈ out, ∃ r : Rotation, q.point = vk.domain.rotateOmega x r := by
+  obtain ⟨adv, inst, bf, perm, lk, tr, hadv, hinst, _hbf, hperm, hlk, htr, hout⟩ :=
+    perProofQueries_parts nbCommitted vk x proof ci ie ac ae pe le te out h
+  subst hout
+  intro q hq
+  rw [List.mem_append] at hq
+  rcases hq with hq | hq
+  · rw [List.mem_append] at hq
+    rcases hq with hq | hq
+    · rw [List.mem_append] at hq
+      rcases hq with hq | hq
+      · rw [List.mem_append] at hq
+        rcases hq with hq | hq
+        · obtain ⟨r, hr⟩ := adviceBlock_point vk x ac ae proof adv hadv q hq
+          exact ⟨r, hr⟩
+        · obtain ⟨r, hr⟩ := instanceBlock_point nbCommitted vk x ci ie proof inst hinst q hq
+          exact ⟨r, hr⟩
+      · have hr := Permutation.Evaluated.queries_point pe vk.domain bf x proof perm
+          hperm q hq
+        rcases hr with hr | hr | hr
+        · exact ⟨Rotation.value 0, by rw [hr, rotateOmega_zero]⟩
+        · exact ⟨Rotation.next, hr⟩
+        · exact ⟨Rotation.value (Permutation.negI32
+            (Permutation.asI32 (bf + 1))), hr⟩
+    · -- the lookup flatMap: collective lemma over the whole block
+      have hlk' : lk = (List.zip (List.range le.size) le.toList).flatMap (fun (l, lq) =>
+          (lq.queries (p := p) vk.domain x proof l).toList) := hlk
+      rw [hlk'] at hq
+      have hr := lookupBlock_point vk x proof le q hq
+      rcases hr with hr | hr
+      · exact ⟨Rotation.value 0, by rw [hr, rotateOmega_zero]⟩
+      · exact ⟨Rotation.next, hr⟩
+  · have htr' : tr = (List.zip (List.range te.size) te.toList).flatMap (fun (i, tq) =>
+        (tq.queries (p := p) x proof i).toList) := htr
+    rw [htr'] at hq
+    have hr := trashBlock_point vk x proof te q hq
+    exact ⟨Rotation.value 0, by rw [hr, rotateOmega_zero]⟩
+
+theorem collectQueries_perProof_point (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (committedInstances adviceCommitments : Array (Array G₁))
+    (instanceEvals adviceEvals : Array (Array (Fr p)))
+    (permutationsEvaluated : Array (Permutation.Evaluated (Fr p) G₁))
+    (lookupsEvaluated : Array (Array (Logup.Evaluated (Fr p) G₁)))
+    (trashcansEvaluated : Array (Array (Trash.Evaluated (Fr p) G₁)))
+    (fixedEvals : Array (Fr p)) (permutationsCommon : Permutation.CommonEvaluated (Fr p))
+    (linCom : VerifierQuery (Fr p) G₁) (queries : Array (VerifierQuery (Fr p) G₁))
+    (h : Verifier.collectQueries nbCommitted vk x committedInstances adviceCommitments
+      instanceEvals adviceEvals permutationsEvaluated lookupsEvaluated trashcansEvaluated
+      fixedEvals permutationsCommon linCom = .ok queries) :
+    ∃ (perProof : List (List (VerifierQuery (Fr p) G₁)))
+      (fixed : List (VerifierQuery (Fr p) G₁)),
+      (∀ q ∈ perProof.flatten, ∃ r : Rotation, q.point = vk.domain.rotateOmega x r) ∧
+      (∀ q ∈ fixed, ∃ r : Rotation, q.point = vk.domain.rotateOmega x r) ∧
+      queries.toList = perProof.flatten ++ fixed ++
+        (permutationsCommon.queries vk.permutation x).toList ++ [linCom] := by
+  unfold Verifier.collectQueries at h
+  dsimp only at h
+  obtain ⟨perProof, hper, h1⟩ := except_bind_ok h
+  obtain ⟨fixed, hfixed, h2⟩ := except_bind_ok h1
+  cases h2
+  refine ⟨perProof, fixed, ?_, ?_, by simp⟩
+  · intro q hq
+    rw [List.mem_flatten] at hq
+    obtain ⟨l, hl, hql⟩ := hq
+    obtain ⟨a, _ha, hfa⟩ := mem_mapM _ _ hper l hl
+    obtain ⟨proof, e⟩ := a
+    have hbody : perProofQueries nbCommitted vk x proof
+        e.1.1.1.1.1.1 e.1.1.1.1.1.2 e.1.1.1.1.2 e.1.1.1.2 e.1.1.2 e.1.2 e.2 = .ok l := hfa
+    exact perProofQueries_point nbCommitted vk x proof
+      e.1.1.1.1.1.1 e.1.1.1.1.1.2 e.1.1.1.1.2 e.1.1.1.2 e.1.1.2 e.1.2 e.2 l hbody q hql
+  · intro q hq
+    obtain ⟨a, _ha, hfa⟩ := mem_mapM _ _ hfixed q hq
+    have hfbody : fixedQueryFn vk x fixedEvals a = .ok q := hfa
+    exact ⟨a.2.2, fixedQueryFn_point vk x fixedEvals a q hfbody⟩
 
 
 end Midfall.LoweringV3

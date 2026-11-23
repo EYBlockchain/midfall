@@ -4630,6 +4630,16 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Permutation.Evaluated.queries_point
   [propext, Classical.choice, Quot.sound]
+#assert_axioms perProofQueries_parts
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms lookupBlock_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms trashBlock_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms perProofQueries_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms collectQueries_perProof_point
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
