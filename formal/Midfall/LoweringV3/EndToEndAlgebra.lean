@@ -2064,6 +2064,16 @@ theorem planMeta_numPointSets_of_validV3 (R : Midfall.LoweringV2.Render p G₁ G
       R.plan.meta_.numPointSets = out.pointSets.length :=
   planMeta_numPointSets_of_generated R hR.generated
 
+theorem planMeta_numPointSets_generator_of_validV3
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    ∃ (qs : List Midfall.Generator.Query) (sets out : Midfall.Generator.IntermediateSets),
+      Midfall.Generator.queries R.plan.meta_ R.plan.data = .ok qs ∧
+      Midfall.Generator.constructIntermediateSetsImpl qs = .ok sets ∧
+      Midfall.Generator.sortSets sets = .ok out ∧
+      R.plan.meta_.numPointSets = out.pointSets.length :=
+  planMeta_numPointSets_generator R
+    (Midfall.LoweringV3.MemoryPairs.planMeta_of_generated hR.generated)
+
 /-- The same count as the protocol's eval-read list length. -/
 theorem plan_numEvals_eq_proofEvalsLength (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (hR : ValidV3 R) :
@@ -4584,6 +4594,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms planMeta_numPointSets_generator
   [propext, Classical.choice, Quot.sound]
+#assert_axioms planMeta_numPointSets_generator_of_validV3
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms planMeta_numPointSets_of_generated
   [propext, Classical.choice, Quot.sound]
 #assert_axioms planMeta_numPointSets_of_validV3
@@ -4599,6 +4611,12 @@ open Midfall.Tools.Done in
 #assert_axioms Permutation.CommonEvaluated.queries_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Logup.Evaluated.queries_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms mem_mapM
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms fixedQueryFn_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms collectQueries_fixed_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
