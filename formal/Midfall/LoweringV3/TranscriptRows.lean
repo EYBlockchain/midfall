@@ -3448,6 +3448,324 @@ theorem runsAll_readAlgebraAdviceEvals (E : VerifierEnv p G₁ G₂ Gₜ)
       rw [List.append_nil] at hb
       exact hb
 
+theorem foldr_pair_snd_length {F : Type} [Mul F] [Zero F] [DecidableEq F]
+    (l : List (F × F)) (a : F) :
+    (l.foldr (fun q st => (if q.2 = 0 then st.1 else st.1 * q.2,
+        (if q.2 = 0 then q.2 else q.1 * st.1) :: st.2)) (a, [])).2.length = l.length := by
+  induction l with
+  | nil => rfl
+  | cons q l ih => simp only [List.foldr_cons, List.length_cons, ih]
+
+theorem foldl_forward_snd_length {F : Type} [Mul F] [Zero F] [DecidableEq F]
+    (xs : List F) (st : F × List (F × F)) :
+    (xs.foldl (fun st p => (if p = 0 then st.1 else st.1 * p, st.2 ++ [(st.1, p)])) st).2.length =
+      st.2.length + xs.length := by
+  induction xs generalizing st with
+  | nil => simp
+  | cons a as ih =>
+      rw [List.foldl_cons, ih]
+      simp only [List.length_append, List.length_cons, List.length_nil]
+      omega
+
+theorem batchInvert_fst_size_direct {F : Type} [Field F] [DecidableEq F] (xs : List F) :
+    (batchInvert xs.toArray).1.size = xs.length := by
+  unfold batchInvert
+  dsimp only
+  rw [List.size_toArray, foldr_pair_snd_length]
+  rw [foldl_forward_snd_length]
+  simp
+
+theorem lIRange_size (d : EvaluationDomain (Fr p)) (x xn : Fr p) (rots : List Int) :
+    (d.lIRange x xn rots).size = rots.length := by
+  unfold EvaluationDomain.lIRange
+  dsimp only
+  rw [List.size_toArray, List.length_zipWith]
+  have hres : (batchInvert ((rots.map fun r => x - d.rotateOmega 1 (Rotation.value r)).toArray)).1.toList.length
+      = rots.length := by
+    rw [Array.length_toList, batchInvert_fst_size_direct (F := Fr p), List.length_map]
+  rw [hres, Nat.min_eq_right (Nat.le_refl _)]
+
+theorem asI32_eq_of_lt {n : Nat} (h : n < 2 ^ 31) :
+    Permutation.asI32 n = (n : Int) := by
+  unfold Permutation.asI32 Permutation.wrapI32
+  dsimp only
+  have h1 : (Int.ofNat n % 4294967296) = Int.ofNat n := by
+    rw [Int.emod_eq_of_lt]
+    · exact Int.natCast_nonneg n
+    · show Int.ofNat n < Int.ofNat 4294967296
+      exact Int.ofNat_lt.mpr (by omega)
+  rw [h1]
+  rw [if_pos (by
+    show Int.ofNat n < Int.ofNat 2147483648
+    exact Int.ofNat_lt.mpr (by omega))]
+  rfl
+
+theorem wrapI32_eq_of_nonneg_of_lt {x : Int} (hlo : 0 ≤ x) (hhi : x < 2147483648) :
+    Permutation.wrapI32 x = x := by
+  unfold Permutation.wrapI32
+  have h1 : x % 4294967296 = x := by
+    rw [Int.emod_eq_of_lt] <;> omega
+  dsimp only
+  rw [h1]
+  rw [if_pos hhi]
+
+theorem negI32_zero : Permutation.negI32 0 = 0 := by
+  unfold Permutation.negI32 Permutation.wrapI32
+  norm_num
+
+theorem le_foldl_max_of_mem_or_le :
+    ∀ (l : List Nat) (a x : Nat), x ≤ a ∨ x ∈ l → x ≤ l.foldl max a := by
+  intro l
+  induction l with
+  | nil =>
+      intro a x h
+      rcases h with h | h
+      · simpa using h
+      · simp at h
+  | cons b bs ih =>
+      intro a x h
+      rw [List.foldl_cons]
+      apply ih (max a b) x
+      rcases h with h | h
+      · exact Or.inl (Nat.le_trans h (Nat.le_max_left a b))
+      · rw [List.mem_cons] at h
+        rcases h with hxb | hmem
+        · rw [hxb]
+          exact Or.inl (Nat.le_max_right a _)
+        · exact Or.inr hmem
+
+/-- `readAlgebra`'s `max_instance_len` (`verifier.rs:340-344`). -/
+def maxInstanceLen {p : ℕ} (instances : Array (Array (Array (Fr p)))) : Nat :=
+  (instances.toList.flatMap (fun row => row.toList.map (fun col => col.size))).foldl (init := 0) max
+
+/-- The `l_i_range` window rotations at `minRot = maxRot = 0`. -/
+def zeroRotations (n : Nat) : List Int := (List.range n).map (fun i => (i : Int))
+
+theorem maxInstanceLen_bound (instances : Array (Array (Array (Fr p))))
+    (row : Array (Array (Fr p))) (hrow : row ∈ instances.toList)
+    (col : Array (Fr p)) (hcol : col ∈ row.toList) :
+    col.size ≤ maxInstanceLen instances := by
+  unfold maxInstanceLen
+  apply le_foldl_max_of_mem_or_le
+  right
+  rw [List.mem_flatMap]
+  exact ⟨row, hrow, List.mem_map.mpr ⟨col, hcol, rfl⟩⟩
+
+theorem zeroRotations_length (n : Nat) : (zeroRotations n).length = n := by
+  simp [zeroRotations]
+
+theorem readAlgebra_rotations_zero (n : Nat) (hmax : n < 2 ^ 31) :
+    (if Permutation.wrapI32 (Permutation.asI32 n + 0) > Permutation.negI32 0 then
+      (List.range ((Permutation.wrapI32 (Permutation.asI32 n + 0) - Permutation.negI32 0).toNat)).map
+        (fun i => Permutation.negI32 0 + (i : Int))
+     else []) = zeroRotations n := by
+  rw [negI32_zero, asI32_eq_of_lt hmax, Int.add_zero]
+  have hw : Permutation.wrapI32 (n : Int) = (n : Int) :=
+    wrapI32_eq_of_nonneg_of_lt (Int.natCast_nonneg n)
+      (by show Int.ofNat n < Int.ofNat 2147483648; exact Int.ofNat_lt.mpr (by omega))
+  rw [hw]
+  split
+  · rw [Int.sub_zero, Int.toNat_natCast]
+    simp [zeroRotations, Int.zero_add]
+  · rename_i hneg
+    have hn : n = 0 := by
+      have h : ¬ (0 < n) := fun h => hneg (Int.ofNat_lt.mpr h)
+      omega
+    subst hn
+    simp [zeroRotations]
+
+theorem lIS_slice_length (d : EvaluationDomain (Fr p)) (x xn : Fr p)
+    (n : Nat) (hmax : n < 2 ^ 31) (col : Array (Fr p)) (hcol : col.size ≤ n) :
+    (((d.lIRange x xn (zeroRotations n)).toList.drop ((0 : Int) - 0).toNat).take col.size).length
+      = col.size := by
+  have hlen : (d.lIRange x xn (zeroRotations n)).toList.length = n := by
+    rw [Array.length_toList, lIRange_size, zeroRotations_length]
+  rw [show ((0 : Int) - 0).toNat = 0 from rfl, List.drop_zero, List.length_take, hlen,
+    Nat.min_eq_left hcol]
+
+
+
+/-- **THE `lIS` SLICE GUARD, DISCHARGED.** Under D-GATE15 `instanceRotZero`, every
+    instance query's rotation is `0`, so the `l_i_range` offset is `0`; the slice is
+    `col.size` long because `col.size` is bounded by the fold-max over all instance
+    column lengths and `l_i_range` keeps its rotation list's length. The runtime
+    cast identity is `maxInstanceLen < 2^31` (the walk's `inst.size` bound). -/
+theorem readAlgebra_instanceSlice_safe (vk : VerifyingKey (Fr p) G₁)
+    (hf : vk.WellFormed Features.solidity) (nbCommitted : Nat)
+    (instances : Array (Array (Array (Fr p))))
+    (hmax : maxInstanceLen instances < 2 ^ 31) (x xn : Fr p)
+    (row : Array (Array (Fr p))) (hrow : row ∈ instances.toList)
+    (q : Column × Rotation) (hq : q ∈ vk.cs.instanceQueries.toList)
+    (col : Array (Fr p)) (hcol : row[q.1.index - nbCommitted]? = some col) :
+    (((vk.domain.lIRange x xn (zeroRotations (maxInstanceLen instances))).toList.drop
+      (0 - q.2.int).toNat).take col.size).length = col.size := by
+  have hq0 : q.2.int = 0 := hf.instanceRotZero q hq
+  have hcolmem : col ∈ row.toList :=
+    Array.mem_toList_iff.mpr ((Array.mem_iff_getElem?).mpr ⟨_, hcol⟩)
+  have hle : col.size ≤ maxInstanceLen instances :=
+    maxInstanceLen_bound instances row hrow col hcolmem
+  rw [hq0]
+  exact lIS_slice_length vk.domain x xn _ hmax col hle
+
+def readAlgebraOneInstanceQuery (row : Array (Array (Fr p))) (nbCommitted : Nat)
+    (maxRot : Int) (lIS : Array (Fr p)) (q : Column × Rotation) : TranscriptM (Fr p) := do
+  if q.1.index < nbCommitted then
+    tmRead (hashableFr (p := p))
+  else
+    let colIdx := q.1.index - nbCommitted
+    match row[colIdx]? with
+    | none => throw (Fault.panic "proofs/src/plonk/verifier.rs:366")
+    | some col =>
+      let offset := (maxRot - q.2.int).toNat
+      let slice := (lIS.toList.drop offset).take col.size
+      unless slice.length == col.size do
+        throw (Fault.panic "proofs/src/plonk/verifier.rs:370")
+      StateT.lift (computeInnerProduct col slice.toArray)
+
+theorem computeInnerProduct_ok_of_size {F : Type} [Field F] (a b : Array F)
+    (h : a.size = b.size) :
+    ∃ x, computeInnerProduct a b = .ok x := by
+  unfold computeInnerProduct
+  have hb : (a.size == b.size) = true := by rw [beq_iff_eq]; exact h
+  simp only [hb, if_true, pure_bind]
+  exact ⟨_, rfl⟩
+
+theorem runsAll_readAlgebraOneInstanceQuery_committed (E : VerifierEnv p G₁ G₂ Gₜ)
+    (row : Array (Array (Fr p))) (nbCommitted : Nat) (maxRot : Int) (lIS : Array (Fr p))
+    (q : Column × Rotation) (h : q.1.index < nbCommitted) (v : Fr p) :
+    RunsAll E (readAlgebraOneInstanceQuery (p := p) row nbCommitted maxRot lIS q)
+      ([Msg.fr v] : List (Msg (Fr p) G₁)) := by
+  unfold readAlgebraOneInstanceQuery
+  rw [if_pos h]
+  exact runsAll_read_fr E v
+
+theorem runsAll_readAlgebraOneInstanceQuery_notCommitted (E : VerifierEnv p G₁ G₂ Gₜ)
+    (row : Array (Array (Fr p))) (nbCommitted : Nat) (maxRot : Int) (lIS : Array (Fr p))
+    (q : Column × Rotation) (h : ¬ q.1.index < nbCommitted)
+    (col : Array (Fr p)) (hrow : row[q.1.index - nbCommitted]? = some col)
+    (hslice : ((lIS.toList.drop (maxRot - q.2.int).toNat).take col.size).length = col.size) :
+    RunsAll E (readAlgebraOneInstanceQuery (p := p) row nbCommitted maxRot lIS q) [] := by
+  unfold readAlgebraOneInstanceQuery
+  rw [if_neg h]
+  dsimp only
+  rw [hrow]
+  have hbool : (((lIS.toList.drop (maxRot - q.2.int).toNat).take col.size).length == col.size) = true := by
+    rw [beq_iff_eq]; exact hslice
+  simp only [hbool, if_true, pure_bind]
+  obtain ⟨v, hv⟩ := computeInnerProduct_ok_of_size col
+    ((lIS.toList.drop (maxRot - q.2.int).toNat).take col.size).toArray
+    (by rw [List.size_toArray]; exact hslice.symm)
+  rw [hv]
+  exact RunsAll.lift_ok E v
+
+
+
+theorem runsAll_instanceQueries_mapM (E : VerifierEnv p G₁ G₂ Gₜ)
+    (row : Array (Array (Fr p))) (nbCommitted : Nat) (maxRot : Int) (lIS : Array (Fr p)) :
+    ∀ (queries : List (Column × Rotation)) (qs : List (Fr p)),
+      qs.length = (queries.filter (fun q => q.1.index < nbCommitted)).length →
+      (∀ q ∈ queries, ¬ q.1.index < nbCommitted →
+        ∃ col, row[q.1.index - nbCommitted]? = some col ∧
+          ((lIS.toList.drop (maxRot - q.2.int).toNat).take col.size).length = col.size) →
+      RunsAll E (queries.mapM (readAlgebraOneInstanceQuery (p := p) row nbCommitted maxRot lIS))
+        (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+  intro queries
+  induction queries with
+  | nil =>
+      intro qs hlen hsafe
+      have h0 : qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst h0
+      simpa only [List.mapM_nil, List.map_nil] using RunsAll.pure E ([] : List (Fr p))
+  | cons q rest ih =>
+      intro qs hlen hsafe
+      have hsafe' : ∀ q' ∈ rest, ¬ q'.1.index < nbCommitted →
+          ∃ col, row[q'.1.index - nbCommitted]? = some col ∧
+            ((lIS.toList.drop (maxRot - q'.2.int).toNat).take col.size).length = col.size :=
+        fun q' hq' => hsafe q' (by simp [hq'])
+      rw [List.mapM_cons]
+      by_cases hq : q.1.index < nbCommitted
+      · have hfil : List.filter (fun q' => decide (q'.1.index < nbCommitted)) (q :: rest) =
+            q :: List.filter (fun q' => decide (q'.1.index < nbCommitted)) rest :=
+          List.filter_cons_of_pos (decide_eq_true_iff.mpr hq)
+        rw [hfil] at hlen
+        obtain ⟨v, qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+        refine RunsAll.bind E (ms₁ := ([Msg.fr v] : List (Msg (Fr p) G₁)))
+          (ms₂ := qs'.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) ?_ ?_
+        · exact runsAll_readAlgebraOneInstanceQuery_committed E row nbCommitted maxRot lIS q hq v
+        · intro head
+          have hb := RunsAll.bind E (ms₁ := qs'.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+            (ms₂ := []) (ih qs' (by simpa using hlen) hsafe')
+            (fun tail => RunsAll.pure E (head :: tail))
+          rw [List.append_nil] at hb
+          exact hb
+      · have hfil : List.filter (fun q' => decide (q'.1.index < nbCommitted)) (q :: rest) =
+            List.filter (fun q' => decide (q'.1.index < nbCommitted)) rest :=
+          List.filter_cons_of_neg (fun h => hq (decide_eq_true_iff.mp h))
+        rw [hfil] at hlen
+        obtain ⟨col, hrow, hslice⟩ := hsafe q (by simp) hq
+        refine RunsAll.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+          (ms₂ := qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+          (runsAll_readAlgebraOneInstanceQuery_notCommitted E row nbCommitted maxRot lIS q hq
+            col hrow hslice) ?_
+        intro head
+        have hb := RunsAll.bind E (ms₁ := qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+          (ms₂ := []) (ih qs hlen hsafe') (fun tail => RunsAll.pure E (head :: tail))
+        rw [List.append_nil] at hb
+        exact hb
+
+
+
+theorem runsAll_instanceEvals (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (nbCommitted : Nat) (maxRot : Int) (lIS : Array (Fr p)) :
+    ∀ (rows : List (Array (Array (Fr p)))) (qs : List (Fr p)),
+      qs.length = rows.length *
+        (vk.cs.instanceQueries.toList.filter
+          (fun q => decide (q.1.index < nbCommitted))).length →
+      (∀ row ∈ rows, ∀ q ∈ vk.cs.instanceQueries.toList, ¬ q.1.index < nbCommitted →
+        ∃ col, row[q.1.index - nbCommitted]? = some col ∧
+          ((lIS.toList.drop (maxRot - q.2.int).toNat).take col.size).length = col.size) →
+      RunsAll E (rows.mapM (fun row =>
+        vk.cs.instanceQueries.toList.mapM
+          (readAlgebraOneInstanceQuery (p := p) row nbCommitted maxRot lIS)))
+        (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+  intro rows
+  induction rows with
+  | nil =>
+      intro qs hlen hsafe
+      have h0 : qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst h0
+      simpa only [List.mapM_nil, List.map_nil] using RunsAll.pure E ([] : List (List (Fr p)))
+  | cons row rows ih =>
+      intro qs hlen hsafe
+      set m := (vk.cs.instanceQueries.toList.filter
+        (fun q => decide (q.1.index < nbCommitted))).length with hm
+      have hsafe' : ∀ row' ∈ rows, ∀ q ∈ vk.cs.instanceQueries.toList,
+          ¬ q.1.index < nbCommitted → ∃ col, row'[q.1.index - nbCommitted]? = some col ∧
+            ((lIS.toList.drop (maxRot - q.2.int).toNat).take col.size).length = col.size :=
+        fun row' hr' => hsafe row' (by simp [hr'])
+      have hlen' : qs.length = m + rows.length * m := by
+        rw [hlen, List.length_cons, Nat.add_one, Nat.succ_mul, Nat.add_comm]
+      have htake : (qs.take m).length = m := by rw [List.length_take]; omega
+      have hdrop : (qs.drop m).length = rows.length * m := by rw [List.length_drop]; omega
+      have hsplit : qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) =
+          (qs.take m).map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (qs.drop m).map (fun q => (Msg.fr q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.mapM_cons, hsplit]
+      refine RunsAll.bind E
+        (ms₁ := (qs.take m).map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (qs.drop m).map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (runsAll_instanceQueries_mapM E row nbCommitted maxRot lIS
+          vk.cs.instanceQueries.toList (qs.take m) (by rw [htake, hm])
+          (fun q hqmem => hsafe row (by simp) q hqmem)) ?_
+      intro head
+      have hb := RunsAll.bind E
+        (ms₁ := (qs.drop m).map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := []) (ih (qs.drop m) hdrop hsafe')
+        (fun tail => RunsAll.pure E (head :: tail))
+      rw [List.append_nil] at hb
+      exact hb
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -5500,6 +5818,25 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.flatMap_permSeg [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_permutationEval [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebraAdviceEvals [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.computeInnerProduct_ok_of_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.readAlgebraOneInstanceQuery [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebraOneInstanceQuery_committed [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebraOneInstanceQuery_notCommitted [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_instanceQueries_mapM [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_instanceEvals [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.batchInvert_fst_size_direct [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.lIRange_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.asI32_eq_of_lt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.wrapI32_eq_of_nonneg_of_lt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.negI32_zero [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.le_foldl_max_of_mem_or_le [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.maxInstanceLen [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.zeroRotations [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.maxInstanceLen_bound [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.zeroRotations_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.readAlgebra_rotations_zero [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.lIS_slice_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.readAlgebra_instanceSlice_safe [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
