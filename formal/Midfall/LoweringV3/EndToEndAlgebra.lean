@@ -4367,6 +4367,70 @@ theorem KzgMultiPrepareWidths_of_queryMap
   obtain ⟨queriesG, setsG, qm, hGok, hLen⟩ := hMap inst trace alg queries hlin
   exact ⟨queriesG, setsG, hGok, KzgPartitionBridge_of_queryMap queries queriesG qm, hLen⟩
 
+/-- **THE D1-SPECIFIC FACT, NAMED EXACTLY: THE LINEARIZE QUERY MAP.** For every
+    query vector `Verifier.linearize` emits, the generator's own
+    `constructIntermediateSetsImpl` runs on a query list paired index-by-index with
+    it, the two grouping relations compute the same partition (`KzgQueryMapData`),
+    and the generator's point-set count is the plan's `numPointSets`.
+
+    This is the only fact `PrepareLogSlots` needs beyond `ValidV3` and the parsed
+    trace. It is NOT a row, bundle, root or `ValidV3` hypothesis: it is the
+    verifier-vs-generator query correspondence (D-GATE10's repaired KZG residual),
+    and `KzgMultiPrepareWidths_of_queryMap` consumes exactly this shape. No theorem
+    in the tree constructs it from `GeneratedBy`: that clause pins the plan/model to
+    `generateAll` for the render's inputs, while the `linearize` query vector comes
+    from the per-proof commitments and evaluations in the parsed trace, so the
+    index-by-index correspondence is the missing refinement, not a re-reading of a
+    definition. -/
+def LinearizeQueryMap (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) : Prop :=
+  ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
+    (alg : Verifier.AlgebraRead (Fr p) G₁)
+    (queries : Array (VerifierQuery (Fr p) G₁)),
+    Verifier.linearize (p := p) (delta := R.E.delta) R.vk
+      (adviceCommitments := trace.adviceCommitments)
+      (committedInstances := if Features.solidity.committedInstances then
+        #[#[(1 : G₁)]] else arrayReplicate (#[#[inst.toList.toArray]]).size
+          (#[] : Array G₁))
+      (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+      (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg
+      = .ok queries →
+    ∃ (queriesG : List Midfall.Generator.Query)
+      (setsG : Midfall.Generator.IntermediateSets)
+      (qm : @KzgQueryMapData (Fr p) G₁ _
+        (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries queriesG),
+      Midfall.Generator.constructIntermediateSetsImpl queriesG = .ok setsG ∧
+      setsG.pointSets.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).numPointSets
+
+/-- The named query-map fact gives the KZG width residual. -/
+theorem KzgMultiPrepareWidths_of_linearizeQueryMap
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (h : LinearizeQueryMap R) :
+    KzgMultiPrepareWidths R :=
+  KzgMultiPrepareWidths_of_queryMap R h
+
+/-- **THE SCHEDULE FROM `ValidV3` AND THE PARSED TRACE, WITH THE ONE NAMED FACT.**
+    The width walk itself is proved (`PrepareLogSlots_of_parseTrace`); the only
+    premise is `LinearizeQueryMap`, the verifier-vs-generator query correspondence. -/
+theorem PrepareLogSlots_of_validV3 (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (h : LinearizeQueryMap R) :
+    Midfall.LoweringV3.PrepareLogSlots R := by
+  obtain ⟨nParse, hParse, hQuot⟩ := parseTraceSchedule R hR
+  exact PrepareLogSlots_of_parsed R hR nParse
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+      R.plan.proofLayout).numPointSets hParse
+    (KzgMultiPrepareWidths_of_linearizeQueryMap R h) hQuot rfl
+
+/-- **THE ADVERTISED `readScheduleAgrees_of_validV3`.** `decodeRust`'s transcript-log
+    slot list is the plan's slot list, for every `ValidV3` render, every instance
+    vector and every proof stream, modulo the one named `LinearizeQueryMap` fact. -/
+theorem readScheduleAgrees_of_validV3 (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (h : LinearizeQueryMap R) :
+    ∀ (inst : Array (Fr p)) (π : Bytes) (ms : List (Msg (Fr p) G₁)),
+      decodeRust (Gₜ := Gₜ) R.E Features.solidity R.vk inst π = some ms →
+        ms.map Midfall.Lowering.Msg.slot =
+          (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots :=
+  readScheduleAgrees_of_prepareLogSlots R (PrepareLogSlots_of_validV3 R hR h)
+
 /-- **`PrepareLogSlots` FROM EXACTLY THE TWO NAMED RESIDUALS.** The parseTrace
     block, the KZG scalar block, and the plan's eval count (`numEvals`, proved in
     this file) are the whole of the bridge; nothing else is assumed. -/
@@ -4435,6 +4499,27 @@ theorem end_to_end_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
   end_to_end_of_prepareLogSlots R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
     inst π hn hside (PrepareLogSlots_of_parseTrace R hR hKZG)
+
+/-- **END-TO-END FROM THE NAMED D1 QUERY MAP.** The same `EndToEndV3` statement as
+    `end_to_end_of_A6_KZG`, with `LinearizeQueryMap` as the only extra premise. This is
+    the form a `ValidV3` render consumes once the `linearize` ↔ `Generator.Query`
+    correspondence is supplied; nothing is added to `ValidV3`, a row, a bundle or the
+    root. -/
+theorem end_to_end_of_validV3 (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (product : Midfall.Yul.PairingProduct)
+    (hR : ValidV3 R) (hEq : LoweringEquivalenceV3 R product)
+    (W : YulSemantics.EVM.ExecEnv) (Lyt : YulSemantics.EVM.Layout) (vkAddr : YulSemantics.EVM.U256)
+    (hdep : Midfall.LoweringV2.DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
+    (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
+    (hcodec : G1CodecLawsV3 R.E.g1)
+    (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
+      Midfall.LoweringV2.SoundSide R keccak256 cd ∧
+        Midfall.LoweringV2.CompleteSide R keccak256 cd)
+    (hMap : LinearizeQueryMap R) :
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
+  end_to_end_of_A6_KZG R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside
+    (KzgMultiPrepareWidths_of_linearizeQueryMap R hMap)
 
 /-- **END-TO-END FROM THE A6 STATIC SCHEDULE.** The A6 half is stated exactly as
     the project-level refinement between `prepare`'s log widths and `R.tpEvents`;
@@ -4722,6 +4807,12 @@ open Midfall.Tools.Done in
 #assert_axioms multiPrepare_width_empty [propext, Classical.choice, Quot.sound]
 #assert_axioms multiPrepare_width_at [propext, Classical.choice, Quot.sound]
 #assert_axioms MultiPrepareBlockWidth.eq_zero_of_empty_run
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms PrepareLogSlots_of_validV3
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms readScheduleAgrees_of_validV3
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms end_to_end_of_validV3
   [propext, Classical.choice, Quot.sound]
 
 end Composition

@@ -61,6 +61,7 @@ import Midfall.Generator.Kzg
 import Midfall.Generator.Quotient.VmTypes
 import Midfall.Halo2.Exec.Native
 import Midfall.Halo2.Exec.Accumulator
+import Midfall.Halo2.Exec.TranscriptLogSized
 import Midfall.Assumptions.Codec
 
 namespace Midfall.Lowering
@@ -3077,6 +3078,213 @@ theorem repack_spec_wire {G₁ : Type} (plan : RepackedProofLayoutPlan) (c : G1C
         exact rfl
 
 
+section DecodeRustWire
+
+variable {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem logDispatch_parts (E : VerifierEnv p G₁ G₂ Gₜ) {rec : Nat × Bytes}
+    {m : Msg (Fr p) G₁} (h : logDispatch E rec = some m) :
+    (rec.1 = g1CompressedWidth ∧ ∃ Q, m = Msg.g1 Q ∧ E.g1.ofCompressed? rec.2 = some Q) ∨
+    (rec.1 = 32 ∧ ∃ s, m = Msg.fr s ∧ frOfRepr? (p := p) rec.2 = some s) := by
+  unfold logDispatch at h
+  by_cases h1 : rec.1 == (hashableG1 E.g1).width
+  · rw [ite_eq_left h1] at h
+    left
+    refine ⟨?_, ?_⟩
+    · rw [← hashableG1_width]; exact Nat.beq_eq.mp h1
+    · cases hq : E.g1.ofCompressed? rec.2 with
+      | none => rw [hq] at h; cases h
+      | some Q => rw [hq] at h; exact ⟨Q, (Option.some.inj h).symm, rfl⟩
+  · rw [ite_eq_right h1] at h
+    by_cases h2 : rec.1 == (hashableFr (p := p)).width
+    · rw [ite_eq_left h2] at h
+      right
+      refine ⟨?_, ?_⟩
+      · rw [← hashableFr_width (p := p)]; exact Nat.beq_eq.mp h2
+      · cases hs : frOfRepr? (p := p) rec.2 with
+        | none => rw [hs] at h; cases h
+        | some s => rw [hs] at h; exact ⟨s, (Option.some.inj h).symm, rfl⟩
+    · rw [ite_eq_right h2] at h; cases h
+
+theorem foldl_bytes_append (l : List (Nat × Bytes)) (acc : Bytes) :
+    l.foldl (fun acc r => acc ++ r.2) acc =
+      acc ++ l.foldl (fun acc r => acc ++ r.2) Bytes.empty := by
+  induction l generalizing acc with
+  | nil => exact (ByteArray.append_empty (b := acc)).symm
+  | cons r rs ih =>
+      simp only [List.foldl_cons]
+      rw [ih (acc ++ r.2), ih (Bytes.empty ++ r.2),
+        show (Bytes.empty : Bytes) ++ r.2 = r.2 from ByteArray.empty_append,
+        ByteArray.append_assoc]
+
+theorem bytesTake_record {pref r rest : Bytes} {n : Nat} (hn : r.size = n) :
+    bytesTake (pref ++ r ++ rest) pref.size n = some r := by
+  rw [ByteArray.append_assoc]
+  rw [bytesTake_append_right (a := pref) (b := r ++ rest) (i := pref.size) (n := n) (by omega)]
+  rw [show pref.size - pref.size = 0 from by omega]
+  rw [bytesTake_append_left (a := r) (b := rest) (i := 0) (n := n) (by omega)]
+  rw [bytesTake_whole_of_size hn]
+
+theorem mapM_cons_parts {α β : Type} {f : α → Option β} {a : α} {l : List α} {ms : List β}
+    (h : List.mapM f (a :: l) = some ms) :
+    ∃ m ms', f a = some m ∧ List.mapM f l = some ms' ∧ ms = m :: ms' := by
+  rw [List.mapM_cons] at h
+  cases hfa : f a with
+  | none => rw [hfa] at h; simp at h
+  | some m =>
+    rw [hfa] at h
+    cases hfl : List.mapM f l with
+    | none => rw [hfl] at h; simp at h
+    | some ms' =>
+      rw [hfl] at h
+      exact ⟨m, ms', rfl, rfl, (Option.some.inj h).symm⟩
+
+theorem decodeGo_records_aux (E : VerifierEnv p G₁ G₂ Gₜ) (π : Bytes) :
+    ∀ (records : List (Nat × Bytes)) (ms : List (Msg (Fr p) G₁))
+      (pref rest : Bytes) (ms0 : List (Msg (Fr p) G₁)),
+      records.mapM (logDispatch E) = some ms →
+      (∀ r ∈ records, r.2.size = r.1) →
+      π = pref ++ records.foldl (fun acc r => acc ++ r.2) Bytes.empty ++ rest →
+      (ms.map Msg.slot).foldlM (decodeGo (p := p) E.g1 π) (ms0, pref.size)
+        = some (ms0 ++ ms, pref.size + widthSum (ms.map Msg.slot)) := by
+  intro records
+  induction records with
+  | nil =>
+      intro ms pref rest ms0 hmap _hsized hpref
+      rw [List.mapM_nil] at hmap
+      have hms : [] = ms := Option.some.inj hmap
+      subst hms
+      simp [widthSum]
+  | cons r rs ih =>
+      intro ms pref rest ms0 hmap hsized hpref
+      obtain ⟨m, ms', hm, hmap', hms⟩ := mapM_cons_parts hmap
+      subst hms
+      have hparts := logDispatch_parts E hm
+      have hr : r.2.size = r.1 := hsized r List.mem_cons_self
+      have hrs : ∀ x ∈ rs, x.2.size = x.1 := fun x hx => hsized x (List.mem_cons_of_mem r hx)
+      have hpref' : π = (pref ++ r.2) ++ rs.foldl (fun acc r => acc ++ r.2) Bytes.empty ++ rest := by
+        rw [hpref]
+        simp only [List.foldl_cons]
+        rw [show (Bytes.empty : Bytes) ++ r.2 = r.2 from ByteArray.empty_append]
+        rw [foldl_bytes_append rs r.2]
+        simp only [ByteArray.append_assoc]
+      rcases hparts with ⟨hrec, Q, rfl, hQ⟩ | ⟨hrec, s, rfl, hs⟩
+      · have htake : bytesTake π pref.size g1CompressedWidth = some r.2 := by
+          rw [hpref', ByteArray.append_assoc]
+          have : r.2.size = g1CompressedWidth := by rw [hr, hrec]
+          exact bytesTake_record this
+        rw [List.map_cons, List.foldlM_cons, Msg.slot]
+        simp only [decodeGo, htake, hQ, Option.bind_some]
+        change List.foldlM (decodeGo (p := p) E.g1 π) (ms0 ++ [Msg.g1 Q],
+          pref.size + g1CompressedWidth) (List.map Msg.slot ms') = _
+        have hsz : pref.size + g1CompressedWidth = (pref ++ r.2).size := by
+          rw [ByteArray.size_append, hr, hrec]
+        rw [hsz]
+        rw [ih ms' (pref ++ r.2) rest (ms0 ++ [Msg.g1 Q]) hmap' hrs hpref']
+        simp only [Msg.slot, List.append_assoc, List.singleton_append, widthSum_cons,
+          slotWidth, ByteArray.size_append, hr, hrec]
+        simp only [Option.some.injEq, Prod.mk.injEq]
+        exact ⟨trivial, by omega⟩
+      · have htake : bytesTake π pref.size 32 = some r.2 := by
+          rw [hpref', ByteArray.append_assoc]
+          have : r.2.size = 32 := by rw [hr, hrec]
+          exact bytesTake_record this
+        rw [List.map_cons, List.foldlM_cons, Msg.slot]
+        simp only [decodeGo, htake, hs, Option.bind_some]
+        change List.foldlM (decodeGo (p := p) E.g1 π) (ms0 ++ [Msg.fr s],
+          pref.size + 32) (List.map Msg.slot ms') = _
+        have hsz : pref.size + 32 = (pref ++ r.2).size := by
+          rw [ByteArray.size_append, hr, hrec]
+        rw [hsz]
+        rw [ih ms' (pref ++ r.2) rest (ms0 ++ [Msg.fr s]) hmap' hrs hpref']
+        simp only [Msg.slot, List.append_assoc, List.singleton_append, widthSum_cons,
+          slotWidth, ByteArray.size_append, hr, hrec]
+        simp only [Option.some.injEq, Prod.mk.injEq]
+        exact ⟨trivial, by omega⟩
+
+
+theorem sum_map_slotWidth (slots : List WireSlot) :
+    (slots.map slotWidth).sum = widthSum slots := by
+  induction slots with
+  | nil => rfl
+  | cons s rest ih =>
+      simp only [List.map_cons, List.sum_cons, widthSum_cons]
+      rw [ih]
+
+theorem fold_size (l : List (Nat × Bytes)) :
+    (l.foldl (fun acc r => acc ++ r.2) Bytes.empty).size =
+      (l.map (fun r => r.2.size)).sum := by
+  induction l with
+  | nil => rfl
+  | cons r rs ih =>
+      simp only [List.foldl_cons, List.map_cons, List.sum_cons]
+      rw [show (Bytes.empty : Bytes) ++ r.2 = r.2 from ByteArray.empty_append]
+      rw [foldl_bytes_append rs r.2, ByteArray.size_append, ih]
+
+
+theorem map_widths_of_mapM (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (records : List (Nat × Bytes)) (ms : List (Msg (Fr p) G₁)),
+      records.mapM (logDispatch E) = some ms →
+      records.map (fun r => r.1) = ms.map (fun m => slotWidth (Msg.slot m)) := by
+  intro records
+  induction records with
+  | nil =>
+      intro ms h
+      rw [List.mapM_nil] at h
+      have hms : [] = ms := Option.some.inj h
+      subst hms
+      rfl
+  | cons r rs ih =>
+      intro ms h
+      obtain ⟨m, ms', hm, hmap', hms⟩ := mapM_cons_parts h
+      subst hms
+      rw [List.map_cons, List.map_cons, ih ms' hmap']
+      rcases logDispatch_parts E hm with ⟨hrec, Q, rfl, _⟩ | ⟨hrec, s, rfl, _⟩
+      · rw [hrec]; rfl
+      · rw [hrec]; rfl
+
+
+theorem decodeWire_of_logSized (E : VerifierEnv p G₁ G₂ Gₜ)
+    (plan : RepackedProofLayoutPlan) (π : Bytes) (records : List (Nat × Bytes))
+    (ms : List (Msg (Fr p) G₁))
+    (hmap : records.mapM (logDispatch E) = some ms)
+    (hsized : ∀ r ∈ records, r.2.size = r.1)
+    (hrec : π = records.foldl (fun acc r => acc ++ r.2) Bytes.empty)
+    (hslots : ms.map Msg.slot = plan.slots) :
+    decodeWire (p := p) plan E.g1 π = some ms := by
+  have hwidths : records.map (fun r => r.1) = ms.map (fun m => slotWidth (Msg.slot m)) :=
+    map_widths_of_mapM E records ms hmap
+  have hsizes : records.map (fun r => r.2.size) = records.map (fun r => r.1) := by
+    apply List.map_congr_left
+    intro r hr
+    exact hsized r hr
+  have hπsize : π.size = plan.compressedLen := by
+    rw [hrec, fold_size, hsizes, hwidths]
+    rw [show (fun m => slotWidth (Msg.slot m)) = (slotWidth ∘ Msg.slot) from rfl,
+      ← List.map_map, hslots, sum_map_slotWidth, compressedLen_eq_widthSum]
+  unfold decodeWire
+  rw [ite_eq_right (by omega : ¬ (π.size ≠ plan.compressedLen))]
+  rw [← hslots]
+  have hwalk := decodeGo_records_aux E π records ms Bytes.empty Bytes.empty [] hmap hsized (by
+    rw [hrec]
+    rw [show (Bytes.empty : Bytes) ++ (records.foldl (fun acc r => acc ++ r.2) Bytes.empty) =
+      records.foldl (fun acc r => acc ++ r.2) Bytes.empty from ByteArray.empty_append]
+    rw [show (records.foldl (fun acc r => acc ++ r.2) Bytes.empty) ++ (Bytes.empty : Bytes) =
+      records.foldl (fun acc r => acc ++ r.2) Bytes.empty from ByteArray.append_empty])
+  have hgoal : (ms.map Msg.slot).foldlM (decodeGo (p := p) E.g1 π) ([], 0) =
+      some (ms, widthSum (ms.map Msg.slot)) := by
+    have hempty : (Bytes.empty : Bytes).size = 0 := rfl
+    simpa [hempty] using hwalk
+  change ((ms.map Msg.slot).foldlM (decodeGo (p := p) E.g1 π) ([], 0)).map Prod.fst = some ms
+  rw [hgoal]
+  rfl
+
+end DecodeRustWire
+
 /-- D8, the pipeline-level half, in the ONLY direction that is true. The PLAN wrote
     "repackProof = .ok π' iff exists ms, decodeRust = some ms and ...", and that is
     FALSE: decodeRust returns none on ANY Fault (Native.lean:228-249 ends with
@@ -3084,15 +3292,15 @@ theorem repack_spec_wire {G₁ : Type} (plan : RepackedProofLayoutPlan) (c : G1C
     - x3 in pointSets (kzg/mod.rs:479, R-35) or the logup inversion (logup.rs:460) -
     repacks successfully with no message list at all. The implication below is the
     surviving direction; hsched supplies the read-schedule shape that
-    Obligations.readScheduleAgrees owes. PROOF OBLIGATION, registered in SORRY.md.
-
-    THE NAMED D1 DEPENDENCY (still open, so this stays a sorry): the proof needs the
-    width schedule of `Verifier.prepare`, i.e. `PrepareLogSlots` /
-    `readScheduleAgrees_of_validV3` in `LoweringV3/EndToEnd.lean` (the read order of
-    `prepare` equals `RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout`).
-    Nothing in the tree relates `decodeRust`'s transcript widths to the protocol plan
-    yet (`gap_readScheduleAgrees`). With that bridge, `decodeWire`'s exact-length guard
-    and `repack_spec_wire` discharge this statement. -/
+    Obligations.readScheduleAgrees owes. NOW PROVED (D1 bridge). `hsched` is the schedule hypothesis, and the proof is the
+    byte-level bridge: `decodeRust`'s transcript log is `LogSized` (every record's repr
+    has exactly its logged width, the size companion of `Transcript.LogWidths` in
+    `Halo2/Exec/TranscriptLogSized.lean`), so the log's concatenation is exactly the
+    message-wire stream `decodeWire` reads. The reverse walk is
+    `decodeWire_of_logSized` above; `repack_spec_wire`'s reverse direction then produces
+    the contract encoding. No width schedule beyond `hsched` is assumed here: deriving
+    `hsched` for a `ValidV3` render is the separate `LinearizeQueryMap` residual
+    (`LoweringV3/EndToEndAlgebra.lean`), and that residual is not a row/root hypothesis. -/
 theorem repack_spec_of_decodeRust {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
     [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
@@ -3105,7 +3313,31 @@ theorem repack_spec_of_decodeRust {G₁ G₂ Gₜ : Type}
       ms.map Msg.slot = plan.slots)
     (ms : List (Msg (Fr p) G₁)) (hdec : decodeRust (Gₜ := Gₜ) E F vk inst π = some ms) :
     repackProof (p := p) plan E.g1 π = .ok (encodeContractProof E.g1 ms) := by
-  sorry
+  obtain ⟨d, t, hrun, hpos, hmap⟩ := decodeRust_some E F vk inst π ms hdec
+  have hpres : Pres (prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]) :=
+    pres_prepare E F vk [[1]] [[inst.toList]]
+  have hbuffer : t.buffer = π := Pres.buffer hpres (Transcript.tiled_initFromBytes π) hrun
+  have hrec0 : t.recorded = π.extract 0 t.pos := transcript_log_concat hpres π hrun
+  have hposπ : t.pos = π.size := by rw [hpos, hbuffer]
+  have hextract : π.extract 0 t.pos = π := by
+    rw [hposπ]
+    exact extract_whole π π.size rfl
+  have hrec : t.recorded = π := by rw [hrec0, hextract]
+  have hwidths : Transcript.LogWidths t :=
+    (presWidths_prepare E F vk [[1]] [[inst.toList]])
+      (Transcript.initFromBytes π) t d (Transcript.LogWidths.initFromBytes π) hrun
+  have hsized : Transcript.LogSized t :=
+    (presSized_prepare E F vk [[1]] [[inst.toList]])
+      (Transcript.initFromBytes π) t d (Transcript.LogSized.initFromBytes π) hrun
+  have hfold : ms.foldl (init := Bytes.empty) (fun a m => ByteArray.append a (msgWire E m)) = π := by
+    rw [decodeRust_recorded E hc F vk inst π d t hrun hpos hwidths ms hdec]
+    exact hrec
+  have hrecπ : π = t.log.toList.foldl (fun acc r => ByteArray.append acc r.2) Bytes.empty := by
+    rw [← hrec, ← Transcript.recorded_eq_fold, List.foldl_map]
+  have hdecWire : decodeWire (p := p) plan E.g1 π = some ms :=
+    decodeWire_of_logSized E plan π t.log.toList ms hmap hsized hrecπ (hsched ms hdec)
+  exact (repack_spec_wire (p := p) plan E.g1 π (encodeContractProof E.g1 ms)).mpr
+    ⟨ms, hdecWire, rfl⟩
 
 /-! Symmetry of the generator's pointer equality. 'Location' and 'Value' carry no
     BEq (Encoding.lean:204 records why), so the four *Beq defs are hand-written and
