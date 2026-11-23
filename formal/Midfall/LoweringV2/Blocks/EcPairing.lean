@@ -882,7 +882,7 @@ theorem ecPairingBodyLit_product_runs (product : PairingProduct)
         (o = .normal ∧
           VEnv.get (restore [("success", (1 : U256)), ("lhs_mptr", lhsW),
             ("rhs_mptr", rhsW), ("ret", (Bridge.Dialect c g).zero)] V') "ret" =
-            some (1 : U256) ∧
+            some (1 : U256) ∧ (st'.env = st.env ∧ st'.halted = st.halted) ∧
           (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
             st'.memory x = st.memory x) ∧
           product (pairingFrame [(LA, GB), (LB, GN)]) = true))) := by
@@ -894,7 +894,7 @@ theorem ecPairingBodyLit_product_runs (product : PairingProduct)
       (o = .normal ∧
         VEnv.get (restore [("success", (1 : U256)), ("lhs_mptr", lhsW),
           ("rhs_mptr", rhsW), ("ret", (Bridge.Dialect c g).zero)] V') "ret" =
-          some (1 : U256) ∧
+          some (1 : U256) ∧ (st'.env = st.env ∧ st'.halted = st.halted) ∧
         (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
           st'.memory x = st.memory x) ∧
         product (pairingFrame [(LA, GB), (LB, GN)]) = true)))
@@ -910,8 +910,11 @@ theorem ecPairingBodyLit_product_runs (product : PairingProduct)
     | (refine Hold.intro ?_
        first
        | exact Or.inl ⟨rfl, by assumption⟩
-       | (refine Or.inr ⟨rfl, ⟨?_, ?_⟩⟩
+       | (refine Or.inr ⟨rfl, ⟨?_, ?_, ?_⟩⟩
           · rfl
+          · refine ⟨?_, ?_⟩
+            · simp +zetaDelta [finishCall, touchMemory2, touchMemory]
+            · simp +zetaDelta [finishCall, touchMemory2, touchMemory]
           · refine ⟨?_, ?_⟩
             · intro x hx
               simp +zetaDelta only [YulSemantics.EVM.litValue, BitVec.toNat_ofNat, BitVec.toNat_add]
@@ -1029,7 +1032,7 @@ theorem ecPairing_call_contract {g : ExternalGas} (product : PairingProduct)
       EvalExpr (Bridge.Dialect (permissive (callsOf product)) g) funs V st
         (Expr.call "ec_pairing"
           [Expr.var "success", Expr.var "lhs_mptr", Expr.var "rhs_mptr"]) r →
-      (∃ st', r = .vals [1] st' ∧
+      (∃ st', r = .vals [1] st' ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
         (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
           st'.memory x = st.memory x) ∧
         product (pairingFrame [(LA, GB), (LB, GN)]) = true) ∨
@@ -1088,7 +1091,7 @@ theorem ecPairing_call_contract {g : ExternalGas} (product : PairingProduct)
                         (hneg := hneg) (hscratchWin := hscratchWin)
                       have hpost := hbodyC _ _ _ (by exact hstmts)
                       have hpost' := hpost.elim
-                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, hpres, hprod⟩
+                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, _henv, hpres, hprod⟩
                       · rcases ho with hn | hl
                         · exact absurd (hn.symm.trans hon) (by decide)
                         · exact absurd (hl.symm.trans hon) (by decide)
@@ -1097,7 +1100,7 @@ theorem ecPairing_call_contract {g : ExternalGas} (product : PairingProduct)
                             [("success", (1 : U256)), ("lhs_mptr", lhsW), ("rhs_mptr", rhsW),
                               ("ret", (Bridge.Dialect (permissive (callsOf product)) g).zero)] := by
                           simp [bindZeros]
-                        refine Or.inl ⟨_, ?_, hpres, hprod⟩
+                        refine Or.inl ⟨_, ?_, _henv.1, _henv.2, hpres, hprod⟩
                         rw [hrets, hv1, hv2, hv3, houter]
                         simp only [List.map_cons, List.map_nil]
                         rw [hret]
@@ -1148,7 +1151,7 @@ theorem ecPairing_call_contract {g : ExternalGas} (product : PairingProduct)
                         (hneg := hneg) (hscratchWin := hscratchWin)
                       have hpost := hbodyC _ _ _ (by exact hstmts)
                       have hpost' := hpost.elim
-                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, hpres, hprod⟩
+                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, _henv, hpres, hprod⟩
                       · exact Or.inr ⟨_, rfl, hrevBody⟩
                       · exact absurd hoh (by decide)
   | callArgsHalt hargs =>
@@ -1193,7 +1196,7 @@ theorem ecPairing_call_contract_lits {g : ExternalGas} (product : PairingProduct
       EvalExpr (Bridge.Dialect (permissive (callsOf product)) g) funs V st
         (Expr.call "ec_pairing"
           [Expr.var "success", Expr.lit (.number rhsNat), Expr.lit (.number lhsNat)]) r →
-      (∃ st', r = .vals [1] st' ∧
+      (∃ st', r = .vals [1] st' ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
         (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
           st'.memory x = st.memory x) ∧
         product (pairingFrame [(LA, GB), (LB, GN)]) = true) ∨
@@ -1248,7 +1251,7 @@ theorem ecPairing_call_contract_lits {g : ExternalGas} (product : PairingProduct
                         (hneg := hneg) (hscratchWin := hscratchWin)
                       have hpost := hbodyC _ _ _ (by exact hstmts)
                       have hpost' := hpost.elim
-                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, hpres, hprod⟩
+                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, _henv, hpres, hprod⟩
                       · rcases ho with hn | hl
                         · exact absurd (hn.symm.trans hon) (by decide)
                         · exact absurd (hl.symm.trans hon) (by decide)
@@ -1259,7 +1262,7 @@ theorem ecPairing_call_contract_lits {g : ExternalGas} (product : PairingProduct
                               ("rhs_mptr", BitVec.ofNat 256 lhsNat),
                               ("ret", (Bridge.Dialect (permissive (callsOf product)) g).zero)] := by
                           simp [bindZeros]
-                        refine Or.inl ⟨_, ?_, hpres, hprod⟩
+                        refine Or.inl ⟨_, ?_, _henv.1, _henv.2, hpres, hprod⟩
                         simp only [Bridge.Dialect, YulSemantics.EVM.litValue]
                         rw [hrets, hv3, houter]
                         simp only [List.map_cons, List.map_nil]
@@ -1307,7 +1310,7 @@ theorem ecPairing_call_contract_lits {g : ExternalGas} (product : PairingProduct
                         (hneg := hneg) (hscratchWin := hscratchWin)
                       have hpost := hbodyC _ _ _ (by exact hstmts)
                       have hpost' := hpost.elim
-                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, hpres, hprod⟩
+                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, _henv, hpres, hprod⟩
                       · exact Or.inr ⟨_, rfl, hrevBody⟩
                       · exact absurd hoh (by decide)
   | callArgsHalt hargs =>
