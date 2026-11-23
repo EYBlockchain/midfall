@@ -237,13 +237,17 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `aeb74b2`: D2 is merged and five generation peels are closed; the register is **109 sorried
+At `009f090`: D2 is merged and five generation peels are closed; the register is **109 sorried
 declarations / 11 ROOT / 36 CERT / 0 REFUTED** (109 rows in `SORRY.md`). A4's `runBody_mono` (ST.13)
 is **PROVED**; A5's 8-statement staticcall walk, tail, and prelude vocabulary are merged; A9's PCS
-block-1/block-2 semantics and generator Word bridge are merged; A11's guard helpers, trim, normal
-leaf, and V3 slice faces are merged; A12's `block_live` traceReturn and vkLoading cases are merged
-(2 of 7 blocks). The D2 KAT is green (**1648 annotated checks / 120 files**), quick gate and
-`checks.sh` are green, and the `ChallengesGood.xNonzero` statement pin is in place.
+block-1/block-2/block-3-seed semantics and generator Word bridge are merged; A11's guard helpers,
+trim, normal leaf, call inversion/VK wire, and `FpWire` are merged; A12's `block_live` traceReturn
+and vkLoading cases are merged (2 of 7 blocks). B4's `ValidV3InhabitationF1Completion.lean` is merged
+and proves `f1GeneratedRender_notValidV3` plus the exact reduction
+`ValidV3 R ↔ ValidV3ExceptPayload R ∧ PayloadPointHalf R`; the F1-real route is therefore B3's
+point/codec re-source, with a synthetic `∃ R, ValidV3 R` only for non-vacuity. The D2 KAT is green
+(**1648 annotated checks / 120 files**), quick gate and `checks.sh` are green, and the
+`ChallengesGood.xNonzero` statement pin is in place.
 
 The vacuity report remains the non-vacuity ledger: the V3 root is **CONDITIONAL** (no `ValidV3`
 inhabitant), **VACUOUS at F1** (`f1_ValidV3_false`), and `0 REFUTED / 1 VACUOUS` is not a non-vacuity
