@@ -3374,4 +3374,135 @@ theorem pcsSetBodyGen_eq (setIdx : Nat) (points : List Int) (distinctRotations :
        rw [if_neg (by omega), show points.length + j - points.length = j by omega])
 
 
+def pcsStmtLocal (locals : List String) : Stmt EVM.Op → Prop
+  | .letDecl [x] _ => x ∈ locals
+  | .assign [x] _ => x ∈ locals
+  | _ => False
+
+def pcsStmtLetName? : Stmt EVM.Op → Option String
+  | .letDecl [x] _ => some x
+  | _ => none
+
+def pcsAddedNames (ss : Block EVM.Op) : List String :=
+  (ss.filterMap pcsStmtLetName?).reverse
+
+theorem pcs_venv_set_map_fst (V : VEnv (Bridge.Dialect c g)) (x : String) (v : U256) :
+    (VEnv.set V x v).map Prod.fst = V.map Prod.fst := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x <;> simp [VEnv.set, hy, ih]
+
+theorem pcsExec_get_of_local {funs : FunEnv (Bridge.Dialect c g)} {ss : Block EVM.Op} {locals : List String}
+    (hloc : ∀ s ∈ ss, pcsStmtLocal locals s) {x : String} (hx : x ∉ locals) :
+    ∀ {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+      {st' : EvmState} {o : Outcome},
+      ExecStmts (Bridge.Dialect c g) funs V st ss V' st' o →
+      o = .normal → VEnv.get V' x = VEnv.get V x := by
+  induction ss with
+  | nil =>
+      intro V st V' st' o h ho
+      cases h
+      rfl
+  | cons s rest ih =>
+      intro V st V' st' o h ho
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h with
+          ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+      · have hs := hloc s (by simp)
+        have hloc' : ∀ s' ∈ rest, pcsStmtLocal locals s' :=
+          fun s' hs' => hloc s' (by simp [hs'])
+        cases s with
+        | letDecl vars e =>
+            cases e with
+            | none =>
+                cases vars with
+                | nil => simp [pcsStmtLocal] at hs
+                | cons x' vars =>
+                    cases vars with
+                    | nil =>
+                        cases hhead with
+                        | letZero =>
+                            have hxne : x ≠ x' := fun h => hx (h ▸ hs)
+                            have htail'' : ExecStmts (Bridge.Dialect c g) funs
+                                ((x', (Bridge.Dialect c g).zero) :: V) st
+                                rest V' st' o := by simpa [bindZeros] using htail
+                            rw [ih hloc' htail'' ho]
+                            exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := x')
+                              (y := x) (v := _) hxne
+                    | cons _ _ => simp [pcsStmtLocal] at hs
+            | some e =>
+                cases vars with
+                | nil => simp [pcsStmtLocal] at hs
+                | cons x' vars =>
+                    cases vars with
+                    | nil =>
+                        cases hhead with
+                        | letVal he hlen =>
+                            obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+                            have hxne : x ≠ x' := fun h => hx (h ▸ hs)
+                            have htail'' : ExecStmts (Bridge.Dialect c g) funs ((x', v) :: V) st1
+                                rest V' st' o := by simpa using htail
+                            rw [ih hloc' htail'' ho]
+                            exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := x')
+                              (y := x) (v := v) hxne
+                    | cons _ _ => simp [pcsStmtLocal] at hs
+        | assign vars e =>
+            cases vars with
+            | nil => simp [pcsStmtLocal] at hs
+            | cons x' vars =>
+                cases vars with
+                | nil =>
+                    cases hhead with
+                    | assignVal he hlen =>
+                        obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+                        have hxne : x ≠ x' := fun h => hx (h ▸ hs)
+                        have htail'' : ExecStmts (Bridge.Dialect c g) funs (VEnv.set V x' v) st1
+                            rest V' st' o := by simpa [VEnv.setMany] using htail
+                        rw [ih hloc' htail'' ho]
+                        exact venv_get_set_ne (D := Bridge.Dialect c g) (x := x') (y := x)
+                          (v := v) hxne
+                | cons _ _ => simp [pcsStmtLocal] at hs
+        | _ => simp [pcsStmtLocal] at hs
+      · exact absurd ho hne
+
+theorem pcsExec_names {funs : FunEnv (Bridge.Dialect c g)} {ss : Block EVM.Op}
+    (hloc : ∀ s ∈ ss, ∃ x e, s = GenAst.ylet x e ∨ s = GenAst.yset x e) :
+    ∀ {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+      {st' : EvmState} {o : Outcome},
+      ExecStmts (Bridge.Dialect c g) funs V st ss V' st' o →
+      o = .normal → V'.map Prod.fst = pcsAddedNames ss ++ V.map Prod.fst := by
+  induction ss with
+  | nil =>
+      intro V st V' st' o h ho
+      cases h
+      rfl
+  | cons s rest ih =>
+      intro V st V' st' o h ho
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h with
+          ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+      · have hloc' : ∀ s' ∈ rest, ∃ x e, s' = GenAst.ylet x e ∨ s' = GenAst.yset x e :=
+          fun s' hs' => hloc s' (by simp [hs'])
+        obtain ⟨x, e, hlet | hset⟩ := hloc s (by simp)
+        · subst hlet
+          cases hhead with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+              have htail'' : ExecStmts (Bridge.Dialect c g) funs ((x, v) :: V) st1
+                  rest V' st' o := by simpa using htail
+              rw [ih hloc' htail'' ho]
+              simp [pcsAddedNames, pcsStmtLetName?, GenAst.ylet, List.append_assoc, List.map_cons]
+        · subst hset
+          cases hhead with
+          | assignVal he hlen =>
+              obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+              have htail'' : ExecStmts (Bridge.Dialect c g) funs (VEnv.set V x v) st1
+                  rest V' st' o := by simpa [VEnv.setMany] using htail
+              have hnone : pcsStmtLetName? (GenAst.yset x e) = none := by
+                simp [GenAst.yset, pcsStmtLetName?]
+              rw [ih hloc' htail'' ho, pcs_venv_set_map_fst]
+              simp [pcsAddedNames, hnone]
+      · exact absurd ho hne
+
+
 end Midfall.LoweringV3.PcsBlock4
