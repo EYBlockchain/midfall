@@ -3029,6 +3029,98 @@ theorem wordLenForBytes_le_mul (n : Nat) :
   have h : n ≤ (n + 31) / 32 * 32 := by omega
   simpa [Nat.mul_comm] using h
 
+theorem proofLen_eq_repackedLen_at (protocol : Midfall.Generator.ProtocolPlan)
+    (cptr numEvals numPointSets : Nat) (L : ProofCalldataLayout)
+    (h : ProofCalldataLayout.fromProtocol protocol cptr numEvals numPointSets = .ok L) :
+    L.proofLen = (RepackedProofLayoutPlan.fromProofLayout L).repackedLen ∧
+      L.proofEnd = L.proofCptr + L.proofLen := by
+  rw [ProofCalldataLayout.fromProtocol] at h
+  simp only [Bind.bind] at h
+  obtain ⟨x1, hx1, h1⟩ := except_bind_ok _ _ h
+  obtain ⟨x2, hx2, h2⟩ := except_bind_ok _ _ h1
+  obtain ⟨x3, hx3, h3⟩ := except_bind_ok _ _ h2
+  obtain ⟨x4, hx4, h4⟩ := except_bind_ok _ _ h3
+  obtain ⟨x5, hx5, h5⟩ := except_bind_ok _ _ h4
+  obtain ⟨x6, hx6, h6⟩ := except_bind_ok _ _ h5
+  by_cases hc : (x6.2.1 != protocol.proof.commitments.length) = true
+  · rw [ite_eq_left hc] at h6
+    obtain ⟨r, hr, _⟩ := except_bind_ok _ _ h6
+    cases hr
+  · rw [ite_eq_right (by simpa using hc)] at h6
+    let ws6 := ProofCalldataLayout.wordSection x6.2.2 numEvals
+    let fc := Midfall.Generator.ProofSection.new ws6.2 1 Midfall.Generator.g1Bytes
+    let ws8 := ProofCalldataLayout.wordSection fc.end numPointSets
+    let piS := Midfall.Generator.ProofSection.new ws8.2 1 Midfall.Generator.g1Bytes
+    have hcptrE : L.proofCptr = cptr := by cases h6; rfl
+    have hadvE : L.advicePhases = x1.1 := by cases h6; rfl
+    have hlmE : L.lookupMultiplicities = x2.1 := by cases h6; rfl
+    have hppE : L.permutationProducts = x3.1 := by cases h6; rfl
+    have hlksE : L.lookups = x4.1 := by cases h6; rfl
+    have htrE : L.trash = x5.1 := by cases h6; rfl
+    have hqlE : L.quotientLimbs = x6.1 := by cases h6; rfl
+    have hevE : L.evals = ws6.1 := by cases h6; rfl
+    have hfE : L.fCom = fc := by cases h6; rfl
+    have hqE : L.qEvals = ws8.1 := by cases h6; rfl
+    have hpeE : L.proofEnd = piS.end := by cases h6; rfl
+    have hplE : L.proofLen = piS.end - cptr := by cases h6; rfl
+    let lks := (List.range protocol.lookupChunks.length).zip protocol.lookupChunks
+    have h1' := foldlM_take_ok protocol Midfall.Generator.CommitmentRead.advice "advice phase"
+      protocol.numUserAdvices ([], 0, cptr) x1 hx1 (by intro s hs; simp at hs)
+    have h2' := takeCommitmentSection_ok protocol x1.2.1 x1.2.2 protocol.numLookups
+      Midfall.Generator.CommitmentRead.lookupMultiplicity "lookup multiplicity" x2.1 x2.2.1 x2.2.2 hx2
+    have h3' := takeCommitmentSection_ok protocol x2.2.1 x2.2.2 protocol.numPermutationZs
+      Midfall.Generator.CommitmentRead.permutationProduct "permutation product" x3.1 x3.2.1 x3.2.2 hx3
+    have h4' := foldlM_lookups_ok protocol lks ([], x3.2.1, x3.2.2) x4 hx4
+      (by intro r hr; simp at hr)
+    have h5' := takeCommitmentSection_ok protocol x4.2.1 x4.2.2 protocol.numTrashcans
+      Midfall.Generator.CommitmentRead.trash "trash" x5.1 x5.2.1 x5.2.2 hx5
+    have h6' := takeCommitmentSection_ok protocol x5.2.1 x5.2.2 protocol.numQuotients
+      Midfall.Generator.CommitmentRead.quotient "quotient limb" x6.1 x6.2.1 x6.2.2 hx6
+    have e2 : x2.1.itemCount = protocol.numLookups := by rw [h2'.1]; rfl
+    have e3 : x3.1.itemCount = protocol.numPermutationZs := by rw [h3'.1]; rfl
+    have e5 : x5.1.itemCount = protocol.numTrashcans := by rw [h5'.1]; rfl
+    have e6 : x6.1.itemCount = protocol.numQuotients := by rw [h6'.1]; rfl
+    have hg : Midfall.Generator.g1Bytes = 128 := rfl
+    have hw : Midfall.Generator.wordBytes = 32 := rfl
+    have hCG : L.commitmentG1Count = sumNat protocol.numUserAdvices + protocol.numLookups
+        + protocol.numPermutationZs + sumNat (lks.map (fun p => p.2 + 1))
+        + protocol.numTrashcans + protocol.numQuotients := by
+      simp only [ProofCalldataLayout.commitmentG1Count, ProofCalldataLayout.nonQuotientG1Count,
+        hadvE, hlmE, hppE, hlksE, htrE, hqlE]
+      show sumNat (x1.1.map (fun s => s.itemCount)) + x2.1.itemCount + x3.1.itemCount
+          + sumNat (x4.1.map (fun r => r.helpers.itemCount + r.accumulator.itemCount))
+          + x5.1.itemCount + x6.1.itemCount = _
+      rw [h1'.2.2, h4'.2.2, e2, e3, e5, e6]
+      simp only [List.map_nil, sumNat_nil, Nat.zero_add]
+    have hc6 : x6.2.2 = cptr + Midfall.Generator.g1Bytes * L.commitmentG1Count := by
+      rw [h6'.2, h5'.2, h4'.1, h3'.2, h2'.2, h1'.1, sumNat_map_mul, hCG, hg]
+      ring
+    have hws6 : ws6.2 = x6.2.2 + numEvals * Midfall.Generator.wordBytes := rfl
+    have hfc : fc.end = ws6.2 + 1 * Midfall.Generator.g1Bytes := rfl
+    have hws8 : ws8.2 = fc.end + numPointSets * Midfall.Generator.wordBytes := rfl
+    have hpi : piS.end = ws8.2 + 1 * Midfall.Generator.g1Bytes := rfl
+    have hpe2 : piS.end = cptr + (Midfall.Generator.g1Bytes * L.commitmentG1Count + numEvals * Midfall.Generator.wordBytes
+        + numPointSets * Midfall.Generator.wordBytes + 2 * Midfall.Generator.g1Bytes) := by
+      rw [hpi, hws8, hfc, hws6, hc6]
+      ring
+    have hge : piS.end ≥ cptr := by rw [hpe2]; omega
+    refine ⟨?_, ?_⟩
+    · rw [hplE, hpe2, Nat.add_sub_cancel_left]
+      have hrep : (RepackedProofLayoutPlan.fromProofLayout L).repackedLen
+          = L.commitmentG1Count * Midfall.Generator.g1Bytes + L.evals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes
+            + L.qEvals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes := by
+        show (RepackedProofLayoutPlan.fromProofLayout L).prefixG1Count * Midfall.Generator.g1Bytes
+            + (RepackedProofLayoutPlan.fromProofLayout L).numEvals * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes
+            + (RepackedProofLayoutPlan.fromProofLayout L).numPointSets * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes = _
+        rw [sum_commitmentReadGroups L]
+        rfl
+      rw [hrep, hevE, hqE]
+      have f1 : ws6.1.itemCount = numEvals := rfl
+      have f2 : ws8.1.itemCount = numPointSets := rfl
+      rw [f1, f2, hCG, hg, hw]
+      ring
+    · rw [hplE, hcptrE, hpeE, hpe2, Nat.add_sub_cancel_left]
+
 /-- **D-GATE11: `fromProtocol`'s proof payload length is below `2 ^ 80`.** The same
     `tp_fromProtocol` + `proofLen_eq_repackedLen` arithmetic as `v3_cdBound`, factored out for
     the transcript-buffer bound. Counts come from `MetaCountsBound`; no render is mentioned. -/
