@@ -3415,10 +3415,19 @@ def quotientProgramFits (p : QuotientProgram) : Prop :=
 def staticWorkingSetFits (pv : PlanView) : Prop :=
   pv.memory.traceU256Mptr + Midfall.Generator.wordBytes < 2 ^ 256
 
+/-- **D-GATE9 (signed 2026-11-23): THE BATCH-INVERT SCRATCH FLOOR.** The batch-inversion
+    helper subtracts 32 from `mptr` while walking backwards, so the scratch window must start
+    above the EVM's 0x40 scratch. `LayoutMemory` allocates it at `selectorAccMptr`, far above
+    the floor, but `WellFormed` carries no pointer lower bound; A4's lag call needs this one
+    clause. It is a layout fact, not a row hypothesis. -/
+def batchInvertScratchFits (pv : PlanView) : Prop :=
+  32 ≤ pv.memory.batchInvertScratchMptr
+
 def programFits (pv : PlanView) (m : Model) : Prop :=
   ptrAddr pv.memory.vkMptr + pv.vk.len < 2 ^ 256 ∧
   ptrAddr pv.memory.vkMptr + pv.vk.runtimeLen < 2 ^ 256 ∧
   staticWorkingSetFits pv ∧
+  batchInvertScratchFits pv ∧
   match m.quotientProgram with
   | some p => quotientProgramFits p
   | none => True
@@ -3444,13 +3453,14 @@ def programFitB (pv : PlanView) (m : Model) : Bool :=
   decide (ptrAddr pv.memory.vkMptr + pv.vk.len < 2 ^ 256) &&
   decide (ptrAddr pv.memory.vkMptr + pv.vk.runtimeLen < 2 ^ 256) &&
   decide (pv.memory.traceU256Mptr + Midfall.Generator.wordBytes < 2 ^ 256) &&
+  decide (32 ≤ pv.memory.batchInvertScratchMptr) &&
   match m.quotientProgram with
   | some p => quotientProgramFitB p
   | none => true
 
 theorem programFitB_eq_true_iff {pv : PlanView} {m : Model} :
     programFitB pv m = true ↔ programFits pv m := by
-  unfold programFitB programFits staticWorkingSetFits
+  unfold programFitB programFits staticWorkingSetFits batchInvertScratchFits
   cases m.quotientProgram <;>
     simp [Bool.and_eq_true, decide_eq_true_eq, quotientProgramFitB_eq_true_iff]
     <;> tauto
@@ -3638,6 +3648,11 @@ theorem staticWorkingSetFits_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV
     staticWorkingSetFits R.pv :=
   (programFit_of_valid hR).2.2.1
 
+/-- **D-GATE9 projection**: the batch-invert scratch starts above the EVM scratch. -/
+theorem batchInvertScratchFits_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    batchInvertScratchFits R.pv :=
+  (programFit_of_valid hR).2.2.2.1
+
 /-- The interpreter's own window, at the model's quotient program. -/
 theorem quotientProgramFits_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
     {p : QuotientProgram} (hp : R.model.quotientProgram = some p) :
@@ -3645,7 +3660,7 @@ theorem quotientProgramFits_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3
   have h := programFit_of_valid hR
   unfold programFits at h
   rw [hp] at h
-  exact h.2.2.2
+  exact h.2.2.2.2
 
 theorem noShadow_of_programOk {R : Render p G₁ G₂ Gₜ} (hp : programOkB R = true) :
     noShadowCore R.pv R.model = true := by
