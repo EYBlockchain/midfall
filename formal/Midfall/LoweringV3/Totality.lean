@@ -2769,6 +2769,127 @@ theorem inv_pcs_pairing_pins {calls : ExternalCalls} {gas : ExternalGas}
           (E.g1.toEip S.c.dual.left.eval).data) = true at hh
         exact ByteArray.ext (beq_iff_eq.mp hh)
 
+/-- `Frame` reads the state only through `env.calldata`, `env.keccakOf` and `env.extCodeOf`,
+    so an environment-preserving transition keeps it. -/
+theorem Frame_env_congr {R : Render p G₁ G₂ Gₜ} {H : Hash} {vkAddr : U256} {cd : Bytes}
+    {c : ExternalCalls} {g : ExternalGas} {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (h : Frame R H vkAddr cd V st) (henv : st'.env = st.env) :
+    Frame R H vkAddr cd V st' := by
+  obtain ⟨hcd, hk, hvk, hvh, hne, hr, hv, hsz⟩ := h
+  refine ⟨?_, ?_, ?_, hvh, hne, hr, hv, hsz⟩
+  · rw [henv]; exact hcd
+  · rw [henv]; exact hk
+  · rw [henv]; exact hvk
+
+/-- The wire frame the helper hands PAIRING_CHECK, as the evidence's `ec_pairing_sem` states it:
+    the two G1 slots read out of memory and the two G2 slots out of the VK header. -/
+def fpWireFrame (R : Render p G₁ G₂ Gₜ) (st : EvmState) : Bytes :=
+  pairingFrame
+    [(bytesAt st (ptrAddr R.pv.memory.pairingRhsMptr) 128, vkG2Words R.pv vkG2BaseSlot),
+     (bytesAt st (ptrAddr R.pv.memory.pairingLhsMptr) 128, vkG2Words R.pv vkNegSG2BaseSlot)]
+
+/-- **THE CLEAN `.finalPairing` ARM, REDUCED TO THE HELPER CALL.** The hypothesis is exactly the
+    existence half the `ec_pairing` body owes: on every clean `.pcs` boundary the call either
+    returns the word 1, changing memory only inside the finalPairing scratch, leaving the
+    environment and halt record alone and answering `true` on the wire frame, or it halts. From
+    that alone the slice is live: the guard skips (`success = 1`), the assignment sets `success`
+    to 1, `Inv .pcs` is transported across the 768-byte write, the two pairing slots are pinned by
+    `inv_pcs_pairing_pins`, `fpG2Slots` turns the header words into the params' encodings, and
+    `fp_pairing_algebra` converts the wire answer into `DualMSM.check`, which
+    `stageInv_pairing_of_pcs` consumes. -/
+theorem block_live_finalPairing_clean_of_call
+    (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
+    (vkAddr : U256) (cd : Bytes)
+    (hcall : ∀ V st, StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+        R H vkAddr cd Checkpoint.pcs V st →
+      ∃ st' : EvmState,
+        (EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+            (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+            (Expr.call "ec_pairing"
+              [Expr.var "success", Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+               Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"]) (.vals [1] st') ∧
+          (∀ x, x < R.pv.memory.finalPairingScratchMptr ∨
+                R.pv.memory.finalPairingScratchMptr + 768 ≤ x → st'.memory x = st.memory x) ∧
+          st'.env = st.env ∧ st'.halted = st.halted ∧
+          product (fpWireFrame R st) = true)
+        ∨ EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+            (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+            (Expr.call "ec_pairing"
+              [Expr.var "success", Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+               Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"]) (.halt st')) :
+    ∀ V st, StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+        R H vkAddr cd Checkpoint.pcs V st →
+      ∃ V' st' o, ExecStmts (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+        (R.slice Partial.finalPairing) V' st' o ∧
+        ((o = .normal ∧ Mid (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+            R H vkAddr cd Checkpoint.pairing V' st') ∨ o ≠ .normal) := by
+  intro V st hclean
+  have hclean' := hclean
+  obtain ⟨hframe, hsucc, -, hraw, -, hagree⟩ := hclean
+  -- the G2 header words are the params' encodings (the V3 `fpG2Slots`)
+  have hslots : vkG2Words R.pv vkG2BaseSlot = R.encG2 (R.params.nG2Prepared)⁻¹ ∧
+      vkG2Words R.pv vkNegSG2BaseSlot = R.encG2 (R.params.sG2Prepared)⁻¹ := by
+    refine ⟨?_, ?_⟩
+    · rw [hR.env.nG2, inv_inv]
+      exact hR.payload.g2Base
+    · rw [hR.env.sG2]
+      exact hR.payload.negSG2
+  -- the guard skips at `success = 1`
+  have hguard : ExecStmt (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"])
+        [Stmt.exprStmt (Expr.call "fail" [Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED"])]) V st .normal :=
+    vk_gate_skip_any R "ERR_PRECOMPILE_FAILED" hsucc (by decide)
+  rw [fp_slice_at R hR]
+  obtain ⟨st', hcase⟩ := hcall V st hclean'
+  rcases hcase with ⟨hev, hmem, henv, hhalt, hprod⟩ | ⟨hev⟩
+  · -- the helper answered 1: the slice exits normally, with `success = 1` and `StageInv .pairing`
+    have hsucc' : VEnv.get (VEnv.setMany V ["success"] [1]) "success" = some (1 : U256) := by
+      show VEnv.get (VEnv.set V "success" (1 : U256)) "success" = some 1
+      exact Midfall.LoweringV2.Blocks.EcPairing.venv_get_set_same hsucc
+    · -- AGREE at `.pcs` in the post state, using `Inv_pcs_of_mem_outside` per decode
+      have hagree' : Agree (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+          R H cd Checkpoint.pcs (VEnv.setMany V ["success"] [1]) st' := by
+        intro ms instW inst hdec
+        obtain ⟨S, hstage, hinv⟩ := hagree ms instW inst hdec
+        refine ⟨S, hstage, ?_⟩
+        have hset : VEnv.setMany V ["success"] [1] = VEnv.set V "success" (1 : U256) := rfl
+        rw [hset]
+        exact Inv_pcs_of_mem_outside R hR hinv hmem henv hhalt 1
+      -- the pairing answer is the `DualMSM.check` the `.pairing` boundary needs
+      have hdual : ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+          Decoded R cd ms instW inst →
+          ∀ S, leanStage R H inst ms Checkpoint.pcs = .ok S →
+            DualMSM.check S.c.dual R.params = true := by
+        intro ms instW inst hdec S hstage
+        obtain ⟨S', hstage', hinv⟩ := hagree ms instW inst hdec
+        have hS : S' = S := by
+          rw [hstage] at hstage'
+          exact (Except.ok.inj hstage').symm
+        subst hS
+        obtain ⟨hRpin, hLpin⟩ := inv_pcs_pairing_pins (E := R.E) (params := R.params)
+          (PV := R.pv) (S := S') hinv
+        apply (Midfall.LoweringV2.Blocks.FinalPairing.fp_pairing_algebra R product hpc S').mp
+        unfold Midfall.LoweringV2.Blocks.FinalPairing.fpAnsBit
+        have hfe : Midfall.LoweringV2.Blocks.FinalPairing.fpFrame R S' = fpWireFrame R st := by
+          unfold Midfall.LoweringV2.Blocks.FinalPairing.fpFrame fpWireFrame
+          rw [hRpin, hLpin, hslots.1, hslots.2]
+        rw [hfe, hprod]
+      have hframe' : Frame R H vkAddr cd (VEnv.setMany V ["success"] [1]) st' := by
+        rw [show VEnv.setMany V ["success"] [1] = VEnv.set V "success" (1 : U256) from rfl]
+        exact Frame_env_congr (Frame_set_success hframe 1) henv
+      have hstage' : StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+          R H vkAddr cd Checkpoint.pairing (VEnv.setMany V ["success"] [1]) st' :=
+        stageInv_pairing_of_pcs R ⟨hframe', hsucc', trivial, hraw, trivial,
+          hagree'⟩ hsucc' hdual
+      refine ⟨VEnv.setMany V ["success"] [1], st', .normal, ?_, Or.inl ⟨rfl, Or.inl hstage'⟩⟩
+      refine Step.seqCons hguard (Step.seqCons (Step.assignVal hev (by rfl)) Step.seqNil)
+  · -- the helper halted: the slice halts before the assignment
+    refine ⟨V, st', .halt, ?_, Or.inr (by decide)⟩
+    refine Step.seqCons hguard (Step.seqStop (Step.assignHalt hev) (by decide))
+
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
     answering at the four precompile addresses, and the block's all-runs row to classify the
