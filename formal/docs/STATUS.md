@@ -237,21 +237,22 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `2245d70`: D2 is merged and five generation peels are closed; the register is **109 sorried
+At `ef90d28`: D2 is merged and five generation peels are closed; the register is **109 sorried
 declarations / 11 ROOT / 36 CERT / 0 REFUTED** (109 rows in `SORRY.md`). A4's `runBody_mono` (ST.13)
-is **PROVED**; A5's 8-statement walk, tail, prelude 2–9, and the `wMulmodAt` inverse link are
-merged; A9's PCS block-1/block-2/block-3-seed semantics and generator Word bridge are merged; A11's
-guard helpers, trim, normal leaf, call inversion/VK wire, `FpWire`, and selector-bucket monotonicity
-are merged; A6's `GroupsMatch` split and state-threaded fold are in its branch; A12's `block_live`
-traceReturn and vkLoading cases are merged (2 of 7 blocks). B4's
-`ValidV3InhabitationF1Completion` proves `f1GeneratedRender_notValidV3` and the exact reduction
-`ValidV3 R ↔ ValidV3ExceptPayload R ∧ PayloadPointHalf R`; B4's
+is **PROVED**; A5's 8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, and bridge
+modulus arithmetic are merged; A9's PCS block-1/block-2/block-3-seed semantics, generator Word
+bridge, and complete block-1 ROT_POINTS table spec are merged; A11's guard helpers, trim, normal
+leaf, call inversion/VK wire, `FpWire`, selector-bucket monotonicity, and the full
+`Inv .pcs → Inv .pairing` transfer are merged; A6's `GroupsMatch` split, state-threaded fold, and
+`phaseCols` are in its branch; A12's `block_live` traceReturn and vkLoading cases are merged
+(2 of 7 blocks). B4's `ValidV3InhabitationF1Completion` proves `f1GeneratedRender_notValidV3` and the
+exact reduction `ValidV3 R ↔ ValidV3ExceptPayload R ∧ PayloadPointHalf R`; B4's
 `ValidV3SyntheticInhabitant.exists_validV3` proves `∃ R, ValidV3 R` at a synthetic render, so the
-**generic root is non-vacuous**. B3's `PayloadPointsF1` now supplies the resourced 19/8 commitments
-and the point half; the F1-real residual is exactly
-`hpay : vkG2Words f1Pv vkNegSG2BaseSlot = g2foldToEip (g2foldExp n)` (the payload's neg-S-G2
-exponent), which B3 is checking against the tracked SRS/params. The D2 KAT is green
-(**1648 annotated checks / 120 files**), quick gate and `checks.sh` are green, and the
+**generic root is non-vacuous**, and B4's DG.4 `GeneratorDone`/`Done`/`not_done_today` card is merged.
+B3's `PayloadPointsF1` supplies the resourced 19/8 commitments and the point half; the F1-real
+residual is exactly `hpay : vkG2Words f1Pv vkNegSG2BaseSlot = g2foldToEip (g2foldExp n)` (the
+payload's neg-S-G2 exponent), which B3 is checking against the tracked SRS/params. The D2 KAT is
+green (**1648 annotated checks / 120 files**), quick gate and `checks.sh` are green, and the
 `ChallengesGood.xNonzero` statement pin is in place.
 
 The vacuity report is the non-vacuity ledger: the generic V3 root is now **NON-VACUOUS (synthetic)**
