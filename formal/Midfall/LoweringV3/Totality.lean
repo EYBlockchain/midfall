@@ -3702,6 +3702,24 @@ theorem fpBodyRun (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
 
 #assert_axioms Midfall.LoweringV3.fpBodyRun [propext, Classical.choice, Quot.sound] native []
 
+/-- **THE pcs CASE OF `block_live`, REDUCED TO THE ROW'S TOTAL PROGRESS CONTRACT.** `BlockProgS`
+    already carries both halves over the honest dialect: its `StmtsContract` field is the exhibited
+    run and its `StmtsContractAll` field classifies every run as `o = .normal` at
+    `StageInv .pcs`, which injects into `Mid .pcs = StageInv .pcs ∨ Poisoned`. No `block_live`
+    hypothesis; the PCS residual is the row itself, exactly like `hbody` in the finalPairing arm. -/
+theorem block_live_pcs (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (hprog : BlockProgS R Partial.pcs H vkAddr product cd) :
+    BlockLive R Partial.pcs H vkAddr product cd := by
+  intro V st hpre
+  obtain ⟨V', st', o, hrun, hgood⟩ := hprog.1 V st hpre
+  refine ⟨V', st', o, hrun, ?_⟩
+  change o = .normal ∧ StageInv R H vkAddr cd Checkpoint.pcs V' st' at hgood
+  exact Or.inl ⟨hgood.1, Or.inl hgood.2⟩
+
+#assert_axioms Midfall.LoweringV3.block_live_pcs
+  [propext, Classical.choice, Quot.sound] native []
+
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
     answering at the four precompile addresses, and the block's all-runs row to classify the
