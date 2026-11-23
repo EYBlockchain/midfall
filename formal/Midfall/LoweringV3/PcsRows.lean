@@ -4783,6 +4783,198 @@ theorem b3_rolled_block_iter {funs : FunEnv (Bridge.Dialect c g)} (nRot : Nat)
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_rolled_block_iter
   [propext, Classical.choice, Quot.sound] native []
 
+/-! ### Block 3: the rolled loop invariant (`allRuns_loop`) -/
+
+def b3LoopAcc (rv pp ep : U256) (st0 : EvmState) (nRot : Nat)
+    (init : Nat → U256) : Nat → Nat → U256
+  | 0, k => init k
+  | j + 1, k =>
+      b3FoldK rv (loadWord st0.memory (pp + BitVec.ofNat 256 (j * Midfall.Generator.wordBytes)).toNat)
+        (rolledWord st0 (ep + BitVec.ofNat 256 (j * (nRot * Midfall.Generator.wordBytes))))
+        (List.range nRot) k (b3LoopAcc rv pp ep st0 nRot init j k)
+
+def b3LoopInv (m nRot : Nat) (pp ep rv : U256) (st0 : EvmState)
+    (init : Nat → U256) (j : Nat) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop :=
+  1 ≤ j ∧ j ≤ m ∧
+  VEnv.get V "i" = some (BitVec.ofNat 256 j) ∧
+  VEnv.get V "pow_p" = some
+    (pp + BitVec.ofNat 256 ((j - 1) * Midfall.Generator.wordBytes)) ∧
+  VEnv.get V "eval_p" = some
+    (ep + BitVec.ofNat 256 ((j - 1) * (nRot * Midfall.Generator.wordBytes))) ∧
+  VEnv.get V "r" = some rv ∧
+  (∀ k, k < nRot → VEnv.get V (qkey k) =
+    some (b3LoopAcc rv pp ep st0 nRot init (j - 1) k)) ∧
+  st.memory = st0.memory
+
+def b3LoopFin (m nRot : Nat) (pp ep rv : U256) (st0 : EvmState)
+    (init : Nat → U256) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (o : Outcome) : Prop :=
+  o = .normal ∧
+  VEnv.get V "i" = some (BitVec.ofNat 256 m) ∧
+  VEnv.get V "pow_p" = some
+    (pp + BitVec.ofNat 256 ((m - 1) * Midfall.Generator.wordBytes)) ∧
+  VEnv.get V "eval_p" = some
+    (ep + BitVec.ofNat 256 ((m - 1) * (nRot * Midfall.Generator.wordBytes))) ∧
+  (∀ k, k < nRot → VEnv.get V (qkey k) =
+    some (b3LoopAcc rv pp ep st0 nRot init (m - 1) k)) ∧
+  st.memory = st0.memory
+
+set_option maxHeartbeats 1200000 in
+theorem b3_incr_block {funs : FunEnv (Bridge.Dialect c g)} (j : Nat) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (.block [GenAst.yset "i" (GenAst.yop EVM.Op.add
+        [GenAst.yvar "i", GenAst.ylit 1])])
+      (fun V _ => VEnv.get V "i" = some (BitVec.ofNat 256 j))
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' "i" = some (BitVec.ofNat 256 (j + 1)) ∧
+        (∀ y, y ≠ "i" → VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  refine YulSemantics.StmtsContractAll.block (D := Bridge.Dialect c g) ?_
+  intro V st hpre V' st' o hrun
+  have hstep := b1_stmt_of_singleton hrun
+  obtain ⟨ho, iv, hiv, hV', hst⟩ :=
+    b3_exec_yset_add_var_lit (x := "i") (y := "i") (off := 1) hstep
+  rw [hpre] at hiv
+  have hiv' : iv = BitVec.ofNat 256 j := (Option.some.inj hiv).symm
+  subst hiv'
+  have hnewi : BitVec.ofNat 256 j + BitVec.ofNat 256 1 =
+      BitVec.ofNat 256 (j + 1) := by
+    rw [← BitVec.ofNat_add]
+  rw [hV', restore_set_same (D := Bridge.Dialect c g)]
+  refine ⟨ho, ?_, ?_, hst⟩
+  · rw [venv_get_set_same (D := Bridge.Dialect c g) hpre]
+    rw [hnewi]
+  · intro y hy
+    exact venv_get_set_ne (D := Bridge.Dialect c g) (x := "i") (y := y)
+      (v := BitVec.ofNat 256 j + BitVec.ofNat 256 1) hy
+
+set_option maxHeartbeats 4000000 in
+theorem b3_rolled_execLoop_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (m nRot : Nat) (hm : m < 2 ^ 256) (init : Nat → U256) (pp ep rv : U256)
+    (st0 : EvmState) :
+    ∀ V st, b3LoopInv m nRot pp ep rv st0 init 1 V st →
+      ∀ V' st' o, ExecLoop (Bridge.Dialect c g) funs V st
+        (GenAst.yop EVM.Op.lt [GenAst.yvar "i", GenAst.ylit m])
+        [GenAst.yset "i" (GenAst.yop EVM.Op.add
+          [GenAst.yvar "i", GenAst.ylit 1])]
+        (b3RolledBody nRot) V' st' o →
+      b3LoopFin m nRot pp ep rv st0 init V' st' o := by
+  intro V st hpre V' st' o hrun
+  refine allRuns_loop (D := Bridge.Dialect c g)
+    (Inv := fun V st => ∃ j, b3LoopInv m nRot pp ep rv st0 init j V st)
+    (Q := b3LoopFin m nRot pp ep rv st0 init) ?_ V st ⟨1, hpre⟩ V' st' o hrun
+  intro V st hInv
+  obtain ⟨j, hInvj⟩ := hInv
+  obtain ⟨hj1, hjm, hi, hpp, hep, hrv, hq, hmem⟩ := hInvj
+  refine ⟨?condHalt, ?exit, ?iter⟩
+  · intro st1 hc
+    exact (b3_eval_lt_var_lit_halt (m := m) hc).elim
+  · intro cv st1 hc hz
+    obtain ⟨iv, hiv, hcv, hst⟩ := b3_eval_lt_var_lit_inv hc
+    rw [hi] at hiv
+    have hiv' : iv = BitVec.ofNat 256 j := (Option.some.inj hiv).symm
+    subst hiv'
+    rw [hst]
+    have hjlt : j < 2 ^ 256 := by omega
+    have hmle : m ≤ j := lt_guard_false hjlt hm (by
+      rw [← hcv]; exact hz)
+    have hjm' : j = m := Nat.le_antisymm hjm hmle
+    subst hjm'
+    exact ⟨rfl, hi, hpp, hep, hq, hmem⟩
+  · intro cv st1 hc hnz
+    obtain ⟨iv, hiv, hcv, hst⟩ := b3_eval_lt_var_lit_inv hc
+    rw [hi] at hiv
+    have hiv' : iv = BitVec.ofNat 256 j := (Option.some.inj hiv).symm
+    subst hiv'
+    have hjlt : j < 2 ^ 256 := by omega
+    have hjl : j < m := lt_guard_true hjlt hm (by
+      intro h; exact hnz (hcv.trans h))
+    intro Vb stb ob hbody
+    rw [hst] at hbody
+    -- the body block
+    obtain ⟨hb_norm, hbq, hbpp, hbep, hb_r, hb_i, hbmem⟩ :=
+      b3_rolled_block_iter (funs := funs) nRot
+        (b3LoopAcc rv pp ep st0 nRot init (j - 1))
+        (pp + BitVec.ofNat 256 ((j - 1) * Midfall.Generator.wordBytes))
+        (ep + BitVec.ofNat 256 ((j - 1) * (nRot * Midfall.Generator.wordBytes)))
+        rv st0.memory (BitVec.ofNat 256 j) V st
+        ⟨hq, hpp, hep, hrv, hi, hmem⟩ Vb stb ob hbody
+    cases ob with
+    | normal =>
+        intro Vp stp op hpost
+        obtain ⟨hop, hinew, hout, hstp⟩ :=
+          b3_incr_block (funs := funs) j Vb stb hb_i Vp stp op hpost
+        have hfun : rolledWord st
+            (ep + BitVec.ofNat 256 ((j - 1) * (nRot * Midfall.Generator.wordBytes))) =
+            rolledWord st0
+            (ep + BitVec.ofNat 256 ((j - 1) * (nRot * Midfall.Generator.wordBytes))) := by
+          funext kk
+          unfold rolledWord
+          rw [hmem]
+        have hpow : loadWord st.memory
+            (pp + BitVec.ofNat 256 ((j - 1) * Midfall.Generator.wordBytes)).toNat =
+            loadWord st0.memory
+            (pp + BitVec.ofNat 256 ((j - 1) * Midfall.Generator.wordBytes)).toNat := by
+          rw [hmem]
+        refine ⟨fun _ => ⟨j+1, by omega, by omega, ?_, ?_, ?_, ?_, ?_, ?_⟩,
+          fun hhalt => absurd (hop.symm.trans hhalt) (by decide)⟩
+        · exact hinew
+        · rw [hout "pow_p" (by decide)]
+          rw [show j + 1 - 1 = j by omega]
+          rw [show j * Midfall.Generator.wordBytes =
+              (j - 1) * Midfall.Generator.wordBytes + Midfall.Generator.wordBytes by
+            have hji : j = (j - 1) + 1 := by omega
+            conv_lhs => rw [hji]
+            rw [Nat.add_mul, one_mul]]
+          rw [BitVec.ofNat_add, ← BitVec.add_assoc]
+          exact hbpp
+        · rw [hout "eval_p" (by decide)]
+          rw [show j + 1 - 1 = j by omega]
+          rw [show j * (nRot * Midfall.Generator.wordBytes) =
+              (j - 1) * (nRot * Midfall.Generator.wordBytes) +
+                (nRot * Midfall.Generator.wordBytes) by
+            have hji : j = (j - 1) + 1 := by omega
+            conv_lhs => rw [hji]
+            rw [Nat.add_mul, one_mul]]
+          rw [BitVec.ofNat_add, ← BitVec.add_assoc]
+          exact hbep
+        · rw [hout "r" (by decide)]
+          exact hb_r
+        · intro k hk
+          rw [hout (qkey k) (by intro h; exact qkey_ne_i k h)]
+          rw [show j + 1 - 1 = j by omega]
+          rw [show b3LoopAcc rv pp ep st0 nRot init j k =
+              b3FoldK rv
+                (loadWord st0.memory
+                  (pp + BitVec.ofNat 256 ((j - 1) * Midfall.Generator.wordBytes)).toNat)
+                (rolledWord st0
+                  (ep + BitVec.ofNat 256 ((j - 1) * (nRot * Midfall.Generator.wordBytes))))
+                (List.range nRot) k
+                (b3LoopAcc rv pp ep st0 nRot init (j - 1) k) from by
+            rw [show j = (j - 1) + 1 by omega]
+            rfl]
+          rw [hpow, hfun] at hbq
+          exact hbq k hk
+        · rw [hstp]
+          exact hbmem.trans hmem
+    | «continue» =>
+        intro Vp stp op hpost
+        exact absurd hb_norm (by decide)
+    | «break» => exact absurd hb_norm (by decide)
+    | «leave» => exact absurd hb_norm (by decide)
+    | halt => exact absurd hb_norm (by decide)
+
+
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_incr_block
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3LoopAcc
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3LoopInv
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3LoopFin
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_rolled_execLoop_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow_halt
