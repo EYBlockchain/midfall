@@ -1574,6 +1574,127 @@ theorem pcsBpTail_contract {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpTail_contract
   [propext, Classical.choice, Quot.sound] native []
 
+/-- The emitted `bpLines`. -/
+def pcsBpLines (n : Nat) (nm : Nat → String) : Block EVM.Op :=
+  pcsBpHead (nm 0) :: ((List.range n).drop 1).map (fun i => pcsBpTail i (nm i))
+
+/-- The running product `bp_i`. -/
+def pcsBpVal (rv : U256) (a : Nat → U256) : Nat → U256
+  | 0 => a 0
+  | i + 1 => wMulmodAt (pcsBpVal rv a i) (a (i + 1)) rv
+
+theorem pcsBpVal_succ (rv : U256) (a : Nat → U256) (i : Nat) :
+    pcsBpVal rv a (i + 1) = wMulmodAt (pcsBpVal rv a i) (a (i + 1)) rv := rfl
+
+set_option maxHeartbeats 1600000 in
+/-- **THE `bpLines` FOLD.** -/
+theorem pcsBpLines_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (n : Nat) (nm : Nat → String) (rv : U256) (a : Nat → U256)
+    (hn : 0 < n)
+    (hbpNeR : ∀ i < n, pcsBpName i ≠ "r")
+    (hbpNeIn : ∀ i < n, ∀ j < n, pcsBpName i ≠ nm j)
+    (hbpDist : ∀ i < n, ∀ j < n, i ≠ j → pcsBpName i ≠ pcsBpName j) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (pcsBpLines n nm)
+      (fun V st => VEnv.get V "r" = some rv ∧
+        (∀ i < n, VEnv.get V (nm i) = some (a i)) ∧
+        (∀ i < n, VEnv.get V (pcsBpName i) = none))
+      (fun V st V' st' o => o = .normal ∧
+        (∀ i < n, VEnv.get V' (pcsBpName i) = some (pcsBpVal rv a i)) ∧
+        (∀ y, (∀ i < n, y ≠ pcsBpName i) → VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  induction n with
+  | zero => intro V st hpre V' st' o hrun; omega
+  | succ n ih =>
+      intro V st hpre V' st' o hrun
+      obtain ⟨hrv, ha, hfresh⟩ := hpre
+      cases n with
+      | zero =>
+          have hshape : pcsBpLines 1 nm = [pcsBpHead (nm 0)] := by simp [pcsBpLines]
+          rw [hshape] at hrun
+          rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+              ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+          · cases htail
+            obtain ⟨ho, yv, hyv, hV1, hst1⟩ := b1_exec_ylet_var hhead
+            have hye : yv = a 0 := Option.some.inj (hyv.symm.trans (ha 0 (by omega)))
+            refine ⟨ho, ?_, ?_, ?_⟩
+            · intro i hi
+              have hi0 : i = 0 := by omega
+              subst hi0
+              rw [hV1, hye]
+              exact venv_get_cons_self (D := Bridge.Dialect c g) V _ _
+            · intro y hy
+              rw [hV1]
+              exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsBpName 0) (y := y)
+                (v := yv) (hy 0 (by omega))
+            · simpa [hst1]
+          · exact absurd (b1_exec_ylet_var hhead).1 hne
+      | succ m =>
+          have hshape : pcsBpLines (m + 2) nm =
+              pcsBpLines (m + 1) nm ++ [pcsBpTail (m + 1) (nm (m + 1))] := by
+            rw [pcsBpLines, pcsBpLines]
+            rw [show m + 2 = (m + 1) + 1 by omega, List.range_succ,
+              List.drop_append_of_le_length (by simp)]
+            rw [List.map_append, List.map_singleton]
+            rfl
+          rw [hshape] at hrun
+          rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+              ⟨V1, st1, hpfx, hlast⟩ | ⟨hpfx, hne⟩
+          · obtain ⟨ho1, hlook1, hout1, hst1⟩ :=
+              ih (by omega)
+                (fun i hi => hbpNeR i (by omega))
+                (fun i hi j hj => hbpNeIn i (by omega) j (by omega))
+                (fun i hi j hj => hbpDist i (by omega) j (by omega))
+                V st ⟨hrv, fun i hi => ha i (by omega), fun i hi => hfresh i (by omega)⟩
+                V1 st1 .normal hpfx
+            rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hlast with
+                ⟨V2, st2, htail, hnil⟩ | ⟨htail, hne2⟩
+            · cases hnil
+              have hprev : VEnv.get V1 (pcsBpName ((m + 1) - 1)) =
+                  some (pcsBpVal rv a ((m + 1) - 1)) := hlook1 (m + 1 - 1) (by omega)
+              have hinp : VEnv.get V1 (nm (m + 1)) = some (a (m + 1)) := by
+                rw [hout1 (nm (m + 1)) (fun i hi => (hbpNeIn i (by omega) (m + 1) (by omega)).symm)]
+                exact ha (m + 1) (by omega)
+              have hrv1 : VEnv.get V1 "r" = some rv := by
+                rw [hout1 "r" (fun i hi => (hbpNeR i (by omega)).symm)]
+                exact hrv
+              obtain ⟨ho2, av, bv, zv, hp, hi, hr, hV2, hst2⟩ :=
+                b1_exec_ylet_mulmod_vars htail
+              have hav : av = pcsBpVal rv a m := by
+                have h := Option.some.inj (hp.symm.trans hprev)
+                simpa using h
+              have hinpe : bv = a (m + 1) := Option.some.inj (hi.symm.trans hinp)
+              have hrve : zv = rv := Option.some.inj (hr.symm.trans hrv1)
+              refine ⟨ho2, ?_, ?_, by rw [hst2, hst1]⟩
+              · intro i hi
+                have hile : i ≤ m + 1 := by omega
+                rcases Nat.lt_or_eq_of_le hile with hil | rfl
+                · rw [hV2]
+                  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsBpName (m + 1))
+                    (y := pcsBpName i) (v := _)
+                    (fun h => hbpDist (m + 1) (by omega) i (by omega) (by omega) h.symm)]
+                  exact hlook1 i hil
+                · rw [hV2, venv_get_cons_self (D := Bridge.Dialect c g), hav, hinpe, hrve]
+                  rw [show pcsBpVal rv a (m + 1) =
+                    wMulmodAt (pcsBpVal rv a m) (a (m + 1)) rv from pcsBpVal_succ rv a m]
+              · intro y hy
+                rw [hV2]
+                rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsBpName (m + 1))
+                  (y := y) (v := _) (hy (m + 1) (by omega))]
+                exact hout1 y (fun i hi => hy i (by omega))
+            · exact absurd (b1_exec_ylet_mulmod_vars htail).1 hne2
+          · exact absurd (ih (by omega)
+              (fun i hi => hbpNeR i (by omega))
+              (fun i hi j hj => hbpNeIn i (by omega) j (by omega))
+              (fun i hi j hj => hbpDist i (by omega) j (by omega))
+              V st ⟨hrv, fun i hi => ha i (by omega), fun i hi => hfresh i (by omega)⟩
+              V' st' o hpfx).1 hne
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpLines [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpVal [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpLines_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
