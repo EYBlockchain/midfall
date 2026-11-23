@@ -2344,6 +2344,152 @@ theorem readAlgebraEvalCount_parseTrace {G₁ : Type} (g1 : G1Codec G₁)
   rw [htrsMap rowT (by simp)]
   omega
 
+theorem zip_range_snd_map {α : Type} (l : List α) (f : α → Nat) :
+    ((List.range l.length).zip l).map (fun p => f p.2) = l.map f := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+      rw [List.length_cons, List.range_succ_eq_map, List.zip_cons_cons, List.map_cons]
+      rw [List.zip_map_left, List.map_map]
+      simp only [Function.comp_def, Prod.map, id_eq]
+      rw [ih]
+      rfl
+
+theorem lookup_evals_length (chunks : List Nat) :
+    (((List.range chunks.length).zip chunks).map (fun p => 1 + p.2 + 2)).sum
+      = (chunks.map (fun c => c + 3)).sum := by
+  rw [zip_range_snd_map chunks (fun c => 1 + c + 2)]
+  congr 1
+  apply List.map_congr_left
+  intro c _
+  omega
+
+theorem sum_range_three (n : Nat) :
+    ((List.range n).map (fun s => if s + 1 != n then 3 else 2)).sum = 3 * n - 1 := by
+  induction n with
+  | zero => simp
+  | succ m ih =>
+      rw [List.range_succ, List.map_append, List.sum_append, List.map_singleton]
+      simp only [List.sum_cons, List.sum_nil]
+      have hmap : (List.range m).map (fun s => if s + 1 != m + 1 then 3 else 2)
+          = List.replicate m 3 := by
+        have hlen : List.replicate m 3 = List.replicate (List.range m).length 3 := by
+          rw [List.length_range]
+        rw [hlen, List.map_eq_replicate_iff]
+        intro s hs
+        have hlt : s < m := List.mem_range.mp hs
+        have hne : s ≠ m := by omega
+        simp [hne]
+      rw [hmap, List.sum_replicate_nat]
+      simp
+      omega
+
+theorem permZ_evals_length {γ : Type} (n : Nat) (f g h : Nat → γ) :
+    ((((List.range n).map (fun s => ([f s, g s] : List γ) ++
+        (if s + 1 != n then [h s] else [])))).flatten).length = 3 * n - 1 := by
+  rw [List.length_flatten, List.map_map]
+  have hmap : ((List.range n).map ((fun l : List γ => l.length) ∘
+      (fun s => ([f s, g s] : List γ) ++ (if s + 1 != n then [h s] else []))))
+      = (List.range n).map (fun s => if s + 1 != n then 3 else 2) := by
+    apply List.map_congr_left
+    intro s _
+    simp only [Function.comp_def, List.length_append, List.length_cons, List.length_nil]
+    split <;> simp
+  rw [hmap, sum_range_three]
+
+
+/-- **The protocol eval-list decomposition (seven groups).** The proof reads:
+    the eval reads of a successfully validated plan are exactly
+    `committedInstance ++ advice ++ fixed ++ permutationCommon ++
+    permutationZ ++ lookup ++ trash`, with lengths
+
+    * committed-instance queries: the filtered `instanceQueries`;
+    * advice queries: `adviceQueries.length`;
+    * fixed queries: `numFixeds - simpleSelectorCols.length`, which is the I-6
+      assert inside `fromConstraintSystem` (`PM:461-475`) -- the same count
+      `validate` leaves in the read list, since its own check only excludes
+      simple-selector columns from `.fixed` reads;
+    * permutation-common: one per permutation column;
+    * permutation sets: `3 k - 1` per product set (`Nat` subtraction makes the
+      `k = 0` case `0`, which is the constructed list's length);
+    * lookups: `nbChunks + 3` per lookup argument (multiplicity, helpers,
+      two accumulators);
+    * trash: one per trashcan.
+
+    Nothing is assumed about `cs`: the plan is the constructor's output, so its
+    fields are read off the same `let`s the constructor bound. -/
+theorem fromConstraintSystem_evals_length {F : Type} (feat : Features) (cs : ConstraintSystem F)
+    (nb : Nat) {plan : ProtocolPlan}
+    (h : ProtocolPlan.fromConstraintSystem feat cs nb = .ok plan) :
+    plan.proof.evals.length =
+      (plan.instanceQueries.filter (fun q => q.column < plan.numCommittedInstances)).length
+      + plan.adviceQueries.length
+      + (plan.numFixeds - plan.simpleSelectorCols.length)
+      + plan.permutationColumns.length
+      + (3 * plan.numPermutationZs - 1)
+      + (plan.lookupChunks.map (fun c => c + 3)).sum
+      + plan.numTrashcans := by
+  unfold ProtocolPlan.fromConstraintSystem at h
+  simp only [Bind.bind] at h
+  obtain ⟨csDegree, _hdeg, h1⟩ := AlgebraWidths.except_bind_ok h
+  obtain ⟨lookupChunks, _hlu, h2⟩ := AlgebraWidths.except_bind_ok h1
+  obtain ⟨_x1, _hr1, h3⟩ := AlgebraWidths.except_bind_ok h2
+  obtain ⟨_x2, _hr2, h4⟩ := AlgebraWidths.except_bind_ok h3
+  obtain ⟨_bl, _hbl, h5⟩ := AlgebraWidths.except_bind_ok h4
+  split at h5
+  · rename_i hfix
+    split at h5
+    · cases h5
+      simp only [List.length_append, List.length_cons, List.length_nil, List.length_map,
+        List.length_flatten, List.length_replicate]
+      -- the fixed-eval guard
+      have hfixEq : (List.filter
+          (fun q => !decide (q.column ∈
+            List.filter (fun idx => cs.hasSimpleSelectorCol idx) (List.range cs.numFixedColumns)))
+          (List.map (fun x => QueryKey.new x.1.index x.2.int) cs.fixedQueries.toList)).length
+          = cs.numFixedColumns -
+            (List.filter (fun idx => cs.hasSimpleSelectorCol idx)
+              (List.range cs.numFixedColumns)).length := by
+        simpa using hfix
+      -- permutation-z group lengths
+      have hpermZ : (List.map List.length
+          (List.map (fun set =>
+            [EvalRead.permutationZ set PermutationZEval.cur,
+              EvalRead.permutationZ set PermutationZEval.next] ++
+              if (set + 1 != if cs.permutation.getColumns.toList.isEmpty = true then 0
+                  else divCeil cs.permutation.getColumns.toList.length (csDegree - 2)) = true
+              then [EvalRead.permutationZ set PermutationZEval.last] else [])
+            (List.range (if cs.permutation.getColumns.toList.isEmpty = true then 0
+              else divCeil cs.permutation.getColumns.toList.length (csDegree - 2))))).sum
+          = 3 * (if cs.permutation.getColumns.toList.isEmpty = true then 0
+              else divCeil cs.permutation.getColumns.toList.length (csDegree - 2)) - 1 := by
+        rw [← List.length_flatten]
+        exact permZ_evals_length _ _ _ _
+      -- lookup group lengths
+      have hlook : (List.map List.length
+          (List.map (fun x =>
+            [EvalRead.lookupMultiplicity x.1] ++
+              List.map (fun chunk => EvalRead.lookupHelper x.1 chunk) (List.range x.2) ++
+              [EvalRead.lookupAccumulator x.1 0, EvalRead.lookupAccumulator x.1 1])
+            ((List.range lookupChunks.toList.length).zip lookupChunks.toList))).sum
+          = (lookupChunks.toList.map (fun c => c + 3)).sum := by
+        rw [List.map_map]
+        have hstep : (List.map ((fun l : List EvalRead => l.length) ∘
+            (fun x => [EvalRead.lookupMultiplicity x.1] ++
+              List.map (fun chunk => EvalRead.lookupHelper x.1 chunk) (List.range x.2) ++
+              [EvalRead.lookupAccumulator x.1 0, EvalRead.lookupAccumulator x.1 1]))
+            ((List.range lookupChunks.toList.length).zip lookupChunks.toList))
+            = (List.map (fun p => 1 + p.2 + 2)
+              ((List.range lookupChunks.toList.length).zip lookupChunks.toList)) := by
+          apply List.map_congr_left
+          intro p _
+          simp only [Function.comp_def, List.length_append, List.length_map, List.length_range,
+            List.length_cons, List.length_nil]
+        rw [hstep, lookup_evals_length]
+      rw [hfixEq, hpermZ, hlook, List.length_range]
+    · cases h5
+  · cases h5
+
 end Composition
 
 end Midfall.LoweringV3
