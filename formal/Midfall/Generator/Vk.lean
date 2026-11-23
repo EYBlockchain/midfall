@@ -579,6 +579,72 @@ def VkHeaderBuilder.new : VkHeaderBuilder :=
     because both are inherent methods. -/
 def VkHeaderLayout.builder : VkHeaderBuilder := VkHeaderBuilder.new
 
+/-- One word-write step of `VkHeaderBuilder.insert`, named so the `foldlM` invariants can be
+    stated and proved. -/
+def VkHeaderBuilder.step (start : Nat) (name : String) (self : VkHeaderBuilder)
+    (pair : Nat × (String × Word256)) : Except String VkHeaderBuilder := do
+  let (offset, value) := pair
+  let word := start + offset
+  match self.words[word]? with
+  | some (some _) =>
+      Except.error ("VK header field " ++ name
+        ++ " overlaps already-written word " ++ toString word)
+  | _ =>
+      Except.ok { words := self.words.take word ++ [some value]
+        ++ self.words.drop (word + 1) }
+
+/-- `step` preserves the number of header words. PROVED. -/
+theorem VkHeaderBuilder.step_length (start : Nat) (name : String) (self : VkHeaderBuilder)
+    (pair : Nat × (String × Word256)) (b' : VkHeaderBuilder)
+    (h : VkHeaderBuilder.step start name self pair = .ok b')
+    (hword : start + pair.1 < self.words.length) :
+    b'.words.length = self.words.length := by
+  obtain ⟨offset, value⟩ := pair
+  unfold VkHeaderBuilder.step at h
+  dsimp only at h
+  cases hw : self.words[start + offset]? with
+  | none =>
+      simp only [hw] at h
+      injection h with hb
+      subst hb
+      simp only [List.length_append, List.length_take, List.length_drop, List.length_cons,
+        List.length_nil]
+      omega
+  | some x =>
+      cases x with
+      | none =>
+          simp only [hw] at h
+          injection h with hb
+          subst hb
+          simp only [List.length_append, List.length_take, List.length_drop, List.length_cons,
+            List.length_nil]
+          omega
+      | some v =>
+          simp only [hw] at h
+          cases h
+
+/-- A `foldlM` of length-preserving `step`s preserves the number of header words. PROVED. -/
+theorem VkHeaderBuilder.foldlM_step_length (l : List (Nat × (String × Word256)))
+    (self : VkHeaderBuilder) (start : Nat) (name : String) (b' : VkHeaderBuilder)
+    (h : l.foldlM (VkHeaderBuilder.step start name) self = .ok b')
+    (hbound : ∀ p ∈ l, start + p.1 < self.words.length) :
+    b'.words.length = self.words.length := by
+  induction l generalizing self with
+  | nil =>
+      change Except.ok self = Except.ok b' at h
+      injection h with hb
+      subst hb
+      rfl
+  | cons p ps ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : VkHeaderBuilder.step start name self p with
+      | error e => simp only [hs] at h; cases h
+      | ok b1 =>
+          simp only [hs] at h
+          have hp : start + p.1 < self.words.length := hbound p (by simp)
+          have hsl := VkHeaderBuilder.step_length start name self p b1 hs hp
+          rw [ih b1 h (fun q hq => by simpa [hsl] using hbound q (by simp [hq])), hsl]
+
 /-- rust: LM:579-621 (VkHeaderBuilder::insert) @formal-baseline. &mut self becomes
     a returned builder, the reading Layout.lean:238-241 uses for reserve. Four
     error paths, all Result::Err(String), with the Rust's message text kept because
@@ -606,18 +672,8 @@ def VkHeaderBuilder.insert (self : VkHeaderBuilder) (slot : VkHeaderSlot)
         ++ " overflows header: range " ++ toString start ++ ".."
         ++ toString finish ++ ", header=" ++ toString self.words.length)
     else
-      let step (b : VkHeaderBuilder) (pair : Nat × (String × Word256)) :
-          Except String VkHeaderBuilder := do
-        let (offset, value) := pair
-        let word := start + offset
-        match b.words[word]? with
-        | some (some _) =>
-            Except.error ("VK header field " ++ spec.name
-              ++ " overlaps already-written word " ++ toString word)
-        | _ =>
-            Except.ok { words := b.words.take word ++ [some value]
-              ++ b.words.drop (word + 1) }
-      (List.zip (List.range values.length) values).foldlM step self
+      (List.zip (List.range values.length) values).foldlM
+        (VkHeaderBuilder.step start spec.name) self
 
 /-- rust: LM:623-631 (VkHeaderBuilder::scalar) @formal-baseline. -/
 def VkHeaderBuilder.scalar (self : VkHeaderBuilder) (slot : VkHeaderSlot)
