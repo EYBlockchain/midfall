@@ -163,6 +163,44 @@ theorem pcs_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) 
 
 /-! ## 5. finalPairing (owner ROW.FP, WP A11) -/
 
+/-- The V3 face of `VkLoading.pv_hasAcc_false`: `ValidV3` carries the same `supported.noAcc` and
+    `inputs.accEncoding` clauses as the frozen `Render.Valid`, and `VkLoading`'s proof used only
+    those. -/
+theorem pv_hasAcc_falseV3 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.pv.hasAccumulator = false := by
+  classical
+  have h : R.cfg.accumulator = none := hR.supported.noAcc
+  have h1 : R.pv = planViewOf R.plan R.model none := by
+    show planViewOf R.plan R.model R.cfg.accumulator = _
+    rw [h]
+  rw [h1, planViewOf, planViewWithAccumulator]
+  rfl
+
+/-- The finalPairing slice read off the emitter at `ValidV3` (the V2 `fp_slice` uses `Render.Valid`;
+    `ValidV3` is a parallel copy, so the row needs this face). -/
+theorem fp_sliceV3 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.slice Partial.finalPairing =
+      [Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"])
+          [Stmt.exprStmt (Expr.call "fail"
+            [Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED"])],
+        Stmt.assign ["success"] (Expr.call "ec_pairing"
+          [Expr.var "success",
+           Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+           Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"])] := by
+  have hacc : R.pv.hasAccumulator = false := pv_hasAcc_falseV3 R hR
+  show Inline.inlineContractConstants R.consts
+    (Midfall.Lowering.GenAst.emitPartial R.pv Partial.finalPairing) = _
+  rw [Midfall.Lowering.GenAst.emitPartial, Midfall.Lowering.GenAst.emitFinalPairing, hacc]
+  rw [Midfall.LoweringV2.Blocks.FinalPairing.fp_slice_raw]
+  simp only [Midfall.LoweringV2.Blocks.FinalPairing.fpVal,
+    Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none]
+
+#assert_axioms Midfall.LoweringV3.pv_hasAcc_falseV3
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.fp_sliceV3
+  [propext, Classical.choice, Quot.sound] native []
+
+
 /-- **LEAF (ROW.FP, WP A11): the finalPairing simulation row.** Evidence `GeneratorRows.lean:1077`;
     children are `ec_pairing_sem`, `fp_pairing_algebra`, `fp_poison`. -/
 theorem fp_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
