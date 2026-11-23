@@ -307,6 +307,20 @@ theorem f1PointRenderCCN_codec_lawsV3 (n : Nat) :
     Midfall.LoweringV3.G1CodecLawsV3 (f1PointRenderCCN n).E.g1 :=
   g1CodecC_lawsV3
 
+/-- The EIP-2537 encoder is the same function at the two renders. -/
+theorem f1PointRenderCC_toEip (vk : VerifyingKey (Fr blsR) G₁z)
+    (params : ParamsVerifierKZG G₁z G2fold) (sG2 : G2fold) :
+    (f1PointRenderCC vk params sG2).E.g1.toEip =
+      (f1PointRenderC vk params sG2).E.g1.toEip := rfl
+
+/-- The EIP-2537 decoder transfers by `g1CodecC_ofEip`: the computable codec's `ofEip?` IS the
+    exhibit's. -/
+theorem f1PointRenderCC_ofEip (vk : VerifyingKey (Fr blsR) G₁z)
+    (params : ParamsVerifierKZG G₁z G2fold) (sG2 : G2fold) :
+    (f1PointRenderCC vk params sG2).E.g1.ofEip? =
+      (f1PointRenderC vk params sG2).E.g1.ofEip? :=
+  g1CodecC_ofEip
+
 /-- The derived plan view is F1's, because `pv` reads `plan`, `model` and `cfg` and never `vk`. -/
 theorem f1PointRenderC_pv (vk : VerifyingKey (Fr blsR) G₁z)
     (params : ParamsVerifierKZG G₁z G2fold) (sG2 : G2fold) :
