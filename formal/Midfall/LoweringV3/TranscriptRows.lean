@@ -2338,6 +2338,17 @@ theorem foldlM_lookups_accOne (protocol : ProtocolPlan) :
             CommitmentRead.lookupAccumulator 1 "lookup accumulator" hy).1
       exact ih st1 res h2 hinv' r hr
 
+/-- The second projections of `(range l.length).zip l` are `l` itself. -/
+theorem zip_range_snd (l : List Nat) :
+    ((List.range l.length).zip l).map (fun p => p.2) = l := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+      rw [List.length_cons, List.range_succ_eq_map, List.zip_cons_cons, List.map_cons]
+      rw [List.zip_map_left, List.map_map]
+      simp only [Function.comp_def, Prod.map, id_eq]
+      rw [ih]
+
 /-- The section facts `fromProtocol` gives, in one record so the row's algebra can take them as a
     single hypothesis. -/
 structure TpLayoutFacts (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout) : Prop where
@@ -2345,6 +2356,8 @@ structure TpLayoutFacts (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout)
   adviceByteLen : ∀ s, s ∈ L.advicePhases →
     s.byteLen = s.itemCount * Midfall.Generator.g1Bytes
   adviceLen : L.advicePhases.length = meta_.protocol.numUserAdvices.length
+  adviceSum : sumNat (L.advicePhases.map (fun s => s.itemCount)) =
+    sumNat meta_.protocol.numUserAdvices
   lookupM : L.lookupMultiplicities.itemCount = meta_.protocol.numLookups
   lookupMByte : L.lookupMultiplicities.byteLen =
     meta_.protocol.numLookups * Midfall.Generator.g1Bytes
@@ -2358,6 +2371,10 @@ structure TpLayoutFacts (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout)
       lk.accumulator.itemBytes = Midfall.Generator.g1Bytes ∧
       lk.accumulator.byteLen = Midfall.Generator.g1Bytes
   lookupsAcc : ∀ lk, lk ∈ L.lookups → lk.accumulator.itemCount = 1
+  lookupSum : sumNat (L.lookups.map (fun lk =>
+    lk.helpers.itemCount + lk.accumulator.itemCount)) =
+    sumNat (((List.range meta_.protocol.lookupChunks.length).zip
+      meta_.protocol.lookupChunks).map (fun p => p.2 + 1))
   trash : L.trash.itemCount = meta_.protocol.numTrashcans
   trashByte : L.trash.byteLen = meta_.protocol.numTrashcans * Midfall.Generator.g1Bytes
   quotient : L.quotientLimbs.itemCount = meta_.protocol.numQuotients
@@ -2406,13 +2423,14 @@ theorem tp_fromProtocol {meta_ : ConstraintSystemMeta} {L : ProofCalldataLayout}
     CommitmentRead.trash meta_.protocol.numTrashcans "trash" hTr
   have hql := takeCommitmentSection_shape meta_.protocol tr.2.1 tr.2.2
     CommitmentRead.quotient meta_.protocol.numQuotients "quotient limb" hQl
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro s hs
     exact (hadv.2.1 s hs).1
   · intro s hs
     exact (hadv.2.1 s hs).2
   · rw [hadvLen]
     simp
+  · simpa [sumNat_nil] using hadv.2.2
   · exact hlm.1
   · exact hlm.2.2
   · exact hpp.1
@@ -2425,6 +2443,7 @@ theorem tp_fromProtocol {meta_ : ConstraintSystemMeta} {L : ProofCalldataLayout}
     rw [hLksAcc lk hlk] at ha2
     exact ⟨hg.1, hg.2, ha.1, by simpa using ha2⟩
   · exact hLksAcc
+  · simpa [sumNat_nil] using hLks.2.2
   · exact htr.1
   · exact htr.2.2
   · exact hql.1
