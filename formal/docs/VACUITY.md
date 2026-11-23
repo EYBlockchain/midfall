@@ -173,6 +173,8 @@ a second row-shape whose inhabitancy is not covered by `InvFixture`.
 | `ValidV3 poseidonRender` | `LoweringV3/Statements.lean:3587` | **FALSE** | new `f1_ValidV3_false` (`Instances/VacuityWitnesses.lean`), from the `generated` refutation. |
 | `ValidV3 f1GeneratedRender` | `Instances/ValidV3InhabitationF1Completion.lean` | **FALSE** | `f1GeneratedRender_notValidV3`; `f1GeneratedRender_validV3_iff_points` reduces it to `PayloadPointHalf`, whose `fixedComms`/`permutationComms` are refuted and whose `g1Base`/`g2Base`/`negSG2` are open. |
 | `∃ R, ValidV3 R` (synthetic) | `Instances/ValidV3SyntheticInhabitant.lean:413` | **INHABITED** | `exists_validV3`; real `generateAll` run, synthetic codec fields (`g1zToEip 1`, slot-15 image) and normalized payload. Generic non-vacuity only, not F1 `Done`. |
+| `PayloadPointHalf (f1PointRenderCN n)` | `Instances/PayloadPointsF1.lean` | **CONDITIONAL** | `f1PointRenderCN_payloadPointHalf` from `hpay : vkG2Words f1Pv vkNegSG2BaseSlot = g2foldToEip (g2foldExp n)`; `f1PointRenderCN_payloadPointHalf_iff` proves the point half is equivalent to `hpay`. Base slots and both commitment lists are unconditional; `negSG2` is the data input. |
+| `ValidV3 (f1PointRenderCN n)` | B4 assembly | **CONDITIONAL on `hpay`** | combine `ValidV3ExceptPayload` with the point half; the F1-real witness awaits B3's SRS/`hpay` provenance. |
 | `HypothesesInhabitedV3 poseidonRender product` | `LoweringV3/Statements.lean:3968` | **FALSE** | `poseidon_notInhabitedV3` (`Instances/StatementsV3Deploy.lean:532`) via `g1CodecZ_not_headlineLaws`; the non-vacuity gate itself is refuted at F1. |
 | `G1CodecHeadlineLaws g1CodecZ` | `LoweringV3/Statements.lean:72` | **FALSE** | `g1CodecZ_not_headlineLaws` (`StatementsV3Deploy.lean:523`); new `f1_codec_headline_false`. |
 | `G1CodecLawsV3 g1CodecZ` | `LoweringV3/Statements.lean:83` | **FALSE** | new `f1_codecLawsV3_false`, from the headline law. |
@@ -466,7 +468,7 @@ only covers the retired V1 `LoweringCorrect` fields.
 
 | # | blocker | exact missing term / writer | owner |
 |---|---|---|---|
-| 1 | F1-real `ValidV3` is still blocked | `PayloadPointHalf f1GeneratedRender`: re-source the 19/8 commitments and `sG2gen` into `poseidonVkExec`; `exists_validV3` gives generic non-vacuity only, not F1 `Done` | B3 + B4 |
+| 1 | F1-real `ValidV3` is blocked only on `hpay` | `hpay : vkG2Words f1Pv vkNegSG2BaseSlot = g2foldToEip (g2foldExp n)`: the payload's neg-S-G2 exponent. Base slots/commitments are unconditional; if the tracked SRS/params do not carry `n`, this is the explicit trapdoor/data trust boundary. `exists_validV3` gives generic non-vacuity only | B3 + B4 |
 | 2 | Row pres are not inhabited | one `StageInv R H vkAddr cd k V st` at a real render/checkpoint, built from `Frame`, `Inv`, `LeanRaw`, `Agree`; `f1_deploymentV2`/`f1_entryFrameV3` supply only `DeploymentV2`/`EntryFrameV3` | A2/A7/A12 |
 | 3 | `EndToEndV3` is conditional on a missing refinement | `PrepareLogSlots R` / `readScheduleAgrees_of_validV3`; also `hside`; at F1 `hcodec` is FALSE (`f1_codecLawsV3_false`) | D1 |
 | 4 | KZG partition bridge is false without `x = 0` exclusion | `KzgPartitionBridge` needs `ChallengesGood.xNonzero`/`rotationDistinct`; `kzgPartitionBridge_false_at_x0` is the falsifier | D1/audit |
