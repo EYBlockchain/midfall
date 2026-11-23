@@ -1585,6 +1585,23 @@ theorem runsAll_readGroupSeq (E : VerifierEnv p G₁ G₂ Gₜ) :
               simpa only [List.append_nil] using
                 (RunsAll.bind E hstep (fun _ => RunsAll.pure E ()))
 
+/-- The advice-phase fragment: one homogeneous G1 group. -/
+theorem runsAll_readGroupSeq_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs : List G₁)
+    (hlen : Qs.length = n) :
+    RunsAll E (readGroupSeq E [(WireSlot.g1, n)])
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  have hmatch : GroupsMatch (p := p) (G₁ := G₁) [(WireSlot.g1, n)]
+      [Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))] := by
+    refine ⟨?_, ?_, trivial⟩
+    · simpa using hlen
+    · intro m hm
+      rw [List.mem_map] at hm
+      obtain ⟨Q, -, rfl⟩ := hm
+      rfl
+  simpa [List.flatten] using
+    runsAll_readGroupSeq E [(WireSlot.g1, n)]
+      [Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))] hmatch
+
 /-- `transcriptOf` starts at cursor 0 with exactly `wireMsgs` in the buffer. -/
 theorem transcriptOf_buffer {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
