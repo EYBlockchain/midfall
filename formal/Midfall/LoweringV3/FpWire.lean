@@ -203,3 +203,36 @@ end FpWireRender
 
 
 end Midfall.LoweringV3
+
+namespace Midfall.Lowering
+
+/-- `Checkpoint`'s `LE` is `idx` comparison; this is the unfold the `InvAt` guard
+    reductions need (the instance itself is not a simp lemma). -/
+theorem checkpoint_le_def (a b : Checkpoint) : (a ≤ b) = (a.idx ≤ b.idx) := rfl
+
+/-- The selector-bucket clause only weakens from `.pcs` to `.pairing`: a permanent
+    region keeps the same `holdsFrs`, `pcsFinalMsm` is live at `.pcs` and dropped at
+    `.pairing`, and every other lifetime is dead at both. -/
+theorem selectorBucket_mono (M : VerifierMemoryLayout) (P : Bool) :
+    (if Checkpoint.liveRegionNamed Checkpoint.pcs M "selector_accumulators" then P else true) = true →
+    (if Checkpoint.liveRegionNamed Checkpoint.pairing M "selector_accumulators" then P else true) = true := by
+  intro h
+  unfold Checkpoint.liveRegionNamed at h ⊢
+  cases hlt : regionLifetime M "selector_accumulators" with
+  | none => simp [hlt] at h ⊢
+  | some lt =>
+      cases lt with
+      | permanent => simpa [hlt, Checkpoint.liveAt] using h
+      | phase ph =>
+          have hq1 : (Checkpoint.pcs == Checkpoint.quotient) = false := by decide
+          have hp1 : (Checkpoint.pcs == Checkpoint.pcs) = true := by decide
+          have hq2 : (Checkpoint.pairing == Checkpoint.quotient) = false := by decide
+          have hp2 : (Checkpoint.pairing == Checkpoint.pcs) = false := by decide
+          cases ph <;> simp [hlt, Checkpoint.liveAt, hq1, hp1, hq2, hp2] at h ⊢
+
+#assert_axioms Midfall.Lowering.checkpoint_le_def
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.selectorBucket_mono
+  [propext, Classical.choice, Quot.sound] native []
+
+end Midfall.Lowering
