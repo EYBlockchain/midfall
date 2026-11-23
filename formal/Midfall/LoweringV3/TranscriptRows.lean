@@ -1504,6 +1504,15 @@ theorem runsAll_readFrGroups_append (E : VerifierEnv p G₁ G₂ Gₜ) :
       · intro _
         exact ih counts₂ (Qs₁.drop n) Qs₂ hlen₂ h₂
 
+/-- `instanceShape` is exactly one proof row, so `parseTrace`'s `numProofs` is 1. -/
+theorem instanceShape_numProofs {p : Nat} [Fact (Nat.Prime p)] (inst : Array (Fr p)) :
+    (instanceShape inst).size = 1 := rfl
+
+/-- The proof-index loop of `parseTrace` at this profile is the singleton `[0]`. -/
+theorem instanceShape_range {p : Nat} [Fact (Nat.Prime p)] (inst : Array (Fr p)) :
+    List.range (instanceShape inst).size = [0] := by
+  simp [instanceShape]
+
 /-- The advice-phase segment of the parser schedule: one G1 group per user phase. -/
 def seqAdvice (userPhases : List UserPhase) : List (WireSlot × Nat) :=
   userPhases.map (fun ph => (WireSlot.g1, ph.adviceBytes / 128))
