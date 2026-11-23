@@ -1240,7 +1240,7 @@ theorem head_gp {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
     (x := "ret") (y := "gp") (by decide)).trans h
 
 theorem head_pf_some {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
-    (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
+    {w : U256} (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = w)
     (h : (VEnv.get V "precompile_failed").isSome = true) :
     (VEnv.get V1 "precompile_failed").isSome = true := by
   obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp h
@@ -1476,6 +1476,151 @@ theorem staticcallGuard_contract (product : PairingProduct)
     exact absurd heval (expr_iszero_staticcall_frame_ne_halts funs V)
 
 
+theorem walk_success_rest (funs : FunEnv (Bridge.Dialect c g))
+    (M : Nat → UInt8) (p a : Nat) (x : U256) (hp : p < 2 ^ 256)
+    (V V1 : VEnv (Bridge.Dialect c g)) (st st1 : EvmState) (resp : CallResponse)
+    (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome)
+    (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
+    (hst1 : st1 = finishCall .staticcall st resp (BitVec.ofNat 256 p).toNat 192
+      (BitVec.ofNat 256 p).toNat 32)
+    (hgp_mptr : VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p))
+    (hgp : VEnv.get V "gp" = some x)
+    (hmstart : VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a))
+    (hr : VEnv.get V "r" = some (BitVec.ofNat 256 blsR))
+    (hpf_some : (VEnv.get V "precompile_failed").isSome = true)
+    (hrv0 : ∃ rv0, VEnv.get V "ret" = some rv0)
+    (hrd : resp.returndata = (bytesNatBE ((x.toNat : ZMod blsR)⁻¹).val 32).data.toList)
+    (hlen1 : st1.returndata.length = 32)
+    (hst1mem : st1.memory = M)
+    (hload : loadWord M p = BitVec.ofNat 256 ((x.toNat : ZMod blsR)⁻¹).val)
+    (hrec : ExecStmts (D := Bridge.Dialect c g) funs V1 st1 rest4 V' st' o) :
+    RestSucc (c := c) (g := g) p a ((x.toNat : ZMod blsR)⁻¹).val x st1 V' st' o :=
+  rest_success_run (c := c) (g := g) funs M p a ((x.toNat : ZMod blsR)⁻¹).val x hp
+    V1 st1 (RestPre.mk (head_ret hV1 hflag hrv0) hlen1 (head_gp_mptr hV1 hflag hgp_mptr)
+      (head_mptr_start hV1 hflag hmstart) (head_r hV1 hflag hr) (head_gp hV1 hflag hgp)
+      (head_pf_some hV1 hflag hpf_some) hst1mem hload)
+    V' st' o hrec
+
+theorem walk_failure_rest (funs : FunEnv (Bridge.Dialect c g)) (p : Nat)
+    (V V1 : VEnv (Bridge.Dialect c g)) (st st1 : EvmState) (resp : CallResponse)
+    (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome)
+    (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 0)
+    (hst1 : st1 = finishCall .staticcall st resp (BitVec.ofNat 256 p).toNat 192
+      (BitVec.ofNat 256 p).toNat 32)
+    (hpf_some : (VEnv.get V "precompile_failed").isSome = true)
+    (hrv0 : ∃ rv0, VEnv.get V "ret" = some rv0)
+    (hrec : ExecStmts (D := Bridge.Dialect c g) funs V1 st1 rest4 V' st' o) :
+    RestFail (c := c) (g := g) st1 V' st' o := by
+  obtain ⟨rv0, hrv0⟩ := hrv0
+  have hretV1 : VEnv.get V1 "ret" = some (0 : U256) := by
+    rw [hV1, hflag]
+    exact Midfall.LoweringV3.PcsRows.venv_get_set_same (D := Bridge.Dialect c g) hrv0
+  exact rest_failure_run (c := c) (g := g) funs V1 st1
+    (RestFailPre.mk hretV1 (head_pf_some hV1 hflag hpf_some)) V' st' o hrec
+
+
+theorem bi_staticcall_walk (consts : Inline.Consts) (product : PairingProduct) (g : ExternalGas)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (gas : Nat) (hgas : consts.lookup "MODEXP_GAS" = some gas)
+    (mem : Nat → UInt8) (p a : Nat) (x : U256)
+    (hp : p < 2 ^ 256) (hp32 : 32 ≤ p) (ha : a + 32 < 2 ^ 256)
+    (hx0 : 0 < x.toNat) (hxr : x.toNat < blsR) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (seg (helperBody consts GenAst.emitBatchInvertAt) 21 8)
+      (fun V st =>
+        VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p) ∧
+        VEnv.get V "gp" = some x ∧
+        VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "r" = some (BitVec.ofNat 256 blsR) ∧
+        (VEnv.get V "ret").isSome ∧ (VEnv.get V "precompile_failed").isSome ∧
+        st.memory = mxMem mem p x)
+      (fun V st V' st' o => WalkPost mem p a x st V' st' o) := by
+  rw [bi_staticcall_segment_form, hgas]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hgp_mptr, hgp, hmstart, hr, hret_some, hpf_some, hmem⟩ := hpre
+  have hout := mxMem_modexpOutput mem p x hx0 hxr
+  have hvalid := modexpValidInput_of_output_some hout
+  change ExecStmts (D := Bridge.Dialect (permissive (callsOf product)) g) funs V st
+    [GenAst.yset "ret" (GenAst.yop EVM.Op.staticcall
+        [Expr.lit (Literal.number gas), GenAst.ylit 5, GenAst.yvar "gp_mptr",
+          GenAst.ylit 192, GenAst.yvar "gp_mptr", GenAst.ylit 32]),
+     GenAst.yset "ret" (GenAst.yop EVM.Op.and
+        [GenAst.yvar "ret", GenAst.yop EVM.Op.eq
+          [GenAst.yop EVM.Op.returndatasize [], GenAst.ylit 32]]),
+     GenAst.yset "precompile_failed" (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"]),
+     GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"]) [Stmt.leave],
+     GenAst.ylet "all_inv" (GenAst.yop EVM.Op.mload [GenAst.yvar "gp_mptr"]),
+     GenAst.ylet "first_mptr" (GenAst.yvar "mptr_start"),
+     GenAst.ylet "second_mptr" (GenAst.yop EVM.Op.add
+        [GenAst.yvar "first_mptr", GenAst.ylit 32]),
+     GenAst.yset "gp_mptr" (GenAst.yop EVM.Op.sub
+        [GenAst.yvar "gp_mptr", GenAst.ylit 32])] V' st' o at hrun
+  obtain ⟨rv0, hrv0⟩ := Option.isSome_iff_exists.mp hret_some
+  have hp_toNat : (BitVec.ofNat 256 p).toNat = p := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hp]
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrun with
+    ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨resp, -, hcall, hV1, hst1⟩ := exec_assign_staticcall_inv (funs := funs)
+      (gas := gas) (vp := BitVec.ofNat 256 p) hgp_mptr h1
+    by_cases hsucc : resp.success = true
+    · -- SUCCESS
+      have hflag : resp.flag = 1 := by simp [CallResponse.flag, hsucc]
+      have h192 : (BitVec.ofNat 256 192).toNat = 192 := rfl
+      have hinput : ByteArray.mk (readBytes st.memory (BitVec.ofNat 256 p).toNat
+            (BitVec.ofNat 256 192).toNat).toArray =
+          ByteArray.mk (readBytes (mxMem mem p x) p 192).toArray := by
+        rw [hp_toNat, h192, hmem]
+      have hcalls : (callsOf product).Call
+          { kind := .staticcall, gas := BitVec.ofNat 256 gas, target := BitVec.ofNat 256 5,
+            value := 0, input := readBytes st.memory (BitVec.ofNat 256 p).toNat
+              (BitVec.ofNat 256 192).toNat } st resp := hcall.2 hsucc
+      have hrd : resp.returndata =
+          (bytesNatBE ((x.toNat : ZMod blsR)⁻¹).val 32).data.toList := by
+        refine callsOf_modexp_returndata
+          (product := product) (req := _) (st := st) (resp := resp)
+          (out := bytesNatBE ((x.toNat : ZMod blsR)⁻¹).val 32) rfl ?_ ?_ hcalls hsucc
+        · rw [hinput]; exact hvalid
+        · rw [hinput]; exact hout
+      have hlen : (bytesNatBE ((x.toNat : ZMod blsR)⁻¹).val 32).data.toList.length = 32 := by
+        rw [Array.length_toList, ByteArray.size_data]
+        exact Midfall.Assumptions.bytesNatBE_size _ 32
+      have hlen1 : st1.returndata.length = 32 := by
+        rw [hst1]; show resp.returndata.length = 32; rw [hrd]; exact hlen
+      have hst1mem : st1.memory = (finishCall .staticcall st resp (BitVec.ofNat 256 p).toNat 192
+          (BitVec.ofNat 256 p).toNat 32).memory := by rw [hst1]
+      have hload : loadWord (finishCall .staticcall st resp (BitVec.ofNat 256 p).toNat 192
+            (BitVec.ofNat 256 p).toNat 32).memory p =
+          BitVec.ofNat 256 ((x.toNat : ZMod blsR)⁻¹).val := by
+        rw [finishCall_staticcall_memory]
+        rw [hp_toNat, hrd, hmem]
+        exact loadWord_copyReturn_bytesNatBE (mem := mxMem mem p x) (p := p)
+          (v := ((x.toNat : ZMod blsR)⁻¹).val) (zmod_inv_val_lt x)
+      have hrest := walk_success_rest (c := permissive (callsOf product)) (g := g) funs
+        ((finishCall .staticcall st resp (BitVec.ofNat 256 p).toNat 192
+          (BitVec.ofNat 256 p).toNat 32).memory) p a x hp
+        V V1 st st1 resp V' st' o hV1 hflag hst1 hgp_mptr hgp hmstart hr hpf_some
+        ⟨rv0, hrv0⟩ hrd hlen1 hst1mem hload hrest1
+      have hok := hrest.hok
+      rw [hok] at ⊢
+      exact Or.inl (walk_success_build mem p a x hp hp32 ha st st1 st' resp V' hst1 hrd hmem
+        (hok ▸ hrest))
+    · -- FAILURE
+      have hflag0 : resp.flag = 0 := by simp [CallResponse.flag, hsucc]
+      have hretV1 : VEnv.get V1 "ret" = some (0 : U256) := by
+        rw [hV1, hflag0]
+        exact Midfall.LoweringV3.PcsRows.venv_get_set_same (D := Bridge.Dialect (permissive (callsOf product)) g) hrv0
+      have hrest := walk_failure_rest (c := permissive (callsOf product)) (g := g) funs p
+        V V1 st st1 resp V' st' o hV1 hflag0 hst1 hpf_some ⟨rv0, hrv0⟩ hrest1
+      have hok := hrest.hok
+      rw [hok] at ⊢
+      exact Or.inr (walk_failure_build mem p a x hp st st1 st' resp V' hst1 hmem (hok ▸ hrest))
+  · obtain ⟨-, ho1, -⟩ := exec_assign_staticcall_inv (funs := funs) (gas := gas)
+      (vp := BitVec.ofNat 256 p) hgp_mptr h1
+    exact absurd ho1 hne1
+
+
+
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -1541,6 +1686,9 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms head_r [propext, Classical.choice, Quot.sound]
 #assert_axioms head_gp [propext, Classical.choice, Quot.sound]
 #assert_axioms head_pf_some [propext, Classical.choice, Quot.sound]
+#assert_axioms walk_success_rest [propext, Classical.choice, Quot.sound]
+#assert_axioms walk_failure_rest [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_staticcall_walk [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_args_litvar_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_staticcall_args [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_staticcall_inv [propext, Classical.choice, Quot.sound]
