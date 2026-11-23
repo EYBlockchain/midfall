@@ -1836,6 +1836,66 @@ theorem runsAll_parseTraceTrashcans_one (E : VerifierEnv p G₁ G₂ Gₜ)
   rw [List.append_nil] at hb
   exact hb
 
+theorem runsAll_tmReadN_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs : List G₁)
+    (hlen : Qs.length = n) :
+    RunsAll E (tmReadN (hashableG1 E.g1) n)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  rw [← ByteArray.append_assoc] at hbuf
+  obtain ⟨arr, t', hrun, hpos', hbuf'⟩ :=
+    tmReadN_g1_wire E n t pref Qs rest hlen hbuf hpos hp henc hwidth
+  refine ⟨arr, t', hrun, hbuf', ?_⟩
+  simpa only [List.map_map, Function.comp_def] using hpos'
+
+/-- The permutation-product fragment of `parseTrace`, verbatim. -/
+def parseTracePermutations (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁)
+    (numProofs : Nat) : TranscriptM (Array (Permutation.Committed G₁)) :=
+  (List.range numProofs).foldlM
+    (init := #[]) fun acc _ => do
+      let pc ← Permutation.readProductCommitments vk.cs.permutation vk.csDegree
+        (hashableG1 E.g1)
+      pure (acc.push pc)
+
+theorem runsAll_perm_readProductCommitments (E : VerifierEnv p G₁ G₂ Gₜ)
+    (perm : PermutationArgument) (csDegree : Nat) (hdeg : 3 ≤ csDegree)
+    (Qs : List G₁)
+    (hlen : Qs.length = Permutation.numChunksOf perm.columns.size (csDegree - 2)) :
+    RunsAll E (Permutation.readProductCommitments perm csDegree (hashableG1 E.g1))
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  unfold Permutation.readProductCommitments
+  have hpos : 2 < csDegree := by omega
+  have hlen0 : csDegree - 2 > 0 := by omega
+  simp only [hlen0, ↓reduceIte]
+  have hb := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+    (runsAll_tmReadN_g1 E (Permutation.numChunksOf perm.columns.size (csDegree - 2)) Qs hlen)
+    (fun arr => RunsAll.pure E ({ permutationProductCommitments := arr } : Permutation.Committed G₁))
+  rw [List.append_nil] at hb
+  exact hb
+
+theorem runsAll_parseTracePermutations_one (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hdeg : 3 ≤ vk.csDegree) (Qs : List G₁)
+    (hlen : Qs.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2)) :
+    RunsAll E (parseTracePermutations E vk 1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  rw [parseTracePermutations]
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil]
+  have hA : RunsAll E
+      ((fun acc => do
+        let pc ← Permutation.readProductCommitments vk.cs.permutation vk.csDegree
+          (hashableG1 E.g1)
+        pure (acc.push pc)) #[])
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+    have hb := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+      (runsAll_perm_readProductCommitments E vk.cs.permutation vk.csDegree hdeg Qs hlen)
+      (fun pc => RunsAll.pure E (#[].push pc))
+    rw [List.append_nil] at hb
+    exact hb
+  have hb := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+    hA (fun acc => RunsAll.pure E acc)
+  rw [List.append_nil] at hb
+  exact hb
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -3711,6 +3771,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trash_readCommitted [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashcans_fold [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTrashcans_one [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_tmReadN_g1 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_perm_readProductCommitments [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTracePermutations_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_at [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_of_algebraRun [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_at [propext, Classical.choice, Quot.sound] native []
