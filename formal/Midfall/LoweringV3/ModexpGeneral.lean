@@ -2516,7 +2516,7 @@ theorem bi_single_head_contract (funs : FunEnv (Bridge.Dialect c g))
         VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
         VEnv.get V "ret" = some succ ∧
         VEnv.get V "precompile_failed" = some 0)
-      (fun _ st V' st' o =>
+      (fun V0 st V' st' o =>
         (o = .normal ∧
           VEnv.get V' "x" = some (loadWord st.memory a) ∧
           VEnv.get V' "single_scratch" = some (BitVec.ofNat 256 s) ∧
@@ -2526,11 +2526,13 @@ theorem bi_single_head_contract (funs : FunEnv (Bridge.Dialect c g))
           VEnv.get V' "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
           VEnv.get V' "ret" = some succ ∧
           VEnv.get V' "precompile_failed" = some 0 ∧
-          st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted)
+          st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+          V' = ("single_scratch", BitVec.ofNat 256 s) :: ("x", loadWord st.memory a) :: V0)
         ∨ (o = .leave ∧
           VEnv.get V' "ret" = some 0 ∧
           VEnv.get V' "precompile_failed" = some 0 ∧
-          st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted)) := by
+          st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+          V' = VEnv.set (("x", loadWord st.memory a) :: V0) "ret" 0)) := by
   rw [biSingleHead]
   intro V st hpre V' st' o hrun
   obtain ⟨hmstart, hscratch, hr, hret, hpf0⟩ := hpre
@@ -2596,7 +2598,7 @@ theorem bi_single_head_contract (funs : FunEnv (Bridge.Dialect c g))
             have hstmem : st'.memory = st.memory := by rw [hst4, hst3, hst2, hst1]; rfl
             have hstenv : st'.env = st.env := by rw [hst4, hst3, hst2, hst1]; rfl
             have hsthalt : st'.halted = st.halted := by rw [hst4, hst3, hst2, hst1]; rfl
-            refine Or.inl ⟨rfl, ?_, rfl, ?_, ?_, ?_, ?_, ?_, ?_, hstmem, hstenv, hsthalt⟩
+            refine Or.inl ⟨rfl, ?_, rfl, ?_, ?_, ?_, ?_, ?_, ?_, hstmem, hstenv, hsthalt, by rw [hv11]⟩
             · rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
                 (x := "single_scratch") (y := "x") (by decide), ← hv11]
               exact hgetx
@@ -2631,7 +2633,7 @@ theorem bi_single_head_contract (funs : FunEnv (Bridge.Dialect c g))
           obtain ⟨ho3, -, -⟩ := h3c.1 hne0
           exact absurd ho3 hne3
         obtain ⟨ho3, hV3, hst3⟩ := h3c.2 hxzero
-        refine Or.inr ⟨ho3, ?_, ?_, ?_, ?_, ?_⟩
+        refine Or.inr ⟨ho3, ?_, ?_, ?_, ?_, ?_, by rw [hV3, hv11]⟩
         · rw [hV3]
           exact Midfall.LoweringV3.LagrangeRows.venv_get_set_same (D := Bridge.Dialect c g) hgetret1
         · rw [hV3]
@@ -2657,7 +2659,7 @@ theorem bi_single_head_contract (funs : FunEnv (Bridge.Dialect c g))
         rw [BitVec.ult]
         exact decide_eq_false (by rwa [htoNatR])
       obtain ⟨ho2, hV2, hst2⟩ := h2c.2 hultf
-      refine Or.inr ⟨ho2, ?_, ?_, ?_, ?_, ?_⟩
+      refine Or.inr ⟨ho2, ?_, ?_, ?_, ?_, ?_, by rw [hV2, hv11]⟩
       · rw [hV2]
         exact Midfall.LoweringV3.LagrangeRows.venv_get_set_same (D := Bridge.Dialect c g) hgetret1
       · rw [hV2]
@@ -2701,7 +2703,7 @@ theorem bi_single_tail_contract (consts : Inline.Consts) (product : PairingProdu
         VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
         (VEnv.get V "ret").isSome ∧ (VEnv.get V "precompile_failed").isSome ∧
         st.memory = mxMem M s xv)
-      (fun _ st V' st' o => o = .leave ∧
+      (fun V0 st V' st' o => o = .leave ∧
         ∃ ret pf, VEnv.get V' "ret" = some ret ∧
           VEnv.get V' "precompile_failed" = some pf ∧
           st'.env = st.env ∧ st'.halted = st.halted ∧
@@ -2711,7 +2713,8 @@ theorem bi_single_tail_contract (consts : Inline.Consts) (product : PairingProdu
             (loadWord M a).toNat < Midfall.Yul.blsR ∧ loadWord M a ≠ 0 ∧
             (loadWord st'.memory a).toNat < Midfall.Yul.blsR ∧
             Midfall.LoweringV3.QuotientRows.wMulmodAt (loadWord st'.memory a) (loadWord M a)
-              (BitVec.ofNat 256 Midfall.Yul.blsR) = 1)) := by
+              (BitVec.ofNat 256 Midfall.Yul.blsR) = 1) ∧
+          V' = VEnv.set (VEnv.set V0 "ret" ret) "precompile_failed" pf) := by
   rw [hgas]
   intro V st hpre V' st' o hrun
   change ExecStmts (D := Bridge.Dialect (permissive (callsOf product)) g) funs V st
@@ -2868,7 +2871,7 @@ theorem bi_single_tail_contract (consts : Inline.Consts) (product : PairingProdu
                   rw [hmemc', Midfall.Yul.Word.loadWord_storeWord_same, hst3, hst2, hst1mem,
                     hs_toNat, hrd]
                   exact loadWord_copyReturn_bytesNatBE (mem := mxMem M s xv) (p := s) _ (zmod_inv_val_lt xv)
-                refine ⟨rfl, 1, 0, hretV3, hpfV3, ?_, ?_, ?_, ?_, ?_⟩
+                refine ⟨rfl, 1, 0, hretV3, hpfV3, ?_, ?_, ?_, ?_, ?_, ?_⟩
                 · rw [henvc, hst3, hst2, henv1]
                 · rw [hhaltc, hst3, hst2, hhalt1]
                 · -- outside
@@ -2898,6 +2901,7 @@ theorem bi_single_tail_contract (consts : Inline.Consts) (product : PairingProdu
                   rw [hload, hloadS, hInvToNat]
                   exact ⟨rfl, hxlt, hxv0, ZMod.val_lt _,
                     wMulmodAt_zmod_inv xv (Nat.ne_of_gt hx0) hxlt⟩
+                · rw [hV3, hV2, hV1, hflag1, Midfall.LoweringV3.LagrangeRows.venv_set_set (D := Bridge.Dialect (permissive (callsOf product)) g)]
             · cases hm with
               | exprStmt _ => exact absurd rfl hne_m
           · have hbody := (exec_guard_var_body (x := "ret") (rv := 1) hretV3 h4).1
@@ -2958,7 +2962,7 @@ theorem bi_single_tail_contract (consts : Inline.Consts) (product : PairingProdu
               ⟨V5, st5, h5, hrest5⟩ | ⟨h5, hne5⟩
             · cases h5
             · cases h5
-              refine ⟨rfl, 0, 1, hretV3, hpfV3, ?_, ?_, ?_, ?_, ?_⟩
+              refine ⟨rfl, 0, 1, hretV3, hpfV3, ?_, ?_, ?_, ?_, ?_, ?_⟩
               · rw [hst3, hst2, henv1]
               · rw [hst3, hst2, hhalt1]
               · intro x hxa hxs
@@ -2971,6 +2975,7 @@ theorem bi_single_tail_contract (consts : Inline.Consts) (product : PairingProdu
                 rfl
               · intro hretne
                 exact absurd rfl hretne
+              · rw [hV3, hV2, hV1, hflag0, Midfall.LoweringV3.LagrangeRows.venv_set_set (D := Bridge.Dialect (permissive (callsOf product)) g)]
           · obtain ⟨ho4, -, -⟩ := (exec_guard_var_body (x := "ret") (rv := 0) hretV3 h4).2 rfl
             exact absurd ho4 hne4
         · obtain ⟨ho3, -, -⟩ := exec_assign_iszero_zero (c := permissive (callsOf product)) (g := g)
@@ -2997,17 +3002,23 @@ theorem bi_single_contract (consts : Inline.Consts) (product : PairingProduct) (
         VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
         VEnv.get V "ret" = some succ ∧
         VEnv.get V "precompile_failed" = some 0)
-      (fun _ st V' st' o => o = .leave ∧
-        BatchInvertPost (c := permissive (callsOf product)) (g := g) st succ a (a + 32) s
-          (BitVec.ofNat 256 Midfall.Yul.blsR) V' st') := by
+      (fun V0 st V' st' o => o = .leave ∧
+        (BatchInvertPost (c := permissive (callsOf product)) (g := g) st succ a (a + 32) s
+          (BitVec.ofNat 256 Midfall.Yul.blsR) V' st' ∧
+        ((V' = VEnv.set (("x", loadWord st.memory a) :: V0) "ret" 0) ∨
+          ∃ ret pf, VEnv.get V' "ret" = some ret ∧
+            VEnv.get V' "precompile_failed" = some pf ∧
+            V' = VEnv.set (VEnv.set
+              (("single_scratch", BitVec.ofNat 256 s) :: ("x", loadWord st.memory a) :: V0)
+              "ret" ret) "precompile_failed" pf))) := by
   rw [biSingleArm_eq]
   intro V st hpre V' st' o hrun
   rcases Step.stmts_append_inv hrun with ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
   · have hh := bi_single_head_contract (c := permissive (callsOf product)) (g := g) funs
       succ a s ha V st hpre V1 st1 .normal hhead
     rcases hh with
-      ⟨-, hx, hsc, hxlt, hx0, hms, hr, hret1, hpf1, hmem1, henv1, hhalt1⟩ |
-      ⟨ho, hret0, hpf0, hmem0, henv0, hhalt0⟩
+      ⟨-, hx, hsc, hxlt, hx0, hms, hr, hret1, hpf1, hmem1, henv1, hhalt1, hshape1⟩ |
+      ⟨ho, hret0, hpf0, hmem0, henv0, hhalt0, hshape0⟩
     · rcases Step.stmts_append_inv htail with ⟨V2, st2, hframe, htail2⟩ | ⟨hframe, hne2⟩
       · have hxpos : 0 < (loadWord st.memory a).toNat := by
           apply Nat.pos_of_ne_zero
@@ -3029,8 +3040,8 @@ theorem bi_single_contract (consts : Inline.Consts) (product : PairingProduct) (
           V2 st2 ⟨hsc, hms, hr, (Option.isSome_iff_exists.mpr ⟨succ, hret1⟩),
             (Option.isSome_iff_exists.mpr ⟨0, hpf1⟩), by rw [hmem2, hmem1, hs_toNat]⟩
           V' st' o htail2
-        obtain ⟨ho_tail, ret, pf, hretT, hpfT, henvT, hhaltT, houtT, hpfret, hsuccT⟩ := htailc
-        refine ⟨ho_tail, ret, pf, hretT, hpfT, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        obtain ⟨ho_tail, ret, pf, hretT, hpfT, henvT, hhaltT, houtT, hpfret, hsuccT, hshapeT⟩ := htailc
+        refine ⟨ho_tail, ⟨ret, pf, hretT, hpfT, ?_, ?_, ?_, ?_, ?_, ?_⟩, Or.inr ⟨ret, pf, hretT, hpfT, by rw [hshapeT, hV2, hshape1]⟩⟩
         · rw [henvT, henv2, henv1]
         · rw [hhaltT, hhalt2, hhalt1]
         · intro x hxa hxs
@@ -3056,12 +3067,203 @@ theorem bi_single_contract (consts : Inline.Consts) (product : PairingProduct) (
   · have hh := bi_single_head_contract (c := permissive (callsOf product)) (g := g) funs
       succ a s ha V st hpre V' st' o hhead
     rcases hh with
-      ⟨hnormal, hx, hsc, hxlt, hx0, hms, hr, hret1, hpf1, hmem1, henv1, hhalt1⟩ |
-      ⟨ho, hret0, hpf0, hmem0, henv0, hhalt0⟩
+      ⟨hnormal, hx, hsc, hxlt, hx0, hms, hr, hret1, hpf1, hmem1, henv1, hhalt1, -⟩ |
+      ⟨ho, hret0, hpf0, hmem0, henv0, hhalt0, hshape0⟩
     · exact absurd hnormal hne
     · exact ⟨ho, BatchInvertPost_zero (c := permissive (callsOf product)) (g := g)
         succ (BitVec.ofNat 256 Midfall.Yul.blsR) a (a + 32) s hsucc hret0 (Option.isSome_iff_exists.mpr ⟨0, hpf0⟩)
-        henv0 hhalt0 (by intro x _ _; rw [hmem0])⟩
+        henv0 hhalt0 (by intro x _ _; rw [hmem0]), Or.inl hshape0⟩
+
+
+theorem bi_prelude_single (consts : Inline.Consts) (product : PairingProduct) (g : ExternalGas)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (gas : Nat) (hgas : consts.lookup "MODEXP_GAS" = some gas)
+    (succ : U256) (a s : Nat) (hsucc : succ ≠ 0)
+    (ha : a + 32 < 2 ^ 256) (hs : s + 224 < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 2 8)
+      (fun V st =>
+        VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "mptr_end" = some (BitVec.ofNat 256 (a + 32)) ∧
+        VEnv.get V "scratch_mptr" = some (BitVec.ofNat 256 s) ∧
+        VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+        VEnv.get V "ret" = some succ ∧
+        VEnv.get V "precompile_failed" = some 0)
+      (fun _ st V' st' o => o = .leave ∧
+        BatchInvertPost (c := permissive (callsOf product)) (g := g) st succ a (a + 32) s
+          (BitVec.ofNat 256 Midfall.Yul.blsR) V' st') := by
+  rw [bi_prelude_single_form]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hmstart, hend, hscratch, hr, hret, hpf0⟩ := hpre
+  have hbR : Midfall.Yul.blsR < 2 ^ 256 := by decide
+  have htoNatR : (BitVec.ofNat 256 Midfall.Yul.blsR).toNat = Midfall.Yul.blsR := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hbR]
+  have hae : a ≤ a + 32 := by omega
+  have he32 : a + 32 < 2 ^ 256 := ha
+  have hsub : (BitVec.ofNat 256 (a + 32) - BitVec.ofNat 256 a : U256) =
+      BitVec.ofNat 256 32 := by
+    rw [ofNat_sub_of_le a (a + 32) hae he32]
+    rw [show a + 32 - a = 32 by omega]
+  -- s2
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrun with
+    ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · have h1c := exec_guard_ret0_lt_vars_false (x := "mptr_end") (y := "mptr_start")
+      hend hmstart (ofNat_ult_ofNat_false a (a + 32) hae he32) h1
+    obtain ⟨-, hV1, hst1⟩ := h1c
+    subst hV1
+    -- s3
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrest1 with
+      ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · obtain ⟨yv, zv, hyv, hzv, -, hV2, hst2⟩ :=
+        exec_let_sub_vars_inv (x := "count_bytes") (y := "mptr_end") (z := "mptr_start") h2
+      rw [hend] at hyv
+      rw [hmstart] at hzv
+      injection hyv with hy
+      injection hzv with hz
+      subst hy hz
+      rw [hsub] at hV2
+      subst hV2
+      have hcount : VEnv.get (("count_bytes", BitVec.ofNat 256 32) :: V1) "count_bytes" =
+          some (BitVec.ofNat 256 32) := rfl
+      -- s4
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrest2 with
+        ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
+      · have h3c := (exec_guard_iszero_var (x := "count_bytes") hcount h3).1
+          (ofNat_ne_zero_of_pos (by norm_num) (by norm_num : 32 < 2 ^ 256))
+        obtain ⟨-, hV3, hst3⟩ := h3c
+        have hs1 : VEnv.get V3 "mptr_start" = some (BitVec.ofNat 256 a) := by
+          rw [hV3]
+          rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+            (x := "count_bytes") (y := "mptr_start") (by decide)]
+          exact hmstart
+        have hs2 : VEnv.get V3 "scratch_mptr" = some (BitVec.ofNat 256 s) := by
+          rw [hV3]
+          rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+            (x := "count_bytes") (y := "scratch_mptr") (by decide)]
+          exact hscratch
+        have hs3 : VEnv.get V3 "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) := by
+          rw [hV3]
+          rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+            (x := "count_bytes") (y := "r") (by decide)]
+          exact hr
+        have hs4 : VEnv.get V3 "ret" = some succ := by
+          rw [hV3]
+          rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+            (x := "count_bytes") (y := "ret") (by decide)]
+          exact hret
+        have hs5 : VEnv.get V3 "precompile_failed" = some 0 := by
+          rw [hV3]
+          rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+            (x := "count_bytes") (y := "precompile_failed") (by decide)]
+          exact hpf0
+        -- s5 true branch
+        rcases Step.stmts_cons_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrest3 with
+          ⟨V4, st4, h4, hrest4⟩ | ⟨h4, hne4⟩
+        · -- the if statement is normal: impossible because the body leaves
+          cases h4 with
+          | ifTrue hc hnz hbody =>
+              obtain ⟨-, -, -, hstc⟩ := eval_eq_var_lit_inv (x := "count_bytes") (k := 32) hc
+              rw [hstc] at hbody
+              obtain ⟨Vb, stb, hb, -, -⟩ := exec_block_inv (funs := funs) hbody
+              have hsc := bi_single_contract (consts := consts) (product := product) (g := g)
+                (hoist (Bridge.Dialect (permissive (callsOf product)) g) (biSingleArm consts) :: funs)
+                gas hgas succ a s hsucc ha hs V3 st3 ⟨hs1, hs2, hs3, hs4, hs5⟩
+                Vb stb .normal hb
+              exact absurd hsc.1 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+          | ifFalse hc hz =>
+              obtain ⟨xv, hxv, hcv, -⟩ := eval_eq_var_lit_inv (x := "count_bytes") (k := 32) hc
+              rw [hV3, hcount] at hxv
+              injection hxv with hxv'
+              subst hxv'
+              rw [hcv] at hz
+              change (1 : U256) = (0 : U256) at hz
+              exact absurd hz (by decide)
+        · cases h4 with
+          | ifTrue hc hnz hbody =>
+              obtain ⟨-, -, -, hstc⟩ := eval_eq_var_lit_inv (x := "count_bytes") (k := 32) hc
+              rw [hstc] at hbody
+              obtain ⟨Vb, stb, hb, hVb, hstb⟩ := exec_block_inv (funs := funs) hbody
+              -- pre for the single arm
+              have hsc := bi_single_contract (consts := consts) (product := product) (g := g)
+                (hoist (Bridge.Dialect (permissive (callsOf product)) g) (biSingleArm consts) :: funs)
+                gas hgas succ a s hsucc ha hs V3 st3 ⟨hs1, hs2, hs3, hs4, hs5⟩
+                Vb stb o hb
+              have ho := hsc.1
+              have hVbBIP : BatchInvertPost (c := permissive (callsOf product)) (g := g)
+                  st3 succ a (a + 32) s (BitVec.ofNat 256 Midfall.Yul.blsR) Vb stb := hsc.2.1
+              have hshape := hsc.2.2
+              -- transport V' = restore V3 Vb to an explicit env and BIP
+              have hst3eq : st3 = st := by rw [hst3, hst2, hst1]
+              rw [hst3eq] at hshape
+              -- functions for get congruence over the restored env
+              have htransfer : BatchInvertPost (c := permissive (callsOf product)) (g := g)
+                  st3 succ a (a + 32) s (BitVec.ofNat 256 Midfall.Yul.blsR) V' stb := by
+                obtain ⟨retB, pfB, hretB, hpfB, henvB, hhaltB, houtB, hsuccB, hpfB0, hretB0⟩ := hVbBIP
+                rcases hshape with hshape0 | ⟨retS, pfS, hretS, hpfS, hshapeS⟩
+                · -- reject: Vb = ("x",..) :: set V3 ret 0
+                  have hVb_eq : Vb = ("x", loadWord st.memory a) ::
+                      VEnv.set V3 "ret" 0 := by
+                    rw [hshape0]
+                    simp [VEnv.set]
+                  have hV'_eq : V' = VEnv.set V3 "ret" 0 := by
+                    rw [hVb, hVb_eq]
+                    rw [Midfall.LoweringV3.LagrangeRows.restore_cons_length
+                      (V := V3) (W := VEnv.set V3 "ret" 0) (y := "x")
+                      (b := loadWord st.memory a) (by rw [Midfall.LoweringV3.LagrangeRows.venv_set_length (D := Bridge.Dialect (permissive (callsOf product)) g) V3 "ret" 0])]
+                  have hgetret : VEnv.get Vb "ret" = VEnv.get V' "ret" := by
+                    rw [hVb_eq, hV'_eq]
+                    simp [VEnv.get, List.find?]
+                  have hgetpf : VEnv.get Vb "precompile_failed" = VEnv.get V' "precompile_failed" := by
+                    rw [hVb_eq, hV'_eq]
+                    simp [VEnv.get, List.find?]
+                  refine ⟨retB, pfB, ?_, ?_, henvB, hhaltB, houtB, hsuccB, hpfB0, hretB0⟩
+                  · rw [← hgetret]; exact hretB
+                  · rw [← hgetpf]; exact hpfB
+                · -- normal: Vb = ("single_scratch",..) :: ("x",..) :: set (set V3 ret) pf
+                  have hVb_eq : Vb = ("single_scratch", BitVec.ofNat 256 s) ::
+                      ("x", loadWord st.memory a) ::
+                        VEnv.set (VEnv.set V3 "ret" retS) "precompile_failed" pfS := by
+                    rw [hshapeS]
+                    simp [VEnv.set]
+                  have hV'_eq : V' = VEnv.set (VEnv.set V3 "ret" retS) "precompile_failed" pfS := by
+                    rw [hVb, hVb_eq]
+                    rw [Midfall.LoweringV3.LagrangeRows.restore_two_cons_length
+                      (V := V3) (W := VEnv.set (VEnv.set V3 "ret" retS) "precompile_failed" pfS)
+                      (y := "single_scratch") (z := "x")
+                      (b := BitVec.ofNat 256 s) (c := loadWord st.memory a)
+                      (by rw [Midfall.LoweringV3.LagrangeRows.venv_set_length (D := Bridge.Dialect (permissive (callsOf product)) g) (VEnv.set V3 "ret" retS) "precompile_failed" pfS,
+                        Midfall.LoweringV3.LagrangeRows.venv_set_length (D := Bridge.Dialect (permissive (callsOf product)) g) V3 "ret" retS])]
+                  have hgetret : VEnv.get Vb "ret" = VEnv.get V' "ret" := by
+                    rw [hVb_eq, hV'_eq]
+                    simp [VEnv.get, List.find?]
+                  have hgetpf : VEnv.get Vb "precompile_failed" = VEnv.get V' "precompile_failed" := by
+                    rw [hVb_eq, hV'_eq]
+                    simp [VEnv.get, List.find?]
+                  refine ⟨retB, pfB, ?_, ?_, henvB, hhaltB, houtB, hsuccB, hpfB0, hretB0⟩
+                  · rw [← hgetret]; exact hretB
+                  · rw [← hgetpf]; exact hpfB
+              refine ⟨ho, ?_⟩
+              rw [hstb]
+              rw [hst3eq] at htransfer
+              exact htransfer
+          | ifFalse hc hz =>
+              obtain ⟨xv, hxv, hcv, -⟩ := eval_eq_var_lit_inv (x := "count_bytes") (k := 32) hc
+              rw [hV3, hcount] at hxv
+              injection hxv with hxv'
+              subst hxv'
+              rw [hcv] at hz
+              change (1 : U256) = (0 : U256) at hz
+              exact absurd hz (by decide)
+          | ifHalt hc => exact (eval_eq_var_lit_no_halt (x := "count_bytes") (k := 32) hc).elim
+      · obtain ⟨ho3, -, -⟩ := (exec_guard_iszero_var (x := "count_bytes") hcount h3).1
+          (ofNat_ne_zero_of_pos (by norm_num) (by norm_num : 32 < 2 ^ 256))
+        exact absurd ho3 hne3
+    · obtain ⟨-, -, -, -, ho2, -, -⟩ :=
+        exec_let_sub_vars_inv (x := "count_bytes") (y := "mptr_end") (z := "mptr_start") h2
+      exact absurd ho2 hne2
+  · obtain ⟨ho1, -, -⟩ := exec_guard_ret0_lt_vars_false (x := "mptr_end") (y := "mptr_start")
+      hend hmstart (ofNat_ult_ofNat_false a (a + 32) hae he32) h1
+    exact absurd ho1 hne1
 
 
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
@@ -3151,6 +3353,7 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms bi_single_head_contract [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_single_tail_contract [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_single_contract [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_prelude_single [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_args_litvar_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_staticcall_args [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_staticcall_inv [propext, Classical.choice, Quot.sound]
