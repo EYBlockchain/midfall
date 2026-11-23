@@ -3,10 +3,10 @@ import Midfall.LoweringV3.ScalarInvSummary
 set_option autoImplicit false
 namespace Midfall.LoweringV3.PcsBlock4
 open Midfall Midfall.Generator Midfall.Lowering Midfall.LoweringV2 Midfall.Lowering.Stage
-open Midfall.LoweringV3.PcsRows
+open Midfall.LoweringV3.PcsRows Midfall.Lowering.GenAstPcs
 open Midfall.LoweringV3.ScalarInvSummary Midfall.LoweringV2 Midfall.LoweringV2.Blocks.TraceReturn
 open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
-variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+variable {c : ExternalCalls} {g : ExternalGas} {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [Group G₁] [Group G₂] [Group Gₜ]
   [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
   [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
@@ -161,6 +161,137 @@ theorem b3_exec_ylet_scalar_inv_var {g : ExternalGas} (product : PairingProduct)
       · injection heh with hst
         subst hst
         exact Or.inr ⟨rfl, hrev⟩
+
+theorem b1_eval_sub_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x y : String}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.sub [GenAst.yvar x, GenAst.yvar y]) (.vals [cv] st')) :
+    ∃ xv yv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      cv = xv - yv ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hy =>
+      cases hrest with
+      | argsCons hnil hx =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hxv, hstx⟩ := b1_eval_var_inv hy
+              obtain ⟨hyv, hsty⟩ := b1_eval_var_inv hx
+              rw [hstx, hsty] at hbi
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨_, _, hxv, hyv, rfl, rfl⟩
+
+theorem b1_eval_addmod_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x y z : String}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.addmod [GenAst.yvar x, GenAst.yvar y, GenAst.yvar z])
+      (.vals [cv] st')) :
+    ∃ xv yv zv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      VEnv.get V z = some zv ∧ cv = wAddmodAt xv yv zv ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hrest with
+      | argsCons hrest2 hy =>
+          cases hrest2 with
+          | argsCons hnil hz =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hxv, hstx⟩ := b1_eval_var_inv hx
+                  obtain ⟨hyv, hsty⟩ := b1_eval_var_inv hy
+                  obtain ⟨hzv, hstz⟩ := b1_eval_var_inv hz
+                  rw [hstx, hsty, hstz] at hbi
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  exact ⟨_, _, _, hxv, hyv, hzv, rfl, rfl⟩
+
+theorem b1_eval_sub_from_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x y : String}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (subFrom (GenAst.yvar x) (GenAst.yvar y)) (.vals [cv] st')) :
+    ∃ xv yv rv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      VEnv.get V "r" = some rv ∧ cv = wAddmodAt xv (rv - yv) rv ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hrest with
+      | argsCons hrest2 hsub =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨xraw, hxvRaw, hstx⟩ := b1_eval_var_vals hx
+                  obtain ⟨rraw, hrvRaw, hstr⟩ := b1_eval_var_vals hr
+                  obtain ⟨rsub, yv, hrvSub, hyv, hsubv, hstsub⟩ :=
+                    b1_eval_sub_vars_inv hsub
+                  have hrEq : rsub = rraw := Option.some.inj (hrvSub.symm.trans hrvRaw)
+                  obtain ⟨hrvProj, _⟩ := b1_eval_var_inv hr
+                  rw [hrvRaw] at hrvProj
+                  cases hrvProj
+                  obtain ⟨hxvProj, _⟩ := b1_eval_var_inv hx
+                  rw [hxvRaw] at hxvProj
+                  cases hxvProj
+                  rw [hstx, hstsub, hstr] at hbi
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  refine ⟨_, _, _, hxvRaw, hyv, hrvRaw, ?_, rfl⟩
+                  rw [← hrEq, hsubv]
+                  rfl
+
+theorem b1_eval_mload_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p : String} {off : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mload
+        [GenAst.yop EVM.Op.add [GenAst.yvar p, GenAst.ylit off]]) (.vals [cv] st')) :
+    ∃ pv, VEnv.get V p = some pv ∧
+      cv = loadWord st.memory (pv + BitVec.ofNat 256 off).toNat ∧
+      st' = touchMemory st (pv + BitVec.ofNat 256 off).toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil harg =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨pv, hpv, haddr, hst1⟩ := b1_eval_add_var_lit_inv harg
+          rw [hst1] at hbi
+          simp only [builtinWithExternal, stepOp] at hbi
+          cases hbi
+          exact ⟨pv, hpv, by rw [haddr], by rw [haddr]⟩
+
+theorem b1_eval_calldataload_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {p : String} {off : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.calldataload
+        [GenAst.yop EVM.Op.add [GenAst.yvar p, GenAst.ylit off]]) (.vals [cv] st')) :
+    ∃ pv, VEnv.get V p = some pv ∧
+      cv = wordFrom st.env.calldata (pv + BitVec.ofNat 256 off).toNat ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil harg =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨pv, hpv, haddr, hst1⟩ := b1_eval_add_var_lit_inv harg
+          rw [hst1] at hbi
+          simp only [builtinWithExternal, stepOp] at hbi
+          cases hbi
+          exact ⟨pv, hpv, by rw [haddr], rfl⟩
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mload_add_var_lit_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_calldataload_add_var_lit_inv
+  [propext, Classical.choice, Quot.sound] native []
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_vars_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_addmod_vars_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_from_vars_inv
+  [propext, Classical.choice, Quot.sound] native []
 
 #assert_axioms Midfall.LoweringV3.PcsBlock4.scalarInv_call_contract_var
   [propext, Classical.choice, Quot.sound] native []
