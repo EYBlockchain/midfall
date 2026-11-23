@@ -459,3 +459,25 @@ inside each block. `pairQueries` supplies the zipped `L` once the sizes agree.
 the priority-3 input. `fromConstraintSystem_pcsQueries_last` remains the single
 named `match`-wrapper residual; `PlanMeta`/`v3_planMeta` remains CERT.1 and is
 not assumed.
+
+## Same-order block point shapes
+
+Landed in `QueryBlockShape` (green, `#assert_axioms`):
+
+* `Trash.Evaluated.queries_point` — every trash query opens at `x`.
+* `Permutation.CommonEvaluated.queries_point` — every common sigma opening
+  opens at `x`.
+* `Logup.Evaluated.queries_point` — every logup query opens at `x` or at
+  `domain.rotateOmega x Rotation.next`.
+
+These are the verifier-side `rotateOmega` shapes for the trash, common and
+lookup blocks. The remaining block shapes are advice, committed instance,
+permutationZ and fixed; each needs the `mapM`/zip membership inversion from
+`collectQueries`. The same-order list equality itself (perProof/fixed/common
+against `pcsQueries`) then follows block by block once those four shapes and
+the `pcsQueries` block decomposition are available.
+
+`pairQueries` already builds the zipped list once the sizes agree.
+`hclass`/`.linear`-vs-`computedQuotientComm`/`G1_IDENTITY_MPTR` freshness remains
+priority 3; `fromConstraintSystem_pcsQueries_last` and `PlanMeta` remain the
+named residuals.

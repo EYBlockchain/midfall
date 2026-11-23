@@ -30,6 +30,7 @@ import Midfall.LoweringV3.KzgQueryMap
 import Midfall.LoweringV3.RotationInjectivity
 import Midfall.LoweringV3.LinearizeEntry
 import Midfall.LoweringV3.QueryTail
+import Midfall.LoweringV3.QueryBlockShape
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -4563,6 +4564,12 @@ open Midfall.Tools.Done in
 #assert_axioms collectQueries_back?
   [propext, Classical.choice, Quot.sound]
 #assert_axioms collectQueries_parts
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Trash.Evaluated.queries_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Permutation.CommonEvaluated.queries_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Logup.Evaluated.queries_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]

@@ -229,6 +229,7 @@ import Midfall.LoweringV3.KzgQueryMap
 import Midfall.LoweringV3.RotationInjectivity
 import Midfall.LoweringV3.LinearizeEntry
 import Midfall.LoweringV3.QueryTail
+import Midfall.LoweringV3.QueryBlockShape
 import Midfall.Instances.StatementsV3Deploy
 import Midfall.Instances.VacuityWitnesses
 import Midfall.Instances.StatementsV3Falsifiers
