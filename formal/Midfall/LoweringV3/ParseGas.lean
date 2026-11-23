@@ -385,6 +385,70 @@ theorem parseArgs_gfs : ∀ (fuel : Nat) (toks : List String) {es : List (Expr E
           intro u hu; exact hrest1 u (by simp [hu])⟩
       · -- none
         cases h
+
 end
+
+/-! ### Conditional statement-parser closure
+
+  The expression parser above is complete. The statement layer is closed here
+  *given* `parseStmt` soundness; the two lemmas are the exact two consumers of
+  that hypothesis, so the remaining statement work is only the `parseStmt`
+  branch table. -/
+
+theorem parseStmts_gfs_of_stmt
+    (hstmt : ∀ (fuel : Nat) (toks : List String) {s : Stmt EVM.Op} {rest : List String},
+      parseStmt fuel toks = some (s, rest) → (∀ t ∈ toks, t ≠ "gas") →
+      GasFreeScan (.s s) ∧ (∀ t ∈ rest, t ≠ "gas")) :
+    ∀ (fuel : Nat) (toks : List String) {ss : Block EVM.Op} {rest : List String},
+    parseStmts fuel toks = some (ss, rest) → (∀ t ∈ toks, t ≠ "gas") →
+    GasFreeScan (.b ss) ∧ (∀ t ∈ rest, t ≠ "gas")
+  | 0, toks, ss, rest, h, hno => by rw [parseStmts.eq_1] at h; cases h
+  | fuel + 1, toks, ss, rest, h, hno => by
+      cases toks with
+      | nil =>
+          rw [parseStmts.eq_3 [] fuel (by intro r hr; cases hr)] at h
+          rw [parseStmt_nil] at h
+          cases h
+      | cons t rest0 =>
+          by_cases ht : t = "}"
+          · subst ht
+            rw [parseStmts.eq_2] at h
+            obtain ⟨rfl, rfl⟩ := Option.some.inj h
+            exact ⟨gfs_b_nil, by intro u hu; exact hno u (by simp [hu])⟩
+          · rw [parseStmts.eq_3 (t :: rest0) fuel
+              (by intro r hr; injection hr with h1 h2; exact ht h1)] at h
+            split at h
+            · rename_i s rr hps
+              obtain ⟨⟨ss', rr'⟩, hrec, hb⟩ := Option.map_eq_some_iff.mp h
+              obtain ⟨rfl, rfl⟩ := Prod.mk.injEq .. ▸ hb
+              obtain ⟨gs, hrest1⟩ := hstmt _ _ hps (by
+                intro u hu; exact hno u (by simp [hu]))
+              obtain ⟨gss, hrest2⟩ := parseStmts_gfs_of_stmt hstmt _ _ hrec hrest1
+              exact ⟨gfs_b_cons gs gss, hrest2⟩
+            · cases h
+
+theorem parseBlock_gfs_of_stmt
+    (hstmt : ∀ (fuel : Nat) (toks : List String) {s : Stmt EVM.Op} {rest : List String},
+      parseStmt fuel toks = some (s, rest) → (∀ t ∈ toks, t ≠ "gas") →
+      GasFreeScan (.s s) ∧ (∀ t ∈ rest, t ≠ "gas")) :
+    ∀ (fuel : Nat) (toks : List String) {b : Block EVM.Op} {rest : List String},
+    parseBlock fuel toks = some (b, rest) → (∀ t ∈ toks, t ≠ "gas") →
+    GasFreeScan (.b b) ∧ (∀ t ∈ rest, t ≠ "gas")
+  | 0, toks, b, rest, h, hno => by rw [parseBlock.eq_1] at h; cases h
+  | fuel + 1, toks, b, rest, h, hno => by
+      cases toks with
+      | nil =>
+          rw [parseBlock.eq_3 [] fuel (by intro r hr; cases hr)] at h
+          cases h
+      | cons t rest0 =>
+          by_cases ht : t = "{"
+          · subst ht
+            rw [parseBlock.eq_2] at h
+            exact parseStmts_gfs_of_stmt hstmt _ _ h (by
+              intro u hu; exact hno u (by simp [hu]))
+          · rw [parseBlock.eq_3 (t :: rest0) fuel
+              (by intro r hr; injection hr with h1 h2; exact ht h1)] at h
+            cases h
+
 
 end Midfall.LoweringV3
