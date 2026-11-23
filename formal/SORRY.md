@@ -39,7 +39,6 @@ gate tool, so it carries the word `sorry` in the message strings it prints, and 
 comments but not string literals. The environment scan needs no exemption.
 
 | declaration | module | kind | status | cone | statement | removed by |
-| Midfall.Generator.Certified.env_k | Midfall.Generator.Certified | theorem | OPEN | - | `8b4b5a8378cdec42` | V3 CERT.6 - pv.k = model.k = inputs.k = vk.domain.k |
 | Midfall.Generator.Certified.env_nG2 | Midfall.Generator.Certified | theorem | OPEN | - | `ce448f3485f23c4e` | V3 CERT.4 - generate_base_vk checks g2 == generator (vk.rs:180) |
 | Midfall.Generator.Certified.env_negLagranges | Midfall.Generator.Certified | theorem | OPEN | - | `b0cfe1fd7ad3a1fe` | V3 CERT.6 - ART builder from the plan meta; meta = ConstraintSystemMeta.new |
 | Midfall.Generator.Certified.env_vkDigest | Midfall.Generator.Certified | theorem | OPEN | - | `669009852444ef59` | V3 CERT.7 - header slot 0 survives the reservation loop; feToU256 o frToRepr = frWord |
@@ -49,7 +48,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Generator.Certified.payload_g2Base | Midfall.Generator.Certified | theorem | OPEN | - | `51b4369467745f38` | V3 CERT.7 - vk.rs:180 plus the G2 codec law |
 | Midfall.Generator.Certified.payload_header | Midfall.Generator.Certified | theorem | OPEN | - | `59c9d0eb95a32759` | V3 CERT.6 - VkHeaderBuilder slots (vk.rs:211-222); sizeBound makes the Nat-to-word write exact |
 | Midfall.Generator.Certified.payload_negSG2 | Midfall.Generator.Certified | theorem | OPEN | - | `794516b4c5a8ca09` | V3 CERT.7 - slot 23 written from s_g2^-1 plus the G2 codec law |
-| Midfall.Generator.Certified.plan_vk_of_generateAll | Midfall.Generator.Certified | theorem | OPEN | - | `dfeaed5aa5d9a250` | V3 CERT.6 - newFromVk stores the payload; generateAll returns the plan (nine binds) |
 | Midfall.Generator.Certified.prog_callsResolved | Midfall.Generator.Certified | theorem | OPEN | - | `e754e48eb935790e` | V3 CERT.5 - call-site lemma per emitter plus the helper signature table |
 | Midfall.Generator.Certified.prog_closed | Midfall.Generator.Certified | theorem | OPEN | - | `4d4e1b3f8d88ecd5` | V3 CERT.5 - from constsDeclared/constTable plus the inlineContractConstants free-name lemma |
 | Midfall.Generator.Certified.prog_codegenStruct | Midfall.Generator.Certified | theorem | OPEN | - | `d29d03ed48643742` | V3 CERT.2 - route A: the emitted tree is the generator text (today false until WP-G1 is certified) |
@@ -74,9 +72,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Generator.Certified.v3_closed | Midfall.Generator.Certified | theorem | OPEN | - | `a3fb03fed6e0f86a` | V3 CERT.5 - mainClosed restricted to the main block |
 | Midfall.Generator.Certified.v3_codegen | Midfall.Generator.Certified | theorem | OPEN | - | `d33dda869f6949aa` | V3 CERT.2 - route A: CodegenAgrees (today false until WP-G1 is certified) |
 | Midfall.Generator.Certified.v3_exitDiscipline | Midfall.Generator.Certified | theorem | OPEN | - | `1fd03addccdcce61` | V3 CERT.5 - exit-scan lemma per emitter |
-| Midfall.Generator.Certified.v3_invariants | Midfall.Generator.Certified | theorem | OPEN | - | `e8a31bf914db9f4a` | V3 CERT.4 - plan.rs:307-308, checked in newFromVk |
-| Midfall.Generator.Certified.v3_layout | Midfall.Generator.Certified | theorem | OPEN | - | `679899afc97708b9` | V3 CERT.6 - newFromVk computes proofLayout exactly |
-| Midfall.Generator.Certified.v3_model | Midfall.Generator.Certified | theorem | OPEN | - | `2fd1382c0813711f` | V3 CERT.6 - generateAll third bind |
 | Midfall.Generator.Certified.v3_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `3fceb6a2ff594db0` | V3 CERT.5 - top-level binder scan, as prog_noShadow |
 | Midfall.Generator.Certified.v3_payload | Midfall.Generator.Certified | theorem | OPEN | - | `7418db397b0c6004` | V3 CERT.7 - the five payload groups at the V3 slot names |
 | Midfall.Generator.Certified.v3_pins_of_valid | Midfall.Generator.Certified | theorem | OPEN | - | `8649414d6a6af241` | V3 CERT.6 - the pin bundles are consequences of the one ValidV3, not of generation |

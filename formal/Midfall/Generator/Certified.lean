@@ -237,7 +237,47 @@ theorem plan_vk_of_generateAll {delta : Fr p} {vk : VerifyingKey (Fr p) G₁} {c
     {out : GenOut}
     (h : generateAll Features.solidity delta vk cfg payload inputs flags = .ok out) :
     out.plan.vk = payload := by
-  sorry -- CERT.6
+  simp only [generateAll, Bind.bind, Except.bind] at h
+  obtain ⟨_rawMeta, _, h1⟩ := cert_except_bind_ok h
+  obtain ⟨plan, hpl, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨_blocks, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨_model, _, h4⟩ := cert_except_bind_ok h3
+  cases h5 : (Halo2Verifier.validateLayout _model) with
+  | error e => simp only [h5] at h4; cases h4
+  | ok u =>
+      simp only [h5] at h4
+      have hA : { plan := plan, qblocks := _blocks, model := _model } = out :=
+        Except.ok.inj (show Except.ok { plan := plan, qblocks := _blocks, model := _model } =
+          Except.ok out from h4)
+      have hp : plan = out.plan := congrArg GenOut.plan hA
+      have hv : plan.vk = payload := by
+        simp only [Midfall.Generator.PlanNew.newFromVk, Bind.bind, Except.bind] at hpl
+        obtain ⟨q, _, hq1⟩ := cert_except_bind_ok hpl
+        obtain ⟨_proofLayout, _, hq2⟩ := cert_except_bind_ok hq1
+        obtain ⟨_qplan, _, hq3⟩ := cert_except_bind_ok hq2
+        obtain ⟨_build, _, hq4⟩ := cert_except_bind_ok hq3
+        obtain ⟨_nw, _, hq5⟩ := cert_except_bind_ok hq4
+        obtain ⟨_pcs, _, hq6⟩ := cert_except_bind_ok hq5
+        obtain ⟨_acc, _, hq7⟩ := cert_except_bind_ok hq6
+        obtain ⟨_memory, _, hq8⟩ := cert_except_bind_ok hq7
+        obtain ⟨_op, _, hq9⟩ := cert_except_bind_ok hq8
+        obtain ⟨_trip, _, hq10⟩ := cert_except_bind_ok hq9
+        split at hq10 <;> (try (split at hq10)) <;> (try (split at hq10)) <;>
+          (try (split at hq10)) <;> (try (split at hq10)) <;> (try (split at hq10))
+        all_goals (try (cases hq10))
+        all_goals rfl
+      rw [← hp]
+      exact hv
+
+/-- The generated-by clause, PROVED from `generate_spec` and `plan_vk_of_generateAll`. -/
+theorem generated_of {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut} (hg : Generates gi o) :
+    Midfall.LoweringV3.GeneratedBy (renderOf gi o) := by
+  obtain ⟨_, payload, _, _, _, h4⟩ := generate_spec hg
+  have hv : o.out.plan.vk = payload := plan_vk_of_generateAll h4
+  refine ⟨o.out, ?_, rfl, rfl, rfl⟩
+  show generateAll Features.solidity gi.E.delta gi.vk gi.cfg o.out.plan.vk
+    (artifactInputsOf gi o.fingerprint) gi.flags = .ok o.out
+  rw [hv]; exact h4
 
 /-! ### P: the program clause, `programOk` - the 33 scratch lemmas -/
 
@@ -313,9 +353,29 @@ theorem prog_noWriters (hg : Generates gi o) (hs : SupportedInput gi) :
 
 /-! ### K: environment (the plan-side half of `EnvAgrees`) -/
 
+/-- `generateVerifierFromPlan` copies `inputs.k` into the model (ART:281). PROVED. -/
+theorem model_k_of_generated {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) : R.model.k = R.inputs.k := by
+  have hg := Midfall.LoweringV3.MemoryPairs.gvfp_of_generated h
+  simp only [generateVerifierFromPlan, Bind.bind, Except.bind] at hg
+  split at hg
+  · cases hg
+  · cases hg
+  · obtain ⟨_a1, _, h1⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp hg
+    obtain ⟨_a2, _, h2⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h1
+    obtain ⟨_a3, _, h3⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h2
+    obtain ⟨_a4, _, h4⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h3
+    obtain ⟨_a5, _, h5⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h4
+    obtain ⟨_a6, _, h6⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h5
+    obtain ⟨_a7, _, h7⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h6
+    have hrec := Except.ok.inj h7
+    simpa using (congrArg (fun x => x.k) hrec).symm
+
 theorem env_k (hg : Generates gi o) (hs : SupportedInput gi) :
     gi.vk.domain.k = (renderOf gi o).pv.k := by
-  sorry -- CERT.6
+  change gi.vk.domain.k = (renderOf gi o).model.k
+  rw [model_k_of_generated (generated_of hg)]
+  rfl
 
 theorem env_negLagranges (hg : Generates gi o) (hs : SupportedInput gi) :
     (renderOf gi o).pv.numNegLagranges = gi.vk.cs.blindingFactors.toOption.getD 0 + 1 := by
@@ -389,20 +449,130 @@ theorem v3_planMeta (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.PlanMeta (renderOf gi o) := by
   sorry -- CERT.1 (suspect: final vs intermediate memory layout)
 
+/-- `newFromVk`'s plan carries the meta and proof layout its own second bind produced. PROVED. -/
+theorem newFromVk_plan_meta_proofLayout {F : Type} [BEq F] (feat : Features)
+    (field : FieldCtx F) (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta)
+    (numInstances : Nat) (accEncoding : Option Midfall.Generator.AccumulatorEncoding)
+    (payload : Halo2VerifyingKey) (plan : LoweringPlan Unit Unit)
+    (h : Midfall.Generator.PlanNew.newFromVk feat field cs rawMeta numInstances accEncoding
+        payload = .ok plan) :
+    ∃ (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout),
+      plan.meta_ = meta_ ∧ plan.proofLayout = L ∧
+      ProofCalldataLayout.fromProtocol meta_.protocol abiVerifyProofProofCptr meta_.numEvals
+        meta_.numPointSets = .ok L := by
+  simp only [Midfall.Generator.PlanNew.newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨q, _, h1⟩ := cert_except_bind_ok h
+  obtain ⟨proofLayout, hpl, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨_qplan, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨_build, _, h4⟩ := cert_except_bind_ok h3
+  obtain ⟨_nw, _, h5⟩ := cert_except_bind_ok h4
+  obtain ⟨_pcs, _, h6⟩ := cert_except_bind_ok h5
+  obtain ⟨_acc, _, h7⟩ := cert_except_bind_ok h6
+  obtain ⟨_memory, _, h8⟩ := cert_except_bind_ok h7
+  obtain ⟨_op, _, h9⟩ := cert_except_bind_ok h8
+  obtain ⟨_trip, _, h10⟩ := cert_except_bind_ok h9
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (exact ⟨q.2.1, proofLayout, rfl, rfl, hpl⟩)
+
 theorem v3_layout (hg : Generates gi o) (hs : SupportedInput gi) :
     ProofCalldataLayout.fromProtocol (renderOf gi o).plan.meta_.protocol abiVerifyProofProofCptr
       (renderOf gi o).plan.meta_.numEvals (renderOf gi o).plan.meta_.numPointSets =
       .ok (renderOf gi o).plan.proofLayout := by
-  sorry -- CERT.6
+  obtain ⟨rawMeta, plan, _hraw, hpl, hp⟩ :=
+    Midfall.LoweringV3.MemoryPairs.plan_of_generated (generated_of hg)
+  obtain ⟨meta_, L, hmeta, hplL, hL⟩ :=
+    newFromVk_plan_meta_proofLayout Features.solidity (frFieldCtx gi.E.delta) gi.vk.cs
+      rawMeta gi.cfg.numInstances gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
+  rw [hp, hmeta, hplL]
+  exact hL
+
+/-- Invert a `validateGeneratorInvariants` success out of a three-arm match. PROVED. -/
+theorem except_ok_ok_of_match {α : Type} {e : Except Fault (Except String Unit)}
+    {rest : Unit → Except Fault α} {errMsg : String → Fault} {a : α}
+    (h : (match e with
+      | .ok (.ok u) => rest u
+      | .ok (.error err) => .error (errMsg err)
+      | .error fault => .error fault) = .ok a) : e = .ok (.ok ()) := by
+  cases e with
+  | error fault => cases h
+  | ok inner =>
+      cases inner with
+      | error err => cases h
+      | ok u =>
+          cases u
+          rfl
+
+/-- `newFromVk` returns only after `validateGeneratorInvariants` has accepted. PROVED. -/
+theorem newFromVk_validate {F : Type} [BEq F] (feat : Features) (field : FieldCtx F)
+    (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding)
+    (payload : Halo2VerifyingKey) (plan : LoweringPlan Unit Unit)
+    (h : Midfall.Generator.PlanNew.newFromVk feat field cs rawMeta numInstances accEncoding
+        payload = .ok plan) :
+    plan.validateGeneratorInvariants = .ok (.ok ()) := by
+  simp only [Midfall.Generator.PlanNew.newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨_q, _, h1⟩ := cert_except_bind_ok h
+  obtain ⟨_proofLayout, _, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨_qplan, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨_build, _, h4⟩ := cert_except_bind_ok h3
+  obtain ⟨_nw, _, h5⟩ := cert_except_bind_ok h4
+  obtain ⟨_pcs, _, h6⟩ := cert_except_bind_ok h5
+  obtain ⟨_acc, _, h7⟩ := cert_except_bind_ok h6
+  obtain ⟨_memory, _, h8⟩ := cert_except_bind_ok h7
+  obtain ⟨_op, _, h9⟩ := cert_except_bind_ok h8
+  obtain ⟨_trip, _, h10⟩ := cert_except_bind_ok h9
+  split at h10
+  · split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;>
+      (try (split at h10)) <;> (try (split at h10))
+    all_goals (try (cases h10))
+    all_goals (try assumption)
+    all_goals (try (simp_all))
+  · cases h10
+  · cases h10
 
 theorem v3_invariants (hg : Generates gi o) (hs : SupportedInput gi) :
     (renderOf gi o).plan.validateGeneratorInvariants = .ok (.ok ()) := by
-  sorry -- CERT.4
+  obtain ⟨_m0, _payload, _, _, _, h4⟩ := generate_spec hg
+  simp only [generateAll, Bind.bind, Except.bind] at h4
+  obtain ⟨_rawMeta, _, h1⟩ := cert_except_bind_ok h4
+  obtain ⟨plan, hpl, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨_blocks, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨_model, _, h4'⟩ := cert_except_bind_ok h3
+  cases hv : (Halo2Verifier.validateLayout _model) with
+  | error e => simp only [hv] at h4'; cases h4'
+  | ok u =>
+      simp only [hv] at h4'
+      have hA : { plan := plan, qblocks := _blocks, model := _model } = o.out :=
+        Except.ok.inj (show Except.ok { plan := plan, qblocks := _blocks, model := _model } =
+          Except.ok o.out from h4')
+      have hp : plan = o.out.plan := congrArg GenOut.plan hA
+      change o.out.plan.validateGeneratorInvariants = .ok (.ok ())
+      rw [← hp]
+      exact newFromVk_validate Features.solidity (frFieldCtx gi.E.delta) gi.vk.cs
+        _rawMeta gi.cfg.numInstances gi.cfg.accumulator _payload plan hpl
 
 theorem v3_model (hg : Generates gi o) (hs : SupportedInput gi) :
     generateVerifierFromPlan (fun _ _ => (renderOf gi o).qblocks) (renderOf gi o).inputs
       (renderOf gi o).flags (renderOf gi o).plan = .ok (renderOf gi o).model := by
-  sorry -- CERT.6
+  obtain ⟨_m0, _payload, _, _, _, h4⟩ := generate_spec hg
+  simp only [generateAll, Bind.bind, Except.bind] at h4
+  obtain ⟨_rawMeta, _, h1⟩ := cert_except_bind_ok h4
+  obtain ⟨plan, _, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨blocks, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨model, hgen, h4'⟩ := cert_except_bind_ok h3
+  cases hv : (Halo2Verifier.validateLayout model) with
+  | error e => simp only [hv] at h4'; cases h4'
+  | ok u =>
+      simp only [hv] at h4'
+      have hA : { plan := plan, qblocks := blocks, model := model } = o.out :=
+        Except.ok.inj (show Except.ok { plan := plan, qblocks := blocks, model := model } =
+          Except.ok o.out from h4')
+      change generateVerifierFromPlan (fun _ _ => o.out.qblocks)
+        (artifactInputsOf gi o.fingerprint) gi.flags o.out.plan = .ok o.out.model
+      rw [← hA]
+      exact hgen
 
 theorem v3_codegen (hg : Generates gi o) (hs : SupportedInput gi) :
     CodegenAgrees (renderOf gi o).pv (renderOf gi o).model := by
@@ -517,16 +687,6 @@ theorem programOkB_of_parts {R : Render p G₁ G₂ Gₜ}
     Midfall.LoweringV3.programOkB R = true := by
   unfold Midfall.LoweringV3.programOkB Midfall.LoweringV3.programOkCore
   simp only [h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, Bool.and_self]
-
-/-- The generated-by clause, PROVED from `generate_spec` and `plan_vk_of_generateAll`. -/
-theorem generated_of {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut} (hg : Generates gi o) :
-    Midfall.LoweringV3.GeneratedBy (renderOf gi o) := by
-  obtain ⟨_, payload, _, _, _, h4⟩ := generate_spec hg
-  have hv : o.out.plan.vk = payload := plan_vk_of_generateAll h4
-  refine ⟨o.out, ?_, rfl, rfl, rfl⟩
-  show generateAll Features.solidity gi.E.delta gi.vk gi.cfg o.out.plan.vk
-    (artifactInputsOf gi o.fingerprint) gi.flags = .ok o.out
-  rw [hv]; exact h4
 
 /-- `Nat` below `2^256` read back from `BitVec.ofNat 256`. PROVED. -/
 theorem bitvec_ofNat_toNat {n : Nat} (h : n < 2 ^ 256) :
