@@ -290,7 +290,8 @@ theorem b1_eval_sub_var_mload_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g
          GenAst.yop EVM.Op.mload
            [GenAst.yop EVM.Op.add [GenAst.yvar q, GenAst.ylit off]]]) (.vals [cv] st')) :
     ∃ rv qv, VEnv.get V "r" = some rv ∧ VEnv.get V q = some qv ∧
-      cv = rv - loadWord st.memory (qv + BitVec.ofNat 256 off).toNat := by
+      cv = rv - loadWord st.memory (qv + BitVec.ofNat 256 off).toNat ∧
+      st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted := by
   obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
   cases hargs with
   | argsCons hrest hr =>
@@ -307,7 +308,55 @@ theorem b1_eval_sub_var_mload_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g
               simp only [builtinWithExternal, stepOp, bin] at hbi
               cases hbi
               rw [hmloadVal]
-              exact ⟨_, qep, hrv, hqep, rfl⟩
+              refine ⟨_, qep, hrv, hqep, rfl, ?_, ?_, ?_⟩
+              · rw [hstr, hstm, Midfall.Yul.Word.touchMemory_memory]
+              · rw [hstr, hstm, Midfall.Yul.Word.touchMemory_env]
+              · rw [hstr, hstm, Midfall.Yul.Word.touchMemory_halted]
+
+theorem b1_eval_sub_from_cdl_mload_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {qc qe : String}
+    {offc offe : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (subFrom
+        (GenAst.yop EVM.Op.calldataload
+          [GenAst.yop EVM.Op.add [GenAst.yvar qc, GenAst.ylit offc]])
+        (GenAst.yop EVM.Op.mload
+          [GenAst.yop EVM.Op.add [GenAst.yvar qe, GenAst.ylit offe]]))
+      (.vals [cv] st')) :
+    ∃ cptr qep rv cdlv, VEnv.get V qc = some cptr ∧ VEnv.get V qe = some qep ∧
+      VEnv.get V "r" = some rv ∧
+      cdlv = wordFrom st.env.calldata (cptr + BitVec.ofNat 256 offc).toNat ∧
+      cv = wAddmodAt cdlv
+        (rv - loadWord st.memory (qep + BitVec.ofNat 256 offe).toNat) rv := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hcdl =>
+      cases hrest with
+      | argsCons hrest2 hsub =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨rv0, hrv0, hstr⟩ := b1_eval_var_vals hr
+                  obtain ⟨rvSub, qep, hrvSub, hqep, hsubVal, hsubMem, hsubEnv, hsubHalt⟩ :=
+                    b1_eval_sub_var_mload_add_var_lit_inv hsub
+                  obtain ⟨cptr, hcptr, hcdlVal, hstc⟩ :=
+                    b1_eval_calldataload_add_var_lit_inv hcdl
+                  rw [hstr] at hsubVal hsubMem hsubEnv hsubHalt
+                  rw [hsubEnv] at hcdlVal
+                  have hrvEq : rvSub = rv0 := Option.some.inj (hrvSub.symm.trans hrv0)
+                  obtain ⟨hrvProj, _⟩ := b1_eval_var_inv hr
+                  rw [hrv0] at hrvProj
+                  cases hrvProj
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  refine ⟨cptr, qep, _, _, hcptr, hqep, hrv0, rfl, ?_⟩
+                  have hrvEq2 := Option.some.inj (hrvSub.symm.trans hrv0)
+                  rw [hsubVal, hcdlVal, hrvEq2]
+                  rfl
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_from_cdl_mload_inv
+  [propext, Classical.choice, Quot.sound] native []
 
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_var_mload_add_var_lit_inv
   [propext, Classical.choice, Quot.sound] native []
