@@ -142,6 +142,11 @@ theorem wlit_val {c : ExternalCalls} {g : ExternalGas} (v : U256) :
     (Dialect c g).litValue (.number v.toNat) = v :=
   BitVec.ofNat_toNat 256 v
 
+/-- A number literal at an arbitrary `Nat` (not only a `U256`-derived one) is its
+    `256`-bit word. Definitional; the lagrange statement-0 contract needs exactly this. -/
+theorem litValue_number_nat {c : ExternalCalls} {g : ExternalGas} (k : Nat) :
+    (Dialect c g).litValue (Literal.number k) = BitVec.ofNat 256 k := rfl
+
 /-- A word literal evaluates to its word, leaving the state alone, at any frame. -/
 theorem wlit_eval {c : ExternalCalls} {g : ExternalGas} {funs : FunEnv (Dialect c g)}
     {V : VEnv (Dialect c g)} {st : EvmState} (v : U256) :
