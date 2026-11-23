@@ -169,3 +169,62 @@ EXACT remaining input (unchanged, and not duplicated here):
    = plan.numPointSets`;
 3. the value→shape count lemma for `constructIntermediateSets` (under
    `ChallengesGood.xNonzero`, `omega` order `n`; D-GATE6 rotation-distinctness).
+
+## D-GATE10 follow-up: the query-map bridge is proved at the KZG level
+
+`Midfall/LoweringV3/KzgQueryMap.lean` now contains the verifier↔generator
+query-map bridge; `Midfall/LoweringV3/EndToEndAlgebra.lean` consumes it.
+
+PROVED (targeted builds `Midfall.LoweringV3.KzgQueryMap`,
+`Midfall.LoweringV3.EndToEndAlgebra`, `Midfall.LoweringV3.EndToEnd`; no `sorryAx`
+in any new declaration):
+
+* `KzgQueryMapData` — the per-index correspondence: a common commitment key
+  `K`, a point-to-rotation map `fk`, and the equality-reflection facts
+  `eqC a b = (ck a == ck b)`, `ecPointBeq a b = (gk a == gk b)`,
+  `(a == b) = (fk a == fk b)`, plus `L` whose two projections are the two query
+  lists.
+* `pass1_step1_sim` — the two step-1 folds of `constructIntermediateSets` and
+  `constructIntermediateSetsImpl` run in lockstep: the first-occurrence point
+  lists agree under `fk`, the commitment groups agree under `ck`/`gk`, and the
+  per-group point-index lists are equal and duplicate-free.
+* `natSort_eq_btreeSetFromList_of_nodup` — the verifier's insertion sort and the
+  generator's BTreeSet fold are the same canonical form on duplicate-free lists
+  (with `natSort_mem`, `btreeSetFromList_mem` and the sortedness/nodup lemmas).
+* `foldl_addKeyFind_length_eq_btreeMap` — the two set-deduplicating folds have
+  the same length (the `pointsV`/`pointsG` grouping), so the point-set counts
+  agree.
+* `constructIntermediateSets_pointSets_size_eq_of_queryMap` — the direct count
+  equality `pointSets.size = setsG.pointSets.length` from `KzgQueryMapData`.
+* `KzgPartitionBridge_of_queryMap` — the named `KzgPartitionBridge` from the
+  same datum; `KzgMultiPrepareWidths_of_queryMap` — `KzgMultiPrepareWidths R`
+  from a per-`linearize` datum plus the generator count.
+* Generator side: `constructIntermediateSetsImpl_pointSets_length` (the
+  `pointSets` fold over `pointIdxSets` preserves length),
+  `sortSets_pointSets_length`, and
+  `numPointSets_eq_of_queries_pointSets_length`
+  (`numPointSets meta data = .ok sets.pointSets.length` from a successful
+  `queries`/`constructIntermediateSetsImpl`/`sortSets` chain).
+
+EXACT remaining input (unchanged in kind, now isolated to one datum):
+
+1. Construct `KzgQueryMapData` at `Verifier.linearize`'s output against
+   `Generator.queries R.plan.meta_ R.plan.data`: the per-index slot/rotation
+   correspondence, including the `.linear` linearization commitment
+   (`data.computedQuotientComm`) vs the verifier's `CommitmentReference.linear`,
+   and the `.onePiece` slots. D-GATE5 `ChallengesGood.xNonzero` and D-GATE6
+   rotation-distinctness supply the injectivity of `fk` (`x·ω^r = x·ω^s ⇒ r=s`)
+   that makes the point equality reflection provable.
+2. The plan-side count: from `PlanMeta`/`PlanMetaStable` (CertProbes) and
+   `metaDataForVk`'s `setNumPointSets`, identify
+   `R.plan.meta_.numPointSets` with the generator count above, and
+   `(RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets`
+   with `R.plan.proofLayout.qEvals.itemCount` (`fromProtocol_qEvals_itemCount`).
+3. The linearize query list itself: proving `Verifier.linearize` produces
+   exactly the `collectQueries` shape (already the real function, so this is a
+   definitional unfolding plus the fixed/linearization order), and the
+   generator `queries` list's order from `ProtocolPlan.fromConstraintSystem`.
+
+W12 remains the falsifier of the old unconditional form:
+`kzgPartitionBridge_false_at_x0` stays green, and the `∀ queries` statement is
+kept only as the refuted object (`MultiPrepareBlockWidth.eq_zero_of_empty_run`).
