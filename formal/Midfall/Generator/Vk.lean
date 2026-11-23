@@ -1731,18 +1731,9 @@ theorem foldlM_fillProgram_ge (l : List (Word256 × Nat)) (offset : Nat)
     PLAN 9.5's Supported has no field for the invariant - that is a
     statement-surface question for the orchestrator and is reported, not invented
     here. -/
-def generateVk (feat : Features) (env : VkBuildEnv Plan)
-    (codecs : VkPointCodecs G₁ G₂) (inputs : VerifierBuildInputs p G₁ G₂) :
-    Except Fault Halo2VerifyingKey := do
-  -- VK:360
-  let vk0 ← generateBaseVk codecs inputs
-  -- VK:362
-  let headerWords := vk0.constants.length
-  -- VK:363-366
-  let init : VkReservationState :=
-    { vk := vk0, quotientConstWords := 0, quotientProgramWords := 0, build := none }
-  -- VK:367-393
-  let st ← (List.range 8).foldlM (reserveStep feat env inputs headerWords) init
+def generateVkFinalize (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
+    (st : VkReservationState) : Except Fault Halo2VerifyingKey := do
   -- VK:395-399
   let quotientProgramBuild ← match st.build with
     | some b => Except.ok b
@@ -1804,6 +1795,20 @@ def generateVk (feat : Features) (env : VkBuildEnv Plan)
       quotientProgramWords := st.quotientProgramWords }
   unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:470" (vkFinal.validatePayloadLayout)
   Except.ok vkFinal
+
+def generateVk (feat : Features) (env : VkBuildEnv Plan)
+    (codecs : VkPointCodecs G₁ G₂) (inputs : VerifierBuildInputs p G₁ G₂) :
+    Except Fault Halo2VerifyingKey := do
+  -- VK:360
+  let vk0 ← generateBaseVk codecs inputs
+  -- VK:362
+  let headerWords := vk0.constants.length
+  -- VK:363-366
+  let init : VkReservationState :=
+    { vk := vk0, quotientConstWords := 0, quotientProgramWords := 0, build := none }
+  -- VK:367-393
+  let st ← (List.range 8).foldlM (reserveStep feat env inputs headerWords) init
+  generateVkFinalize feat env inputs headerWords st
 
 
 end Midfall.Generator
