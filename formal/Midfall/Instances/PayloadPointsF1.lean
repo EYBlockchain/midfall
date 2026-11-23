@@ -115,7 +115,77 @@ theorem f1PayloadPointHalf_g2Base_is_field
       = f1GeneratedRender.encG2 bls12_381Pairing.g₂ :=
   h.g2Base
 
-/-! ## §2. THE F1 RENDER AT THE CONSTRUCTED PAIRING.
+/-! ## §2. THE 19/8 REAL COMMITMENTS, DECODED FROM THE PARSED PAYLOAD.
+
+  The Lean key `poseidonVkExec` carries `Array.replicate 19 (1 : G₁z)` in `fixedCommitments`
+  and `Array.replicate 8 (1 : G₁z)` in `permutation.commitments` (`PoseidonEnv.lean:195-200`),
+  while the parsed payload carries the artifact's real points. B4 measured the consequence:
+  `fixedComms` and `permutationComms` are FALSE at `f1GeneratedRender`
+  (`f1_fixedComms_false`, `f1_permutationComms_false`).
+
+  The repair is DATA, not a clause: decode every payload EIP-2537 word into the carrier with
+  the computable decoder `g1zOfEipC?` (`Instances/G1Compressed.lean:132`: width, canonical
+  coordinates, curve, r-torsion - no discrete log and no axiom), and put those points in the
+  key. `f1DecodedFixed_all`/`f1DecodedPerm_all` are the machine-checked statement that no
+  fallback identity was taken; the two re-encode theorems are then exactly the two
+  `PayloadPointHalf` commitment fields at the re-sourced key. -/
+
+/-- Every fixed commitment of the parsed F1 payload, decoded (or `none` if it is not an
+    r-torsion EIP-2537 point). -/
+def f1DecodedFixed : List (Option G₁z) :=
+  f1Pv.vk.fixedComms.map (fun w => g1zOfEipC? (Midfall.LoweringV3.g1WordsBytes w))
+
+/-- Every permutation commitment of the parsed F1 payload, decoded. -/
+def f1DecodedPerm : List (Option G₁z) :=
+  f1Pv.vk.permutationComms.map (fun w => g1zOfEipC? (Midfall.LoweringV3.g1WordsBytes w))
+
+/-- The decoded fixed commitments as carrier elements. The `getD 1` arm is unreachable by the
+    two `_all` theorems below; it is what makes the term total. -/
+def f1ResourcedFixed : List G₁z := f1DecodedFixed.map (fun o => o.getD 1)
+
+/-- The decoded permutation commitments. -/
+def f1ResourcedPerm : List G₁z := f1DecodedPerm.map (fun o => o.getD 1)
+
+/-- **THE RE-SOURCED KEY.** Same domain, CS, degree and transcript representation as D.2's key;
+    the two commitment arrays are the payload's own points. -/
+def f1VkResourced : VerifyingKey (Fr blsR) G₁z :=
+  { poseidonVkExec with
+    fixedCommitments := f1ResourcedFixed.toArray
+    permutation := { poseidonVkExec.permutation with
+      commitments := f1ResourcedPerm.toArray } }
+
+/-- **NO FALLBACK WAS TAKEN: all 19 payload fixed commitments decode into the carrier.**
+    AXIOM: f1DecodedFixed_all._native.native_decide.ax_1_1. -/
+theorem f1DecodedFixed_all : f1DecodedFixed.all (fun o => o.isSome) = true := by
+  native_decide
+
+/-- **NO FALLBACK WAS TAKEN: all 8 payload permutation commitments decode.** AXIOM:
+    f1DecodedPerm_all._native.native_decide.ax_1_1. -/
+theorem f1DecodedPerm_all : f1DecodedPerm.all (fun o => o.isSome) = true := by
+  native_decide
+
+/-- **THE FIXED-COMMITMENT FIELD OF THE RE-SOURCED KEY.** The payload words are the EIP images
+    of the decoded points, in order - exactly `PayloadPointHalf.fixedComms`.
+    AXIOM: f1VkResourced_fixed_reencodes._native.native_decide.ax_1_1. -/
+theorem f1VkResourced_fixed_reencodes :
+    f1Pv.vk.fixedComms.map Midfall.LoweringV3.g1WordsBytes =
+      f1VkResourced.fixedCommitments.toList.map g1zToEip := by
+  native_decide
+
+/-- **THE PERMUTATION-COMMITMENT FIELD OF THE RE-SOURCED KEY.** AXIOM:
+    f1VkResourced_perm_reencodes._native.native_decide.ax_1_1. -/
+theorem f1VkResourced_perm_reencodes :
+    f1Pv.vk.permutationComms.map Midfall.LoweringV3.g1WordsBytes =
+      f1VkResourced.permutation.commitments.toList.map g1zToEip := by
+  native_decide
+
+/-- The re-sourced key really differs from D.2's identity key: this is not a restatement of the
+    placeholder. WITNESS, by the two commitment arrays. -/
+theorem f1VkResourced_fixed_ne_placeholder :
+    f1VkResourced.fixedCommitments ≠ poseidonVkExec.fixedCommitments := by
+  native_decide
+
+/-! ## §3. THE F1 RENDER AT THE CONSTRUCTED PAIRING.
 
   `PairingByConstruction.lean:62` constructs the D-P62(a) pairing `e(P,k) = k • P` over `G₁z`
   with `g₁ = g1zGen` and `g₂ = g2foldExp 1`. It is repeated here as a plain `def` (not an
@@ -167,6 +237,15 @@ noncomputable def pairingF1 : AdmissiblePairing G₁z G2fold G₁z where
 theorem pairingF1_g1 : pairingF1.g₁ = g1zGen := rfl
 theorem pairingF1_g2 : pairingF1.g₂ = g2foldExp 1 := rfl
 
+/-- **THE PAYLOAD-SOURCED KZG PARAMETERS.** `nG2Prepared` is `g₂⁻¹` at the constructed pairing
+    (the `EnvAgrees.nG2` clause), and `sG2Prepared` is the inverse of the payload's neg-S-G2
+    point's exponent, i.e. the payload's own `s·H2`. `sG2` is the same point, so the three
+    parameters are mutually consistent and no opaque axiom is read. -/
+noncomputable def f1ParamsResourced (n : Nat) : ParamsVerifierKZG G₁z G2fold :=
+  { sG2 := (g2foldExp n)⁻¹
+    nG2Prepared := (g2foldExp 1)⁻¹
+    sG2Prepared := (g2foldExp n)⁻¹ }
+
 noncomputable section ConstructedPairing
 
 local instance : AdmissiblePairing G₁z G2fold G₁z := pairingF1
@@ -217,6 +296,85 @@ theorem f1PointRenderC_g2Base (vk : VerifyingKey (Fr blsR) G₁z)
   show Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkG2BaseSlot
     = g2foldToEip (g2foldExp 1)
   exact payloadG2Base_bytes
+
+/-- **`PayloadPointHalf.fixedComms` AT THE RE-SOURCED RENDER, UNCONDITIONALLY.** -/
+theorem f1PointRenderC_fixedComms (params : ParamsVerifierKZG G₁z G2fold)
+    (sG2 : G2fold) :
+    (f1PointRenderC f1VkResourced params sG2).pv.vk.fixedComms.map
+        Midfall.LoweringV3.g1WordsBytes
+      = (f1PointRenderC f1VkResourced params sG2).vk.fixedCommitments.toList.map
+          (f1PointRenderC f1VkResourced params sG2).E.g1.toEip := by
+  show f1Pv.vk.fixedComms.map Midfall.LoweringV3.g1WordsBytes
+    = f1VkResourced.fixedCommitments.toList.map g1zToEip
+  exact f1VkResourced_fixed_reencodes
+
+/-- **`PayloadPointHalf.permutationComms` AT THE RE-SOURCED RENDER, UNCONDITIONALLY.** -/
+theorem f1PointRenderC_permutationComms (params : ParamsVerifierKZG G₁z G2fold)
+    (sG2 : G2fold) :
+    (f1PointRenderC f1VkResourced params sG2).pv.vk.permutationComms.map
+        Midfall.LoweringV3.g1WordsBytes
+      = (f1PointRenderC f1VkResourced params sG2).vk.permutation.commitments.toList.map
+          (f1PointRenderC f1VkResourced params sG2).E.g1.toEip := by
+  show f1Pv.vk.permutationComms.map Midfall.LoweringV3.g1WordsBytes
+    = f1VkResourced.permutation.commitments.toList.map g1zToEip
+  exact f1VkResourced_perm_reencodes
+
+/-- **THE POINT-SOURCED RENDER.** The key is the re-sourced one, the parameters carry the
+    payload's `s·H2`, and `sG2gen` is its inverse - the payload's neg-S-G2 point. -/
+abbrev f1PointRenderCN (n : Nat) :
+    Render blsR G₁z G2fold G₁z :=
+  f1PointRenderC f1VkResourced (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+
+/-- The right-hand side of `PayloadPointHalf.negSG2` at `f1PointRenderCN n`, reduced to the
+    payload exponent. -/
+theorem f1PointRenderCN_negRhs (n : Nat) :
+    (f1PointRenderCN n).encG2 ((f1PointRenderCN n).sG2gen⁻¹)
+      = g2foldToEip (g2foldExp n) := by
+  show g2foldToEip (((g2foldExp n)⁻¹)⁻¹) = g2foldToEip (g2foldExp n)
+  rw [inv_inv]
+
+/-- **THE `negSG2`/`sG2gen` BRIDGE.** If the payload's NEG_S_G2 bytes are the EIP encoding of
+    `g2foldExp n` - i.e. `n` is the payload's own `−s`, the discrete-log witness the artifact
+    does not carry - then `sG2gen := (g2foldExp n)⁻¹` makes the field true, and `f1ParamsResourced n`
+    makes `EnvAgrees.sG2` hold at the same value. No other hypothesis enters. -/
+theorem f1PointRenderCN_negSG2 (n : Nat)
+    (hpay : Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkNegSG2BaseSlot
+      = g2foldToEip (g2foldExp n)) :
+    Midfall.Lowering.vkG2Words (f1PointRenderCN n).pv Midfall.Lowering.vkNegSG2BaseSlot
+      = (f1PointRenderCN n).encG2 (f1PointRenderCN n).sG2gen⁻¹ := by
+  show Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkNegSG2BaseSlot
+    = g2foldToEip (((g2foldExp n)⁻¹)⁻¹)
+  rw [inv_inv]
+  exact hpay
+
+/-- **THE WHOLE POINT HALF AT THE RE-SOURCED RENDER.** Both base slots, both commitment
+    lists, and `negSG2` under the one data statement that names the payload's neg-S-G2 point.
+    This is the object B4's `f1GeneratedRender_validV3_iff_points` consumes. -/
+theorem f1PointRenderCN_payloadPointHalf (n : Nat)
+    (hpay : Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkNegSG2BaseSlot
+      = g2foldToEip (g2foldExp n)) :
+    PayloadPointHalf (f1PointRenderCN n) where
+  g1Base := f1PointRenderC_g1Base f1VkResourced (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+  g2Base := f1PointRenderC_g2Base f1VkResourced (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+  negSG2 := f1PointRenderCN_negSG2 n hpay
+  fixedComms := f1PointRenderC_fixedComms (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+  permutationComms := f1PointRenderC_permutationComms (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+
+/-- **THE EXACT RESIDUAL OF THE POINT HALF AT THE RE-SOURCED RENDER.** Every field except
+    `negSG2` is unconditional; the whole point half is EQUIVALENT to the payload having the
+    exponent `n` at its neg-S-G2 slot. The forward direction is the `negSG2` projection and
+    is what makes this an iff and not a one-way implication. -/
+theorem f1PointRenderCN_payloadPointHalf_iff (n : Nat) :
+    PayloadPointHalf (f1PointRenderCN n)
+      ↔ Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkNegSG2BaseSlot
+          = g2foldToEip (g2foldExp n) := by
+  constructor
+  · intro h
+    have hh := h.negSG2
+    rw [f1PointRenderCN_negRhs] at hh
+    exact hh
+  · intro h
+    exact f1PointRenderCN_payloadPointHalf n h
 
 end ConstructedPairing
 
