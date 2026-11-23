@@ -27,6 +27,8 @@
 -/
 import Midfall.LoweringV3.EndToEnd
 import Midfall.LoweringV3.KzgQueryMap
+import Midfall.LoweringV3.RotationInjectivity
+import Midfall.LoweringV3.LinearizeEntry
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -1977,6 +1979,61 @@ theorem plan_numEvals_eq_protocol (R : Midfall.LoweringV2.Render p G₁ G₂ G�
     R.cfg.numCommittedInstances hraw
   obtain ⟨hqE, hqP⟩ := hq
   rw [hqE, hqP, hrawE]
+
+/-- **The plan-side point-set-count identification.** For a generated plan, the
+    repacked layout's `numPointSets` (`proofLayout.qEvals.itemCount`) is the plan
+    meta's `numPointSets`, exactly as `plan_numEvals_eq_protocol` does for
+    `numEvals`. Proved from `newFromVk_meta_layout` and
+    `fromProtocol_qEvals_itemCount`; no count hypothesis is assumed. -/
+theorem plan_numPointSets_eq_meta (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets
+      = R.plan.meta_.numPointSets := by
+  obtain ⟨rawMeta, plan, _hraw, hpl, hp⟩ :=
+    Midfall.LoweringV2.pfx_plan_of_generated hR.generated
+  obtain ⟨meta_, L, hmeta, hplL, hL⟩ := newFromVk_meta_layout Features.solidity
+    (Midfall.Generator.PlanNew.frFieldCtx R.E.delta) R.vk.cs rawMeta R.cfg.numInstances
+    R.cfg.accumulator R.plan.vk plan hpl
+  rw [← hp] at hmeta hplL
+  rw [hplL, hmeta]
+  show L.qEvals.itemCount = meta_.numPointSets
+  exact fromProtocol_qEvals_itemCount meta_.protocol meta_.numEvals meta_.numPointSets L hL
+
+/-- **THE PLAN META'S POINT-SET COUNT IS THE GENERATOR'S COUNT.** `PlanMeta`
+    pins `R.plan.meta_` to `(m0.setNumDummyEvals 0).setNumPointSets n` with
+    `numPointSets (m0.setNumDummyEvals 0) R.plan.data = .ok n`. Since
+    `numPointSets`/`queries` read only the protocol (not the `numPointSets`
+    field), the successful computation is available at `R.plan.meta_` itself,
+    and its `sortSets` result has exactly `n = R.plan.meta_.numPointSets`
+    point sets. `hdummy` is the `Data.new` initialiser (the empty dummy-eval
+    buffer); `PlanMeta`'s data equation supplies it. -/
+theorem planMeta_numPointSets_generator (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hM : PlanMeta R) (hdummy : R.plan.data.dummyEvalWords = []) :
+    ∃ (qs : List Midfall.Generator.Query) (sets out : Midfall.Generator.IntermediateSets),
+      Midfall.Generator.queries R.plan.meta_ R.plan.data = .ok qs ∧
+      Midfall.Generator.constructIntermediateSetsImpl qs = .ok sets ∧
+      Midfall.Generator.sortSets sets = .ok out ∧
+      R.plan.meta_.numPointSets = out.pointSets.length := by
+  obtain ⟨m0, n, _hnew, _hdata, hn, hmeta⟩ := hM
+  have hcount : Midfall.Generator.numPointSets (R.plan.meta_.setNumPointSets 0)
+      R.plan.data = .ok n := by
+    rw [hmeta]
+    rw [show ((m0.setNumDummyEvals 0).setNumPointSets n).setNumPointSets 0 =
+      (m0.setNumDummyEvals 0).setNumPointSets 0 by
+        simp [Midfall.Generator.ConstraintSystemMeta.setNumPointSets]]
+    rw [numPointSets_setNumPointSets]
+    exact hn
+  obtain ⟨out, hout, hlen⟩ :=
+    numPointSets_parts (R.plan.meta_.setNumPointSets 0) R.plan.data n hcount
+  obtain ⟨qs, sets, hq0, hci, hsort⟩ :=
+    intermediateSets_parts (R.plan.meta_.setNumPointSets 0) R.plan.data
+      out hdummy hout
+  have hq : Midfall.Generator.queries R.plan.meta_ R.plan.data = .ok qs := by
+    rw [← queries_setNumPointSets]
+    exact hq0
+  refine ⟨qs, sets, out, hq, hci, hsort, ?_⟩
+  rw [hmeta]
+  exact hlen.symm
 
 /-- The same count as the protocol's eval-read list length. -/
 theorem plan_numEvals_eq_proofEvalsLength (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
@@ -4380,6 +4437,28 @@ open Midfall.Tools.Done in
 #assert_axioms numPointSets_eq_of_queries_pointSets_length
   [propext, Classical.choice, Quot.sound]
 #assert_axioms constructIntermediateSetsImpl_pointSets_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms rotateOmega_eq_mul_zpow
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms rotateOmega_injective_on_rotations
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms rotationKey_injective
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms exists_pointKey
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms plan_numPointSets_eq_meta
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms planMeta_numPointSets_generator
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms intermediateSets_parts
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms collectQueries_back?
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms VerifierQuery.newLinear_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms computeLinearizationCommitment_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms linearize_back?_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms multiPrepare_width_empty [propext, Classical.choice, Quot.sound]
 #assert_axioms multiPrepare_width_at [propext, Classical.choice, Quot.sound]
