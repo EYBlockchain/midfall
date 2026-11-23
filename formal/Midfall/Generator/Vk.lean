@@ -1287,6 +1287,39 @@ theorem headerScalarInsert_length (b : VkHeaderBuilder) (site : String) (slot : 
   apply VkHeaderBuilder.insert_length
   simpa [headerScalarInsert, VkHeaderBuilder.scalar] using unwrapAt_ok h
 
+theorem headerScalarInsert_get (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (name : String) (value : Word256) (b' : VkHeaderBuilder)
+    (h : headerScalarInsert b site slot name value = .ok b') :
+    b'.words[VkHeaderSlot.word slot]? = some (some (name, value)) := by
+  exact VkHeaderBuilder.scalar_get b slot name value b'
+    (by simpa [headerScalarInsert] using unwrapAt_ok h)
+
+theorem headerScalarInsert_frame (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (name : String) (value : Word256) (b' : VkHeaderBuilder)
+    (h : headerScalarInsert b site slot name value = .ok b')
+    (i : Nat) (hne : i ≠ VkHeaderSlot.word slot) :
+    b'.words[i]? = b.words[i]? := by
+  exact VkHeaderBuilder.scalar_frame b slot name value b'
+    (by simpa [headerScalarInsert] using unwrapAt_ok h) i hne
+
+theorem headerG1Insert_frame (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (names : List String) (values : List Word256) (b' : VkHeaderBuilder)
+    (h : headerG1Insert b site slot names values = .ok b')
+    (i : Nat) (hi : i < VkHeaderSlot.word slot ∨
+      VkHeaderSlot.word slot + (List.zip names values).length ≤ i) :
+    b'.words[i]? = b.words[i]? := by
+  exact VkHeaderBuilder.insert_get?_other b slot g1WordsCount (List.zip names values) b'
+    (by simpa [headerG1Insert, VkHeaderBuilder.g1] using unwrapAt_ok h) i hi
+
+theorem headerG2Insert_frame (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (names : List String) (values : List Word256) (b' : VkHeaderBuilder)
+    (h : headerG2Insert b site slot names values = .ok b')
+    (i : Nat) (hi : i < VkHeaderSlot.word slot ∨
+      VkHeaderSlot.word slot + (List.zip names values).length ≤ i) :
+    b'.words[i]? = b.words[i]? := by
+  exact VkHeaderBuilder.insert_get?_other b slot g2WordsCount (List.zip names values) b'
+    (by simpa [headerG2Insert, VkHeaderBuilder.g2] using unwrapAt_ok h) i hi
+
 theorem headerG1Insert_length (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
     (names : List String) (values : List Word256) (b' : VkHeaderBuilder)
     (h : headerG1Insert b site slot names values = .ok b') :
