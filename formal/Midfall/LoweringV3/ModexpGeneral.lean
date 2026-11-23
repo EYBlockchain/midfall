@@ -2151,6 +2151,60 @@ theorem bi_bridge_head (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c
 set_option maxHeartbeats 500000 in
 
 
+theorem bi_bridge_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (p a mp : Nat) (gv x_last : U256)
+    (hp : p + 192 < 2 ^ 256) (hmp : mp < 2 ^ 256)
+    (hprime : Nat.Prime Midfall.Yul.blsR)
+    (hg0 : gv ≠ 0) (hg_lt : gv.toNat < Midfall.Yul.blsR)
+    (hx0 : x_last ≠ 0) (hxlt : x_last.toNat < Midfall.Yul.blsR) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10)
+      (fun V st =>
+        VEnv.get V "mptr" = some (BitVec.ofNat 256 mp) ∧
+        VEnv.get V "gp" = some gv ∧
+        VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p) ∧
+        VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+        (VEnv.get V "ret").isSome ∧
+        (VEnv.get V "precompile_failed").isSome ∧
+        loadWord st.memory mp = x_last)
+      (fun _ st V' st' o => o = .normal ∧
+        VEnv.get V' "gp" = some (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last (BitVec.ofNat 256 Midfall.Yul.blsR)) ∧
+        VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p) ∧
+        VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V' "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+        (VEnv.get V' "ret").isSome ∧
+        (VEnv.get V' "precompile_failed").isSome ∧
+        st'.memory = mxMem st.memory p (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last (BitVec.ofNat 256 Midfall.Yul.blsR))) := by
+  let gp' : U256 := Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last (BitVec.ofNat 256 Midfall.Yul.blsR)
+  have hform : seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10 =
+      seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 4 ++
+        seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 15 6 := by
+    rw [bi_bridge_form, bi_bridge_head_form, bi_bridge_stores_form]
+  rw [hform]
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+  · have hh := bi_bridge_head (c := c) (g := g) (consts := consts) funs p a mp gv x_last
+      hmp hprime hg0 hg_lt hx0 hxlt V st hpre V1 st1 .normal hhead
+    obtain ⟨-, hgp1, hgpm1, hms1, hr1, hret1, hpf1, hmem1⟩ := hh
+    obtain ⟨ho, hV', hmem⟩ :=
+      bi_bridge_stores (c := c) (g := g) (consts := consts) funs p gp' hp V1 st1
+        ⟨hgpm1, hgp1, hr1⟩ V' st' o htail
+    refine ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · rw [hV']; exact hgp1
+    · rw [hV']; exact hgpm1
+    · rw [hV']; exact hms1
+    · rw [hV']; exact hr1
+    · rw [hV']; exact hret1
+    · rw [hV']; exact hpf1
+    · calc st'.memory = mxMem st1.memory p gp' := hmem
+        _ = mxMem st.memory p (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last (BitVec.ofNat 256 Midfall.Yul.blsR)) := by
+          rw [hmem1]
+  · exact absurd (bi_bridge_head (c := c) (g := g) (consts := consts) funs p a mp gv x_last
+      hmp hprime hg0 hg_lt hx0 hxlt V st hpre V' st' o hhead).1 hne
+
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -2226,6 +2280,7 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms bi_bridge_stores [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_bridge_head_form [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_bridge_head [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_contract [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_args_litvar_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_staticcall_args [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_staticcall_inv [propext, Classical.choice, Quot.sound]
