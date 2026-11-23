@@ -1732,6 +1732,42 @@ theorem pcsBq_contract {g : ExternalGas} (product : PairingProduct)
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBq_contract
   [propext, Classical.choice, Quot.sound] native []
 
+/-- `SIInv` commutes with `QuotientRows.wMulmodAt` at the field modulus. -/
+theorem pcsSIInv_wMulmod_quot (b a : U256) :
+    SIInv (Midfall.LoweringV3.QuotientRows.wMulmodAt b a (BitVec.ofNat 256 blsR)) =
+      Midfall.LoweringV3.QuotientRows.wMulmodAt (SIInv b) (SIInv a) (BitVec.ofNat 256 blsR) := by
+  have hb : blsR < 2 ^ 256 := by decide
+  apply BitVec.eq_of_toNat_eq
+  have hval (x : U256) : ((x.toNat : ZMod blsR)⁻¹).val < 2 ^ 256 :=
+    lt_trans (ZMod.val_lt _) hb
+  rw [show (SIInv (Midfall.LoweringV3.QuotientRows.wMulmodAt b a (BitVec.ofNat 256 blsR))).toNat
+      = ((Midfall.LoweringV3.QuotientRows.wMulmodAt b a (BitVec.ofNat 256 blsR)).toNat
+          : ZMod blsR)⁻¹.val by
+    simp only [SIInv, BitVec.toNat_ofNat]
+    exact Nat.mod_eq_of_lt (hval _)]
+  rw [LagrangeRows.wMulmodAt_toNat hb b a]
+  rw [LagrangeRows.wMulmodAt_toNat hb (SIInv b) (SIInv a)]
+  simp only [SIInv, BitVec.toNat_ofNat]
+  rw [Nat.mod_eq_of_lt (hval b), Nat.mod_eq_of_lt (hval a)]
+  rw [← ZMod.val_mul]
+  congr 1
+  rw [ZMod.natCast_mod]
+  push_cast
+  rw [mul_inv_rev]
+  ring
+
+/-- `SIInv` commutes with `PcsRows.wMulmodAt` at the field modulus. -/
+theorem pcsSIInv_wMulmod (b a : U256) :
+    SIInv (Midfall.LoweringV3.PcsRows.wMulmodAt b a (BitVec.ofNat 256 blsR)) =
+      Midfall.LoweringV3.PcsRows.wMulmodAt (SIInv b) (SIInv a) (BitVec.ofNat 256 blsR) := by
+  simpa [Midfall.LoweringV3.PcsRows.wMulmodAt, Midfall.LoweringV3.QuotientRows.wMulmodAt]
+    using pcsSIInv_wMulmod_quot b a
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsSIInv_wMulmod_quot
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsSIInv_wMulmod
+  [propext, Classical.choice, Quot.sound] native []
+
 /-- The field modulus word is nonzero. -/
 theorem pcsR_ne_zero : (BitVec.ofNat 256 Midfall.Yul.blsR : U256) ≠ 0 := by
   intro h
@@ -1776,6 +1812,378 @@ theorem pcs_wMulmodAt_toNat_lt {a b : U256} :
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_comm
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_toNat_lt
+  [propext, Classical.choice, Quot.sound] native []
+
+/-- `wMulmodAt` by the field one is the identity on canonical words. -/
+theorem pcs_wMulmodAt_one_right {a : U256} (ha : a.toNat < blsR) :
+    wMulmodAt a 1 (BitVec.ofNat 256 blsR) = a := by
+  apply BitVec.eq_of_toNat_eq
+  change (Midfall.LoweringV3.QuotientRows.wMulmodAt a 1 (BitVec.ofNat 256 blsR)).toNat
+    = a.toNat
+  rw [LagrangeRows.wMulmodAt_toNat (by decide) a 1]
+  have h1 : (1 : U256).toNat = 1 := by decide
+  rw [h1, Nat.mul_one, Nat.mod_eq_of_lt ha]
+
+theorem pcs_wMulmodAt_one_left {a : U256} (ha : a.toNat < blsR) :
+    wMulmodAt 1 a (BitVec.ofNat 256 blsR) = a := by
+  rw [pcs_wMulmodAt_comm, pcs_wMulmodAt_one_right ha]
+
+/-- A product of two canonical nonzero field words is nonzero. -/
+theorem pcs_wMulmodAt_ne_zero {x y : U256}
+    (hx : x.toNat < blsR) (hy : y.toNat < blsR)
+    (hx0 : x.toNat ≠ 0) (hy0 : y.toNat ≠ 0) :
+    wMulmodAt x y (BitVec.ofNat 256 blsR) ≠ 0 := by
+  have hp : Nat.Prime (BitVec.ofNat 256 blsR).toNat :=
+    Midfall.LoweringV3.ModexpGeneral.prime_BlsR_toNat
+  have hxt : x.toNat < (BitVec.ofNat 256 blsR).toNat := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]; exact hx
+  have hyt : y.toNat < (BitVec.ofNat 256 blsR).toNat := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]; exact hy
+  change Midfall.LoweringV3.QuotientRows.wMulmodAt x y (BitVec.ofNat 256 blsR) ≠ 0
+  rw [Midfall.LoweringV3.BatchInvert.wMulmodAt_ne_zero_iff hp hxt hyt]
+  exact ⟨fun h => hx0 (by rw [h]; rfl), fun h => hy0 (by rw [h]; rfl)⟩
+
+/-- `SIInv` lands in the canonical field range. -/
+theorem pcsSIInv_toNat_lt (x : U256) : (SIInv x).toNat < blsR := by
+  unfold SIInv
+  rw [BitVec.toNat_ofNat]
+  have h := ZMod.val_lt ((x.toNat : ZMod blsR)⁻¹)
+  rw [Nat.mod_eq_of_lt (lt_trans h (by decide : blsR < 2 ^ 256))]
+  exact h
+
+/-- Inverting a product recovers the inverse of the left factor. -/
+theorem pcs_inv_mul_left {prev a bp : U256}
+    (hbp : bp = wMulmodAt prev a (BitVec.ofNat 256 blsR))
+    (hprev : prev.toNat < blsR)
+    (hprev0 : prev.toNat ≠ 0) :
+    wMulmodAt (SIInv bp) prev (BitVec.ofNat 256 blsR) = SIInv a := by
+  have hinv : SIInv bp = wMulmodAt (SIInv prev) (SIInv a) (BitVec.ofNat 256 blsR) := by
+    rw [hbp, pcsSIInv_wMulmod]
+  rw [hinv, pcs_wMulmodAt_assoc]
+  rw [pcs_wMulmodAt_comm (a := SIInv a) (b := prev)]
+  rw [← pcs_wMulmodAt_assoc]
+  rw [pcsSIInv_mul prev hprev0 hprev]
+  exact pcs_wMulmodAt_one_left (pcsSIInv_toNat_lt a)
+
+/-- Inverting a product recovers the inverse of the right factor. -/
+theorem pcs_inv_mul_right {prev a bp : U256}
+    (hbp : bp = wMulmodAt prev a (BitVec.ofNat 256 blsR))
+    (ha : a.toNat < blsR)
+    (ha0 : a.toNat ≠ 0) :
+    wMulmodAt (SIInv bp) a (BitVec.ofNat 256 blsR) = SIInv prev := by
+  have hinv : SIInv bp = wMulmodAt (SIInv prev) (SIInv a) (BitVec.ofNat 256 blsR) := by
+    rw [hbp, pcsSIInv_wMulmod]
+  rw [hinv, pcs_wMulmodAt_assoc]
+  rw [pcsSIInv_mul a ha0 ha]
+  exact pcs_wMulmodAt_one_right (pcsSIInv_toNat_lt prev)
+
+/-- The running product `bp_i` stays canonical. -/
+theorem pcsBpVal_toNat_lt (a : Nat → U256) (N : Nat)
+    (hlt : ∀ i, i ≤ N → (a i).toNat < blsR) :
+    ∀ i, i ≤ N → (pcsBpVal (BitVec.ofNat 256 blsR) a i).toNat < blsR
+  | 0, _ => by simpa [pcsBpVal] using hlt 0 (by omega)
+  | _ + 1, _ => by
+      rw [pcsBpVal_succ]
+      exact pcs_wMulmodAt_toNat_lt
+
+/-- The running product `bp_i` stays nonzero when every input is. -/
+theorem pcsBpVal_ne_zero (a : Nat → U256) (N : Nat)
+    (hlt : ∀ i, i ≤ N → (a i).toNat < blsR)
+    (h0 : ∀ i, i ≤ N → (a i).toNat ≠ 0) :
+    ∀ i, i ≤ N → pcsBpVal (BitVec.ofNat 256 blsR) a i ≠ 0
+  | 0, _ => by
+      intro h
+      have h' : (a 0).toNat = 0 := by
+        rw [show a 0 = 0 by simpa [pcsBpVal] using h]
+        rfl
+      exact h0 0 (by omega) h'
+  | i + 1, hi => by
+      rw [pcsBpVal_succ]
+      exact pcs_wMulmodAt_ne_zero (pcsBpVal_toNat_lt a N hlt i (by omega))
+        (hlt (i + 1) hi)
+        (fun h => pcsBpVal_ne_zero a N hlt h0 i (by omega)
+          (BitVec.eq_of_toNat_eq (by rw [h]; rfl)))
+        (h0 (i + 1) hi)
+
+/-- One `bq` step: `let inv_i := mulmod(bq, bp_{i-1}, r)` then `bq := mulmod(bq, input_i, r)`. -/
+def pcsBqStep (i : Nat) (prev inp : String) (invName : Nat → String) : Block EVM.Op :=
+  [ GenAst.ylet (invName i) (GenAst.yop EVM.Op.mulmod
+      [GenAst.yvar "bq", GenAst.yvar prev, GenAst.yvar "r"]),
+    GenAst.yset "bq" (GenAst.yop EVM.Op.mulmod
+      [GenAst.yvar "bq", GenAst.yvar inp, GenAst.yvar "r"]) ]
+
+/-- The emitted backward `bq` walk. -/
+def pcsBqLines (n : Nat) (nm invName : Nat → String) : Block EVM.Op :=
+  ((List.range n).drop 1).reverse.flatMap fun i =>
+    pcsBqStep i (pcsBpName (i - 1)) (nm i) invName
+
+theorem pcsBqLines_succ (n : Nat) (hn : 1 ≤ n) (nm invName : Nat → String) :
+    pcsBqLines (n + 1) nm invName =
+      pcsBqStep n (pcsBpName (n - 1)) (nm n) invName ++ pcsBqLines n nm invName := by
+  unfold pcsBqLines
+  rw [List.range_succ]
+  rw [List.drop_append_of_le_length (by simpa using hn)]
+  simp only [List.reverse_append, List.reverse_singleton, List.flatMap_append,
+    List.flatMap_cons, List.flatMap_nil, List.append_nil]
+
+/-- Append two chunks when the first cannot halt. -/
+theorem pcsStmtsContractAll_append_normal {funs : FunEnv (Bridge.Dialect c g)}
+    {ss1 ss2 : Block EVM.Op}
+    {pre mid : VEnv (Bridge.Dialect c g) → EvmState → Prop}
+    {post : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Outcome → Prop}
+    (h1 : StmtsContractAll (D := Bridge.Dialect c g) funs ss1 pre
+      (fun V st V' st' o => o = .normal ∧ mid V' st'))
+    (h2 : ∀ V st, pre V st → StmtsContractAll (D := Bridge.Dialect c g) funs ss2 mid
+      (fun _ _ V' st' o => post V st V' st' o)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (ss1 ++ ss2) pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1run, h2run⟩ | ⟨h1run, hne⟩
+  · exact h2 V st hpre V1 st1 (h1 V st hpre V1 st1 .normal h1run).2 V' st' o h2run
+  · exact absurd (h1 V st hpre V' st' o h1run).1 hne
+
+/-- One backward step runs normally and binds the inverse of the factor. -/
+theorem pcsBqStep_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (i : Nat) (prev inp : String) (invName : Nat → String)
+    (bq0 bpv av rv : U256)
+    (h1 : invName i ≠ "bq") (h2 : invName i ≠ prev) (h3 : invName i ≠ inp)
+    (h4 : invName i ≠ "r") :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsBqStep i prev inp invName)
+      (fun V st => VEnv.get V "bq" = some bq0 ∧ VEnv.get V prev = some bpv ∧
+        VEnv.get V inp = some av ∧ VEnv.get V "r" = some rv)
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' (invName i) = some (wMulmodAt bq0 bpv rv) ∧
+        VEnv.get V' "bq" = some (wMulmodAt bq0 av rv) ∧
+        (∀ y, y ≠ invName i → y ≠ "bq" → VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hbq, hbp, hinp, hr⟩ := hpre
+  unfold pcsBqStep at hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, hhead, hrest⟩ | ⟨hhead, hne⟩
+  · obtain ⟨ho1, xv, yv, zv, hx, hy, hz, hV1, hst1⟩ :=
+      b1_exec_ylet_mulmod_vars hhead
+    have hxe : xv = bq0 := Option.some.inj (hx.symm.trans hbq)
+    have hye : yv = bpv := Option.some.inj (hy.symm.trans hbp)
+    have hze : zv = rv := Option.some.inj (hz.symm.trans hr)
+    rw [hV1] at hrest
+    rw [hst1] at hrest
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest with
+        ⟨V2, st2, htail, hnil⟩ | ⟨htail, hne2⟩
+    · cases hnil
+      obtain ⟨ho2, av', bv', zv', ha', hb', hz', hV2, hst2⟩ :=
+        b1_exec_yset_mulmod htail
+      have hae : av' = bq0 := by
+        have h := ha'
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := "bq")
+          (v := wMulmodAt xv yv zv) h1.symm] at h
+        exact Option.some.inj (h.symm.trans hbq)
+      have hbe : bv' = av := by
+        have h := hb'
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := inp)
+          (v := wMulmodAt xv yv zv) h3.symm] at h
+        exact Option.some.inj (h.symm.trans hinp)
+      have hze' : zv' = rv := by
+        have h := hz'
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := "r")
+          (v := wMulmodAt xv yv zv) h4.symm] at h
+        exact Option.some.inj (h.symm.trans hr)
+      refine ⟨ho2, ?_, ?_, ?_, hst2⟩
+      · rw [hV2]
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "bq") (y := invName i)
+          (v := wMulmodAt av' bv' zv') h1]
+        rw [venv_get_cons_self (D := Bridge.Dialect c g)]
+        rw [hxe, hye, hze]
+      · rw [hV2]
+        rw [venv_get_set_same (D := Bridge.Dialect c g)
+          (v := bq0) (w := wMulmodAt av' bv' zv')
+          (by
+            rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := "bq")
+              (v := wMulmodAt xv yv zv) h1.symm]
+            exact hbq)]
+        rw [hae, hbe, hze']
+      · intro y hyinv hybq
+        rw [hV2]
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "bq") (y := y)
+          (v := wMulmodAt av' bv' zv') hybq]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := y)
+          (v := wMulmodAt xv yv zv) hyinv]
+    · exact absurd (b1_exec_yset_mulmod htail).1 hne2
+  · exact absurd (b1_exec_ylet_mulmod_vars hhead).1 hne
+
+set_option maxHeartbeats 1200000 in
+/-- **THE `bqLines` FOLD.** Starting at `bq = bp_{n-1}⁻¹`, the backward walk binds every
+    `inv_i = input_i⁻¹` and leaves `bq = input_0⁻¹`; nothing else moves. -/
+theorem pcsBqLines_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (n : Nat) (nm invName : Nat → String) (a : Nat → U256)
+    (hn : 1 ≤ n)
+    (hlt : ∀ i, i < n → (a i).toNat < blsR)
+    (h0 : ∀ i, i < n → (a i).toNat ≠ 0)
+    (hbqNeR : "bq" ≠ "r")
+    (hinvBq : ∀ i, 1 ≤ i → i < n → invName i ≠ "bq")
+    (hinvPrev : ∀ i, 1 ≤ i → i < n → invName i ≠ pcsBpName (i - 1))
+    (hinvInp : ∀ i, 1 ≤ i → i < n → invName i ≠ nm i)
+    (hinvR : ∀ i, 1 ≤ i → i < n → invName i ≠ "r")
+    (hbqNotBp : ∀ i < n, pcsBpName i ≠ "bq")
+    (hbqNotInp : ∀ i < n, nm i ≠ "bq")
+    (hinvNotBp : ∀ i, 1 ≤ i → i < n → ∀ j < n, pcsBpName j ≠ invName i)
+    (hinvNotInp : ∀ i, 1 ≤ i → i < n → ∀ j < n, nm j ≠ invName i)
+    (hrNotInv : ∀ i, 1 ≤ i → i < n → "r" ≠ invName i)
+    (hinvDist : ∀ i, 1 ≤ i → i < n → ∀ j, 1 ≤ j → j < n → i ≠ j →
+      invName i ≠ invName j) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsBqLines n nm invName)
+      (fun V st => VEnv.get V "bq" = some (SIInv (pcsBpVal (BitVec.ofNat 256 blsR) a (n - 1))) ∧
+        VEnv.get V "r" = some (BitVec.ofNat 256 blsR) ∧
+        (∀ i, i < n → VEnv.get V (pcsBpName i) = some (pcsBpVal (BitVec.ofNat 256 blsR) a i)) ∧
+        (∀ i, i < n → VEnv.get V (nm i) = some (a i)))
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' "bq" = some (SIInv (a 0)) ∧
+        (∀ i, 1 ≤ i → i < n → VEnv.get V' (invName i) = some (SIInv (a i))) ∧
+        (∀ y, y ≠ "bq" → (∀ i, 1 ≤ i → i < n → y ≠ invName i) →
+          VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  induction n with
+  | zero => omega
+  | succ n ih =>
+      cases n with
+      | zero =>
+          intro V st hpre V' st' o hrun
+          have hshape : pcsBqLines 1 nm invName = [] := by
+            unfold pcsBqLines
+            rfl
+          rw [hshape] at hrun
+          cases hrun
+          obtain ⟨hbq, _hr, _hbp, _hinp⟩ := hpre
+          refine ⟨rfl, ?_, ?_, ?_, rfl⟩
+          · simpa [pcsBpVal] using hbq
+          · intro i hi1 hin
+            omega
+          · intro y _ _
+            rfl
+      | succ m =>
+          intro V st hpre V' st' o hrun
+          obtain ⟨hbq, hr, hbp, hinp⟩ := hpre
+          have hshape : pcsBqLines (m + 2) nm invName =
+              pcsBqStep (m + 1) (pcsBpName ((m + 1) - 1)) (nm (m + 1)) invName
+                ++ pcsBqLines (m + 1) nm invName :=
+            pcsBqLines_succ (m + 1) (by omega) nm invName
+          rw [hshape] at hrun
+          rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+              ⟨V1, st1, hstep, hrest⟩ | ⟨hstep, hne⟩
+          · have hbpN : VEnv.get V (pcsBpName ((m + 1) - 1)) =
+                some (pcsBpVal (BitVec.ofNat 256 blsR) a ((m + 1) - 1)) := by
+              simpa using hbp (m + 1 - 1) (by omega)
+            have hinpN : VEnv.get V (nm (m + 1)) = some (a (m + 1)) :=
+              hinp (m + 1) (by omega)
+            have hstepc := pcsBqStep_contract (c := c) (g := g) (funs := funs)
+              (m + 1) (pcsBpName ((m + 1) - 1)) (nm (m + 1)) invName
+              (SIInv (pcsBpVal (BitVec.ofNat 256 blsR) a (m + 1)))
+              (pcsBpVal (BitVec.ofNat 256 blsR) a ((m + 1) - 1)) (a (m + 1))
+              (BitVec.ofNat 256 blsR)
+              (hinvBq (m + 1) (by omega) (by omega))
+              (hinvPrev (m + 1) (by omega) (by omega))
+              (hinvInp (m + 1) (by omega) (by omega))
+              (hinvR (m + 1) (by omega) (by omega))
+              V st ⟨by simpa using hbq, hbpN, hinpN, hr⟩ V1 st1 .normal hstep
+            obtain ⟨ho1, hinvNew, hbqNew, hpres1, hst1⟩ := hstepc
+            have hbpSucc : pcsBpVal (BitVec.ofNat 256 blsR) a (m + 1) =
+                wMulmodAt (pcsBpVal (BitVec.ofNat 256 blsR) a m) (a (m + 1))
+                  (BitVec.ofNat 256 blsR) := by
+              simpa using pcsBpVal_succ (BitVec.ofNat 256 blsR) a m
+            have hprevEq : pcsBpVal (BitVec.ofNat 256 blsR) a ((m + 1) - 1) =
+                pcsBpVal (BitVec.ofNat 256 blsR) a m := by rw [Nat.add_sub_cancel]
+            have hvalNew : VEnv.get V1 (invName (m + 1)) = some (SIInv (a (m + 1))) := by
+              rw [hinvNew, hprevEq]
+              rw [pcs_inv_mul_left hbpSucc
+                (pcsBpVal_toNat_lt a (m + 1) (fun i hi => hlt i (by omega)) m (by omega))
+                (fun h => pcsBpVal_ne_zero a (m + 1)
+                  (fun i hi => hlt i (by omega)) (fun i hi => h0 i (by omega)) m (by omega)
+                  (BitVec.eq_of_toNat_eq (by rw [h]; rfl)))]
+            have hbqNew' : VEnv.get V1 "bq" =
+                some (SIInv (pcsBpVal (BitVec.ofNat 256 blsR) a m)) := by
+              rw [hbqNew, pcs_inv_mul_right hbpSucc
+                (hlt (m + 1) (by omega)) (h0 (m + 1) (by omega))]
+            have hr1 : VEnv.get V1 "r" = some (BitVec.ofNat 256 blsR) := by
+              rw [hpres1 "r" (hrNotInv (m + 1) (by omega) (by omega)) hbqNeR.symm]
+              exact hr
+            have hbp1 : ∀ i, i < m + 1 →
+                VEnv.get V1 (pcsBpName i) = some (pcsBpVal (BitVec.ofNat 256 blsR) a i) := by
+              intro i hi
+              rw [hpres1 (pcsBpName i)
+                (hinvNotBp (m + 1) (by omega) (by omega) i (by omega))
+                (hbqNotBp i (by omega))]
+              exact hbp i (by omega)
+            have hinp1 : ∀ i, i < m + 1 → VEnv.get V1 (nm i) = some (a i) := by
+              intro i hi
+              rw [hpres1 (nm i)
+                (hinvNotInp (m + 1) (by omega) (by omega) i (by omega))
+                (hbqNotInp i (by omega))]
+              exact hinp i (by omega)
+            have hrestc := ih (by omega) (fun i hi => hlt i (by omega))
+              (fun i hi => h0 i (by omega))
+              (fun i hi1 hin => hinvBq i (by omega) (by omega))
+              (fun i hi1 hin => hinvPrev i (by omega) (by omega))
+              (fun i hi1 hin => hinvInp i (by omega) (by omega))
+              (fun i hi1 hin => hinvR i (by omega) (by omega))
+              (fun i hi => hbqNotBp i (by omega))
+              (fun i hi => hbqNotInp i (by omega))
+              (fun i hi1 hin j hj => hinvNotBp i (by omega) (by omega) j (by omega))
+              (fun i hi1 hin j hj => hinvNotInp i (by omega) (by omega) j (by omega))
+              (fun i hi1 hin => hrNotInv i (by omega) (by omega))
+              (fun i hi1 hin j hj1 hjn hij => hinvDist i (by omega) (by omega)
+                j (by omega) (by omega) (by omega))
+              V1 st1 ⟨hbqNew', hr1, hbp1, hinp1⟩ V' st' o hrest
+            obtain ⟨ho2, hbqFinal, hinvRest, hpres2, hst2⟩ := hrestc
+            refine ⟨ho2, hbqFinal, ?_, ?_, by rw [hst2, hst1]⟩
+            · intro i hi1 hin
+              rcases Nat.lt_or_eq_of_le (by omega : i ≤ m + 1) with hilt | rfl
+              · exact hinvRest i hi1 hilt
+              · rw [hpres2 (invName (m + 1))
+                  (hinvBq (m + 1) (by omega) (by omega))
+                  (fun j hj1 hjn => hinvDist (m + 1) (by omega) (by omega)
+                    j hj1 (by omega) (by omega))]
+                exact hvalNew
+            · intro y hybq hyinv
+              rw [hpres2 y hybq (fun i hi1 hin => hyinv i hi1 (by omega))]
+              exact hpres1 y (hyinv (m + 1) (by omega) (by omega)) hybq
+          · exact absurd (pcsBqStep_contract (c := c) (g := g) (funs := funs)
+              (m + 1) (pcsBpName ((m + 1) - 1)) (nm (m + 1)) invName
+              (SIInv (pcsBpVal (BitVec.ofNat 256 blsR) a (m + 1)))
+              (pcsBpVal (BitVec.ofNat 256 blsR) a ((m + 1) - 1)) (a (m + 1))
+              (BitVec.ofNat 256 blsR)
+              (hinvBq (m + 1) (by omega) (by omega))
+              (hinvPrev (m + 1) (by omega) (by omega))
+              (hinvInp (m + 1) (by omega) (by omega))
+              (hinvR (m + 1) (by omega) (by omega))
+              V st ⟨by simpa using hbq, hbp (m + 1 - 1) (by omega), hinp (m + 1) (by omega), hr⟩
+              V' st' o hstep).1 hne
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_one_right
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_one_left
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_ne_zero
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsSIInv_toNat_lt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_inv_mul_left
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_inv_mul_right
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpVal_toNat_lt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpVal_ne_zero
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqStep [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqLines [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqLines_succ
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsStmtsContractAll_append_normal
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqStep_contract
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqLines_contract
   [propext, Classical.choice, Quot.sound] native []
 
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
@@ -1838,5 +2246,1387 @@ theorem pcs_wMulmodAt_toNat_lt {a b : U256} :
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b3_exec_ylet_scalar_inv_var
   [propext, Classical.choice, Quot.sound] native []
+
+theorem pcsStmtsContractAll_append_mid {funs : FunEnv (Bridge.Dialect c g)}
+    {ss1 ss2 : Block EVM.Op}
+    {pre : VEnv (Bridge.Dialect c g) → EvmState → Prop}
+    {mid : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Prop}
+    {post : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Outcome → Prop}
+    (h1 : StmtsContractAll (D := Bridge.Dialect c g) funs ss1 pre
+      (fun V st V' st' o => o = .normal ∧ mid V st V' st' ∧ st' = st))
+    (h2 : ∀ V st, pre V st → StmtsContractAll (D := Bridge.Dialect c g) funs ss2
+      (fun V' st' => mid V st V' st')
+      (fun _ _ V' st' o => post V st V' st' o)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (ss1 ++ ss2) pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1run, h2run⟩ | ⟨h1run, hne⟩
+  · obtain ⟨_, hmid, hst⟩ := h1 V st hpre V1 st1 .normal h1run
+    exact h2 V st hpre V1 st1 hmid V' st' o h2run
+  · exact absurd (h1 V st hpre V' st' o h1run).1 hne
+
+def pcsDenInvVal (rv : U256) (f : Nat → U256) : Nat → U256
+  | 0 => 1
+  | k + 1 => wMulmodAt (pcsDenInvVal rv f k) (f k) rv
+
+def pcsDenInvSetStmt (j : Nat) (invName : Nat → String) : Stmt EVM.Op :=
+  GenAst.yset "den_inv" (GenAst.yop EVM.Op.mulmod
+    [GenAst.yvar "den_inv", GenAst.yvar (invName j), GenAst.yvar "r"])
+
+def pcsDenInvLines (m : Nat) (invName : Nat → String) : Block EVM.Op :=
+  [GenAst.ylet "den_inv" (GenAst.yvar (invName 0))] ++
+    ((List.range m).drop 1).map (fun j => pcsDenInvSetStmt j invName)
+
+theorem pcsDenInvLines_succ (m : Nat) (hm : 1 ≤ m) (invName : Nat → String) :
+    pcsDenInvLines (m + 1) invName =
+      pcsDenInvLines m invName ++ [pcsDenInvSetStmt m invName] := by
+  unfold pcsDenInvLines
+  rw [List.range_succ]
+  rw [List.drop_append_of_le_length (by simpa using hm)]
+  simp only [List.map_append, List.map_singleton, List.append_assoc]
+
+theorem pcsDenInvHead_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (invName : Nat → String) (inv0 : U256) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (GenAst.ylet "den_inv" (GenAst.yvar (invName 0)))
+      (fun V st => VEnv.get V (invName 0) = some inv0)
+      (fun V st V' st' o => o = .normal ∧ V' = ("den_inv", inv0) :: V ∧
+        VEnv.get V' "den_inv" = some inv0 ∧
+        (∀ y, y ≠ "den_inv" → VEnv.get V' y = VEnv.get V y) ∧ st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨ho, yv, hyv, hV, hst⟩ := b1_exec_ylet_var hrun
+  have hye : yv = inv0 := Option.some.inj (hyv.symm.trans hpre)
+  refine ⟨ho, by rw [hV, hye], by rw [hV, hye]; exact venv_get_cons_self _ _ _,
+    ?_, hst⟩
+  intro y hy
+  rw [hV]
+  exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := "den_inv") (y := y)
+    (v := yv) hy
+
+theorem pcsDenInvSet_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (j : Nat) (invName : Nat → String) (acc invj rv : U256) :
+    StmtContractAll (D := Bridge.Dialect c g) funs (pcsDenInvSetStmt j invName)
+      (fun V st => VEnv.get V "den_inv" = some acc ∧
+        VEnv.get V (invName j) = some invj ∧ VEnv.get V "r" = some rv)
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' "den_inv" = some (wMulmodAt acc invj rv) ∧
+        (∀ y, y ≠ "den_inv" → VEnv.get V' y = VEnv.get V y) ∧ st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hacc, hinv, hrv⟩ := hpre
+  obtain ⟨ho, av, bv, zv, ha, hb, hz, hV, hst⟩ := b1_exec_yset_mulmod hrun
+  have hae : av = acc := Option.some.inj (ha.symm.trans hacc)
+  have hbe : bv = invj := Option.some.inj (hb.symm.trans hinv)
+  have hze : zv = rv := Option.some.inj (hz.symm.trans hrv)
+  refine ⟨ho, ?_, ?_, hst⟩
+  · rw [hV, hae, hbe, hze]
+    exact venv_get_set_same (D := Bridge.Dialect c g) hacc
+  · intro y hy
+    rw [hV]
+    exact venv_get_set_ne (D := Bridge.Dialect c g) (x := "den_inv") (y := y)
+      (v := wMulmodAt av bv zv) hy
+
+set_option maxHeartbeats 1200000 in
+theorem pcsDenInvLines_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (m : Nat) (invName : Nat → String) (a : Nat → U256) (hm : 1 ≤ m)
+    (hne : ∀ j < m, "den_inv" ≠ invName j)
+    (hneR : "den_inv" ≠ "r") :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsDenInvLines m invName)
+      (fun V st => VEnv.get V "r" = some (BitVec.ofNat 256 blsR) ∧
+        (∀ j < m, VEnv.get V (invName j) = some (SIInv (a j))))
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' "den_inv" =
+          some (pcsDenInvVal (BitVec.ofNat 256 blsR) (fun j => SIInv (a j)) m) ∧
+        (∀ y, y ≠ "den_inv" → VEnv.get V' y = VEnv.get V y) ∧ st' = st) := by
+  induction m with
+  | zero => omega
+  | succ m ih =>
+      cases m with
+      | zero =>
+          intro V st hpre V' st' o hrun
+          obtain ⟨hr, hinv⟩ := hpre
+          have hshape : pcsDenInvLines 1 invName =
+              [GenAst.ylet "den_inv" (GenAst.yvar (invName 0))] := by
+            unfold pcsDenInvLines
+            rfl
+          rw [hshape] at hrun
+          obtain ⟨ho, hV, hget, hpres, hst⟩ :=
+            stmtsContractAll_singleton
+              (pcsDenInvHead_contract (c := c) (g := g) (funs := funs) invName
+                (SIInv (a 0))) V st (hinv 0 (by omega)) V' st' o hrun
+          refine ⟨ho, ?_, ?_, hst⟩
+          · rw [hget]
+            congr 1
+            show SIInv (a 0) = pcsDenInvVal (BitVec.ofNat 256 blsR) (fun j => SIInv (a j)) 1
+            simp only [pcsDenInvVal]
+            exact (pcs_wMulmodAt_one_left (pcsSIInv_toNat_lt (a 0))).symm
+          · intro y hy
+            exact hpres y hy
+      | succ m =>
+          intro V st hpre V' st' o hrun
+          obtain ⟨hr, hinv⟩ := hpre
+          have hshape : pcsDenInvLines (m + 2) invName =
+              pcsDenInvLines (m + 1) invName ++ [pcsDenInvSetStmt (m + 1) invName] :=
+            pcsDenInvLines_succ (m + 1) (by omega) invName
+          rw [hshape] at hrun
+          have hpre1 : VEnv.get V "r" = some (BitVec.ofNat 256 blsR) ∧
+              (∀ j < m + 1, VEnv.get V (invName j) = some (SIInv (a j))) :=
+            ⟨hr, fun j hj => hinv j (by omega)⟩
+          refine pcsStmtsContractAll_append_mid
+            (c := c) (g := g) (funs := funs)
+            (ss1 := pcsDenInvLines (m + 1) invName)
+            (ss2 := [pcsDenInvSetStmt (m + 1) invName])
+            (pre := fun V st => VEnv.get V "r" = some (BitVec.ofNat 256 blsR) ∧
+              (∀ j < m + 2, VEnv.get V (invName j) = some (SIInv (a j))))
+            (mid := fun V0 st0 V1 st1 => VEnv.get V1 "den_inv" =
+                some (pcsDenInvVal (BitVec.ofNat 256 blsR) (fun j => SIInv (a j)) (m + 1)) ∧
+              (∀ y, y ≠ "den_inv" → VEnv.get V1 y = VEnv.get V0 y) ∧
+              VEnv.get V1 "r" = some (BitVec.ofNat 256 blsR) ∧
+              VEnv.get V1 (invName (m + 1)) = some (SIInv (a (m + 1))) ∧
+              st1 = st0)
+            (post := fun V st V' st' o => o = .normal ∧
+              VEnv.get V' "den_inv" =
+                some (pcsDenInvVal (BitVec.ofNat 256 blsR) (fun j => SIInv (a j)) (m + 2)) ∧
+              (∀ y, y ≠ "den_inv" → VEnv.get V' y = VEnv.get V y) ∧ st' = st)
+            ?_ ?_ V st ⟨hr, hinv⟩ V' st' o hrun
+          · -- first chunk
+            intro V0 st0 h0 V1 st1 o1 h1
+            have h0' : VEnv.get V0 "r" = some (BitVec.ofNat 256 blsR) ∧
+                (∀ j < m + 1, VEnv.get V0 (invName j) = some (SIInv (a j))) :=
+              ⟨h0.1, fun j hj => h0.2 j (by omega)⟩
+            have hih := ih (by omega) (fun j hj => hne j (by omega))
+              V0 st0 h0' V1 st1 o1 h1
+            obtain ⟨ho1, hden1, hpres1, hst1⟩ := hih
+            refine ⟨ho1, ?_, hst1⟩
+            refine ⟨hden1, hpres1, ?_, ?_, hst1⟩
+            · rw [hpres1 "r" hneR.symm]
+              exact h0.1
+            · rw [hpres1 (invName (m + 1)) (hne (m + 1) (by omega)).symm]
+              exact h0.2 (m + 1) (by omega)
+          · -- the final set step
+            intro V0 st0 _hpre V1 st1 hmid V2 st2 o2 hrun2
+            obtain ⟨hden0, hpres0, hr0, hinv0, hst10⟩ := hmid
+            have hset := stmtsContractAll_singleton
+              (pcsDenInvSet_contract (c := c) (g := g) (funs := funs)
+                (m + 1) invName
+                (pcsDenInvVal (BitVec.ofNat 256 blsR) (fun j => SIInv (a j)) (m + 1))
+                (SIInv (a (m + 1))) (BitVec.ofNat 256 blsR))
+              V1 st1 ⟨hden0, hinv0, hr0⟩ V2 st2 o2 hrun2
+            obtain ⟨ho2, hden2, hpres2, hst2⟩ := hset
+            refine ⟨ho2, ?_, ?_, by rw [hst2, hst10]⟩
+            · simpa [pcsDenInvVal] using hden2
+            · intro y hy
+              rw [hpres2 y hy]
+              exact hpres0 y hy
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDenInvVal [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDenInvSetStmt [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDenInvLines [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDenInvLines_succ
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDenInvHead_contract
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDenInvSet_contract
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsDenInvLines_contract
+  [propext, Classical.choice, Quot.sound] native []
+
+
+theorem b1_eval_mulmod_cdl_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {qc x y : String} {off : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAst.yop EVM.Op.calldataload
+           [GenAst.yop EVM.Op.add [GenAst.yvar qc, GenAst.ylit off]],
+         GenAst.yvar x, GenAst.yvar y]) (.vals [cv] st')) :
+    ∃ cptr xv yv, VEnv.get V qc = some cptr ∧ VEnv.get V x = some xv ∧
+      VEnv.get V y = some yv ∧
+      cv = wMulmodAt (wordFrom st.env.calldata (cptr + BitVec.ofNat 256 off).toNat) xv yv ∧
+      st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hcdl =>
+      cases hrest with
+      | argsCons hrest2 hx =>
+          cases hrest2 with
+          | argsCons hnil hy =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hyv, hsty⟩ := b1_eval_var_inv hy
+                  obtain ⟨hxv, hstx⟩ := b1_eval_var_inv hx
+                  obtain ⟨cptr, hcptr, hcdlVal, hstc⟩ :=
+                    b1_eval_calldataload_add_var_lit_inv hcdl
+                  have hstx' : _ = st := hstx.trans hsty
+                  have hout : _ = st := hstc.trans hstx'
+                  rw [hstx'] at hcdlVal
+                  rw [hout] at hbi
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  exact ⟨cptr, _, _, hcptr, hxv, hyv, by rw [hcdlVal, Midfall.LoweringV3.PcsRows.wMulmodAt], rfl⟩
+
+theorem b1_eval_mulmod_cdl_add_var_lit_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {qc x y : String} {off : Nat}
+    {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAst.yop EVM.Op.calldataload
+           [GenAst.yop EVM.Op.add [GenAst.yvar qc, GenAst.ylit off]],
+         GenAst.yvar x, GenAst.yvar y]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hcdl =>
+          cases hrest with
+          | argsCons hrest2 hx =>
+              cases hrest2 with
+              | argsCons hnil hy =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact b1_eval_args_halt_false (fun e he st0 st1 hh => by
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact b1_eval_calldataload_add_var_lit_halt hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) hargs
+
+theorem b1_exec_ylet_mulmod_cdl_var {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {x qc y z : String} {off : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.ylet x (GenAst.yop EVM.Op.mulmod
+        [GenAst.yop EVM.Op.calldataload
+           [GenAst.yop EVM.Op.add [GenAst.yvar qc, GenAst.ylit off]],
+         GenAst.yvar y, GenAst.yvar z])) V' st' o) :
+    o = .normal ∧ ∃ cptr yv zv,
+      VEnv.get V qc = some cptr ∧ VEnv.get V y = some yv ∧ VEnv.get V z = some zv ∧
+      V' = (x, wMulmodAt
+        (wordFrom st.env.calldata (cptr + BitVec.ofNat 256 off).toNat) yv zv) :: V ∧
+      st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨cptr, yv, zv, hc, hy, hz, hcv, hst⟩ :=
+        b1_eval_mulmod_cdl_add_var_lit_inv he
+      subst hcv; subst hst
+      exact ⟨rfl, cptr, yv, zv, hc, hy, hz, by simp [VEnv.setMany], rfl⟩
+  | letHalt he => exact (b1_eval_mulmod_cdl_add_var_lit_halt he).elim
+
+/-- The `eval := proofEval * den_inv` line of the general set arm. -/
+def pcsEvalStmt (setIdx : Nat) : Stmt EVM.Op :=
+  GenAst.ylet "eval" (GenAst.yop EVM.Op.mulmod
+    [GenAst.yop EVM.Op.calldataload
+       [GenAst.yop EVM.Op.add
+         [GenAst.yvar "Q_EVAL_CPTR", GenAst.ylit (setIdx * Midfall.Generator.wordBytes)]],
+     GenAst.yvar "den_inv", GenAst.yvar "r"])
+
+theorem pcsEval_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (setIdx : Nat) (den cptr rv : U256)
+    (hb : cptr.toNat + setIdx * Midfall.Generator.wordBytes < 2 ^ 256) :
+    StmtContractAll (D := Bridge.Dialect c g) funs (pcsEvalStmt setIdx)
+      (fun V st => VEnv.get V "Q_EVAL_CPTR" = some cptr ∧
+        VEnv.get V "den_inv" = some den ∧ VEnv.get V "r" = some rv)
+      (fun V st V' st' o => o = .normal ∧
+        V' = ("eval", wMulmodAt (wordFrom st.env.calldata
+          (cptr.toNat + setIdx * Midfall.Generator.wordBytes)) den rv) :: V ∧
+        VEnv.get V' "eval" = some (wMulmodAt (wordFrom st.env.calldata
+          (cptr.toNat + setIdx * Midfall.Generator.wordBytes)) den rv) ∧
+        (∀ y, y ≠ "eval" → VEnv.get V' y = VEnv.get V y) ∧ st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hcptr, hden, hrv⟩ := hpre
+  obtain ⟨ho, cptr', yv, zv, hc, hy, hz, hV, hst⟩ :=
+    b1_exec_ylet_mulmod_cdl_var hrun
+  have hce : cptr' = cptr := Option.some.inj (hc.symm.trans hcptr)
+  have hye : yv = den := Option.some.inj (hy.symm.trans hden)
+  have hze : zv = rv := Option.some.inj (hz.symm.trans hrv)
+  have haddr : (cptr' + BitVec.ofNat 256
+        (setIdx * Midfall.Generator.wordBytes)).toNat =
+      cptr.toNat + setIdx * Midfall.Generator.wordBytes := by
+    rw [hce, BitVec.toNat_add, BitVec.toNat_ofNat,
+      Nat.mod_eq_of_lt (by omega : setIdx * Midfall.Generator.wordBytes < 2 ^ 256),
+      Nat.mod_eq_of_lt hb]
+  have hval : wMulmodAt (wordFrom st.env.calldata
+        (cptr' + BitVec.ofNat 256 (setIdx * Midfall.Generator.wordBytes)).toNat) yv zv =
+      wMulmodAt (wordFrom st.env.calldata
+        (cptr.toNat + setIdx * Midfall.Generator.wordBytes)) den rv := by
+    rw [haddr, hye, hze]
+  refine ⟨ho, ?_, ?_, ?_, hst⟩
+  · rw [hV, hval]
+  · rw [hV, hval]
+    exact venv_get_cons_self (D := Bridge.Dialect c g) V _ _
+  · intro y hy
+    rw [hV]
+    exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := "eval") (y := y)
+      (v := _) hy
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mulmod_cdl_add_var_lit_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mulmod_cdl_add_var_lit_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_exec_ylet_mulmod_cdl_var
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsEvalStmt [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsEval_contract
+  [propext, Classical.choice, Quot.sound] native []
+
+
+theorem b1_eval_mulmod_mload_add_var_lit_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {q a z : String} {off : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAst.yop EVM.Op.mload
+           [GenAst.yop EVM.Op.add [GenAst.yvar q, GenAst.ylit off]],
+         GenAst.yvar a, GenAst.yvar z]) (.vals [cv] st')) :
+    ∃ qv av zv, VEnv.get V q = some qv ∧ VEnv.get V a = some av ∧
+      VEnv.get V z = some zv ∧
+      cv = wMulmodAt (loadWord st.memory (qv + BitVec.ofNat 256 off).toNat) av zv ∧
+      st' = touchMemory st (qv + BitVec.ofNat 256 off).toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hmload =>
+      cases hrest with
+      | argsCons hrest2 ha =>
+          cases hrest2 with
+          | argsCons hnil hz =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hzv, hstz⟩ := b1_eval_var_inv hz
+                  obtain ⟨hav, hsta⟩ := b1_eval_var_inv ha
+                  obtain ⟨qv, hqv, hmloadVal, hstm⟩ :=
+                    b1_eval_mload_add_var_lit_inv hmload
+                  have hza : _ = st := hstz
+                  have haa : _ = st := hsta.trans hza
+                  rw [haa] at hmloadVal hstm
+                  rw [hstm] at hbi
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  exact ⟨qv, _, _, hqv, hav, hzv, by rw [hmloadVal, Midfall.LoweringV3.PcsRows.wMulmodAt], rfl⟩
+
+theorem b1_eval_mulmod_mload_add_var_lit_var_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {q a z : String} {off : Nat}
+    {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAst.yop EVM.Op.mload
+           [GenAst.yop EVM.Op.add [GenAst.yvar q, GenAst.ylit off]],
+         GenAst.yvar a, GenAst.yvar z]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hm =>
+          cases hrest with
+          | argsCons hrest2 ha =>
+              cases hrest2 with
+              | argsCons hnil hz =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact b1_eval_args_halt_false (fun e he st0 st1 hh => by
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact b1_eval_mload_add_var_lit_halt hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) hargs
+
+theorem b1_eval_mulmod_nested_mload_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {q dx lb : String} {off : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAst.yop EVM.Op.mulmod
+           [GenAst.yop EVM.Op.mload
+              [GenAst.yop EVM.Op.add [GenAst.yvar q, GenAst.ylit off]],
+            GenAst.yvar dx, GenAst.yvar "r"],
+         GenAst.yvar lb, GenAst.yvar "r"]) (.vals [cv] st')) :
+    ∃ qv dxv lbv rv, VEnv.get V q = some qv ∧ VEnv.get V dx = some dxv ∧
+      VEnv.get V lb = some lbv ∧ VEnv.get V "r" = some rv ∧
+      cv = wMulmodAt (wMulmodAt (loadWord st.memory
+        (qv + BitVec.ofNat 256 off).toNat) dxv rv) lbv rv ∧
+      st' = touchMemory st (qv + BitVec.ofNat 256 off).toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hinner =>
+      cases hrest with
+      | argsCons hrest2 hlb =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hrv0, hstr⟩ := b1_eval_var_inv hr
+                  obtain ⟨hlbv, hstlb⟩ := b1_eval_var_inv hlb
+                  obtain ⟨qv, dxv, zv, hq, hdx, hz, hinnerVal, hstinner⟩ :=
+                    b1_eval_mulmod_mload_add_var_lit_var_inv hinner
+                  have hzv : zv = _ := Option.some.inj (hz.symm.trans hrv0)
+                  have hlb_state : _ = st := hstlb.trans hstr
+                  rw [hzv] at hinnerVal
+                  rw [hlb_state] at hinnerVal hstinner
+                  rw [hstinner] at hbi
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  exact ⟨qv, dxv, _, _, hq, hdx, hlbv, hrv0,
+                    by rw [hinnerVal, Midfall.LoweringV3.PcsRows.wMulmodAt, Midfall.LoweringV3.PcsRows.wMulmodAt], rfl⟩
+
+theorem b1_eval_mulmod_nested_mload_add_var_lit_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {q dx lb : String} {off : Nat}
+    {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAst.yop EVM.Op.mulmod
+           [GenAst.yop EVM.Op.mload
+              [GenAst.yop EVM.Op.add [GenAst.yvar q, GenAst.ylit off]],
+            GenAst.yvar dx, GenAst.yvar "r"],
+         GenAst.yvar lb, GenAst.yvar "r"]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hinner =>
+          cases hrest with
+          | argsCons hrest2 hlb =>
+              cases hrest2 with
+              | argsCons hnil hr =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact b1_eval_args_halt_false (fun e he st0 st1 hh => by
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact b1_eval_mulmod_mload_add_var_lit_var_halt hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) hargs
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mulmod_mload_add_var_lit_var_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mulmod_mload_add_var_lit_var_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mulmod_nested_mload_add_var_lit_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mulmod_nested_mload_add_var_lit_halt
+  [propext, Classical.choice, Quot.sound] native []
+
+
+theorem b1_exec_ylet_mulmod_nested {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {x q dx lb : String} {off : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.ylet x (GenAst.yop EVM.Op.mulmod
+        [GenAst.yop EVM.Op.mulmod
+           [GenAst.yop EVM.Op.mload
+              [GenAst.yop EVM.Op.add [GenAst.yvar q, GenAst.ylit off]],
+            GenAst.yvar dx, GenAst.yvar "r"],
+         GenAst.yvar lb, GenAst.yvar "r"])) V' st' o) :
+    o = .normal ∧ ∃ qv dxv lbv rv,
+      VEnv.get V q = some qv ∧ VEnv.get V dx = some dxv ∧
+      VEnv.get V lb = some lbv ∧ VEnv.get V "r" = some rv ∧
+      V' = (x, wMulmodAt (wMulmodAt (loadWord st.memory
+        (qv + BitVec.ofNat 256 off).toNat) dxv rv) lbv rv) :: V ∧
+      st' = touchMemory st (qv + BitVec.ofNat 256 off).toNat 32 := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨qv, dxv, lbv, rv, hq, hdx, hlb, hrv, hcv, hst⟩ :=
+        b1_eval_mulmod_nested_mload_add_var_lit_inv he
+      subst hcv; subst hst
+      exact ⟨rfl, qv, dxv, lbv, rv, hq, hdx, hlb, hrv, by simp, rfl⟩
+  | letHalt he => exact (b1_eval_mulmod_nested_mload_add_var_lit_halt he).elim
+
+theorem b1_exec_yset_sub_from_vars {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {x a b : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.yset x (GenAstPcs.subFrom (GenAst.yvar a) (GenAst.yvar b))) V' st' o) :
+    o = .normal ∧ ∃ av bv rv, VEnv.get V a = some av ∧ VEnv.get V b = some bv ∧
+      VEnv.get V "r" = some rv ∧
+      V' = VEnv.set V x (wAddmodAt av (rv - bv) rv) ∧ st' = st := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨av, bv, rv, ha, hb, hr, hval, hst⟩ := b1_eval_sub_from_vars_inv he
+      subst hval; subst hst
+      exact ⟨rfl, av, bv, rv, ha, hb, hr, by simp [VEnv.setMany], rfl⟩
+  | assignHalt he => exact (b1_eval_sub_from_vars_halt he).elim
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_exec_ylet_mulmod_nested
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_exec_yset_sub_from_vars
+  [propext, Classical.choice, Quot.sound] native []
+
+/-- The field value of one `term_j`. -/
+def pcsTermVal (rv ev dxv lbv : U256) : U256 :=
+  wMulmodAt (wMulmodAt ev dxv rv) lbv rv
+
+/-- The running `eval` after the term lines `0..k-1`. -/
+def pcsEvalAcc (rv : U256) (ev dxv lbv : Nat → U256) : Nat → U256 → U256
+  | 0, acc => acc
+  | k + 1, acc =>
+      wAddmodAt (pcsEvalAcc rv ev dxv lbv k acc)
+        (rv - pcsTermVal rv (ev k) (dxv k) (lbv k)) rv
+
+/-- One term line: `let term_j := ...; eval := eval - term_j`. -/
+def pcsTermStmt (j evOff : Nat) (dxN lbN : String) : Block EVM.Op :=
+  [ GenAst.ylet ("term_" ++ toString j) (GenAst.yop EVM.Op.mulmod
+      [ GenAst.yop EVM.Op.mulmod
+          [ GenAst.yop EVM.Op.mload
+              [GenAst.yop EVM.Op.add
+                [GenAst.yvar "Q_EVAL_SET_MPTR", GenAst.ylit (evOff * Midfall.Generator.wordBytes)]],
+            GenAst.yvar dxN, GenAst.yvar "r"],
+        GenAst.yvar lbN, GenAst.yvar "r"]),
+    GenAst.yset "eval" (GenAstPcs.subFrom (GenAst.yvar "eval")
+      (GenAst.yvar ("term_" ++ toString j))) ]
+
+def pcsTermLines (m off : Nat) (dxN lbN : Nat → String) : Block EVM.Op :=
+  (List.range m).flatMap fun j => pcsTermStmt j (off + j) (dxN j) (lbN j)
+
+theorem pcsTermLines_succ (m off : Nat) (dxN lbN : Nat → String) :
+    pcsTermLines (m + 1) off dxN lbN =
+      pcsTermLines m off dxN lbN ++ pcsTermStmt m (off + m) (dxN m) (lbN m) := by
+  unfold pcsTermLines
+  rw [List.range_succ, List.flatMap_append, List.flatMap_cons, List.flatMap_nil,
+    List.append_nil]
+
+set_option maxHeartbeats 1200000 in
+theorem pcsTermStmt_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (j evOff : Nat) (dxN lbN : String) (dxv lbv rv acc qep : U256)
+    (haddr : qep.toNat + evOff * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hneEval : ("term_" ++ toString j) ≠ "eval")
+    (hneR : ("term_" ++ toString j) ≠ "r")
+    (hneDx : ("term_" ++ toString j) ≠ dxN)
+    (hneLb : ("term_" ++ toString j) ≠ lbN) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsTermStmt j evOff dxN lbN)
+      (fun V st => VEnv.get V "Q_EVAL_SET_MPTR" = some qep ∧
+        VEnv.get V dxN = some dxv ∧ VEnv.get V lbN = some lbv ∧
+        VEnv.get V "r" = some rv ∧ VEnv.get V "eval" = some acc)
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' ("term_" ++ toString j) = some (pcsTermVal rv
+          (loadWord st.memory (qep.toNat + evOff * Midfall.Generator.wordBytes)) dxv lbv) ∧
+        VEnv.get V' "eval" = some (wAddmodAt acc (rv - pcsTermVal rv
+          (loadWord st.memory (qep.toNat + evOff * Midfall.Generator.wordBytes)) dxv lbv) rv) ∧
+        (∀ y, y ≠ ("term_" ++ toString j) → y ≠ "eval" →
+          VEnv.get V' y = VEnv.get V y) ∧
+        st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hqep, hdx, hlb, hrv, heval⟩ := hpre
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, hhead, hrest⟩ | ⟨hhead, hne⟩
+  · obtain ⟨ho1, qv, dxv', lbv', rvw, hq, hdx', hlb', hr', hV1, hst1⟩ :=
+      b1_exec_ylet_mulmod_nested hhead
+    have hqe : qv = qep := Option.some.inj (hq.symm.trans hqep)
+    have hdxe : dxv' = dxv := Option.some.inj (hdx'.symm.trans hdx)
+    have hlbe : lbv' = lbv := Option.some.inj (hlb'.symm.trans hlb)
+    have hrve : rvw = rv := Option.some.inj (hr'.symm.trans hrv)
+    have haddr : (qv + BitVec.ofNat 256 (evOff * Midfall.Generator.wordBytes)).toNat =
+        qep.toNat + evOff * Midfall.Generator.wordBytes := by
+      rw [hqe, BitVec.toNat_add, BitVec.toNat_ofNat,
+        Nat.mod_eq_of_lt (by omega : evOff * Midfall.Generator.wordBytes < 2 ^ 256),
+        Nat.mod_eq_of_lt haddr]
+    have hterm : wMulmodAt (wMulmodAt (loadWord st.memory
+          (qv + BitVec.ofNat 256 (evOff * Midfall.Generator.wordBytes)).toNat) dxv' rvw) lbv' rvw =
+        pcsTermVal rv (loadWord st.memory
+          (qep.toNat + evOff * Midfall.Generator.wordBytes)) dxv lbv := by
+      rw [haddr, hdxe, hlbe, hrve]
+      rfl
+    have hV1' : V1 = (("term_" ++ toString j),
+        pcsTermVal rv (loadWord st.memory
+          (qep.toNat + evOff * Midfall.Generator.wordBytes)) dxv lbv) :: V := by
+      rw [hV1, hterm]
+    rw [hV1'] at hrest
+    rw [hst1] at hrest
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest with
+        ⟨V2, st2, htail, hnil⟩ | ⟨htail, hne2⟩
+    · cases hnil
+      obtain ⟨ho2, av, bv, rv', ha, hb, hr, hV2, hst2⟩ :=
+        b1_exec_yset_sub_from_vars htail
+      have hae : av = acc := by
+        have h := ha
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "term_" ++ toString j)
+          (y := "eval") (v := _) hneEval.symm] at h
+        exact Option.some.inj (h.symm.trans heval)
+      have hbe : bv = pcsTermVal rv (loadWord st.memory
+            (qep.toNat + evOff * Midfall.Generator.wordBytes)) dxv lbv := by
+        have h1 : VEnv.get (("term_" ++ toString j,
+            pcsTermVal rv (loadWord st.memory
+              (qep.toNat + evOff * Midfall.Generator.wordBytes)) dxv lbv) :: V)
+            ("term_" ++ toString j) = some (pcsTermVal rv (loadWord st.memory
+              (qep.toNat + evOff * Midfall.Generator.wordBytes)) dxv lbv) :=
+          venv_get_cons_self (D := Bridge.Dialect c g) V _ _
+        exact Option.some.inj (hb.symm.trans h1)
+      have hre : rv' = rv := by
+        have h := hr
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "term_" ++ toString j)
+          (y := "r") (v := _) hneR.symm] at h
+        exact Option.some.inj (h.symm.trans hrv)
+      refine ⟨ho2, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hV2]
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "eval")
+          (y := "term_" ++ toString j) (v := _) hneEval]
+        rw [venv_get_cons_self (D := Bridge.Dialect c g)]
+      · rw [hV2]
+        rw [venv_get_set_same (D := Bridge.Dialect c g) (v := acc) (w := _)
+          (by
+            rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "term_" ++ toString j)
+              (y := "eval") (v := _) hneEval.symm]
+            exact heval)]
+        rw [hae, hbe, hre]
+      · intro y hyterm hyeval
+        rw [hV2]
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "eval") (y := y)
+          (v := _) hyeval]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "term_" ++ toString j)
+          (y := y) (v := _) hyterm]
+      · simpa [hst2, hst1] using Midfall.Yul.Word.touchMemory_memory st _ 32
+      · simpa [hst2, hst1] using Midfall.Yul.Word.touchMemory_env st _ 32
+      · simpa [hst2, hst1] using Midfall.Yul.Word.touchMemory_halted st _ 32
+    · exact absurd (b1_exec_yset_sub_from_vars htail).1 hne2
+  · exact absurd (b1_exec_ylet_mulmod_nested hhead).1 hne
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsTermVal [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsEvalAcc [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsTermStmt [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsTermLines [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsTermLines_succ
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsTermStmt_contract
+  [propext, Classical.choice, Quot.sound] native []
+
+
+theorem pcsStmtsContractAll_append_mid' {funs : FunEnv (Bridge.Dialect c g)}
+    {ss1 ss2 : Block EVM.Op}
+    {pre : VEnv (Bridge.Dialect c g) → EvmState → Prop}
+    {mid : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Prop}
+    {post : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Outcome → Prop}
+    (h1 : StmtsContractAll (D := Bridge.Dialect c g) funs ss1 pre
+      (fun V st V' st' o => o = .normal ∧ mid V st V' st'))
+    (h2 : ∀ V st, pre V st → StmtsContractAll (D := Bridge.Dialect c g) funs ss2
+      (fun V' st' => mid V st V' st')
+      (fun _ _ V' st' o => post V st V' st' o)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (ss1 ++ ss2) pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1run, h2run⟩ | ⟨h1run, hne⟩
+  · obtain ⟨_, hmid⟩ := h1 V st hpre V1 st1 .normal h1run
+    exact h2 V st hpre V1 st1 hmid V' st' o h2run
+  · exact absurd (h1 V st hpre V' st' o h1run).1 hne
+
+set_option maxHeartbeats 1600000 in
+theorem pcsTermLines_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (m off : Nat) (dxN lbN : Nat → String)
+    (ev dxv lbv : Nat → U256) (rv acc qep : U256)
+    (haddr : ∀ j, j < m →
+      qep.toNat + (off + j) * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hneEval : ∀ j, j < m → ("term_" ++ toString j) ≠ "eval")
+    (hneR : ∀ j, j < m → ("term_" ++ toString j) ≠ "r")
+    (hneQ : ∀ j, j < m → ("term_" ++ toString j) ≠ "Q_EVAL_SET_MPTR")
+    (htermNotDx : ∀ j, j < m → ∀ k, k < m → ("term_" ++ toString j) ≠ dxN k)
+    (htermNotLb : ∀ j, j < m → ∀ k, k < m → ("term_" ++ toString j) ≠ lbN k)
+    (htermDist : ∀ i, i < m → ∀ j, j < m → i ≠ j →
+      ("term_" ++ toString i) ≠ ("term_" ++ toString j))
+    (hdxEval : ∀ k, k < m → dxN k ≠ "eval")
+    (hlbEval : ∀ k, k < m → lbN k ≠ "eval")
+    (hdxTerm : ∀ k, k < m → ∀ j, j < m → dxN k ≠ ("term_" ++ toString j))
+    (hlbTerm : ∀ k, k < m → ∀ j, j < m → lbN k ≠ ("term_" ++ toString j))
+    (hrEval : "r" ≠ "eval")
+    (hrTerm : ∀ j, j < m → "r" ≠ ("term_" ++ toString j))
+    (hqEval : "Q_EVAL_SET_MPTR" ≠ "eval")
+    (hqTerm : ∀ j, j < m → "Q_EVAL_SET_MPTR" ≠ ("term_" ++ toString j)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsTermLines m off dxN lbN)
+      (fun V st => VEnv.get V "r" = some rv ∧ VEnv.get V "eval" = some acc ∧
+        VEnv.get V "Q_EVAL_SET_MPTR" = some qep ∧
+        (∀ j, j < m → VEnv.get V (dxN j) = some (dxv j)) ∧
+        (∀ j, j < m → VEnv.get V (lbN j) = some (lbv j)) ∧
+        (∀ j, j < m → loadWord st.memory
+          (qep.toNat + (off + j) * Midfall.Generator.wordBytes) = ev j))
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' "eval" = some (pcsEvalAcc rv ev dxv lbv m acc) ∧
+        (∀ j, j < m → VEnv.get V' ("term_" ++ toString j) =
+          some (pcsTermVal rv (ev j) (dxv j) (lbv j))) ∧
+        (∀ y, y ≠ "eval" → (∀ j, j < m → y ≠ ("term_" ++ toString j)) →
+          VEnv.get V' y = VEnv.get V y) ∧
+        st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted) := by
+  induction m with
+  | zero =>
+      intro V st hpre V' st' o hrun
+      cases hrun
+      obtain ⟨hr, heval, hq, hdx, hlb, hload⟩ := hpre
+      refine ⟨rfl, heval, ?_, ?_, rfl, rfl, rfl⟩
+      · intro j hj
+        omega
+      · intro y _ _
+        rfl
+  | succ m ih =>
+      intro V st hpre V' st' o hrun
+      obtain ⟨hr, heval, hq, hdx, hlb, hload⟩ := hpre
+      have hshape : pcsTermLines (m + 1) off dxN lbN =
+          pcsTermLines m off dxN lbN ++ pcsTermStmt m (off + m) (dxN m) (lbN m) :=
+        pcsTermLines_succ m off dxN lbN
+      rw [hshape] at hrun
+      refine pcsStmtsContractAll_append_mid' (c := c) (g := g) (funs := funs)
+        (mid := fun V0 st0 V1 st1 =>
+          VEnv.get V1 "eval" = some (pcsEvalAcc rv ev dxv lbv m acc) ∧
+          (∀ j, j < m → VEnv.get V1 ("term_" ++ toString j) =
+            some (pcsTermVal rv (ev j) (dxv j) (lbv j))) ∧
+          VEnv.get V1 "r" = some rv ∧
+          VEnv.get V1 "Q_EVAL_SET_MPTR" = some qep ∧
+          (∀ j, j < m → VEnv.get V1 (dxN j) = some (dxv j)) ∧
+          (∀ j, j < m → VEnv.get V1 (lbN j) = some (lbv j)) ∧
+          (∀ y, y ≠ "eval" → (∀ j, j < m → y ≠ ("term_" ++ toString j)) →
+            VEnv.get V1 y = VEnv.get V0 y) ∧
+          st1.memory = st0.memory ∧ st1.env = st0.env ∧ st1.halted = st0.halted)
+        (pre := fun V st => VEnv.get V "r" = some rv ∧ VEnv.get V "eval" = some acc ∧
+          VEnv.get V "Q_EVAL_SET_MPTR" = some qep ∧
+          (∀ j, j < m + 1 → VEnv.get V (dxN j) = some (dxv j)) ∧
+          (∀ j, j < m + 1 → VEnv.get V (lbN j) = some (lbv j)) ∧
+          (∀ j, j < m + 1 → loadWord st.memory
+            (qep.toNat + (off + j) * Midfall.Generator.wordBytes) = ev j))
+        (post := fun V st V' st' o => o = .normal ∧
+          VEnv.get V' "eval" = some (pcsEvalAcc rv ev dxv lbv (m + 1) acc) ∧
+          (∀ j, j < m + 1 → VEnv.get V' ("term_" ++ toString j) =
+            some (pcsTermVal rv (ev j) (dxv j) (lbv j))) ∧
+          (∀ y, y ≠ "eval" → (∀ j, j < m + 1 → y ≠ ("term_" ++ toString j)) →
+            VEnv.get V' y = VEnv.get V y) ∧
+          st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted)
+        ?_ ?_ V st ⟨hr, heval, hq, hdx, hlb, hload⟩ V' st' o hrun
+      · -- the recursive chunk
+        intro V0 st0 h0 V1 st1 o1 h1
+        have h0' : VEnv.get V0 "r" = some rv ∧ VEnv.get V0 "eval" = some acc ∧
+            VEnv.get V0 "Q_EVAL_SET_MPTR" = some qep ∧
+            (∀ j, j < m → VEnv.get V0 (dxN j) = some (dxv j)) ∧
+            (∀ j, j < m → VEnv.get V0 (lbN j) = some (lbv j)) ∧
+            (∀ j, j < m → loadWord st0.memory
+              (qep.toNat + (off + j) * Midfall.Generator.wordBytes) = ev j) :=
+          ⟨h0.1, h0.2.1, h0.2.2.1,
+            (fun j hj => h0.2.2.2.1 j (by omega)),
+            (fun j hj => h0.2.2.2.2.1 j (by omega)),
+            fun j hj => h0.2.2.2.2.2 j (by omega)⟩
+        have hih := ih
+          (fun j hj => haddr j (by omega))
+          (fun j hj => hneEval j (by omega))
+          (fun j hj => hneR j (by omega))
+          (fun j hj => hneQ j (by omega))
+          (fun j hj k hk => htermNotDx j (by omega) k (by omega))
+          (fun j hj k hk => htermNotLb j (by omega) k (by omega))
+          (fun i hi j hj hij => htermDist i (by omega) j (by omega) hij)
+          (fun k hk => hdxEval k (by omega))
+          (fun k hk => hlbEval k (by omega))
+          (fun k hk j hj => hdxTerm k (by omega) j (by omega))
+          (fun k hk j hj => hlbTerm k (by omega) j (by omega))
+          (fun j hj => hrTerm j (by omega))
+          (fun j hj => hqTerm j (by omega))
+          V0 st0 h0' V1 st1 o1 h1
+        obtain ⟨ho1, heval1, hterms1, hpres1, hmem1, henv1, hhalt1⟩ := hih
+        refine ⟨ho1, heval1, hterms1, ?_, ?_, ?_, ?_, hpres1, hmem1, henv1, hhalt1⟩
+        · rw [hpres1 "r" hrEval (fun j hj => hrTerm j (by omega))]
+          exact h0.1
+        · rw [hpres1 "Q_EVAL_SET_MPTR" hqEval (fun j hj => hqTerm j (by omega))]
+          exact h0.2.2.1
+        · intro j hj
+          rw [hpres1 (dxN j) (hdxEval j (by omega)) (fun k hk => hdxTerm j (by omega) k (by omega))]
+          exact h0.2.2.2.1 j (by omega)
+        · intro j hj
+          rw [hpres1 (lbN j) (hlbEval j (by omega)) (fun k hk => hlbTerm j (by omega) k (by omega))]
+          exact h0.2.2.2.2.1 j (by omega)
+      · -- the last term line
+        intro V0 st0 h0 V1 st1 hmid V2 st2 o2 hrun2
+        obtain ⟨heval1, hterms1, hr1, hq1, hdx1, hlb1, hpres1, hmem1, henv1, hhalt1⟩ := hmid
+        have hdxm : VEnv.get V1 (dxN m) = some (dxv m) := by
+          rw [hpres1 (dxN m) (hdxEval m (by omega))
+            (fun j hj => hdxTerm m (by omega) j (by omega))]
+          exact h0.2.2.2.1 m (by omega)
+        have hlbm : VEnv.get V1 (lbN m) = some (lbv m) := by
+          rw [hpres1 (lbN m) (hlbEval m (by omega))
+            (fun j hj => hlbTerm m (by omega) j (by omega))]
+          exact h0.2.2.2.2.1 m (by omega)
+        have hloadm : loadWord st1.memory
+            (qep.toNat + (off + m) * Midfall.Generator.wordBytes) = ev m := by
+          rw [hmem1]
+          exact h0.2.2.2.2.2 m (by omega)
+        have hset := pcsTermStmt_contract (c := c) (g := g) (funs := funs)
+          m (off + m) (dxN m) (lbN m) (dxv m) (lbv m) rv
+          (pcsEvalAcc rv ev dxv lbv m acc) qep
+          (haddr m (by omega))
+          (hneEval m (by omega)) (hneR m (by omega))
+          (htermNotDx m (by omega) m (by omega))
+          (htermNotLb m (by omega) m (by omega))
+          V1 st1 ⟨hq1, hdxm, hlbm, hr1, heval1⟩ V2 st2 o2 hrun2
+        obtain ⟨ho2, hterm2, heval2, hpres2, hmem2, henv2, hhalt2⟩ := hset
+        refine ⟨ho2, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [heval2, hloadm]
+          rfl
+        · intro j hj
+          rcases Nat.lt_or_eq_of_le (by omega : j ≤ m) with hjm | rfl
+          · rw [hpres2 ("term_" ++ toString j)
+              (htermDist j (by omega) m (by omega) (by omega)) (hneEval j (by omega))]
+            exact hterms1 j hjm
+          · rw [hterm2, hloadm]
+        · intro y hyeval hyterm
+          rw [hpres2 y (hyterm m (by omega)) hyeval]
+          exact hpres1 y hyeval (fun j hj => hyterm j (by omega))
+        · rw [hmem2, hmem1]
+        · rw [henv2, henv1]
+        · rw [hhalt2, hhalt1]
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsStmtsContractAll_append_mid'
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsTermLines_contract
+  [propext, Classical.choice, Quot.sound] native []
+
+
+/-- `MemSameOutside` is transitive. -/
+theorem pcsMemSameOutside_trans {st1 st2 st3 : EvmState} {lo len : Nat}
+    (h12 : MemSameOutside st1 st2 lo len) (h23 : MemSameOutside st2 st3 lo len) :
+    MemSameOutside st1 st3 lo len := by
+  intro a ha
+  rw [h23 a ha, h12 a ha]
+
+/-- A touched-memory state still agrees outside any window. -/
+theorem pcsMemSameOutside_touch {st st' : EvmState} {lo len : Nat}
+    (h : MemSameOutside st st' lo len) (a n : Nat) :
+    MemSameOutside st (touchMemory st' a n) lo len := by
+  intro b hb
+  rw [Midfall.Yul.Word.touchMemory_memory]
+  exact h b hb
+
+/-- The `f_eval` Horner update of the general set arm. -/
+def pcsFEvalStmt : Stmt EVM.Op :=
+  GenAst.yset "f_eval" (GenAst.yop EVM.Op.addmod
+    [GenAst.yop EVM.Op.mulmod
+       [GenAst.yvar "f_eval", GenAst.yvar "x2", GenAst.yvar "r"],
+     GenAst.yvar "eval", GenAst.yvar "r"])
+
+theorem pcsFEval_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (fev x2v evv rv : U256) :
+    StmtContractAll (D := Bridge.Dialect c g) funs pcsFEvalStmt
+      (fun V st => VEnv.get V "f_eval" = some fev ∧
+        VEnv.get V "x2" = some x2v ∧ VEnv.get V "eval" = some evv ∧
+        VEnv.get V "r" = some rv)
+      (fun V st V' st' o => o = .normal ∧
+        V' = VEnv.set V "f_eval" (wAddmodAt (wMulmodAt fev x2v rv) evv rv) ∧
+        st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hf, hx, he, hr⟩ := hpre
+  obtain ⟨ho, fvv, x2v', evv', rv4, hf', hx', he', hr', hV, hst⟩ :=
+    b1_exec_yset_f_eval hrun
+  have hfe : fvv = fev := Option.some.inj (hf'.symm.trans hf)
+  have hxe : x2v' = x2v := Option.some.inj (hx'.symm.trans hx)
+  have hee : evv' = evv := Option.some.inj (he'.symm.trans he)
+  have hre : rv4 = rv := Option.some.inj (hr'.symm.trans hr)
+  refine ⟨ho, ?_, hst⟩
+  rw [hV, hfe, hxe, hee, hre]
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsMemSameOutside_trans
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsMemSameOutside_touch
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsFEvalStmt [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsFEval_contract
+  [propext, Classical.choice, Quot.sound] native []
+
+
+def pcsRotPtRef (distinctRotations : List Int) (rot : Int) : String :=
+  "rot_pt_" ++ toString ((distinctRotations.findIdx? fun r => r == rot).getD 0)
+
+def pcsPointRefs (points : List Int) (distinctRotations : List Int) : List (Nat × String) :=
+  (Midfall.Generator.enumIdx points).map fun q => (q.1, pcsRotPtRef distinctRotations q.2)
+
+def pcsKs (points : List Int) (distinctRotations : List Int) (j : Nat) : List (Nat × String) :=
+  (Midfall.Generator.enumIdx points).filterMap fun q =>
+    if q.1 == j then none else some (q.1, pcsRotPtRef distinctRotations q.2)
+
+def pcsBatchInputs (m : Nat) : List String :=
+  (List.range m).map pcsDxName ++ (List.range m).map pcsLbasisName
+
+def pcsBatchName (m i : Nat) : String := (pcsBatchInputs m).getD i ""
+
+def pcsInvName (m j : Nat) : String :=
+  if j < m then "dx_inv_" ++ toString j else "lbasis_inv_" ++ toString (j - m)
+
+/-- The `else` branch of `pcsSetBlockAst`, copied verbatim. -/
+def pcsSetBodyGen (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (setEvalOffsetWords : Nat) : Block EVM.Op :=
+  let rotPtRef : Int → String := fun rot =>
+    "rot_pt_" ++ toString ((distinctRotations.findIdx? fun r => r == rot).getD 0)
+  let proofEval := GenAst.yop EVM.Op.calldataload [GenAst.yop EVM.Op.add [GenAst.yvar "Q_EVAL_CPTR",
+    GenAst.ylit (setIdx * Midfall.Generator.wordBytes)]]
+  let m := points.length
+  let dxLines := (Midfall.Generator.enumIdx points).map fun (j, point) =>
+    GenAst.ylet ("dx_" ++ toString j) (GenAstPcs.subFrom (GenAst.yvar "x3") (GenAst.yvar (rotPtRef point)))
+  let lbasisLines := (Midfall.Generator.enumIdx points).map fun (j, pointJ) =>
+    let pj := GenAst.yvar (rotPtRef pointJ)
+    let terms := (Midfall.Generator.enumIdx points).filterMap fun (k, pointK) =>
+      if k == j then none else some (GenAst.yset ("lbasis_" ++ toString j)
+        (GenAst.yop EVM.Op.mulmod [GenAst.yvar ("lbasis_" ++ toString j),
+          GenAstPcs.subFrom pj (GenAst.yvar (rotPtRef pointK)), GenAst.yvar "r"]))
+    [GenAst.ylet ("lbasis_" ++ toString j) (GenAst.ylit 1)] ++ terms
+  let batchInputs := (List.range m).map (fun j => "dx_" ++ toString j)
+    ++ (List.range m).map (fun j => "lbasis_" ++ toString j)
+  let n := batchInputs.length
+  let bpLines := [GenAst.ylet "bp_0" (GenAst.yvar (batchInputs.getD 0 ""))]
+    ++ ((Midfall.Generator.enumIdx batchInputs).drop 1).map fun (i, inp) =>
+        GenAst.ylet ("bp_" ++ toString i)
+          (GenAst.yop EVM.Op.mulmod [GenAst.yvar ("bp_" ++ toString (i - 1)), GenAst.yvar inp, GenAst.yvar "r"])
+  let invName : Nat → String := fun idx =>
+    if idx < m then "dx_inv_" ++ toString idx else "lbasis_inv_" ++ toString (idx - m)
+  let bqLines := ((List.range n).drop 1).reverse.flatMap fun i =>
+    [ GenAst.ylet (invName i) (GenAst.yop EVM.Op.mulmod [GenAst.yvar "bq", GenAst.yvar ("bp_" ++ toString (i - 1)), GenAst.yvar "r"]),
+      GenAst.yset "bq" (GenAst.yop EVM.Op.mulmod [GenAst.yvar "bq", GenAst.yvar (batchInputs.getD i ""), GenAst.yvar "r"]) ]
+  let denInvLines := [GenAst.ylet "den_inv" (GenAst.yvar (invName 0))]
+    ++ ((List.range m).drop 1).map fun j =>
+        GenAst.yset "den_inv" (GenAst.yop EVM.Op.mulmod [GenAst.yvar "den_inv", GenAst.yvar ("dx_inv_" ++ toString j),
+          GenAst.yvar "r"])
+  let termLines := (List.range m).flatMap fun j =>
+    let evJ := GenAst.yop EVM.Op.mload [GenAst.yop EVM.Op.add [GenAst.yvar "Q_EVAL_SET_MPTR",
+      GenAst.ylit ((setEvalOffsetWords + j) * Midfall.Generator.wordBytes)]]
+    [ GenAst.ylet ("term_" ++ toString j)
+        (GenAst.yop EVM.Op.mulmod [GenAst.yop EVM.Op.mulmod [evJ, GenAst.yvar ("dx_inv_" ++ toString j), GenAst.yvar "r"],
+          GenAst.yvar ("lbasis_inv_" ++ toString j), GenAst.yvar "r"]),
+      GenAst.yset "eval" (GenAstPcs.subFrom (GenAst.yvar "eval") (GenAst.yvar ("term_" ++ toString j))) ]
+  dxLines ++ lbasisLines.flatten ++ bpLines
+    ++ [ GenAst.ylet "bq" (GenAst.ycall "scalar_inv" [GenAst.yvar ("bp_" ++ toString (n - 1))]) ]
+    ++ bqLines ++ [GenAst.ylet (invName 0) (GenAst.yvar "bq")] ++ denInvLines
+    ++ [ GenAst.ylet "eval" (GenAst.yop EVM.Op.mulmod [proofEval, GenAst.yvar "den_inv", GenAst.yvar "r"]) ]
+    ++ termLines
+    ++ [ GenAst.yset "f_eval" (GenAst.yop EVM.Op.addmod [GenAst.yop EVM.Op.mulmod [GenAst.yvar "f_eval",
+          GenAst.yvar "x2", GenAst.yvar "r"], GenAst.yvar "eval", GenAst.yvar "r"]) ]
+
+def pcsGenBody (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off : Nat) : Block EVM.Op :=
+  let m := points.length
+  let xs := pcsPointRefs points distinctRotations
+  let invName := pcsInvName m
+  let n := (pcsBatchInputs m).length
+  let nm := pcsBatchName m
+  xs.map (fun q => pcsDxStmt q.1 q.2)
+    ++ (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (pcsKs points distinctRotations q.1))).flatten
+    ++ pcsBpLines n nm
+    ++ [pcsBqStmt (pcsBpName (n - 1))]
+    ++ pcsBqLines n nm invName
+    ++ [GenAst.ylet (invName 0) (GenAst.yvar "bq")]
+    ++ pcsDenInvLines m invName
+    ++ [pcsEvalStmt setIdx]
+    ++ pcsTermLines m off (fun j => invName j) (fun j => invName (m + j))
+    ++ [pcsFEvalStmt]
+
+
+theorem list_filterMap_congr {α β : Type} {l : List α} {f g : α → Option β}
+    (h : ∀ x ∈ l, f x = g x) : l.filterMap f = l.filterMap g := by
+  induction l with
+  | nil => rfl
+  | cons a l ih =>
+      simp only [List.filterMap_cons]
+      rw [h a (by simp)]
+      split <;> simp [ih (fun x hx => h x (by simp [hx]))]
+
+theorem pcsBpMap_gen (l : List String) :
+    ((Midfall.Generator.enumIdx l).drop 1).map (fun x =>
+        GenAst.ylet ("bp_" ++ toString x.1) (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar ("bp_" ++ toString (x.1 - 1)), GenAst.yvar x.2, GenAst.yvar "r"]))
+    = ((List.range l.length).drop 1).map (fun i =>
+        GenAst.ylet (pcsBpName i) (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar (pcsBpName (i - 1)), GenAst.yvar (l.getD i ""), GenAst.yvar "r"])) := by
+  unfold Midfall.Generator.enumIdx
+  apply List.ext_getElem
+  · simp only [List.length_map, List.length_drop, List.length_zip, List.length_range]
+    rw [Nat.min_self]
+  · intro j hj1 hj2
+    simp only [List.length_map, List.length_drop, List.length_zip, List.length_range,
+      Nat.min_self] at hj1
+    simp only [List.getElem_map, List.getElem_drop, List.getElem_zip, List.getElem_range,
+      pcsBpName]
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (by omega), Option.getD_some]
+
+theorem pcsBpLines_gen (batchInputs : List String) :
+    [GenAst.ylet "bp_0" (GenAst.yvar (batchInputs.getD 0 ""))]
+      ++ ((Midfall.Generator.enumIdx batchInputs).drop 1).map (fun x =>
+          GenAst.ylet ("bp_" ++ toString x.1) (GenAst.yop EVM.Op.mulmod
+            [GenAst.yvar ("bp_" ++ toString (x.1 - 1)), GenAst.yvar x.2, GenAst.yvar "r"]))
+    = pcsBpLines batchInputs.length (fun i => batchInputs.getD i "") := by
+  unfold pcsBpLines pcsBpHead pcsBpTail
+  rw [pcsBpMap_gen]
+  have h0 : (Nat.repr 0 : String) = "0" := by decide
+  simp [pcsBpName, h0]
+
+theorem pcsBqLines_gen (batchInputs : List String) (invName : Nat → String) :
+    ((List.range batchInputs.length).drop 1).reverse.flatMap (fun i =>
+      [ GenAst.ylet (invName i) (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar "bq", GenAst.yvar ("bp_" ++ toString (i - 1)), GenAst.yvar "r"]),
+        GenAst.yset "bq" (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar "bq", GenAst.yvar (batchInputs.getD i ""), GenAst.yvar "r"]) ])
+    = pcsBqLines batchInputs.length (fun i => batchInputs.getD i "") invName := rfl
+
+theorem pcsDenInvLines_gen (m : Nat) (hm : 1 ≤ m) (invName : Nat → String)
+    (hinv0 : invName 0 = "dx_inv_" ++ toString 0)
+    (hinv : ∀ j, j < m → invName j = "dx_inv_" ++ toString j) :
+    [GenAst.ylet "den_inv" (GenAst.yvar (invName 0))]
+      ++ ((List.range m).drop 1).map (fun j =>
+          GenAst.yset "den_inv" (GenAst.yop EVM.Op.mulmod
+            [GenAst.yvar "den_inv", GenAst.yvar ("dx_inv_" ++ toString j), GenAst.yvar "r"]))
+    = pcsDenInvLines m invName := by
+  unfold pcsDenInvLines pcsDenInvSetStmt
+  rw [hinv0]
+  congr 1
+  apply List.map_congr_left
+  intro j hj
+  have hjlt : j < m := by
+    have := List.mem_range.mp (List.mem_of_mem_drop hj)
+    omega
+  rw [← hinv j hjlt]
+
+theorem pcsTermLines_gen (m off : Nat) (invName : Nat → String)
+    (hinv : ∀ j, j < m → invName j = "dx_inv_" ++ toString j)
+    (hinv2 : ∀ j, j < m → invName (m + j) = "lbasis_inv_" ++ toString j) :
+    (List.range m).flatMap (fun j =>
+      [ GenAst.ylet ("term_" ++ toString j)
+          (GenAst.yop EVM.Op.mulmod
+            [GenAst.yop EVM.Op.mulmod
+                [GenAst.yop EVM.Op.mload
+                    [GenAst.yop EVM.Op.add
+                      [GenAst.yvar "Q_EVAL_SET_MPTR",
+                        GenAst.ylit ((off + j) * Midfall.Generator.wordBytes)]],
+                  GenAst.yvar ("dx_inv_" ++ toString j), GenAst.yvar "r"],
+              GenAst.yvar ("lbasis_inv_" ++ toString j), GenAst.yvar "r"]),
+        GenAst.yset "eval" (GenAstPcs.subFrom (GenAst.yvar "eval")
+          (GenAst.yvar ("term_" ++ toString j))) ])
+    = pcsTermLines m off (fun j => invName j) (fun j => invName (m + j)) := by
+  unfold pcsTermLines
+  rw [List.flatMap_def, List.flatMap_def]
+  congr 1
+  apply List.map_congr_left
+  intro j hj
+  have hjlt : j < m := List.mem_range.mp hj
+  unfold pcsTermStmt
+  rw [← hinv j hjlt, ← hinv2 j hjlt]
+
+theorem pcsDxLines_gen (points : List Int) (distinct : List Int) :
+    (Midfall.Generator.enumIdx points).map (fun x =>
+        GenAst.ylet ("dx_" ++ toString x.1)
+          (GenAstPcs.subFrom (GenAst.yvar "x3")
+            (GenAst.yvar ("rot_pt_" ++ toString
+              ((List.findIdx? (fun r => r == x.2) distinct).getD 0)))))
+    = (pcsPointRefs points distinct).map (fun q => pcsDxStmt q.1 q.2) := by
+  simp only [pcsPointRefs, pcsDxStmt, pcsRotPtRef, List.map_map]
+  apply List.map_congr_left
+  intro q hq
+  simp [pcsDxName]
+
+theorem pcsLbasisLines_gen (points : List Int) (distinct : List Int) :
+    (Midfall.Generator.enumIdx points).map (fun x =>
+        [GenAst.ylet ("lbasis_" ++ toString x.1) (GenAst.ylit 1)]
+        ++ (Midfall.Generator.enumIdx points).filterMap (fun x_1 =>
+            if x_1.1 == x.1 then none else some (GenAst.yset ("lbasis_" ++ toString x.1)
+              (GenAst.yop EVM.Op.mulmod [GenAst.yvar ("lbasis_" ++ toString x.1),
+                GenAstPcs.subFrom
+                  (GenAst.yvar ("rot_pt_" ++ toString
+                    ((List.findIdx? (fun r => r == x.2) distinct).getD 0)))
+                  (GenAst.yvar ("rot_pt_" ++ toString
+                    ((List.findIdx? (fun r => r == x_1.2) distinct).getD 0))), GenAst.yvar "r"]))))
+    = (pcsPointRefs points distinct).map (fun q =>
+        pcsLbasisGroupAst q.1 q.2 (pcsKs points distinct q.1)) := by
+  simp only [pcsPointRefs, pcsRotPtRef, List.map_map]
+  apply List.map_congr_left
+  intro q hq
+  rw [show ((fun q => pcsLbasisGroupAst q.1 q.2 (pcsKs points distinct q.1)) ∘
+      (fun q => (q.1, "rot_pt_" ++ toString
+        ((List.findIdx? (fun r => r == q.2) distinct).getD 0)))) q =
+      pcsLbasisGroupAst q.1 ("rot_pt_" ++ toString
+        ((List.findIdx? (fun r => r == q.2) distinct).getD 0))
+        (pcsKs points distinct q.1) from rfl]
+  simp only [pcsLbasisGroupAst, pcsLbasisInit, pcsLbasisStmt, pcsLbasisName,
+    pcsKs, List.cons_append, List.singleton_append]
+  rw [List.map_filterMap, List.nil_append]
+  congr 1
+  apply list_filterMap_congr
+  intro x hx
+  by_cases h : (x.1 == q.1) = true <;> simp [h, pcsRotPtRef]
+
+theorem pcsSetBodyGen_eq (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off : Nat) (hm : 1 < points.length) :
+    pcsSetBodyGen setIdx points distinctRotations off = pcsGenBody setIdx points distinctRotations off := by
+  unfold pcsSetBodyGen pcsGenBody
+  dsimp only
+  simp only [pcsBatchInputs, pcsBatchName, pcsDxName, pcsLbasisName, pcsInvName]
+  set invName : Nat → String := fun idx =>
+    if idx < points.length then "dx_inv_" ++ toString idx
+    else "lbasis_inv_" ++ toString (idx - points.length) with hinvName
+  rw [pcsDxLines_gen, pcsLbasisLines_gen,
+    pcsBpLines_gen ((List.range points.length).map (fun j => "dx_" ++ toString j)
+      ++ (List.range points.length).map (fun j => "lbasis_" ++ toString j)),
+    pcsBqLines_gen ((List.range points.length).map (fun j => "dx_" ++ toString j)
+      ++ (List.range points.length).map (fun j => "lbasis_" ++ toString j)) invName,
+    pcsDenInvLines_gen points.length (by omega) invName ?_ ?_,
+    pcsTermLines_gen points.length off invName ?_ ?_]
+  · rw [hinvName]
+    unfold pcsBatchName pcsBatchInputs pcsDxName pcsLbasisName pcsInvName pcsBpName
+    simp [pcsEvalStmt, pcsFEvalStmt, pcsBqStmt]
+  all_goals
+    first
+    | (intro j hj; simp only [hinvName]; rw [if_pos hj])
+    | (simp only [hinvName]; rw [if_pos (by omega)])
+    | (intro j hj; simp only [hinvName]
+       rw [if_neg (by omega), show points.length + j - points.length = j by omega])
+
+
+def pcsStmtLocal (locals : List String) : Stmt EVM.Op → Prop
+  | .letDecl [x] _ => x ∈ locals
+  | .assign [x] _ => x ∈ locals
+  | _ => False
+
+def pcsStmtLetName? : Stmt EVM.Op → Option String
+  | .letDecl [x] _ => some x
+  | _ => none
+
+def pcsAddedNames (ss : Block EVM.Op) : List String :=
+  (ss.filterMap pcsStmtLetName?).reverse
+
+theorem pcs_venv_set_map_fst (V : VEnv (Bridge.Dialect c g)) (x : String) (v : U256) :
+    (VEnv.set V x v).map Prod.fst = V.map Prod.fst := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x <;> simp [VEnv.set, hy, ih]
+
+theorem pcsExec_get_of_local {funs : FunEnv (Bridge.Dialect c g)} {ss : Block EVM.Op} {locals : List String}
+    (hloc : ∀ s ∈ ss, pcsStmtLocal locals s) {x : String} (hx : x ∉ locals) :
+    ∀ {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+      {st' : EvmState} {o : Outcome},
+      ExecStmts (Bridge.Dialect c g) funs V st ss V' st' o →
+      o = .normal → VEnv.get V' x = VEnv.get V x := by
+  induction ss with
+  | nil =>
+      intro V st V' st' o h ho
+      cases h
+      rfl
+  | cons s rest ih =>
+      intro V st V' st' o h ho
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h with
+          ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+      · have hs := hloc s (by simp)
+        have hloc' : ∀ s' ∈ rest, pcsStmtLocal locals s' :=
+          fun s' hs' => hloc s' (by simp [hs'])
+        cases s with
+        | letDecl vars e =>
+            cases e with
+            | none =>
+                cases vars with
+                | nil => simp [pcsStmtLocal] at hs
+                | cons x' vars =>
+                    cases vars with
+                    | nil =>
+                        cases hhead with
+                        | letZero =>
+                            have hxne : x ≠ x' := fun h => hx (h ▸ hs)
+                            have htail'' : ExecStmts (Bridge.Dialect c g) funs
+                                ((x', (Bridge.Dialect c g).zero) :: V) st
+                                rest V' st' o := by simpa [bindZeros] using htail
+                            rw [ih hloc' htail'' ho]
+                            exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := x')
+                              (y := x) (v := _) hxne
+                    | cons _ _ => simp [pcsStmtLocal] at hs
+            | some e =>
+                cases vars with
+                | nil => simp [pcsStmtLocal] at hs
+                | cons x' vars =>
+                    cases vars with
+                    | nil =>
+                        cases hhead with
+                        | letVal he hlen =>
+                            obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+                            have hxne : x ≠ x' := fun h => hx (h ▸ hs)
+                            have htail'' : ExecStmts (Bridge.Dialect c g) funs ((x', v) :: V) st1
+                                rest V' st' o := by simpa using htail
+                            rw [ih hloc' htail'' ho]
+                            exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := x')
+                              (y := x) (v := v) hxne
+                    | cons _ _ => simp [pcsStmtLocal] at hs
+        | assign vars e =>
+            cases vars with
+            | nil => simp [pcsStmtLocal] at hs
+            | cons x' vars =>
+                cases vars with
+                | nil =>
+                    cases hhead with
+                    | assignVal he hlen =>
+                        obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+                        have hxne : x ≠ x' := fun h => hx (h ▸ hs)
+                        have htail'' : ExecStmts (Bridge.Dialect c g) funs (VEnv.set V x' v) st1
+                            rest V' st' o := by simpa [VEnv.setMany] using htail
+                        rw [ih hloc' htail'' ho]
+                        exact venv_get_set_ne (D := Bridge.Dialect c g) (x := x') (y := x)
+                          (v := v) hxne
+                | cons _ _ => simp [pcsStmtLocal] at hs
+        | _ => simp [pcsStmtLocal] at hs
+      · exact absurd ho hne
+
+theorem pcsExec_names {funs : FunEnv (Bridge.Dialect c g)} {ss : Block EVM.Op}
+    (hloc : ∀ s ∈ ss, ∃ x e, s = GenAst.ylet x e ∨ s = GenAst.yset x e) :
+    ∀ {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+      {st' : EvmState} {o : Outcome},
+      ExecStmts (Bridge.Dialect c g) funs V st ss V' st' o →
+      o = .normal → V'.map Prod.fst = pcsAddedNames ss ++ V.map Prod.fst := by
+  induction ss with
+  | nil =>
+      intro V st V' st' o h ho
+      cases h
+      rfl
+  | cons s rest ih =>
+      intro V st V' st' o h ho
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h with
+          ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+      · have hloc' : ∀ s' ∈ rest, ∃ x e, s' = GenAst.ylet x e ∨ s' = GenAst.yset x e :=
+          fun s' hs' => hloc s' (by simp [hs'])
+        obtain ⟨x, e, hlet | hset⟩ := hloc s (by simp)
+        · subst hlet
+          cases hhead with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+              have htail'' : ExecStmts (Bridge.Dialect c g) funs ((x, v) :: V) st1
+                  rest V' st' o := by simpa using htail
+              rw [ih hloc' htail'' ho]
+              simp [pcsAddedNames, pcsStmtLetName?, GenAst.ylet, List.append_assoc, List.map_cons]
+        · subst hset
+          cases hhead with
+          | assignVal he hlen =>
+              obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+              have htail'' : ExecStmts (Bridge.Dialect c g) funs (VEnv.set V x v) st1
+                  rest V' st' o := by simpa [VEnv.setMany] using htail
+              have hnone : pcsStmtLetName? (GenAst.yset x e) = none := by
+                simp [GenAst.yset, pcsStmtLetName?]
+              rw [ih hloc' htail'' ho, pcs_venv_set_map_fst]
+              simp [pcsAddedNames, hnone]
+      · exact absurd ho hne
+
+
+structure PcsGenNames (m : Nat) (xs : List (Nat × String))
+    (ks : Nat → List (Nat × String)) : Prop where
+  dxX3 : ∀ q ∈ xs, pcsDxName q.1 ≠ "x3"
+  dxR : ∀ q ∈ xs, pcsDxName q.1 ≠ "r"
+  dxRot : ∀ q ∈ xs, ∀ r ∈ xs, q.2 ≠ pcsDxName r.1
+  dxIdx : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1
+  dxDist : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1 → pcsDxName q.1 ≠ pcsDxName r.1
+  lbR : ∀ q ∈ xs, pcsLbasisName q.1 ≠ "r"
+  lbPt : ∀ q ∈ xs, pcsLbasisName q.1 ≠ q.2
+  lbKs : ∀ q ∈ xs, ∀ k ∈ ks q.1, pcsLbasisName q.1 ≠ k.2
+  lbRot : ∀ q ∈ xs, ∀ r ∈ xs, pcsLbasisName q.1 ≠ r.2
+  lbRot2 : ∀ q ∈ xs, ∀ r ∈ xs, ∀ k ∈ ks r.1, pcsLbasisName q.1 ≠ k.2
+  lbDist : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1 → pcsLbasisName q.1 ≠ pcsLbasisName r.1
+  lbIdx : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1
+  lbDx : ∀ q ∈ xs, ∀ r ∈ xs, pcsLbasisName q.1 ≠ pcsDxName r.1
+  bpR : ∀ i < (pcsBatchInputs m).length, pcsBpName i ≠ "r"
+  bpIn : ∀ i < (pcsBatchInputs m).length, ∀ j < (pcsBatchInputs m).length,
+    pcsBpName i ≠ pcsBatchName m j
+  bpDist : ∀ i < (pcsBatchInputs m).length, ∀ j < (pcsBatchInputs m).length,
+    i ≠ j → pcsBpName i ≠ pcsBpName j
+  bqR : "bq" ≠ "r"
+  invBq : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → pcsInvName m i ≠ "bq"
+  invPrev : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length →
+    pcsInvName m i ≠ pcsBpName (i - 1)
+  invInp : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length →
+    pcsInvName m i ≠ pcsBatchName m i
+  invR : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → pcsInvName m i ≠ "r"
+  bqBp : ∀ i < (pcsBatchInputs m).length, pcsBpName i ≠ "bq"
+  bqInp : ∀ i < (pcsBatchInputs m).length, pcsBatchName m i ≠ "bq"
+  invBp : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → ∀ j < (pcsBatchInputs m).length,
+    pcsBpName j ≠ pcsInvName m i
+  invInp2 : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → ∀ j < (pcsBatchInputs m).length,
+    pcsBatchName m j ≠ pcsInvName m i
+  rInv : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → "r" ≠ pcsInvName m i
+  invDist : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length →
+    ∀ j, 1 ≤ j → j < (pcsBatchInputs m).length → i ≠ j → pcsInvName m i ≠ pcsInvName m j
+  invX2 : ∀ i, pcsInvName m i ≠ "x2"
+  invF : ∀ i, pcsInvName m i ≠ "f_eval"
+  invQ : ∀ i, pcsInvName m i ≠ "Q_EVAL_CPTR"
+  bqBpName : ∀ i < (pcsBatchInputs m).length, "bq" ≠ pcsBpName i
+  denInv : ∀ j < m, "den_inv" ≠ pcsInvName m j
+  denR : "den_inv" ≠ "r"
+  termEval : ∀ j < m, ("term_" ++ toString j) ≠ "eval"
+  termR : ∀ j < m, ("term_" ++ toString j) ≠ "r"
+  termQ : ∀ j < m, ("term_" ++ toString j) ≠ "Q_EVAL_SET_MPTR"
+  termDx : ∀ j < m, ∀ k < m, ("term_" ++ toString j) ≠ pcsInvName m k
+  termLb : ∀ j < m, ∀ k < m, ("term_" ++ toString j) ≠ pcsInvName m (m + k)
+  termDist : ∀ i < m, ∀ j < m, i ≠ j → ("term_" ++ toString i) ≠ ("term_" ++ toString j)
+  dxEval : ∀ k < m, pcsInvName m k ≠ "eval"
+  lbEval : ∀ k < m, pcsInvName m (m + k) ≠ "eval"
+  dxTerm : ∀ k < m, ∀ j < m, pcsInvName m k ≠ ("term_" ++ toString j)
+  lbTerm : ∀ k < m, ∀ j < m, pcsInvName m (m + k) ≠ ("term_" ++ toString j)
+  rEval : "r" ≠ "eval"
+  rTerm : ∀ j < m, "r" ≠ ("term_" ++ toString j)
+  qEval : "Q_EVAL_SET_MPTR" ≠ "eval"
+  qTerm : ∀ j < m, "Q_EVAL_SET_MPTR" ≠ ("term_" ++ toString j)
+
+def pcsGenBatchVal (rv x3v : U256) (p : Nat → U256) (ks : Nat → List (Nat × String))
+    (m i : Nat) : U256 :=
+  if i < m then wAddmodAt x3v (rv - p i) rv
+  else pcsLbasisVal rv (p (i - m)) p (ks (i - m))
+
+def pcsGenFEval (rv x2v fev cval : U256) (ev : Nat → U256) (a : Nat → U256) (m : Nat) : U256 :=
+  wAddmodAt (wMulmodAt fev x2v rv)
+    (pcsEvalAcc rv ev (fun j => SIInv (a j)) (fun j => SIInv (a (m + j))) m
+      (wMulmodAt cval (pcsDenInvVal rv (fun j => SIInv (a j)) m) rv)) rv
+
+theorem pcsBatchInputs_length (m : Nat) : (pcsBatchInputs m).length = 2 * m := by
+  simp only [pcsBatchInputs, List.length_append, List.length_map, List.length_range]
+  omega
+
+theorem pcsBatchName_dx (m i : Nat) (hi : i < m) : pcsBatchName m i = pcsDxName i := by
+  unfold pcsBatchName pcsBatchInputs
+  rw [List.getD_eq_getElem?_getD]
+  rw [List.getElem?_append_left]
+  · simp [List.getElem?_map, List.getElem?_range, hi, pcsDxName]
+  · simp only [List.length_map, List.length_range]; exact hi
+
+theorem pcsBatchName_lb (m j : Nat) (hj : j < m) :
+    pcsBatchName m (m + j) = pcsLbasisName j := by
+  unfold pcsBatchName pcsBatchInputs
+  rw [List.getD_eq_getElem?_getD]
+  rw [List.getElem?_append_right]
+  · simp only [List.length_map, List.length_range]
+    rw [show m + j - m = j by omega]
+    simp [List.getElem?_map, List.getElem?_range, hj, pcsLbasisName]
+  · simp only [List.length_map, List.length_range]; omega
+
+
+theorem pcsPointRefs_mem (points : List Int) (distinct : List Int) {i : Nat}
+    (hi : i < points.length) :
+    (i, pcsRotPtRef distinct (points.get ⟨i, hi⟩)) ∈ pcsPointRefs points distinct := by
+  unfold pcsPointRefs pcsRotPtRef
+  apply List.mem_map.mpr
+  have hi' : i < (Midfall.Generator.enumIdx points).length := by
+    simp [Midfall.Generator.enumIdx]; exact hi
+  refine ⟨(Midfall.Generator.enumIdx points)[i]'hi', List.getElem_mem (l := Midfall.Generator.enumIdx points) hi', ?_⟩
+  simp [Midfall.Generator.enumIdx]
+
+
+theorem pcsStmtsContractAll_append_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {ss1 ss2 : Block EVM.Op}
+    {pre : VEnv (Bridge.Dialect c g) → EvmState → Prop}
+    {mid : VEnv (Bridge.Dialect c g) → EvmState → Prop}
+    {post : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Outcome → Prop}
+    (h1 : StmtsContractAll (D := Bridge.Dialect c g) funs ss1 pre
+      (fun V st V' st' o => (o = .normal ∧ mid V' st') ∨
+        (o = .halt ∧ post V st V' st' o)))
+    (h2 : ∀ V st, pre V st → StmtsContractAll (D := Bridge.Dialect c g) funs ss2 mid
+      (fun _ _ V' st' o => post V st V' st' o)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (ss1 ++ ss2) pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1run, h2run⟩ | ⟨h1run, hne⟩
+  · rcases h1 V st hpre V1 st1 .normal h1run with ⟨_, hmid⟩ | ⟨hh, _⟩
+    · exact h2 V st hpre V1 st1 hmid V' st' o h2run
+    · cases hh
+  · rcases h1 V st hpre V' st' o h1run with ⟨hh, _⟩ | ⟨_, hpost⟩
+    · exact absurd hh hne
+    · exact hpost
+
+
 
 end Midfall.LoweringV3.PcsBlock4
