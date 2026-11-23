@@ -2712,6 +2712,21 @@ theorem scatterIndexed_ok_of_cover {α : Type} (n : Nat) (pairs : List (Nat × �
   rw [hys]
   exact ⟨ys.toArray, rfl⟩
 
+/-- A column index of `cols` is paired with SOME read in `zip cols reads`, provided the read
+    array is at least as long as `cols` (`tmReadN_size` supplies this at the advice site). -/
+theorem mem_zip_of_mem {α : Type} (cols : List Nat) (reads : List α)
+    (hlen : cols.length ≤ reads.length) {i : Nat} (hi : i ∈ cols) :
+    ∃ a, (i, a) ∈ List.zip cols reads := by
+  rw [List.mem_iff_getElem?] at hi
+  obtain ⟨k, hk⟩ := hi
+  have hklt : k < cols.length := (List.getElem?_eq_some_iff.mp hk).1
+  have hkreads : k < reads.length := by omega
+  have hsome : reads[k]? = some reads[k] := List.getElem?_eq_getElem hkreads
+  obtain ⟨a, ha⟩ : ∃ a, reads[k]? = some a := ⟨reads[k], hsome⟩
+  refine ⟨a, ?_⟩
+  rw [List.mem_iff_getElem?]
+  exact ⟨k, by rw [List.getElem?_zip_eq_some]; exact ⟨hk, ha⟩⟩
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -4600,6 +4615,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.readN_size [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tmReadN_size [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.scatterIndexed_ok_of_cover [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.mem_zip_of_mem [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
