@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `091101f7` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`,
+**As of:** `f81fd7ef` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`,
 KAT 1648/119, closure 5251/620 digest `da67ab3de31b92e9`). Later merges are proof terms and below-root KZG modules; the closure digest is unchanged. Current report: root **11 / sound 5**,
 register **96 rows / 11 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
 260 modules; closure **5251 declarations / 620 external leaves / digest `da67ab3de31b92e9`**.
