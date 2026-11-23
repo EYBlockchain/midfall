@@ -32,6 +32,7 @@ import Midfall.LoweringV3.LinearizeEntry
 import Midfall.LoweringV3.QueryTail
 import Midfall.LoweringV3.QueryBlockShape
 import Midfall.LoweringV3.PcsOrder
+import Midfall.LoweringV3.UpstreamSets
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -4666,6 +4667,8 @@ open Midfall.Tools.Done in
 #assert_axioms filter_range_pred_rev
   [propext, Classical.choice, Quot.sound]
 #assert_axioms upstreamBlock_permZBlock
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms assertPermutationQueryOrderIsUpstreamEquivalent_parts
   [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
