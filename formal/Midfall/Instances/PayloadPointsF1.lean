@@ -646,7 +646,13 @@ theorem f1VkResourced_wf : f1VkResourced.WellFormed Features.solidity :=
     singlePhase := by
       show f1VkResourced.cs.numChallenges = 0
       native_decide
-    committedInstancesOn := rfl }
+    committedInstancesOn := rfl
+    advicePhaseTotal := by
+      show f1VkResourced.cs.adviceColumnPhase.size = f1VkResourced.cs.numAdviceColumns
+      native_decide
+    challengePhaseTotal := by
+      show f1VkResourced.cs.challengePhase.size = f1VkResourced.cs.numChallenges
+      native_decide }
 
 /-- **`supported` AT THE RE-SOURCED RENDER.** The only changed field is `vkPoints`, which is
     `g1CodecZ_g1Valid` for EVERY carrier point (so the real commitments are readable by
