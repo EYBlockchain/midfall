@@ -559,10 +559,6 @@ theorem env_k (hg : Generates gi o) (hs : SupportedInput gi) :
   rw [model_k_of_generated (generated_of hg)]
   rfl
 
-theorem env_negLagranges (hg : Generates gi o) (hs : SupportedInput gi) :
-    (renderOf gi o).pv.numNegLagranges = gi.vk.cs.blindingFactors.toOption.getD 0 + 1 := by
-  sorry -- CERT.6
-
 /-- The `vk.rs:180` check, from the small `generateBaseVkPrefix`. PROVED. -/
 theorem generateBaseVkPrefix_g2 {inputs : VerifierBuildInputs p G₁ G₂}
     {pre : Word256 × Word256 × Word256 × Word256 × Word256}
@@ -1521,6 +1517,70 @@ theorem generateBaseVkPrefix_components {inputs : VerifierBuildInputs p G₁ G�
                   · rw [← h5]
                   · rw [← h6]
 
+/-- `ConstraintSystem.blindingFactors` is at least six: `f4 = f3 + 3` and `f1 = max 3 _`. PROVED. -/
+theorem blindingFactors_ge_six {F : Type} {cs : ConstraintSystem F} {bf : Nat}
+    (h : cs.blindingFactors = .ok bf) : 6 ≤ bf := by
+  unfold ConstraintSystem.blindingFactors at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨_deg, _hdeg, h⟩ := cert_except_bind_ok h
+  obtain ⟨_cc, _hcc, h⟩ := cert_except_bind_ok h
+  split at h
+  · cases h
+  · cases h
+    omega
+
+/-- `fromConstraintSystem` writes `rotationLast = -(blindingFactors + 1)`. PROVED. -/
+theorem fromConstraintSystem_rotationLast {F : Type} {feat : Features} {cs : ConstraintSystem F}
+    {nb : Nat} {plan : ProtocolPlan}
+    (h : ProtocolPlan.fromConstraintSystem feat cs nb = .ok plan) :
+    ∃ bf, cs.blindingFactors = .ok bf ∧ plan.rotationLast = -((bf : Int) + 1) := by
+  unfold ProtocolPlan.fromConstraintSystem at h
+  simp only [Bind.bind] at h
+  obtain ⟨_dg, _hdg, h⟩ := cert_except_bind_ok h
+  obtain ⟨_lc, _hlc, h⟩ := cert_except_bind_ok h
+  obtain ⟨_nu, _hnu, h⟩ := cert_except_bind_ok h
+  obtain ⟨_nc, _hnc, h⟩ := cert_except_bind_ok h
+  obtain ⟨bf, hbf, h⟩ := cert_except_bind_ok h
+  split at h
+  · rename_i _hfix
+    split at h
+    · cases h
+      exact ⟨bf, hbf, rfl⟩
+    · cases h
+  · cases h
+
+/-- `ConstraintSystemMeta.new` carries `-(blindingFactors + 1)` and the factor is at least six.
+    PROVED. -/
+theorem constraintSystemMeta_new_rotationLast {F : Type} {feat : Features}
+    {cs : ConstraintSystem F} {nb : Nat} {metaOut : ConstraintSystemMeta}
+    (h : ConstraintSystemMeta.new feat cs nb = .ok metaOut) :
+    ∃ bf, cs.blindingFactors = .ok bf ∧ metaOut.rotationLast = -((bf : Int) + 1) ∧ 6 ≤ bf := by
+  unfold ConstraintSystemMeta.new at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨protocol, hproto, h⟩ := cert_except_bind_ok h
+  cases h
+  obtain ⟨bf, hbf, hrot⟩ := fromConstraintSystem_rotationLast hproto
+  exact ⟨bf, hbf, hrot, blindingFactors_ge_six hbf⟩
+
+/-- Every generated render's model reads `numNegLagranges` off the plan meta. PROVED. -/
+theorem model_numNegLagranges_of_generated {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) :
+    R.model.numNegLagranges = R.plan.meta_.rotationLast.natAbs := by
+  have hg := Midfall.LoweringV3.MemoryPairs.gvfp_of_generated h
+  simp only [generateVerifierFromPlan, Bind.bind, Except.bind] at hg
+  split at hg
+  · cases hg
+  · cases hg
+  · obtain ⟨_a1, _, h1⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp hg
+    obtain ⟨_a2, _, h2⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h1
+    obtain ⟨_a3, _, h3⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h2
+    obtain ⟨_a4, _, h4⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h3
+    obtain ⟨_a5, _, h5⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h4
+    obtain ⟨_a6, _, h6⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h5
+    obtain ⟨_a7, _, h7⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h6
+    have hrec := Except.ok.inj h7
+    simpa [numNegLagrangesOf] using (congrArg (fun x => x.numNegLagranges) hrec).symm
+
 /-- `newFromVk`'s plan meta keeps the raw meta's rotation. PROVED. -/
 theorem newFromVk_rotationLast {F : Type} [BEq F] (feat : Features) (field : FieldCtx F)
     (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
@@ -1547,6 +1607,28 @@ theorem newFromVk_rotationLast {F : Type} [BEq F] (feat : Features) (field : Fie
     change q.2.1.rotationLast = rawMeta.rotationLast
     exact Midfall.Generator.metaDataForStableStaticLayout_rotationLast hq
 
+
+theorem env_negLagranges (hg : Generates gi o) (hs : SupportedInput gi) :
+    (renderOf gi o).pv.numNegLagranges = gi.vk.cs.blindingFactors.toOption.getD 0 + 1 := by
+  have hmodel : (renderOf gi o).model.numNegLagranges =
+      (renderOf gi o).plan.meta_.rotationLast.natAbs :=
+    model_numNegLagranges_of_generated (generated_of hg)
+  have hpv : (renderOf gi o).pv.numNegLagranges = (renderOf gi o).model.numNegLagranges := rfl
+  rw [hpv, hmodel]
+  obtain ⟨m0, _payload, hraw, _hgenvk, _hfp, _h4⟩ := generate_spec hg
+  obtain ⟨rawMeta, plan, hraw', hpl, hp⟩ :=
+    Midfall.LoweringV3.MemoryPairs.plan_of_generated (generated_of hg)
+  have hrawEq : rawMeta = m0 := Except.ok.inj (hraw'.symm.trans hraw)
+  have hmeta : (renderOf gi o).plan.meta_.rotationLast = m0.rotationLast := by
+    rw [hp]
+    rw [newFromVk_rotationLast Features.solidity (frFieldCtx gi.E.delta) gi.vk.cs rawMeta
+      gi.cfg.numInstances gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl, hrawEq]
+  obtain ⟨bf, hbf, hrot, _hbfge⟩ := constraintSystemMeta_new_rotationLast hraw
+  have hrot' : (renderOf gi o).plan.meta_.rotationLast.natAbs = bf + 1 := by
+    rw [hmeta, hrot, Int.natAbs_neg]
+    rw [show (↑bf + 1 : Int) = ↑(bf + 1) from by norm_num, Int.natAbs_natCast]
+  rw [hrot', hbf]
+  rfl
 
 theorem payload_header (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.vkDigest = frWord gi.vk.transcriptRepr ∧
@@ -2254,17 +2336,44 @@ theorem prog_transcriptRegionOk (hg : Generates gi o) (hs : SupportedInput gi) :
 /-- D-CERT1 / CERT.6: the `g1_identity` window lies above the zero floor (PG-G1ID). -/
 theorem prog_g1IdentityFloor (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.g1IdentityFloor (renderOf gi o).pv = true := by
-  sorry -- CERT.6 (D4)
+  obtain ⟨meta_, vkMptr, config, _vkBase, hmem, hvk, hsize⟩ :=
+    Midfall.LoweringV3.plan_size_of_generated (generated_of hg)
+  have hvkfloor : 0x1560 ≤ ptrAddr (renderOf gi o).pv.memory.vkMptr := by
+    rw [hmem, Midfall.LoweringV3.MemoryPairs.new_vkMptr, hvk,
+      Midfall.LoweringV3.MemoryPairs.ptrAddr_valueFromNat]
+    exact Midfall.LoweringV3.staticWorkingMemorySizeForMeta_floor meta_ _ hsize
+  have htheta : ptrAddr (renderOf gi o).pv.memory.vkMptr ≤
+      ptrAddr (renderOf gi o).pv.memory.thetaMptr := by
+    rw [hmem, Midfall.LoweringV3.MemoryPairs.new_vkMptr]
+    exact Midfall.LoweringV3.new_theta_ge_vk meta_ _ vkMptr config
+  have hg1 : ptrAddr (renderOf gi o).pv.memory.thetaMptr ≤
+      ptrAddr (renderOf gi o).pv.memory.g1IdentityMptr := by
+    rw [hmem]
+    rw [show ptrAddr (VerifierMemoryLayout.new meta_ (renderOf gi o).pv.vk vkMptr config).g1IdentityMptr =
+      ptrAddr (VerifierMemoryLayout.new meta_ (renderOf gi o).pv.vk vkMptr config).thetaMptr
+        + 209 * wordBytes from rfl]
+    omega
+  unfold Midfall.LoweringV3.g1IdentityFloor
+  rw [decide_eq_true_eq]
+  omega
 
 /-- D-CERT1 / CERT.6: at least two Lagrange denominators (PG-NEGLAG). -/
 theorem prog_negLagrangesFloor (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.negLagrangesFloor (renderOf gi o).pv = true := by
-  sorry -- CERT.6 (D4)
+  unfold Midfall.LoweringV3.negLagrangesFloor
+  rw [decide_eq_true_eq]
+  have hneg := env_negLagranges hg hs
+  obtain ⟨_m0, _payload, hraw, _hgenvk, _hfp, _h4⟩ := generate_spec hg
+  obtain ⟨bf, hbf, _hrot, hbfge⟩ := constraintSystemMeta_new_rotationLast hraw
+  rw [hneg, hbf]
+  simp only [Except.toOption, Option.getD_some]
+  omega
 
 /-- D-CERT1 / CERT.6: one sigma commitment per permutation column (D-P59's repair). -/
 theorem prog_permCommMatchRepaired (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.permCommMatchRepaired (renderOf gi o).vk = true := by
-  sorry -- CERT.6 (D4)
+  show (gi.vk.permutation.commitments.size == gi.vk.cs.permutation.columns.size) = true
+  exact beq_iff_eq.mpr hs.wf.permutationCommitmentsMatch
 
 /-- D-CERT1 / CERT.5: `gas()` occurs only as a call's gas argument (D-P71 addition 1). -/
 theorem prog_gasCallOk (hg : Generates gi o) (hs : SupportedInput gi) :
