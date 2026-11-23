@@ -4612,6 +4612,12 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Logup.Evaluated.queries_point
   [propext, Classical.choice, Quot.sound]
+#assert_axioms mem_mapM
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms fixedQueryFn_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms collectQueries_fixed_point
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
