@@ -1994,6 +1994,57 @@ theorem runsAll_parseTraceLookupMultiplicities_one (E : VerifierEnv p G₁ G₂ 
   rw [List.append_nil] at hb
   exact hb
 
+/-! #### D-GATE12 - the clause spent
+
+`WellFormed.lookupChunkable` is the exact success+nonzero form; these two lemmas turn it into the
+success of `nbParallelLookupsPerChunk` and of `chunkByDegree` itself, and the multiplicity run then
+drops its hypothesis. -/
+
+/-- **D-GATE12, EXISTENTIAL FORM.** The decidable clause gives the `∃ nb` with `0 < nb`. -/
+theorem nbParallelLookupsPerChunk_ok_of_wf {vk : VerifyingKey (Fr p) G₁}
+    (hf : vk.WellFormed Features.solidity) {l : LogupBatchedArgument (Fr p)}
+    (hl : l ∈ vk.cs.lookups.toList) :
+    ∃ nb, l.nbParallelLookupsPerChunk vk.csDegree = .ok nb ∧ 0 < nb := by
+  have h := hf.lookupChunkable l hl
+  cases hb : l.nbParallelLookupsPerChunk vk.csDegree with
+  | error e => rw [hb] at h; cases h
+  | ok nb =>
+      rw [hb] at h
+      exact ⟨nb, rfl, of_decide_eq_true h⟩
+
+/-- `rustChunks` succeeds exactly when the chunk count is nonzero (`logup.rs:329` panics at zero). -/
+theorem rustChunks_ok {α : Type} (n : Nat) (hn : 0 < n) (site : String) (xs : Array α) :
+    ∃ ys, rustChunks n site xs = .ok ys := by
+  unfold rustChunks
+  rw [if_neg (Nat.ne_of_gt hn)]
+  exact ⟨_, rfl⟩
+
+/-- **`chunkByDegree` SUCCEEDS AT EVERY LOOKUP OF A WELL-FORMED KEY.** Both panic sites are
+    excluded: the zero input degree by the `nbParallelLookupsPerChunk` success, the zero chunk
+    count by its positivity. -/
+theorem chunkByDegree_ok_of_wf {vk : VerifyingKey (Fr p) G₁}
+    (hf : vk.WellFormed Features.solidity) {l : LogupBatchedArgument (Fr p)}
+    (hl : l ∈ vk.cs.lookups.toList) :
+    ∃ c, l.chunkByDegree vk.csDegree = .ok c := by
+  obtain ⟨nb, hnb, hpos⟩ := nbParallelLookupsPerChunk_ok_of_wf hf hl
+  unfold LogupBatchedArgument.chunkByDegree
+  rw [hnb]
+  simp only [Except.bind, bind, Except.pure, pure]
+  obtain ⟨ys, hys⟩ := rustChunks_ok nb hpos _ l.inputExpressions
+  rw [hys]
+  exact ⟨_, rfl⟩
+
+/-- **THE MULTIPLICITY RUN, UNCONDITIONAL.** Same statement as
+    `runsAll_parseTraceLookupMultiplicities_one`, with the chunkability hypothesis discharged by
+    `WellFormed.lookupChunkable`. -/
+theorem runsAll_parseTraceLookupMultiplicities_one_of_wf (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (Qs : List G₁) (hlen : Qs.length = vk.cs.lookups.size) :
+    RunsAll E (parseTraceLookupMultiplicities E vk 1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) :=
+  runsAll_parseTraceLookupMultiplicities_one E vk
+    (fun l hl => chunkByDegree_ok_of_wf hf hl) Qs hlen
+
 theorem runsAll_logup_readCommitment (E : VerifierEnv p G₁ G₂ Gₜ)
     (cm : Logup.CommittedMultiplicities G₁) (n : Nat) (Qs : List G₁)
     (hlen : Qs.length = n + 1) :
@@ -4138,6 +4189,10 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_logup_readMultiplicities [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupMultiplicities_fold [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.nbParallelLookupsPerChunk_ok_of_wf [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.rustChunks_ok [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.chunkByDegree_ok_of_wf [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_logup_readCommitment [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupCommitments_row [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupCommitments_rows [propext, Classical.choice, Quot.sound] native []
