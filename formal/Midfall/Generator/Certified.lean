@@ -3273,6 +3273,51 @@ theorem proofLen_lt_of_fromProtocol {meta_ m0 : ConstraintSystemMeta} {L : Proof
   rw [hRep]
   nlinarith [hCCount, hEval, hPoint, Nat.zero_le L.commitmentG1Count]
 
+/-- `fromProtocol`'s `fCom` section is one G1 item. -/
+theorem fromProtocol_fCom_itemCount {protocol : ProtocolPlan} {cptr numEvals numPointSets : Nat}
+    {L : ProofCalldataLayout}
+    (h : ProofCalldataLayout.fromProtocol protocol cptr numEvals numPointSets = .ok L) :
+    L.fCom.itemCount = 1 := by
+  unfold ProofCalldataLayout.fromProtocol at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨x1, _, h1⟩ := cert_except_bind_ok h
+  obtain ⟨x2, _, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨x3, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨x4, _, h4⟩ := cert_except_bind_ok h3
+  obtain ⟨x5, _, h5⟩ := cert_except_bind_ok h4
+  obtain ⟨x6, _, h6⟩ := cert_except_bind_ok h5
+  split at h6
+  · cases h6
+  · cases h6
+    rfl
+
+/-- `fromProtocol`'s `pi` section is one G1 item. -/
+theorem fromProtocol_pi_itemCount {protocol : ProtocolPlan} {cptr numEvals numPointSets : Nat}
+    {L : ProofCalldataLayout}
+    (h : ProofCalldataLayout.fromProtocol protocol cptr numEvals numPointSets = .ok L) :
+    L.pi.itemCount = 1 := by
+  unfold ProofCalldataLayout.fromProtocol at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨x1, _, h1⟩ := cert_except_bind_ok h
+  obtain ⟨x2, _, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨x3, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨x4, _, h4⟩ := cert_except_bind_ok h3
+  obtain ⟨x5, _, h5⟩ := cert_except_bind_ok h4
+  obtain ⟨x6, _, h6⟩ := cert_except_bind_ok h5
+  split at h6
+  · cases h6
+  · cases h6
+    rfl
+
+/-- `divCeil a 32 ≤ a + 1`. -/
+theorem divCeil32_le_succ (a : Nat) : Midfall.Generator.QuotientFoldCompute.divCeil a 32 ≤ a + 1 := by
+  unfold Midfall.Generator.QuotientFoldCompute.divCeil
+  have h32 : (32 == 0) = false := rfl
+  rw [h32]
+  simp only [Bool.false_eq_true, ite_false]
+  have h : a + 31 ≤ 32 * (a + 1) := by nlinarith
+  exact Nat.div_le_of_le_mul h
+
 /-- The render's proof layout length bound, from the count clause. -/
 theorem plan_proofLen_lt {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut}
     (hg : Generates gi o) (hs : SupportedInput gi) :
