@@ -3844,6 +3844,60 @@ theorem bi_front (consts : Inline.Consts) (product : PairingProduct) (g : Extern
       exact hout q (by rcases hq with h | h <;> omega)
     · exact absurd ho hne
 
+/-- The backward loop with a ONE-word remainder (`k = 2`): the guard `second_mptr < mptr` is
+    `ofNat (a+32) < ofNat (a+32)`, false, so the loop runs zero times and is the identity. -/
+theorem bi_backward_loop_zero (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (a : Nat) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 29 1)
+      (fun V _ =>
+        VEnv.get V "mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+        VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)))
+      (fun V st V' st' o => o = .normal ∧ V' = V ∧ st' = st) := by
+  rw [bi_backward_loop_form]
+  simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
+    GenAst.yexpr]
+  intro V st hpre
+  obtain ⟨hmptr, hsecond⟩ := hpre
+  let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
+    fun V' st' o => o = .normal ∧ V' = V ∧ st' = st
+  change Midfall.Yul.WpTac.AllRuns funs V st
+    [Stmt.forLoop []
+      (Expr.builtin Op.lt [Expr.var "second_mptr", Expr.var "mptr"])
+      []
+      [ Stmt.letDecl ["inv"] (some (Expr.builtin Op.mulmod
+          [Expr.var "all_inv", Expr.builtin Op.mload [Expr.var "gp_mptr"], Expr.var "r"]))
+      , Stmt.assign ["all_inv"] (Expr.builtin Op.mulmod
+          [Expr.var "all_inv", Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "r"])
+      , Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var "mptr", Expr.var "inv"])
+      , Stmt.assign ["mptr"] (Expr.builtin Op.sub
+          [Expr.var "mptr", Expr.lit (Literal.number 0x20)])
+      , Stmt.assign ["gp_mptr"] (Expr.builtin Op.sub
+          [Expr.var "gp_mptr", Expr.lit (Literal.number 0x20)]) ]] Q
+  refine Midfall.Yul.LoopRule.allRuns_for_cons_wp (Bridge.Dialect c g)
+    (Midfall.Yul.WpBridge.Bopen c g) (Midfall.Yul.WpBridge.Cnone _)
+    (Midfall.Yul.WpBridge.Bopen_sound c g) (Midfall.Yul.WpBridge.Cnone_sound _)
+    (n := 40) (fun V' st' => V' = V ∧ st' = st) ?hinit ?hstep
+  · exact ⟨rfl, rfl⟩
+  · intro Vi sti hInv
+    obtain ⟨rfl, rfl⟩ := hInv
+    unfold Midfall.Yul.LoopRule.wpIter
+    simp only [Midfall.Yul.Wp.wpE, Midfall.Yul.Wp.wpA, Midfall.Yul.WpBridge.Bopen,
+      stepOp, bin, ter, un, hmptr, hsecond]
+    refine ⟨?gFalse, ?gTrue⟩
+    · intro hguard
+      refine ⟨?allRuns⟩
+      intro V' st' o hrun
+      cases hrun with
+      | seqNil => exact ⟨rfl, by simp [restore], rfl⟩
+    · intro hguard
+      exact absurd (show b2w ((BitVec.ofNat 256 (a + 32)).ult
+          (BitVec.ofNat 256 (a + 32))) = (0 : U256) from by
+        rw [show (BitVec.ofNat 256 (a + 32)).ult (BitVec.ofNat 256 (a + 32)) = false from by
+          rw [BitVec.ult]
+          exact decide_eq_false (Nat.lt_irrefl _)]
+        rfl) hguard
+
 #assert_axioms loadWord_mxMem_below [propext, Classical.choice, Quot.sound]
 #assert_axioms loadWord_mxMem_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms loadWord_copyReturn_mxMem_below [propext, Classical.choice, Quot.sound]
