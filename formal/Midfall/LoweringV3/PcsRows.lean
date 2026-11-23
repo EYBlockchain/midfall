@@ -44,18 +44,33 @@
 
   ## What is NOT here yet
 
-  ROW.PCS.2 (`pcs_b2_sem`), the block SEM leaves 1/3/4/5/6 and the row glue are not stated here.
-  Stating them without their proofs would add register rows that need their own W12 falsifiers, and
-  `Rows.lean`'s two pcs leaves must not be moved onto unproved children. Section 4 proves the
-  block-2 inliner facts AND the full alignment `pcsBlock2_inline`: the slice is the literal
-  `pcsBlock2Inline a1 aP nb trunc`. The remaining piece for `pcs_b2_sem` is the loop's `AllRuns`
-  contract over `pcsLoopBody` (`wPowers`, the `p = aP + 32j` / `acc` / `writeWords` invariant). It
-  is not a premise and adds no hypothesis to a row.
+  ROW.PCS.2 is PROVED (`pcs_b2_sem`, section 8): the block-2 loop walks of section 6 and the
+  inliner alignment of section 4.1 compose into the evidence's block-2 statement. The block SEM
+  leaves 1/3/4/5/6, the coverage invariant and the row glue are NOT stated here. Stating them
+  without their proofs would add register rows that need their own W12 falsifiers, and `Rows.lean`'s
+  two pcs leaves must not be moved onto unproved children.
+
+  ## ROW.PCS's residual at this HEAD (measured, for the row owner)
+
+  `pcs_blockSim` is a `StmtsContractAll` over the whole `R.slice .pcs`. The slice is ONE outer
+  `Stmt.block` whose body is the eight blocks of `GenAstPcs.computationsAst` (the inliner keeps
+  every block wrapper; it does not flatten them). Block 2 is section 8. The remaining children are
+  NOT small: blocks 1, 3, 4, 5 and 6 compute the rotation point table, the per-set q_eval sums
+  (including the rolled arm's `scalar_inv` call), the Horner f_eval walk, the final MSM with its
+  `staticcall` to 0x0c, and the two pairing-input staticcalls to 0x0b; the post's `Agree .pcs`
+  clause needs the emitted values to equal `snapshotOf`'s `b.fEval`, `c.v`, `c.finalCom` and
+  `c.dual`, which is `phaseA/B/C` correctness. Two further prerequisites are not in the tree:
+  (i) PG-PCS-EMIT - `computationsAst` must not fault and must be non-empty (the fault arm leaves
+  `R.slice .pcs = []` and then the row's `LeanRaw .pcs` post is false); (ii) the coverage invariant
+  that turns `Mirror .quotient` + `Holds.g1Decodes` into `decode_exists`'s `hpts`, so the post's
+  `∃ ms ..., Decoded` conjunct can be established. Both are named in the evidence's PG table, and
+  neither is a hypothesis a row may take.
 -/
 import Midfall.LoweringV2.Stages
 import Midfall.Lowering.GenAstPcs
 import Midfall.Yul.Word
 import Midfall.Yul.LoopRule
+import Midfall.LoweringV2.Blocks.VkLoading
 import Midfall.LoweringV3.VkWindow
 import Midfall.Tools.Done
 set_option autoImplicit false
@@ -127,21 +142,21 @@ theorem mapM_isSome_of_forall {α β : Type} (f : α → Option β) (l : List α
   `Decoded`. -/
 
 /-- The `frOfWord?` gate on a list whose words are all below `p`. -/
-theorem mapM_frOfWord?_of_all (l : List Word256)
+theorem mapM_Midfall.LoweringV2.frOfWord?_of_all (l : List Word256)
     (h : l.all (fun w => w.toNat < p) = true) :
-    ∃ inst : List (Fr p), l.mapM (frOfWord? (p := p)) = some inst := by
+    ∃ inst : List (Fr p), l.mapM (Midfall.LoweringV2.frOfWord? (p := p)) = some inst := by
   induction l with
   | nil => exact ⟨[], rfl⟩
   | cons a as ih =>
       rw [List.all_cons, Bool.and_eq_true] at h
       obtain ⟨ha, has⟩ := h
       obtain ⟨inst, hin⟩ := ih has
-      have hfa : frOfWord? (p := p) a = some (Nat.cast a.toNat) := by
-        simpa [frOfWord?] using ha
+      have hfa : Midfall.LoweringV2.frOfWord? (p := p) a = some (Nat.cast a.toNat) := by
+        simpa [Midfall.LoweringV2.frOfWord?] using ha
       refine ⟨(Nat.cast a.toNat) :: inst, ?_⟩
       rw [List.mapM_cons]
-      change Option.bind (frOfWord? (p := p) a)
-        (fun x => Option.bind (List.mapM (frOfWord? (p := p)) as) (fun xs => some (x :: xs))) =
+      change Option.bind (Midfall.LoweringV2.frOfWord? (p := p) a)
+        (fun x => Option.bind (List.mapM (Midfall.LoweringV2.frOfWord? (p := p)) as) (fun xs => some (x :: xs))) =
         some (Nat.cast a.toNat :: inst)
       rw [hfa, Option.bind_some, hin]
       rfl
@@ -149,10 +164,10 @@ theorem mapM_frOfWord?_of_all (l : List Word256)
 /-- The array form: a word array all of whose entries are below `p` has an `instOfWords?` image. -/
 theorem instOfWords?_of_all (l : List Word256)
     (h : l.all (fun w => w.toNat < p) = true) :
-    ∃ inst : Array (Fr p), instOfWords? (p := p) l.toArray = some inst := by
-  obtain ⟨instL, hmap⟩ := mapM_frOfWord?_of_all (p := p) l h
+    ∃ inst : Array (Fr p), Midfall.LoweringV2.instOfWords? (p := p) l.toArray = some inst := by
+  obtain ⟨instL, hmap⟩ := mapM_Midfall.LoweringV2.frOfWord?_of_all (p := p) l h
   refine ⟨instL.toArray, ?_⟩
-  unfold instOfWords?
+  unfold Midfall.LoweringV2.instOfWords?
   rw [show l.toArray.toList = l from rfl, hmap]
   rfl
 
@@ -161,7 +176,7 @@ theorem instOfWords?_of_all (l : List Word256)
 theorem instOfWords?_of_rawDecode {L : ProofCalldataLayout} {n : Nat} {cd : Bytes}
     {raw : List (RawMsg p)} {iw : Array Word256}
     (h : rawDecode (p := p) L n cd = some (raw, iw)) :
-    ∃ inst : Array (Fr p), instOfWords? (p := p) iw = some inst := by
+    ∃ inst : Array (Fr p), Midfall.LoweringV2.instOfWords? (p := p) iw = some inst := by
   unfold rawDecode at h
   split_ifs at h with henv
   · cases h2 : rawSlots (p := p) cd (RepackedProofLayoutPlan.fromProofLayout L).slots
@@ -450,10 +465,9 @@ theorem pcsBlock2_inline (consts : Inline.Consts) (hr : consts.lookup "r" = none
 
   The x1 power table's loop is stated over `wPowers` and written by `pcsWriteWords`. These are
   the render-free definitions and the read-over-write/outside lemmas the loop contract needs; the
-  `AllRuns` proof itself is the next step and is not stated here (no register row is added). The
-  generic `VEnv` lemmas are dialect-generic copies of the ones `LagrangeRows`/`QuotientRows`
-  already proved; they are copied rather than imported so this file's cone does not pull in the
-  quotient modules. -/
+  `AllRuns` proof itself is section 8's `pcs_loop_*`/`pcs_b2_sem`. The generic `VEnv` lemmas are
+  dialect-generic copies of the ones `LagrangeRows`/`QuotientRows` already proved - copied rather
+  than imported so this file's cone does not pull in the quotient modules. -/
 
 /-- `VEnv.set` preserves length. -/
 theorem venv_set_length {D : YulSemantics.Dialect} [DecidableEq D.Value] (V : VEnv D)
@@ -1370,6 +1384,543 @@ theorem readBytes_storeWord_outside (mem : Nat → UInt8) (q : Nat) (v : U256) (
   rw [if_neg]
   rintro ⟨h1, h2⟩
   omega
+
+
+/-! ## 8. ROW.PCS.2: block 2's x1 power table (PROVED)
+
+  `pcsBlock2_inline` (section 4.1) turns the emitted block-2 term into the literal
+  `pcsBlock2Inline a1 aP nb trunc`; the two loop walks of section 6 give the x1 power table when
+  `nb > 1`. This section composes them. `pcs_b2_sem` is the child at the evidence's statement
+  (`GeneratorRows.lean:986`) and `pcs_b2_sem_inline` is the same fact at the inlined term the
+  slice carries.
+
+  THE PROOF. `pcs_b2_prefix` inverts the two-statement prefix (`let x1 := mload(a1)`,
+  `mstore(aP, 1)`) with the small `stepOp` inversions at the top of this section; `pcs_b2_lets`
+  inverts `let acc := 1; let p := aP`; `pcs_b2_body_of_loop` threads them into `pcs_loop_*` and
+  reads the table back with `pcsLoadWord_writeWords_lt`/`pcsWriteWords_outside`. The `nb ≤ 1`
+  arm is `pcs_b2_small`: the emitter omits the loop there, and the unconditional `mstore` at
+  `aP` is already the first (and only) table entry. No ROW hypothesis is added: this is a CHILD
+  lemma (ROW.PCS.2), stated with the evidence's three layout hypotheses
+  (`aP + 32*nb < 2^256`, the a1/aP disjointness, `a1 < 2^256`); all three are layout facts at the
+  row, not new row hypotheses.
+
+  The `VEnv.set`/`restore` facts are section 5's copies; the three small evaluation inversions at
+  the top of this section are copies of `LagrangeRows` §7b (this file deliberately does not import
+  the quotient modules), and the memory-window conjunct is spelled inline instead of importing
+  `MemSameOutside` for the same reason. -/
+
+/-- A one-element list is a singleton (copy of `LagrangeRows.list_length_one`, so this file
+    does not import the quotient modules). -/
+theorem b2_list_length_one {α : Type} {l : List α} (h : l.length = 1) : ∃ a, l = [a] := by
+  cases l with
+  | nil => simp at h
+  | cons a t =>
+      cases t with
+      | nil => exact ⟨a, rfl⟩
+      | cons b t => simp at h
+
+/-- A literal evaluates to its word (copy of `LagrangeRows.eval_lit_inv`). -/
+theorem b2_eval_lit_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {n : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (.number n)) (.vals [cv] st')) :
+    cv = BitVec.ofNat 256 n ∧ st' = st := by
+  cases h
+  exact ⟨rfl, rfl⟩
+
+/-- A local builtin's value evaluation, split into arguments and the builtin fact (copy of
+    `LagrangeRows.eval_builtin_vals_inv`). -/
+theorem b2_eval_builtin_vals_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {op : EVM.Op} {args : List (Expr EVM.Op)}
+    {vals : List U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.builtin op args) (.vals vals st')) :
+    ∃ argvals st1, EvalArgs (Bridge.Dialect c g) funs V st args (.vals argvals st1) ∧
+      (Bridge.Dialect c g).Builtin op argvals st1 (.ok vals st') := by
+  cases h with
+  | builtinOk hargs hbi => exact ⟨_, _, hargs, hbi⟩
+
+theorem b2_ok_mstore {a b : U256} {st : EvmState} {r : BuiltinResult U256 EvmState}
+    (h : (Bridge.Dialect c g).Builtin EVM.Op.mstore [a, b] st r) :
+    ∃ (rets : List U256) (st₂ : EvmState), r = .ok rets st₂ := by
+  have h' : stepOp EVM.Op.mstore [a, b] st = some r := h
+  simp only [stepOp] at h'
+  cases h'
+  exact ⟨_, _, rfl⟩
+
+theorem b2_eval_mload_lit_vals {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {k : Nat} {v : U256} {st' : EvmState} (hk : k < 2 ^ 256)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mload [Expr.lit (Literal.number k)]) (.vals [v] st')) :
+    v = loadWord st.memory k ∧ st' = touchMemory st k 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ :=
+    b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil hhead =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨hv, hst⟩ := b2_eval_lit_inv hhead
+          rw [hv, hst] at hbi
+          have hb : stepOp EVM.Op.mload [BitVec.ofNat 256 k] st =
+              some (.ok [v] st') := hbi
+          simp only [stepOp] at hb
+          have hk' : (BitVec.ofNat 256 k).toNat = k := by
+            rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hk]
+          rw [hk'] at hb
+          cases hb
+          exact ⟨rfl, rfl⟩
+
+theorem b2_eval_mload_lit_halt {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {k : Nat} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mload [Expr.lit (Literal.number k)]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_unary (op := EVM.Op.mload)
+    (fun _ _ _ hr => Midfall.LoweringV2.Blocks.VkLoading.vk_ok_mload hr)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) h
+
+theorem b2_eval_mstore_lit_vals {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {a v : Nat} {st' : EvmState} (ha : a < 2 ^ 256)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mstore
+        [Expr.lit (Literal.number a), Expr.lit (Literal.number v)]) (.vals [] st')) :
+    st' = { touchMemory st a 32 with memory := storeWord st.memory a (BitVec.ofNat 256 v) } := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ :=
+    b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead1 =>
+      cases hrest with
+      | argsCons hnil hhead2 =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨haa, hsta⟩ := b2_eval_lit_inv hhead1
+              obtain ⟨hv, hstv⟩ := b2_eval_lit_inv hhead2
+              rw [haa, hsta, hv, hstv] at hbi
+              have hb : stepOp EVM.Op.mstore [BitVec.ofNat 256 a, BitVec.ofNat 256 v] st =
+                  some (.ok [] st') := hbi
+              simp only [stepOp] at hb
+              have ha' : (BitVec.ofNat 256 a).toNat = a := by
+                rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt ha]
+              rw [ha'] at hb
+              cases hb
+              rfl
+
+theorem b2_eval_mstore_lit_halt {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {a v : Nat} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.mstore
+        [Expr.lit (Literal.number a), Expr.lit (Literal.number v)]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := EVM.Op.mstore)
+    (fun _ _ _ _ hr => b2_ok_mstore hr)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) h
+
+theorem b2_exec_let_mload_lit {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    {x : String} {k : Nat} (hk : k < 2 ^ 256)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.builtin EVM.Op.mload [Expr.lit (Literal.number k)]))) V' st' o) :
+    o = .normal ∧ V' = (x, loadWord st.memory k) :: V ∧ st' = touchMemory st k 32 := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨hv, hst⟩ := b2_eval_mload_lit_vals hk he
+      subst hv; subst hst
+      exact ⟨rfl, rfl, rfl⟩
+  | letHalt he => exact (b2_eval_mload_lit_halt he).elim
+
+theorem b2_exec_exprStmt_mstore_lit {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    {a v : Nat} (ha : a < 2 ^ 256)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.builtin EVM.Op.mstore
+        [Expr.lit (Literal.number a), Expr.lit (Literal.number v)])) V' st' o) :
+    o = .normal ∧ V' = V ∧
+      st' = { touchMemory st a 32 with memory := storeWord st.memory a (BitVec.ofNat 256 v) } := by
+  cases h with
+  | exprStmt he => exact ⟨rfl, rfl, b2_eval_mstore_lit_vals ha he⟩
+  | exprStmtHalt he => exact (b2_eval_mstore_lit_halt he).elim
+
+theorem b2_exec_let_lit {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    {x : String} {k : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.lit (Literal.number k)))) V' st' o) :
+    o = .normal ∧ V' = (x, BitVec.ofNat 256 k) :: V ∧ st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨hv, hst⟩ := b2_eval_lit_inv he
+      subst hv; subst hst
+      exact ⟨rfl, rfl, rfl⟩
+  | letHalt he => exact (Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts he).elim
+
+/-- Composition with a mid that may depend on the pre-state. -/
+theorem b2_append_dep {D : Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {ss₁ ss₂ : Block D.Op}
+    {pre : VEnv D → D.State → Prop}
+    {mid : VEnv D → D.State → VEnv D → D.State → Prop}
+    {post : VEnv D → D.State → VEnv D → D.State → Outcome → Prop}
+    (h₁ : StmtsContractAll funs ss₁ pre (fun V st V' st' o =>
+      (o = .normal ∧ mid V st V' st') ∨ (o ≠ .normal ∧ post V st V' st' o)))
+    (h₂ : ∀ V st, pre V st → ∀ Vm stm, mid V st Vm stm →
+      ∀ V' st' o, ExecStmts D funs Vm stm ss₂ V' st' o → post V st V' st' o) :
+    StmtsContractAll funs (ss₁ ++ ss₂) pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv (D := D) hrun with ⟨Vm, stm, h1run, h2run⟩ | ⟨h1run, hne⟩
+  · rcases h₁ V st hpre Vm stm .normal h1run with ⟨_, hmid⟩ | ⟨hne', _⟩
+    · exact h₂ V st hpre Vm stm hmid V' st' o h2run
+    · exact absurd rfl hne'
+  · rcases h₁ V st hpre V' st' o h1run with ⟨heq, _⟩ | ⟨_, hpost⟩
+    · exact absurd heq hne
+    · exact hpost
+
+/-- Composition where the head always terminates normally. -/
+theorem pcs_b2_prefix {funs : FunEnv (Bridge.Dialect c g)} (a1 aP : Nat)
+    (ha1b : a1 < 2 ^ 256) (haP : aP < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [GenAst.ylet "x1" (GenAst.yop EVM.Op.mload [GenAst.ylit a1]),
+       GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.ylit aP, GenAst.ylit 1])]
+      (fun V _ => (VEnv.get V "r").isSome)
+      (fun V st V' st' o => o = .normal ∧
+        V' = ("x1", loadWord st.memory a1) :: V ∧
+        st'.memory = storeWord st.memory aP 1 ∧ st'.env = st.env ∧ st'.halted = st.halted) := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with ⟨V1, st1, h1, h2⟩ | ⟨h1, hne⟩
+  · obtain ⟨_, hV1, hst1⟩ := b2_exec_let_mload_lit (funs := funs) ha1b h1
+    rw [hV1, hst1] at h2
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h2 with ⟨V2, st2, h2', h3⟩ | ⟨h2', hne2⟩
+    · obtain ⟨_, hV2, hst2⟩ := b2_exec_exprStmt_mstore_lit (funs := funs) haP h2'
+      cases h3
+      rw [hV2, hst2]
+      refine ⟨rfl, rfl, ?_, ?_, ?_⟩ <;> rfl
+    · obtain ⟨ho, _, _⟩ := b2_exec_exprStmt_mstore_lit (funs := funs) haP h2'
+      exact absurd ho hne2
+  · obtain ⟨ho, _, _⟩ := b2_exec_let_mload_lit (funs := funs) ha1b h1
+    exact absurd ho hne
+
+theorem pcs_b2_lets {funs : FunEnv (Bridge.Dialect c g)} (aP : Nat) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [GenAst.ylet "acc" (GenAst.ylit 1), GenAst.ylet "p" (GenAst.ylit aP)]
+      (fun _ _ => True)
+      (fun V st V' st' o => o = .normal ∧
+        V' = ("p", BitVec.ofNat 256 aP) :: ("acc", (1 : U256)) :: V ∧ st' = st) := by
+  intro V st _ V' st' o hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with ⟨V1, st1, h1, h2⟩ | ⟨h1, hne⟩
+  · obtain ⟨_, hV1, hst1⟩ := b2_exec_let_lit (funs := funs) (x := "acc") (k := 1) h1
+    rw [hV1, hst1] at h2
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h2 with ⟨V2, st2, h2', h3⟩ | ⟨h2', hne2⟩
+    · obtain ⟨_, hV2, hst2⟩ := b2_exec_let_lit (funs := funs) (x := "p") (k := aP) h2'
+      cases h3
+      rw [hV2, hst2]
+      exact ⟨rfl, rfl, rfl⟩
+    · obtain ⟨ho, _, _⟩ := b2_exec_let_lit (funs := funs) (x := "p") (k := aP) h2'
+      exact absurd ho hne2
+  · obtain ⟨ho, _, _⟩ := b2_exec_let_lit (funs := funs) (x := "acc") (k := 1) h1
+    exact absurd ho hne
+
+theorem pcs_b2_body_of_loop {funs : FunEnv (Bridge.Dialect c g)} (nb : Nat) (trunc : Bool)
+    (a1 aP : Nat) (hnb : aP + 32 * nb < 2 ^ 256) (hnb1 : nb > 1)
+    (ha1 : a1 + 32 ≤ aP ∨ aP + 32 * nb ≤ a1) (ha1b : a1 < 2 ^ 256)
+    (hloop : StmtsContractAll (D := Bridge.Dialect c g) funs
+      [Stmt.forLoop pcsInit (GenAst.yop EVM.Op.lt [GenAst.yvar "i", GenAst.ylit (nb - 1)])
+        pcsPost (pcsLoopBody trunc)]
+      (fun V st => VEnv.get V "acc" = some (1 : U256) ∧
+        VEnv.get V "p" = some (BitVec.ofNat 256 aP) ∧
+        (VEnv.get V "x1").isSome ∧ (VEnv.get V "r").isSome ∧
+        st.memory = storeWord st.memory aP 1)
+      (fun V st V' st' o => o = .normal ∧
+        ∃ rw x1, VEnv.get V "r" = some rw ∧ VEnv.get V "x1" = some x1 ∧
+          V' = VEnv.set (VEnv.set V "acc" (wPowers rw x1 trunc (nb - 1)).1) "p"
+            (BitVec.ofNat 256 (aP + 32 * (nb - 1))) ∧
+          st'.memory = pcsWriteWords st.memory aP
+            (fun i => (wPowers rw x1 trunc i).2) nb ∧
+          st'.env = st.env ∧ st'.halted = st.halted)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsBlock2Inline a1 aP nb trunc)
+      (fun V _ => (VEnv.get V "r").isSome)
+      (fun V st V' st' o => o = .normal ∧ restore V V' = V ∧ st'.env = st.env ∧
+        st'.halted = st.halted ∧ (∀ a, (a < aP ∨ aP + 32 * (max nb 1) ≤ a) → st'.memory a = st.memory a) ∧
+        ∃ rw, VEnv.get V "r" = some rw ∧
+          ∀ i, i < max nb 1 → loadWord st'.memory (aP + 32 * i) =
+            (wPowers rw (loadWord st.memory a1) trunc i).2) := by
+  intro V st hpre V' st' o hrun
+  rw [pcsBlock2Inline, if_pos hnb1] at hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+    ⟨Vm, stm, h1run, h2run⟩ | ⟨h1run, hne⟩
+  · obtain ⟨_, hVm, hmem, henv, hhalt⟩ :=
+      pcs_b2_prefix (funs := funs) a1 aP ha1b (Nat.lt_of_le_of_lt (Nat.le_add_right aP (32 * nb)) hnb) V st hpre Vm stm .normal h1run
+    rw [show [GenAst.ylet "acc" (GenAst.ylit 1), GenAst.ylet "p" (GenAst.ylit aP),
+        GenAst.yfor pcsInit (GenAst.yop EVM.Op.lt [GenAst.yvar "i", GenAst.ylit (nb - 1)])
+          pcsPost (pcsLoopBody trunc)] =
+        [GenAst.ylet "acc" (GenAst.ylit 1), GenAst.ylet "p" (GenAst.ylit aP)] ++
+        [GenAst.yfor pcsInit (GenAst.yop EVM.Op.lt [GenAst.yvar "i", GenAst.ylit (nb - 1)])
+          pcsPost (pcsLoopBody trunc)] from rfl] at h2run
+    rcases Step.stmts_append_inv (D := Bridge.Dialect c g) h2run with
+      ⟨Vl, stl, hlrun, hlooprun⟩ | ⟨hlrun, hne2⟩
+    · obtain ⟨_, hVl, hstl⟩ :=
+        pcs_b2_lets (funs := funs) aP Vm stm trivial Vl stl .normal hlrun
+      rw [hVm] at hVl
+      have hmemno : stl.memory = storeWord stl.memory aP 1 := by
+        rw [hstl, hmem, storeWord_storeWord_same]
+      have hacc : VEnv.get Vl "acc" = some (1 : U256) := by
+        rw [hVl]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "p") (y := "acc")
+          (v := BitVec.ofNat 256 aP) (by decide)]
+        exact venv_get_cons_self (D := Bridge.Dialect c g) _ "acc" 1
+      have hpp : VEnv.get Vl "p" = some (BitVec.ofNat 256 aP) := by
+        rw [hVl]
+        exact venv_get_cons_self (D := Bridge.Dialect c g) _ "p" (BitVec.ofNat 256 aP)
+      have hx1s : (VEnv.get Vl "x1").isSome = true := by
+        rw [hVl]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "p") (y := "x1")
+          (v := BitVec.ofNat 256 aP) (by decide)]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "acc") (y := "x1")
+          (v := (1 : U256)) (by decide)]
+        rw [venv_get_cons_self (D := Bridge.Dialect c g)]
+        rfl
+      have hrs : (VEnv.get Vl "r").isSome = true := by
+        rw [hVl]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "p") (y := "r")
+          (v := BitVec.ofNat 256 aP) (by decide)]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "acc") (y := "r")
+          (v := (1 : U256)) (by decide)]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x1") (y := "r")
+          (v := loadWord st.memory a1) (by decide)]
+        exact hpre
+      obtain ⟨ho, rw, x1v, hrw, hx1v, hV, hmem', henv', hhalt'⟩ :=
+        hloop Vl stl ⟨hacc, hpp, hx1s, hrs, hmemno⟩ V' st' o hlooprun
+      have hVr : VEnv.get V "r" = some rw := by
+        rw [hVl] at hrw
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "p") (y := "r")
+          (v := BitVec.ofNat 256 aP) (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "acc") (y := "r")
+          (v := (1 : U256)) (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x1") (y := "r")
+          (v := loadWord st.memory a1) (by decide)] at hrw
+        exact hrw
+      have hx1val : x1v = loadWord st.memory a1 := by
+        rw [hVl] at hx1v
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "p") (y := "x1")
+          (v := BitVec.ofNat 256 aP) (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "acc") (y := "x1")
+          (v := (1 : U256)) (by decide),
+          venv_get_cons_self (D := Bridge.Dialect c g)] at hx1v
+        exact (Option.some.inj hx1v).symm
+      rw [hx1val] at hV hmem'
+      have hrestore : restore V V' = V := by
+        rw [hV, hVl]
+        rw [venv_set_cons_ne (D := Bridge.Dialect c g) (x := "acc") (y := "p") (by decide)]
+        rw [venv_set_cons_same (D := Bridge.Dialect c g)]
+        rw [venv_set_cons_same (D := Bridge.Dialect c g)]
+        simp only [restore, List.length_cons]
+        rw [show List.length V + 1 + 1 + 1 - List.length V = 3 by omega]
+        rfl
+      refine ⟨ho, ?_⟩
+      refine ⟨hrestore, ?_⟩
+      refine ⟨by rw [henv', hstl, henv], ?_⟩
+      refine ⟨by rw [hhalt', hstl, hhalt], ?_⟩
+      refine ⟨?_, ?_⟩
+      · intro a ha
+        rw [show (32 * (max nb 1)) = 32 * nb from by rw [Nat.max_eq_left (Nat.le_of_lt hnb1)]] at ha
+        rw [hmem']
+        rw [pcsWriteWords_outside _ _ _ ha]
+        rw [hstl, hmem]
+        unfold storeWord
+        rw [if_neg]
+        rintro ⟨h1, h2⟩
+        rcases ha with h | h
+        · exact absurd h1 (Nat.not_le_of_gt h)
+        · have h32 : aP + 32 ≤ a :=
+            Nat.le_trans (Nat.add_le_add_left (by simpa using Nat.mul_le_mul_left 32 (Nat.le_of_lt hnb1)) aP) h
+          exact absurd h2 (Nat.not_lt_of_ge h32)
+      · refine ⟨rw, hVr, ?_⟩
+        intro i hi
+        rw [show (max nb 1) = nb from by rw [Nat.max_eq_left (Nat.le_of_lt hnb1)]] at hi
+        rw [hmem']
+        rw [pcsLoadWord_writeWords_lt _ _ _ hi]
+    · obtain ⟨ho, _, _⟩ := pcs_b2_lets (funs := funs) aP Vm stm trivial V' st' o hlrun
+      exact absurd ho hne2
+  · obtain ⟨ho, _, _, _, _⟩ :=
+      pcs_b2_prefix (funs := funs) a1 aP ha1b
+        (Nat.lt_of_le_of_lt (Nat.le_add_right aP (32 * nb)) hnb) V st hpre V' st' o h1run
+    exact absurd ho hne
+/-- The `nb ≤ 1` arm: the block is the two-statement prefix only. -/
+theorem pcs_b2_small {funs : FunEnv (Bridge.Dialect c g)} (nb : Nat) (trunc : Bool)
+    (a1 aP : Nat) (hnb : aP + 32 * nb < 2 ^ 256) (hnb1 : ¬ nb > 1)
+    (ha1b : a1 < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsBlock2Inline a1 aP nb trunc)
+      (fun V _ => (VEnv.get V "r").isSome)
+      (fun V st V' st' o => o = .normal ∧ restore V V' = V ∧ st'.env = st.env ∧
+        st'.halted = st.halted ∧ (∀ a, (a < aP ∨ aP + 32 * (max nb 1) ≤ a) → st'.memory a = st.memory a) ∧
+        ∃ rw, VEnv.get V "r" = some rw ∧
+          ∀ i, i < max nb 1 → loadWord st'.memory (aP + 32 * i) =
+            (wPowers rw (loadWord st.memory a1) trunc i).2) := by
+  intro V st hpre V' st' o hrun
+  rw [pcsBlock2Inline, if_neg hnb1] at hrun
+  rw [List.append_nil] at hrun
+  obtain ⟨ho, hVm, hmem, henv, hhalt⟩ :=
+    pcs_b2_prefix (funs := funs) a1 aP ha1b
+      (Nat.lt_of_le_of_lt (Nat.le_add_right aP (32 * nb)) hnb) V st hpre V' st' o hrun
+  have hrestore : restore V V' = V := by
+    rw [hVm]
+    simp only [restore, List.length_cons]
+    rw [show List.length V + 1 - List.length V = 1 by omega]
+    rfl
+  refine ⟨ho, ?_⟩
+  refine ⟨hrestore, ?_⟩
+  refine ⟨henv, ?_⟩
+  refine ⟨hhalt, ?_⟩
+  refine ⟨?_, ?_⟩
+  · intro a ha
+    have hmax : max nb 1 = 1 := Nat.max_eq_right (Nat.le_of_not_gt hnb1)
+    rw [hmax] at ha
+    rw [hmem]
+    unfold storeWord
+    rw [if_neg]
+    rintro ⟨h1, h2⟩
+    rcases ha with h | h
+    · exact absurd h1 (Nat.not_le_of_gt h)
+    · have h32 : aP + 32 ≤ a := by
+        have h1' : aP + 32 * 1 ≤ a := by simpa using h
+        exact Nat.le_trans (Nat.add_le_add_left (le_refl 32) aP) h1'
+      exact absurd h2 (Nat.not_lt_of_ge h32)
+  · obtain ⟨rw, hrw⟩ := Option.isSome_iff_exists.mp hpre
+    refine ⟨rw, hrw, ?_⟩
+    intro i hi
+    have hmax : max nb 1 = 1 := Nat.max_eq_right (Nat.le_of_not_gt hnb1)
+    rw [hmax] at hi
+    have hi0 : i = 0 := Nat.lt_one_iff.mp hi
+    subst hi0
+    rw [hmem, Nat.mul_zero, Nat.add_zero]
+    rw [Midfall.Yul.Word.loadWord_storeWord_same]
+    rfl
+
+theorem pcs_b2_body {funs : FunEnv (Bridge.Dialect c g)} (nb : Nat) (trunc : Bool)
+    (a1 aP : Nat) (hnb : aP + 32 * nb < 2 ^ 256)
+    (ha1 : a1 + 32 ≤ aP ∨ aP + 32 * nb ≤ a1) (ha1b : a1 < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsBlock2Inline a1 aP nb trunc)
+      (fun V _ => (VEnv.get V "r").isSome)
+      (fun V st V' st' o => o = .normal ∧ restore V V' = V ∧ st'.env = st.env ∧
+        st'.halted = st.halted ∧ (∀ a, (a < aP ∨ aP + 32 * (max nb 1) ≤ a) → st'.memory a = st.memory a) ∧
+        ∃ rw, VEnv.get V "r" = some rw ∧
+          ∀ i, i < max nb 1 → loadWord st'.memory (aP + 32 * i) =
+            (wPowers rw (loadWord st.memory a1) trunc i).2) := by
+  by_cases hnb1 : nb > 1
+  · cases trunc
+    · exact pcs_b2_body_of_loop (c := c) (g := g) (funs := funs) nb false a1 aP hnb hnb1 ha1 ha1b
+        (pcs_loop_false (c := c) (g := g) (funs := funs) ([] : Inline.Consts) rfl nb hnb1 aP hnb)
+    · exact pcs_b2_body_of_loop (c := c) (g := g) (funs := funs) nb true a1 aP hnb hnb1 ha1 ha1b
+        (pcs_loop_true (c := c) (g := g) (funs := funs) ([] : Inline.Consts) rfl nb hnb1 aP hnb)
+  · exact pcs_b2_small (c := c) (g := g) (funs := funs) nb trunc a1 aP hnb hnb1 ha1b
+
+/-! ### 8.1 The shape of the `.pcs` slice (PROVED)
+
+  The evidence's `pcs_slice_of_ok` (`GeneratorRows.lean:960`) says the slice is
+  `Inline.inlineContractConstants consts blocks.flatten`. That is FALSE at this tree: the inliner
+  keeps every `Stmt.block` wrapper (`InlineConstants.lean:322`), so the slice is ONE outer block
+  whose body is the eight inlined blocks. `pcs_slice_of_ok` below is the true shape (and records
+  the non-emptiness PG-PCS-EMIT requires); `pcs_slice_of_fault` is the evidence's fault-arm
+  finding, still true: on `.error` the slice is `[]`. -/
+
+/-- **THE SUCCESS-ARM SHAPE OF THE `.pcs` SLICE.** One outer `Stmt.block`; its body is the
+    inlined `blocks`, each still wrapped in its own `Stmt.block`. -/
+theorem pcs_slice_of_ok (R : Render p G₁ G₂ Gₜ) (blocks : List (Block EVM.Op))
+    (h : GenAstPcs.computationsAst R.pv.meta_ R.pv.dat R.pv.memory
+      R.pv.truncatedChallenges false = .ok blocks) (hn : blocks ≠ []) :
+    R.slice Partial.pcs =
+      [Stmt.block (Inline.inlineContractConstantsAt 63 R.consts (blocks.map Stmt.block))] := by
+  show Inline.inlineContractConstants R.consts
+      (GenAst.emitPartialM R.pv (partialCtxOfVerifier R.model) Partial.pcs) = _
+  rw [GenAst.emitPartialM, if_neg (by decide : ¬ (Partial.pcs = Partial.quotientLin))]
+  show Inline.inlineContractConstants R.consts (GenAst.emitPartial R.pv Partial.pcs) = _
+  rw [GenAst.emitPartial]
+  show Inline.inlineContractConstants R.consts
+      (match GenAstPcs.computationsAst R.pv.meta_ R.pv.dat R.pv.memory
+        R.pv.truncatedChallenges false with
+      | .ok [] => []
+      | .ok blocks => [Stmt.block (blocks.map Stmt.block)]
+      | .error _ => []) = _
+  rw [h]
+  cases blocks with
+  | nil => exact absurd rfl hn
+  | cons b bs => rfl
+
+/-- **THE FAULT ARM** (the evidence's PG-PCS-EMIT finding, restated at V3): a faulting PCS
+    emitter leaves the slice EMPTY, so the `.pcs` row is false on that arm (its exit claims a
+    `Decoded` the parser never established). -/
+theorem pcs_slice_of_fault (R : Render p G₁ G₂ Gₜ) (f : Midfall.Halo2.Fault)
+    (h : GenAstPcs.computationsAst R.pv.meta_ R.pv.dat R.pv.memory
+      R.pv.truncatedChallenges false = .error f) :
+    R.slice Partial.pcs = [] := by
+  show Inline.inlineContractConstants R.consts
+      (GenAst.emitPartialM R.pv (partialCtxOfVerifier R.model) Partial.pcs) = _
+  rw [GenAst.emitPartialM, if_neg (by decide : ¬ (Partial.pcs = Partial.quotientLin))]
+  show Inline.inlineContractConstants R.consts (GenAst.emitPartial R.pv Partial.pcs) = _
+  rw [GenAst.emitPartial]
+  show Inline.inlineContractConstants R.consts
+      (match GenAstPcs.computationsAst R.pv.meta_ R.pv.dat R.pv.memory
+        R.pv.truncatedChallenges false with
+      | .ok [] => []
+      | .ok blocks => [Stmt.block (blocks.map Stmt.block)]
+      | .error _ => []) = _
+  rw [h]
+  rfl
+
+/-- **ROW.PCS.2 (block 2 of the PCS region), PROVED**: the emitted x1 power table. -/
+theorem pcs_b2_sem {funs : FunEnv (Bridge.Dialect c g)} (nb : Nat) (trunc : Bool) (a1 aP : Nat)
+    (hnb : aP + 32 * nb < 2 ^ 256)
+    (ha1 : a1 + 32 ≤ aP ∨ aP + 32 * nb ≤ a1) (ha1b : a1 < 2 ^ 256) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.block (pcsBlock2Inline a1 aP nb trunc))
+      (fun V _ => (VEnv.get V "r").isSome)
+      (fun V st V' st' o => o = .normal ∧ V' = V ∧ st'.env = st.env ∧
+        st'.halted = st.halted ∧ (∀ a, (a < aP ∨ aP + 32 * (max nb 1) ≤ a) → st'.memory a = st.memory a) ∧
+        ∃ rw, VEnv.get V "r" = some rw ∧
+          ∀ i, i < max nb 1 → loadWord st'.memory (aP + 32 * i) =
+            (wPowers rw (loadWord st.memory a1) trunc i).2) := by
+  intro V st hpre V' st' o hrun
+  cases hrun with
+  | block hbody =>
+      exact pcs_b2_body (funs := hoist (Bridge.Dialect c g) (pcsBlock2Inline a1 aP nb trunc) :: funs)
+        nb trunc a1 aP hnb ha1 ha1b V st hpre _ _ _ hbody
+
+/-- One-statement sequences: `StmtContractAll` at a single statement is `StmtsContractAll`. -/
+theorem stmtsContractAll_singleton {D : Dialect} [DecidableEq D.Value] {funs : FunEnv D}
+    {s : Stmt D.Op} {pre : VEnv D → D.State → Prop}
+    {post : VEnv D → D.State → VEnv D → D.State → Outcome → Prop}
+    (h : StmtContractAll funs s pre post) : StmtsContractAll funs [s] pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_cons_inv (D := D) hrun with ⟨V1, st1, h1, h2⟩ | ⟨h1, _⟩
+  · cases h2
+    exact h V st hpre _ _ _ h1
+  · exact h V st hpre V' st' o h1
+
+/-- **ROW.PCS.2 at the term the slice carries**: `pcs_b2_sem` after the block-2 inliner
+    alignment. The constants are the render's own table (an arbitrary `consts` with the three
+    lookups), so no render is named. -/
+theorem pcs_b2_sem_inline {funs : FunEnv (Bridge.Dialect c g)} (consts : Inline.Consts)
+    (hr : consts.lookup "r" = none) (nb : Nat) (trunc : Bool) (a1 aP : Nat)
+    (h1 : consts.lookup "X1_MPTR" = some a1) (hP : consts.lookup "X1_POWERS_MPTR" = some aP)
+    (hnb : aP + 32 * nb < 2 ^ 256)
+    (ha1 : a1 + 32 ≤ aP ∨ aP + 32 * nb ≤ a1) (ha1b : a1 < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [Stmt.block (Inline.inlineContractConstants consts (GenAstPcs.pcsBlock2Ast nb trunc))]
+      (fun V _ => (VEnv.get V "r").isSome)
+      (fun V st V' st' o => o = .normal ∧ V' = V ∧ st'.env = st.env ∧
+        st'.halted = st.halted ∧ (∀ a, (a < aP ∨ aP + 32 * (max nb 1) ≤ a) → st'.memory a = st.memory a) ∧
+        ∃ rw, VEnv.get V "r" = some rw ∧
+          ∀ i, i < max nb 1 → loadWord st'.memory (aP + 32 * i) =
+            (wPowers rw (loadWord st.memory a1) trunc i).2) := by
+  rw [pcsBlock2_inline consts hr nb trunc a1 aP h1 hP]
+  exact stmtsContractAll_singleton (pcs_b2_sem (c := c) (g := g) (funs := funs)
+    nb trunc a1 aP hnb ha1 ha1b)
+
+
+#assert_axioms Midfall.LoweringV3.PcsRows.pcs_b2_prefix
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.pcs_b2_lets
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.pcs_b2_sem
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.pcs_b2_sem_inline
+  [propext, Classical.choice, Quot.sound] native []
 
 #assert_axioms Midfall.LoweringV3.PcsRows.decode_exists [propext, Classical.choice, Quot.sound]
   native []
