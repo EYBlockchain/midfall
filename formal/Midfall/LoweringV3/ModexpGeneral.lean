@@ -641,10 +641,10 @@ theorem eval_sub_var_lit_no_halt {c : ExternalCalls} {g : ExternalGas}
 
 theorem exec_let_mload_var_inv {c : ExternalCalls} {g : ExternalGas}
     {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
-    {st st' : EvmState} {o : Outcome} {x : String}
+    {st st' : EvmState} {o : Outcome} {x y : String}
     (h : ExecStmt (Bridge.Dialect c g) funs V st
-      (Stmt.letDecl [x] (some (Expr.builtin EVM.Op.mload [Expr.var "gp_mptr"]))) V' st' o) :
-    ∃ p v, VEnv.get V "gp_mptr" = some p ∧ v = loadWord st.memory p.toNat ∧
+      (Stmt.letDecl [x] (some (Expr.builtin EVM.Op.mload [Expr.var y]))) V' st' o) :
+    ∃ p v, VEnv.get V y = some p ∧ v = loadWord st.memory p.toNat ∧
       o = .normal ∧ V' = (x, v) :: V ∧ st' = touchMemory st p.toNat 32 := by
   cases h with
   | letVal he hlen =>
@@ -768,7 +768,7 @@ theorem bi_staticcall_tail_lets {c : ExternalCalls} {g : ExternalGas}
   -- s1 mload
   rcases Step.stmts_cons_inv hrun with ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
   · obtain ⟨pp, vv, hgetpp, hvval, ho1, hV1, hst1⟩ :=
-      exec_let_mload_var_inv (x := "all_inv") h1
+      exec_let_mload_var_inv (x := "all_inv") (y := "gp_mptr") h1
     rw [hgp] at hgetpp
     injection hgetpp with hpp
     subst hpp
