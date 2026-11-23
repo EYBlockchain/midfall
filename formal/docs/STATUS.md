@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `48d19e05` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
+**As of:** `8f150b52` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
 PlanMeta later re-pinned the closure at **5252 declarations / digest `fa2cfd35f9d64826`**; a final
 full gate is owed on the current tree. Current report: root **11 / sound 5**, register
 **94 rows / 11 ROOT / 21 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
@@ -325,6 +325,12 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
 - A9: PCS block-4 m1 set contract, `dxLines`/`lbasisLines`/`bpLines`/`bq`/`bqLines`,
   `denInv`/`eval`/`termLines`/`f_eval` line folds, and the general-arm AST/name/no-shadow bundle
   (1790 lines); `block_live_pcs`. The set-block/block composition is the remaining PCS unit.
+- A9: `pcsGenPrefix_contract` state threading, `pcsGenBody_contract` (prefix+batch+tail), and
+  `pcsSetBlockAst_eq_gen` are proved; `pcsSetBlock_contract`'s restore-env facts remain.
+- A11: `runsAllP_fixed_fold` and `readFixedEvals` proved; the remaining `readAlgebra` blocks are
+  logup/permutation/advice/instance/minRot/lIS, then the parseTrace cover.
+- A5: `fromConstraintSystem_pcsQueries`, `perProofQueries_parts`, the permutationZ upstream
+  reordering and the per-block query spines are proved; upstream z-slice + `hclass` freshness remain.
 - A4: `LagrangeBlock` vocabulary + statement-4 contract; per-phase representation and group-4
   denominator-loop proof.
 - A5: `bi_front`, `bi_back_tail`, prelude main, and **`batch_invert_summary` PROVED** (with the
