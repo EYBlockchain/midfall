@@ -4697,6 +4697,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms hashMapGet_mem
   [propext, Classical.choice, Quot.sound]
+#assert_axioms kzgCommitBeq_linear_onePiece
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms kzgCommitBeq_linear_offdiag
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point

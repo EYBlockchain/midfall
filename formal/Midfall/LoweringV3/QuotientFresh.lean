@@ -1,5 +1,6 @@
 import Midfall.LoweringV3.KzgQueryMap
 import Midfall.Generator.LayoutMemory
+import Midfall.Halo2.Exec.Kzg.MultiOpen
 open Midfall Midfall.Halo2 Midfall.Generator
 set_option autoImplicit false
 set_option maxHeartbeats 2000000
@@ -538,3 +539,41 @@ theorem ecPointBeq_quotient_of_classification (c : EcPoint)
     exact ecPointBeq_quotient_g1
 
 end Midfall.Generator
+
+namespace Midfall.Halo2
+open Midfall Midfall.Halo2
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)]
+  [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem kzgCommitBeq_linear_onePiece (pts : Array G₁) (scals : Array (Fr p))
+    (labs : Array CommitmentLabel) (slot : CommitSlot) (com : G₁) :
+    kzgCommitBeq (G₂ := G₂) (Gₜ := Gₜ) (P := P)
+      (.linear pts scals labs) (.onePiece slot com) = false := rfl
+
+/-- **THE OFF-DIAGONAL LINEARIZATION `hclass` CASE.**  The verifier side is
+    `.linear`, the other side is a one-piece commitment, and the generator's
+    linearization pointer is the fresh quotient pointer while the other queried
+    commitment is numeric or the identity sentinel.  The two equality tests are
+    then both `false`. -/
+theorem kzgCommitBeq_linear_offdiag
+    (x x' : VerifierQuery (Fr p) G₁ × Midfall.Generator.Query)
+    (pts : Array G₁) (scals : Array (Fr p)) (labs : Array CommitmentLabel)
+    (slot : CommitSlot) (com : G₁)
+    (hlin : x.1.commitment = .linear pts scals labs)
+    (hone : x'.1.commitment = .onePiece slot com)
+    (hq : x.2.comm = Midfall.Generator.quotientComm)
+    (hclass : x'.2.comm = Midfall.Generator.quotientComm ∨
+      x'.2.comm.Numeric ∨ x'.2.comm = Midfall.Generator.g1Identity)
+    (hne : x'.2.comm ≠ Midfall.Generator.quotientComm) :
+    kzgCommitBeq (G₂ := G₂) (Gₜ := Gₜ) (P := P)
+        x.1.commitment x'.1.commitment =
+      Midfall.Generator.ecPointBeq x.2.comm x'.2.comm := by
+  rw [hlin, hone, kzgCommitBeq_linear_onePiece, hq]
+  exact (Midfall.Generator.ecPointBeq_quotient_of_classification
+    x'.2.comm hclass hne).symm
+
+end Midfall.Halo2
