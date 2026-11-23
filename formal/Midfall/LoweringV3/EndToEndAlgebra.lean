@@ -2490,6 +2490,244 @@ theorem fromConstraintSystem_evals_length {F : Type} (feat : Features) (cs : Con
     · cases h5
   · cases h5
 
+theorem mapM_map_opt {α β γ : Type} (f : α → Option β) (g : β → γ) (l : List α) :
+    l.mapM (fun x => (f x).map g) = (l.mapM f).map (List.map g) := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+      rw [List.mapM_cons, ih, List.mapM_cons]
+      cases h : f a with
+      | none => simp [h]
+      | some b =>
+          cases h2 : as.mapM f with
+          | none => simp [h, h2]
+          | some l0 => simp [h, h2]
+
+theorem except_toOption_map {ε α β : Type} (e : Except ε α) (g : α → β) :
+    (e.map g).toOption = (e.toOption).map g := by
+  cases e <;> rfl
+
+theorem mapM_map_some {α β γ : Type} (f : α → Except Fault β) (g : β → γ) :
+    ∀ (l : List α) (l' : List γ),
+      l.mapM (fun x => ((f x).map g).toOption) = some l' →
+      ∃ l0, l.mapM (fun x => (f x).toOption) = some l0 ∧ l' = l0.map g := by
+  intro l l' h
+  have h' : l.mapM (fun x => ((f x).toOption).map g) = some l' := by
+    simpa only [except_toOption_map] using h
+  rw [mapM_map_opt (fun x => (f x).toOption) g l] at h'
+  cases hm : l.mapM (fun x => (f x).toOption) with
+  | none => rw [hm] at h'; cases h'
+  | some l0 => rw [hm] at h'; simp only [Option.map_some, Option.some.injEq] at h'
+               exact ⟨l0, rfl, h'.symm⟩
+
+theorem mapExceptArray_go_chunkN {F : Type} (deg : Nat) :
+    ∀ (xs : List (LogupBatchedArgument F)) (acc out : Array Nat),
+      mapExceptArray.go (fun x => (x.chunkByDegree deg).map LogupChunkedArgument.numChunks)
+          xs acc = .ok out →
+      ∃ l, xs.mapM (fun x => ((x.chunkByDegree deg).map LogupChunkedArgument.numChunks).toOption)
+          = some l ∧ out.toList = acc.toList ++ l := by
+  intro xs
+  induction xs with
+  | nil =>
+      intro acc out h
+      cases h
+      exact ⟨[], by simp, by simp⟩
+  | cons x rest ih =>
+      intro acc out h
+      simp only [mapExceptArray.go] at h
+      obtain ⟨y, hf, hgo⟩ := AlgebraWidths.except_bind_ok h
+      obtain ⟨l, hmap, hout⟩ := ih (acc.push y) out hgo
+      refine ⟨y :: l, ?_, ?_⟩
+      · rw [List.mapM_cons, hf, hmap]
+        rfl
+      · rw [hout, Array.toList_push]
+        simp [List.append_assoc]
+
+theorem mapExceptArray_chunk {F : Type} (deg : Nat) (xs : Array (LogupBatchedArgument F))
+    {out : Array Nat}
+    (h : mapExceptArray (fun x => (x.chunkByDegree deg).map LogupChunkedArgument.numChunks)
+      xs = .ok out) :
+    ∃ cl, chunkedOf deg xs.toList = some cl ∧
+      out.toList = cl.map LogupChunkedArgument.numChunks := by
+  have hgo := h
+  unfold mapExceptArray at hgo
+  obtain ⟨l, hmap, hout⟩ := mapExceptArray_go_chunkN deg xs.toList #[] out hgo
+  obtain ⟨cl, hcl, hl⟩ := mapM_map_some (fun x => x.chunkByDegree deg)
+    LogupChunkedArgument.numChunks xs.toList l hmap
+  exact ⟨cl, hcl, by rw [hout]; simpa using hl⟩
+
+
+theorem divCeil_zero (k : Nat) : divCeil 0 k = 0 := by
+  unfold divCeil
+  cases k <;> simp
+
+theorem if_list_isEmpty_divCeil {α : Type} (l : List α) (k : Nat) :
+    (if l.isEmpty = true then 0 else divCeil l.length k) = divCeil l.length k := by
+  by_cases h : l.isEmpty = true
+  · rw [if_pos h]
+    have hnil : l = [] := by
+      cases l with
+      | nil => rfl
+      | cons a as => simp at h
+    rw [hnil]
+    simp [divCeil_zero]
+  · rw [if_neg h]
+
+set_option maxHeartbeats 8000000 in
+theorem validate_numSimpleSelectors {plan : ProtocolPlan} {u : Unit}
+    (h : plan.validate = .ok u) : plan.numSimpleSelectors = plan.simpleSelectorCols.length := by
+  by_contra hne
+  have hb : (plan.numSimpleSelectors != plan.simpleSelectorCols.length) = true := by
+    rw [bne_iff_ne]; exact hne
+  unfold ProtocolPlan.validate at h
+  dsimp only at h
+  rw [hb] at h
+  simp only [if_true] at h
+  cases h
+
+
+set_option maxHeartbeats 8000000 in
+theorem readAlgebraEvalCount_parseTrace_eq_numMainEvals {G₁ : Type} (g1 : G1Codec G₁)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (xc : G₁) (inst : Array (Fr p)) {plan : ProtocolPlan}
+    (hplan : ProtocolPlan.fromConstraintSystem Features.solidity vk.cs 1 = .ok plan)
+    {t : Transcript} {tr : VerifierTrace (Fr p) G₁} {t' : Transcript}
+    (h : (parseTrace g1 Features.solidity vk #[#[xc]] #[#[inst.toList.toArray]]).run t
+      = .ok (tr, t')) :
+    readAlgebraEvalCount vk tr.permutations tr.lookups tr.trashcans 1 1
+        #[#[inst.toList.toArray]]
+      = plan.numMainEvals := by
+  rw [readAlgebraEvalCount_parseTrace g1 vk hf xc inst h]
+  change _ = plan.proof.evals.length
+  rw [fromConstraintSystem_evals_length Features.solidity vk.cs 1 hplan]
+  unfold ProtocolPlan.fromConstraintSystem at hplan
+  simp only [Bind.bind] at hplan
+  obtain ⟨csDegree, hdeg, hp1⟩ := AlgebraWidths.except_bind_ok hplan
+  obtain ⟨lookupChunks, hlu, hp2⟩ := AlgebraWidths.except_bind_ok hp1
+  obtain ⟨_x1, _hr1, hp3⟩ := AlgebraWidths.except_bind_ok hp2
+  obtain ⟨_x2, _hr2, hp4⟩ := AlgebraWidths.except_bind_ok hp3
+  obtain ⟨_bl, _hbl, hp5⟩ := AlgebraWidths.except_bind_ok hp4
+  split at hp5
+  · rename_i hfix
+    split at hp5
+    · rename_i hval
+      cases hp5
+      dsimp only
+      have hns : vk.cs.numSimpleSelectors =
+          (List.filter (fun idx => vk.cs.hasSimpleSelectorCol idx)
+            (List.range vk.cs.numFixedColumns)).length :=
+        validate_numSimpleSelectors hval
+      have hdegEq : csDegree = vk.csDegree := by
+        rw [hf.csDegreeMatches] at hdeg
+        exact (Except.ok.inj hdeg).symm
+      obtain ⟨cl, hcl, hchunks⟩ := mapExceptArray_chunk csDegree vk.cs.lookups hlu
+      rw [hdegEq] at hcl
+      rw [hns]
+      rw [hf.permutationCommitmentsMatch]
+      rw [hdegEq]
+      rw [if_list_isEmpty_divCeil (vk.cs.permutation.getColumns.toList) (vk.csDegree - 2)]
+      rw [Array.length_toList]
+      rw [lookupEvalCount_eq vk.csDegree vk.cs.lookups.toList cl hcl]
+      rw [hchunks]
+      rw [map_add_three_map]
+      rw [filter_map_index_length]
+      simp [Array.length_toList, Permutation.numChunksOf, PermutationArgument.getColumns]
+    · cases hp5
+  · cases hp5
+
+set_option maxHeartbeats 4000000 in
+/-- The generated plan's protocol is `fromConstraintSystem` applied to the same
+    constraint system and the deployed committed-instance count (`1`, from
+    `SupportedV2.instShape`). -/
+theorem plan_protocol_fromConstraintSystem {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) :
+    ProtocolPlan.fromConstraintSystem Features.solidity R.vk.cs 1
+      = .ok R.plan.meta_.protocol := by
+  obtain ⟨rawMeta, plan, hraw, hpl, hp⟩ := Midfall.LoweringV2.pfx_plan_of_generated hR.generated
+  unfold ConstraintSystemMeta.new at hraw
+  simp only [Bind.bind] at hraw
+  obtain ⟨protocol, hproto, hok⟩ := AlgebraWidths.except_bind_ok hraw
+  have hrawMeta : rawMeta.protocol = protocol := by
+    have h := Except.ok.inj hok
+    rw [← h]
+  have hmetaprot : plan.meta_.protocol = protocol := by
+    have h2 := (newFromVk_meta_numEvals (Midfall.Generator.PlanNew.frFieldCtx R.E.delta)
+      R.vk.cs rawMeta R.cfg.numInstances R.cfg.accumulator R.plan.vk plan hpl).2
+    rw [h2, hrawMeta]
+  rw [hp, hmetaprot]
+  rw [hR.supported.instShape.2] at hproto
+  exact hproto
+
+/-- **`PrepareLogSlots` from A6, the KZG point-set bridge, and the two count
+    identities that remain outside this lane.** The readAlgebra eval count is no
+    longer assumed for an arbitrary trace: it is derived for the trace the
+    `prepare` run actually parses, from `readAlgebraEvalCount_parseTrace` and the
+    protocol's seven-group decomposition. -/
+theorem PrepareLogSlots_of_parsed {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (nParse n : Nat)
+    (hParse : ∀ (inst : Array (Fr p)),
+      ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
+    (hMulti : MultiPrepareBlockWidth R.E.g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) n)
+    (hQuot : nParse + readAlgebraQuotientCount Features.solidity R.vk
+      = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).prefixG1Count)
+    (hPoint : n = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numPointSets) :
+    PrepareLogSlots R := by
+  intro inst π d t hrun
+  unfold Midfall.Halo2.prepare at hrun
+  unfold Midfall.Halo2.prepareWith at hrun
+  unfold Verifier.prepare at hrun
+  obtain ⟨trace, t1, hparse, hver⟩ := PresWidthSeq.run_bind_ok hrun
+  have heval := readAlgebraEvalCount_parseTrace_eq_numMainEvals R.E.g1 R.vk
+    hR.supported.wf (1 : G₁) inst (plan_protocol_fromConstraintSystem R hR) hparse
+  have h2 : readAlgebraEvalCount R.vk trace.permutations trace.lookups trace.trashcans
+      1 1 #[#[inst.toList.toArray]]
+      = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numEvals :=
+    heval.trans (plan_numEvals_eq_protocol R hR).symm
+  have hslots := prepareSlots_of_counts R inst trace nParse n hQuot h2 hPoint
+  have hparseW : t1.log.toList.map (fun r => r.1) =
+      (Transcript.initFromBytes π).log.toList.map (fun r => r.1)
+        ++ List.replicate nParse (hashableG1 R.E.g1).width :=
+    hParse inst (Transcript.initFromBytes π) t1 trace hparse
+  have hverW : t.log.toList.map (fun r => r.1) = t1.log.toList.map (fun r => r.1) ++
+      (readAlgebraWidths R.E.g1 Features.solidity R.vk trace.permutations
+          trace.lookups trace.trashcans 1 1 #[#[inst.toList.toArray]]
+        ++ ([(hashableG1 R.E.g1).width]
+            ++ List.replicate n (hashableFr (p := p)).width
+            ++ [(hashableG1 R.E.g1).width])) :=
+    verifyAlgebraicConstraints_width R.E.g1 R.E.delta Features.solidity
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) R.vk trace #[#[(1 : G₁)]] #[#[inst.toList.toArray]] n hMulti
+      rfl t1 t d hver
+  have hcompose : ∀ (l : List (Nat × Bytes)),
+      l.map (fun r => if r.1 = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                      else Midfall.Lowering.WireSlot.fr)
+        = (l.map (fun r => r.1)).map
+            (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                      else Midfall.Lowering.WireSlot.fr) := by
+    intro l
+    rw [List.map_map]
+    rfl
+  rw [hcompose, hverW, hparseW]
+  have hinit : (Transcript.initFromBytes π).log.toList.map (fun r => r.1) = [] := rfl
+  rw [hinit]
+  simp only [List.nil_append]
+  exact hslots
+
 end Composition
 
 end Midfall.LoweringV3
