@@ -4510,6 +4510,275 @@ theorem pcs_venv_get_restore_of_names {V V' : VEnv (Bridge.Dialect c g)} {extra 
   rw [hfind] at hget
   exact hget
 
+def pcsLetNames (ss : Block EVM.Op) : List String := ss.filterMap pcsStmtLetName?
+
+macro "pcs_ne1" : tactic => `(tactic|
+  (intro h
+   have hc := congrArg (fun s : String => s.toList.take 1) h
+   simp [pcsDxName, pcsLbasisName, pcsBpName] at hc))
+
+theorem pcsLetNames_append (a b : Block EVM.Op) :
+    pcsLetNames (a ++ b) = pcsLetNames a ++ pcsLetNames b := by
+  simp [pcsLetNames, List.filterMap_append]
+
+theorem pcsLetNames_ylet (x : String) (e : Expr EVM.Op) :
+    pcsLetNames [GenAst.ylet x e] = [x] := by
+  simp [pcsLetNames, pcsStmtLetName?, GenAst.ylet]
+
+theorem pcsLetNames_yset (x : String) (e : Expr EVM.Op) :
+    pcsLetNames [GenAst.yset x e] = [] := by
+  simp [pcsLetNames, pcsStmtLetName?, GenAst.yset]
+
+theorem pcsLetNames_dx (xs : List (Nat × String)) :
+    pcsLetNames (xs.map (fun q => pcsDxStmt q.1 q.2)) =
+      xs.map (fun q => pcsDxName q.1) := by
+  induction xs with
+  | nil => rfl
+  | cons q rest ih =>
+      unfold pcsLetNames
+      rw [List.map_cons, List.filterMap_cons]
+      simp only [pcsStmtLetName?, pcsDxStmt, GenAst.ylet]
+      rw [List.map_cons]
+      change pcsDxName q.1 :: pcsLetNames
+          (List.map (fun q => pcsDxStmt q.1 q.2) rest) =
+        pcsDxName q.1 :: List.map (fun q => pcsDxName q.1) rest
+      rw [ih]
+
+theorem pcsLetNames_lbasisGroup (j : Nat) (pt : String) (ks : List (Nat × String)) :
+    pcsLetNames (pcsLbasisGroupAst j pt ks) = [pcsLbasisName j] := by
+  simp [pcsLetNames, pcsLbasisGroupAst, pcsLbasisInit, pcsLbasisStmt, pcsStmtLetName?,
+    GenAst.ylet, GenAst.yset]
+
+theorem pcsLetNames_lbasis (xs : List (Nat × String)) (ks : Nat → List (Nat × String)) :
+    pcsLetNames ((xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten) =
+      xs.map (fun q => pcsLbasisName q.1) := by
+  induction xs with
+  | nil => rfl
+  | cons q rest ih =>
+      rw [List.map_cons, List.flatten_cons, pcsLetNames_append,
+        pcsLetNames_lbasisGroup]
+      rw [List.map_cons, ih]
+      rfl
+
+theorem pcsLetNames_bpTail_map (l : List Nat) (nm : Nat → String) :
+    pcsLetNames (l.map (fun i => pcsBpTail i (nm i))) = l.map pcsBpName := by
+  induction l with
+  | nil => rfl
+  | cons i rest ih =>
+      unfold pcsLetNames
+      rw [List.map_cons, List.filterMap_cons]
+      simp only [pcsStmtLetName?, pcsBpTail, GenAst.ylet]
+      rw [List.map_cons]
+      change pcsBpName i :: pcsLetNames (List.map (fun i => pcsBpTail i (nm i)) rest) =
+        pcsBpName i :: List.map pcsBpName rest
+      rw [ih]
+
+theorem pcsLetNames_bp (n : Nat) (nm : Nat → String) :
+    pcsLetNames (pcsBpLines n nm) =
+      pcsBpName 0 :: ((List.range n).drop 1).map pcsBpName := by
+  simp only [pcsBpLines, pcsBpHead, pcsBpTail, pcsLetNames, List.filterMap_cons,
+    pcsStmtLetName?, GenAst.ylet]
+  change pcsBpName 0 :: pcsLetNames
+    (List.map (fun i => pcsBpTail i (nm i)) ((List.range n).drop 1)) =
+    pcsBpName 0 :: List.map pcsBpName ((List.range n).drop 1)
+  rw [pcsLetNames_bpTail_map]
+
+theorem pcsLetNames_bqStep_map (l : List Nat) (nm : Nat → String) (invName : Nat → String) :
+    pcsLetNames (l.flatMap (fun i => pcsBqStep i (pcsBpName (i - 1)) (nm i) invName)) =
+      l.map (fun i => invName i) := by
+  induction l with
+  | nil => rfl
+  | cons i rest ih =>
+      rw [List.flatMap_cons, pcsLetNames_append]
+      simp only [pcsBqStep, pcsBqStep, pcsLetNames, List.filterMap_cons, pcsStmtLetName?,
+        GenAst.ylet, GenAst.yset, List.filterMap_nil, List.append_nil]
+      change [invName i] ++ pcsLetNames
+        (List.flatMap (fun i => pcsBqStep i (pcsBpName (i - 1)) (nm i) invName) rest) =
+        invName i :: List.map (fun i => invName i) rest
+      rw [ih]
+      rfl
+
+theorem pcsLetNames_bq (n : Nat) (nm : Nat → String) (invName : Nat → String) :
+    pcsLetNames (pcsBqLines n nm invName) =
+      ((List.range n).drop 1).reverse.map invName := by
+  change pcsLetNames (((List.range n).drop 1).reverse.flatMap
+    (fun i => pcsBqStep i (pcsBpName (i - 1)) (nm i) invName)) =
+    ((List.range n).drop 1).reverse.map invName
+  rw [pcsLetNames_bqStep_map]
+
+theorem pcsLetNames_den (m : Nat) (invName : Nat → String) :
+    pcsLetNames (pcsDenInvLines m invName) = ["den_inv"] := by
+  simp [pcsLetNames, pcsDenInvLines, pcsDenInvSetStmt, pcsStmtLetName?, GenAst.ylet,
+    GenAst.yset]
+
+theorem pcsLetNames_eval (setIdx : Nat) :
+    pcsLetNames [pcsEvalStmt setIdx] = ["eval"] := by
+  simp [pcsLetNames, pcsEvalStmt, pcsStmtLetName?, GenAst.ylet]
+
+theorem pcsLetNames_termStmt_map (l : List Nat) (off : Nat)
+    (invName lbN : Nat → String) :
+    pcsLetNames (l.flatMap (fun j => pcsTermStmt j (off + j) (invName j) (lbN j))) =
+      l.map (fun j => "term_" ++ toString j) := by
+  induction l with
+  | nil => rfl
+  | cons j rest ih =>
+      rw [List.flatMap_cons, pcsLetNames_append]
+      simp only [pcsTermStmt, pcsLetNames, List.filterMap_cons, pcsStmtLetName?,
+        GenAst.ylet, GenAst.yset, List.filterMap_nil, List.append_nil]
+      change ["term_" ++ toString j] ++ pcsLetNames
+        (List.flatMap (fun j => pcsTermStmt j (off + j) (invName j) (lbN j)) rest) =
+        ("term_" ++ toString j) :: List.map (fun j => "term_" ++ toString j) rest
+      rw [ih]
+      rfl
+
+theorem pcsLetNames_term (m off : Nat) (invName : Nat → String) :
+    pcsLetNames (pcsTermLines m off invName (fun j => invName (m + j))) =
+      (List.range m).map (fun j => "term_" ++ toString j) := by
+  change pcsLetNames ((List.range m).flatMap
+    (fun j => pcsTermStmt j (off + j) (invName j) (invName (m + j)))) =
+    (List.range m).map (fun j => "term_" ++ toString j)
+  rw [pcsLetNames_termStmt_map (lbN := fun j => invName (m + j))]
+
+theorem pcsLetNames_fe : pcsLetNames [pcsFEvalStmt] = [] := by
+  simp [pcsLetNames, pcsFEvalStmt, pcsStmtLetName?, GenAst.yset]
+
+
+theorem pcsLetNames_bqStmt (prev : String) :
+    pcsLetNames [pcsBqStmt prev] = ["bq"] := by
+  simp [pcsLetNames, pcsBqStmt, pcsStmtLetName?, GenAst.ylet]
+
+namespace PcsNames
+
+theorem notFEval_append {a b : List String}
+    (ha : ∀ x ∈ a, x ≠ "f_eval") (hb : ∀ x ∈ b, x ≠ "f_eval") :
+    ∀ x ∈ a ++ b, x ≠ "f_eval" := by
+  intro x hx
+  rw [List.mem_append] at hx
+  rcases hx with h | h
+  · exact ha x h
+  · exact hb x h
+
+theorem dx (xs : List (Nat × String)) :
+    ∀ x ∈ pcsLetNames (xs.map (fun q => pcsDxStmt q.1 q.2)), x ≠ "f_eval" := by
+  rw [pcsLetNames_dx]
+  intro x hx
+  simp only [List.mem_map] at hx
+  rcases hx with ⟨q, _, rfl⟩
+  pcs_ne1
+
+theorem lb (xs : List (Nat × String)) (ks : Nat → List (Nat × String)) :
+    ∀ x ∈ pcsLetNames ((xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten),
+      x ≠ "f_eval" := by
+  rw [pcsLetNames_lbasis]
+  intro x hx
+  simp only [List.mem_map] at hx
+  rcases hx with ⟨q, _, rfl⟩
+  pcs_ne1
+
+theorem bp (n : Nat) (nm : Nat → String) :
+    ∀ x ∈ pcsLetNames (pcsBpLines n nm), x ≠ "f_eval" := by
+  rw [pcsLetNames_bp]
+  intro x hx
+  simp only [List.mem_cons, List.mem_map] at hx
+  rcases hx with rfl | ⟨i, _, rfl⟩
+  · pcs_ne1
+  · pcs_ne1
+
+theorem bqCall (prev : String) :
+    ∀ x ∈ pcsLetNames [pcsBqStmt prev], x ≠ "f_eval" := by
+  rw [pcsLetNames_bqStmt]
+  intro x hx
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+  subst hx
+  pcs_ne1
+
+theorem bq (n m : Nat) (nm : Nat → String) :
+    ∀ x ∈ pcsLetNames (pcsBqLines n nm (pcsInvName m)), x ≠ "f_eval" := by
+  rw [pcsLetNames_bq]
+  intro x hx
+  simp only [List.mem_map] at hx
+  rcases hx with ⟨i, _, rfl⟩
+  unfold pcsInvName
+  split <;> pcs_ne1
+
+theorem inv0 (m : Nat) :
+    ∀ x ∈ pcsLetNames [GenAst.ylet (pcsInvName m 0) (GenAst.yvar "bq")], x ≠ "f_eval" := by
+  rw [pcsLetNames_ylet]
+  intro x hx
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+  subst hx
+  unfold pcsInvName
+  split <;> pcs_ne1
+
+theorem den (m : Nat) (invName : Nat → String) :
+    ∀ x ∈ pcsLetNames (pcsDenInvLines m invName), x ≠ "f_eval" := by
+  rw [pcsLetNames_den]
+  intro x hx
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+  subst hx
+  pcs_ne1
+
+theorem eval (setIdx : Nat) :
+    ∀ x ∈ pcsLetNames [pcsEvalStmt setIdx], x ≠ "f_eval" := by
+  rw [pcsLetNames_eval]
+  intro x hx
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+  subst hx
+  pcs_ne1
+
+theorem term (m off : Nat) :
+    ∀ x ∈ pcsLetNames (pcsTermLines m off (pcsInvName m) (fun j => pcsInvName m (m + j))),
+      x ≠ "f_eval" := by
+  rw [pcsLetNames_term]
+  intro x hx
+  simp only [List.mem_map] at hx
+  rcases hx with ⟨j, _, rfl⟩
+  pcs_ne1
+
+theorem fe : ∀ x ∈ pcsLetNames [pcsFEvalStmt], x ≠ "f_eval" := by
+  rw [pcsLetNames_fe]
+  intro x hx
+  simp at hx
+
+end PcsNames
+
+set_option maxHeartbeats 4000000 in
+theorem pcsGenBody_fe_notmem (setIdx : Nat) (points : List Int) (distinct : List Int)
+    (off : Nat) :
+    "f_eval" ∉ pcsLetNames (pcsGenBody setIdx points distinct off) := by
+  have hall : ∀ x ∈ pcsLetNames (pcsGenBody setIdx points distinct off), x ≠ "f_eval" := by
+    unfold pcsGenBody
+    dsimp only
+    simp only [pcsLetNames_append, List.append_nil]
+    repeat' apply PcsNames.notFEval_append
+    all_goals trace_state
+    all_goals
+      first
+      | apply PcsNames.dx
+      | apply PcsNames.lb
+      | apply PcsNames.bp
+      | apply PcsNames.bqCall
+      | apply PcsNames.bq
+      | apply PcsNames.inv0
+      | apply PcsNames.den
+      | apply PcsNames.eval
+      | apply PcsNames.term
+      | apply PcsNames.fe
+  intro h
+  exact hall "f_eval" h rfl
+
+
+
+theorem pcs_mem_addedNames {x : String} {ss : Block EVM.Op} :
+    x ∈ pcsAddedNames ss ↔ x ∈ pcsLetNames ss := by
+  simp [pcsAddedNames, pcsLetNames]
+
+theorem pcsGenBody_fe_notmem_added (setIdx : Nat) (points : List Int) (distinct : List Int)
+    (off : Nat) :
+    "f_eval" ∉ pcsAddedNames (pcsGenBody setIdx points distinct off) := by
+  intro h
+  exact pcsGenBody_fe_notmem setIdx points distinct off ((pcs_mem_addedNames).mp h)
+
 set_option maxHeartbeats 16000000 in
 theorem pcsGenBody_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
