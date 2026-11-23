@@ -1802,6 +1802,45 @@ theorem bi_prelude_main (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
     exact absurd ho1 hne1
 
 
+theorem wMulmodAt_zmod_inv (x : U256) (hx0 : x.toNat ≠ 0) (hx : x.toNat < Midfall.Yul.blsR) :
+    Midfall.LoweringV3.QuotientRows.wMulmodAt (BitVec.ofNat 256 ((x.toNat : ZMod Midfall.Yul.blsR)⁻¹).val) x
+      (BitVec.ofNat 256 Midfall.Yul.blsR) = 1 := by
+  have hR : (BitVec.ofNat 256 Midfall.Yul.blsR : U256) ≠ 0 := by
+    intro h0
+    have := congrArg BitVec.toNat h0
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide : Midfall.Yul.blsR < 2 ^ 256)] at this
+    simp at this
+    have hpos : 0 < Midfall.Yul.blsR := by decide
+    omega
+  rw [Midfall.LoweringV3.QuotientRows.wMulmodAt, if_neg hR]
+  rw [BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt (zmod_inv_val_lt x),
+    Nat.mod_eq_of_lt (by decide : Midfall.Yul.blsR < 2 ^ 256)]
+  haveI : Fact (1 < Midfall.Yul.blsR) := ⟨by decide⟩
+  have hxne : (x.toNat : ZMod Midfall.Yul.blsR) ≠ 0 := by
+    intro h
+    have := congrArg ZMod.val h
+    rw [ZMod.val_natCast_of_lt hx, ZMod.val_zero] at this
+    exact hx0 this
+  have hinv : (x.toNat : ZMod Midfall.Yul.blsR) * ((x.toNat : ZMod Midfall.Yul.blsR)⁻¹) = 1 :=
+    mul_inv_cancel₀ hxne
+  have hval := congrArg ZMod.val hinv
+  rw [ZMod.val_mul, ZMod.val_natCast, Nat.mod_eq_of_lt hx, ZMod.val_one] at hval
+  rw [Nat.mul_comm] at hval
+  rw [hval]
+  rfl
+
+theorem fwdProd_zmod_inv (mem : Nat → UInt8) (a k : Nat)
+    (hx0 : (fwdProd mem a (BitVec.ofNat 256 Midfall.Yul.blsR) (k - 1)).toNat ≠ 0)
+    (hx : (fwdProd mem a (BitVec.ofNat 256 Midfall.Yul.blsR) (k - 1)).toNat < Midfall.Yul.blsR) :
+    Midfall.LoweringV3.QuotientRows.wMulmodAt (BitVec.ofNat 256
+        (((fwdProd mem a (BitVec.ofNat 256 Midfall.Yul.blsR) (k - 1)).toNat :
+          ZMod Midfall.Yul.blsR)⁻¹).val)
+      (fwdProd mem a (BitVec.ofNat 256 Midfall.Yul.blsR) (k - 1))
+      (BitVec.ofNat 256 Midfall.Yul.blsR) = 1 :=
+  wMulmodAt_zmod_inv _ hx0 hx
+
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -1871,6 +1910,8 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms walk_failure_rest [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_staticcall_walk [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_prelude_main [propext, Classical.choice, Quot.sound]
+#assert_axioms wMulmodAt_zmod_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms fwdProd_zmod_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_args_litvar_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_staticcall_args [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_staticcall_inv [propext, Classical.choice, Quot.sound]
