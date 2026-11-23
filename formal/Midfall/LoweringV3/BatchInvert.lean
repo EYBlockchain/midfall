@@ -2161,6 +2161,32 @@ theorem exec_mstore_add_var_inv {funs : FunEnv (Bridge.Dialect c g)}
                 (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) haddr).elim
 
 
+theorem ofNat_add_ofNat_toNat (p k : Nat) (h : p + k < 2 ^ 256) :
+    ((BitVec.ofNat 256 p + BitVec.ofNat 256 k : U256)).toNat = p + k := by
+  rw [BitVec.toNat_add, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt (by omega : p < 2 ^ 256),
+    Nat.mod_eq_of_lt (by omega : k < 2 ^ 256),
+    Nat.mod_eq_of_lt h]
+
+theorem bi_bridge_stores_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 15 6 =
+      [ GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 0], GenAst.ylit 32]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 32], GenAst.ylit 32]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 64], GenAst.ylit 32]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 96], GenAst.yvar "gp"]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 128],
+            GenAst.yop EVM.Op.sub [GenAst.yvar "r", GenAst.ylit 2]]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 160], GenAst.yvar "r"]) ] := by
+  kernel_rfl
+
+
+
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
@@ -2193,6 +2219,8 @@ theorem exec_mstore_add_var_inv {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms exec_guard_false_eq_var_lit [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_mstore_add_var_normal [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_mstore_add_var_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms ofNat_add_ofNat_toNat [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_stores_form [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
