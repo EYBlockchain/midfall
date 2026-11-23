@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `2cbb6245` (2026-11-23). **Full gate GREEN at `b171a8a9`** (`verify.sh: ok (full)`,
+**As of:** `e8145055` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`,
 KAT 1648/119, closure 5251/620 digest `da67ab3de31b92e9`). The only later change is A11's
 `fp_blockProgS` closure (a proof term; the closure digest is unchanged). Current report: root **11 / sound 5**,
 register **96 rows / 11 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
