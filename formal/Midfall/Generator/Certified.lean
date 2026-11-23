@@ -658,12 +658,6 @@ theorem env_nG2 (hg : Generates gi o) (hs : SupportedInput gi) :
   show gi.srs.g2⁻¹ = P.g₂⁻¹
   rw [hg2]
 
-theorem env_vkDigest (hg : Generates gi o) (hs : SupportedInput gi) :
-    ((renderOf gi o).pv.vk.constants.getD 0 ("", 0)).2 = frWord gi.vk.transcriptRepr := by
-  sorry -- CERT.7
-
-/-! ### K: payload (`PayloadAgrees`), five groups -/
-
 theorem payload_header (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.vkDigest = frWord gi.vk.transcriptRepr ∧
     (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numInstances).toNat = gi.cfg.numInstances ∧
@@ -680,6 +674,14 @@ theorem payload_header (hg : Generates gi o) (hs : SupportedInput gi) :
       (Midfall.LoweringV3.payloadWord (renderOf gi o).pv Midfall.Generator.vkHeaderTemplateSlotsDefault.numAccLimbBits).toNat) =
       accWordsOfEncoding gi.cfg.accumulator := by
   sorry -- CERT.6
+
+theorem env_vkDigest (hg : Generates gi o) (hs : SupportedInput gi) :
+    ((renderOf gi o).pv.vk.constants.getD 0 ("", 0)).2 = frWord gi.vk.transcriptRepr := by
+  show Midfall.LoweringV3.payloadWord (renderOf gi o).pv
+    Midfall.Generator.vkHeaderTemplateSlotsDefault.vkDigest = frWord gi.vk.transcriptRepr
+  exact (payload_header hg hs).1
+
+/-! ### K: payload (`PayloadAgrees`), five groups -/
 
 theorem payload_g1Base (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.Lowering.vkG1Words (renderOf gi o).pv Midfall.Lowering.vkG1BaseSlot =
@@ -868,8 +870,32 @@ theorem v3_cdBound (hg : Generates gi o) (hs : SupportedInput gi) :
   sorry -- CERT.1 (suspect: no generator check bounds proofEnd)
 
 theorem v3_payload (hg : Generates gi o) (hs : SupportedInput gi) :
-    Midfall.LoweringV3.PayloadAgrees (renderOf gi o) := by
-  sorry -- CERT.7
+    Midfall.LoweringV3.PayloadAgrees (renderOf gi o) :=
+  let h := payload_header hg hs
+  { digest := h.1
+    numInstances := by
+      apply BitVec.eq_of_toNat_eq
+      change (Midfall.LoweringV3.payloadWord (renderOf gi o).pv
+        Midfall.Generator.vkHeaderTemplateSlotsDefault.numInstances).toNat =
+          (BitVec.ofNat 256 gi.cfg.numInstances).toNat
+      rw [h.2.1, BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by have := hs.sizeBound.1; omega)]
+    k := by
+      apply BitVec.eq_of_toNat_eq
+      change (Midfall.LoweringV3.payloadWord (renderOf gi o).pv
+        Midfall.Generator.vkHeaderTemplateSlotsDefault.k).toNat =
+          (BitVec.ofNat 256 gi.vk.domain.k).toNat
+      rw [h.2.2.1, BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by have := hs.sizeBound.2; omega)]
+    nInv := h.2.2.2.1
+    omega := h.2.2.2.2.1
+    omegaInv := h.2.2.2.2.2.1
+    omegaInvToL := h.2.2.2.2.2.2.1
+    accWords := h.2.2.2.2.2.2.2
+    constantsLength := payload_constantsLength hg hs
+    g1Base := payload_g1Base hg hs
+    g2Base := payload_g2Base hg hs
+    negSG2 := payload_negSG2 hg hs
+    fixedComms := (payload_comms hg hs).1
+    permutationComms := (payload_comms hg hs).2 }
 
 theorem v3_pins_of_valid {R : Render p G₁ G₂ Gₜ} (h : Midfall.LoweringV3.ValidV3 R) :
     (∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t) ∧
@@ -1006,32 +1032,7 @@ theorem generator_certified (gi : GenInput p G₁ G₂ Gₜ) (o : CertOut) (hg :
       omegaInvMul := hs.omegaInvMul, omegaOrder := hs.omegaOrder
       negLagranges := env_negLagranges hg hs, nG2 := env_nG2 hg hs, sG2 := rfl
       vkDigestWord := env_vkDigest hg hs }
-  payload :=
-    let h := payload_header hg hs
-    { digest := h.1
-      numInstances := by
-        apply BitVec.eq_of_toNat_eq
-        change (Midfall.LoweringV3.payloadWord (renderOf gi o).pv
-          Midfall.Generator.vkHeaderTemplateSlotsDefault.numInstances).toNat =
-            (BitVec.ofNat 256 gi.cfg.numInstances).toNat
-        rw [h.2.1, bitvec_ofNat_toNat (by have := hs.sizeBound.1; omega)]
-      k := by
-        apply BitVec.eq_of_toNat_eq
-        change (Midfall.LoweringV3.payloadWord (renderOf gi o).pv
-          Midfall.Generator.vkHeaderTemplateSlotsDefault.k).toNat =
-            (BitVec.ofNat 256 gi.vk.domain.k).toNat
-        rw [h.2.2.1, bitvec_ofNat_toNat (by have := hs.sizeBound.2; omega)]
-      nInv := h.2.2.2.1
-      omega := h.2.2.2.2.1
-      omegaInv := h.2.2.2.2.2.1
-      omegaInvToL := h.2.2.2.2.2.2.1
-      accWords := h.2.2.2.2.2.2.2
-      constantsLength := payload_constantsLength hg hs
-      g1Base := payload_g1Base hg hs
-      g2Base := payload_g2Base hg hs
-      negSG2 := payload_negSG2 hg hs
-      fixedComms := (payload_comms hg hs).1
-      permutationComms := (payload_comms hg hs).2 }
+  payload := v3_payload hg hs
   supported :=
     { advice := hs.advice, instShape := hs.instShape, noRotInst := hs.noRotInst
       singlePhase := hs.singlePhase, hLimbs := hs.hLimbs, vkPoints := hs.vkPoints
