@@ -516,7 +516,8 @@ theorem deciding_supported_wf : poseidonVkExec.WellFormed Features.solidity :=
     committedInstancesOn := rfl,
     advicePhaseTotal := by native_decide,
     challengePhaseTotal := by native_decide,
-    lookupChunkable := by native_decide }
+    lookupChunkable := by native_decide,
+    fixedSelectorBound := by native_decide }
 
 /- **THE SUPPORTED CLAUSE WAS REFUTED HERE UNTIL R.7.** The refutation `poseidonValid_supported_not` ran
     through `wf.permutationCommitmentsMatch` - the mis-ported field D-P59 repairs. At the fixture the
