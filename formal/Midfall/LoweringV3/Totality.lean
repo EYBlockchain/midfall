@@ -27,6 +27,7 @@ import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.LoweringV3.FpConsts
 import Midfall.LoweringV3.VkClean
+import Midfall.Lowering.FrameWalk
 import Midfall.Tools.ConeSorries
 import Midfall.Tools.Done
 set_option autoImplicit false
@@ -2253,6 +2254,448 @@ theorem fpScratchSeparated_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 
   · right
     right
     omega
+
+theorem readBytes_congr_of_outside {m₁ m₂ : Nat → UInt8} {scratch len p n : Nat}
+    (hmem : ∀ x, x < scratch ∨ scratch + len ≤ x → m₁ x = m₂ x)
+    (hwin : p + n ≤ scratch ∨ scratch + len ≤ p) :
+    readBytes m₁ p n = readBytes m₂ p n := by
+  rw [readBytes]
+  exact Midfall.Lowering.FrameWalk.readBytes_congr m₁ m₂ p n
+    (fun i hi => hmem _ (by omega))
+
+theorem bytesAt_congr_of_outside {st st' : EvmState} {scratch len p n : Nat}
+    (hmem : ∀ x, x < scratch ∨ scratch + len ≤ x → st'.memory x = st.memory x)
+    (hwin : p + n ≤ scratch ∨ scratch + len ≤ p) :
+    bytesAt st' p n = bytesAt st p n := by
+  unfold bytesAt
+  rw [readBytes_congr_of_outside hmem hwin]
+
+theorem wordAt_congr_of_outside {st st' : EvmState} {scratch len a : Nat}
+    (hmem : ∀ x, x < scratch ∨ scratch + len ≤ x → st'.memory x = st.memory x)
+    (hwin : a + 32 ≤ scratch ∨ scratch + len ≤ a) :
+    wordAt st' a = wordAt st a := by
+  unfold wordAt
+  exact Midfall.Yul.Word.loadWord_congr st'.memory st.memory a
+    (fun i hi => hmem _ (by omega))
+
+omit [Fact (Nat.Prime p)] in
+theorem holdsFr_congr_of_outside {st st' : EvmState} {scratch len a : Nat} (x : Fr p)
+    (hmem : ∀ x, x < scratch ∨ scratch + len ≤ x → st'.memory x = st.memory x)
+    (hwin : a + 32 ≤ scratch ∨ scratch + len ≤ a) :
+    holdsFr st' a x = holdsFr st a x := by
+  unfold holdsFr
+  rw [wordAt_congr_of_outside hmem hwin]
+
+theorem holdsG1_congr_of_outside {st st' : EvmState} {scratch len a : Nat}
+    (E : VerifierEnv p G₁ G₂ Gₜ) (Q : G₁)
+    (hmem : ∀ x, x < scratch ∨ scratch + len ≤ x → st'.memory x = st.memory x)
+    (hwin : a + 128 ≤ scratch ∨ scratch + len ≤ a) :
+    holdsG1 E st' a Q = holdsG1 E st a Q := by
+  unfold holdsG1
+  rw [bytesAt_congr_of_outside hmem (by omega)]
+
+omit [Fact (Nat.Prime p)] in
+theorem List_all_congr {α : Type} {p q : α → Bool} :
+    ∀ (l : List α), (∀ a ∈ l, p a = q a) → l.all p = l.all q
+  | [], _ => rfl
+  | a :: as, h => by
+    simp only [List.all_cons, h a (by simp),
+      List_all_congr as (fun b hb => h b (by simp [hb]))]
+
+theorem holdsG1s_congr_of_outside {st st' : EvmState} {scratch len base : Nat}
+    (E : VerifierEnv p G₁ G₂ Gₜ) (Qs : Array G₁)
+    (hmem : ∀ x, x < scratch ∨ scratch + len ≤ x → st'.memory x = st.memory x)
+    (hbase : ∀ i, i < Qs.size →
+      (base + 128 * i) + 128 ≤ scratch ∨ scratch + len ≤ base + 128 * i) :
+    holdsG1s E st' base Qs = holdsG1s E st base Qs := by
+  unfold holdsG1s
+  apply List_all_congr
+  intro a ha
+  obtain ⟨-, hget⟩ := (Array.mem_zipIdx_iff_le_and_getElem?_sub).mp
+    (Array.mem_toList_iff.mp ha)
+  obtain ⟨hi, -⟩ := Array.getElem?_eq_some_iff.mp hget
+  exact holdsG1_congr_of_outside E a.1 hmem (hbase a.2 (by simpa using hi))
+
+omit [Fact (Nat.Prime p)] in
+theorem venv_get_set_ne_tot {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x y : Ident} {v : D.Value} (h : y ≠ x) :
+    VEnv.get (VEnv.set V x v) y = VEnv.get V y := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨x', v'⟩ := p
+      by_cases hx : x' = x
+      · subst hx
+        have hxy : decide (x' = y) = false := by
+          rw [decide_eq_false]; exact fun hh => h hh.symm
+        simp only [VEnv.set, ite_true, VEnv.get, List.find?, hxy]
+      · rw [VEnv.set, ite_eq_right hx]
+        by_cases hy : x' = y
+        · subst hy
+          simp only [VEnv.get, List.find?]
+          rfl
+        · have hxy : decide (x' = y) = false := by
+            rw [decide_eq_false]; exact hy
+          simp only [VEnv.get, List.find?, hxy]
+          exact ih
+
+omit [Fact (Nat.Prime p)] in
+theorem holdsFrs_congr_of_outside {st st' : EvmState} {scratch len base : Nat}
+    (xs : Array (Fr p))
+    (hmem : ∀ x, x < scratch ∨ scratch + len ≤ x → st'.memory x = st.memory x)
+    (hbase : ∀ i, i < xs.size →
+      (base + 32 * i) + 32 ≤ scratch ∨ scratch + len ≤ base + 32 * i) :
+    holdsFrs st' base xs = holdsFrs st base xs := by
+  unfold holdsFrs
+  apply List_all_congr
+  intro a ha
+  obtain ⟨-, hget⟩ := (Array.mem_zipIdx_iff_le_and_getElem?_sub).mp
+    (Array.mem_toList_iff.mp ha)
+  obtain ⟨hi, -⟩ := Array.getElem?_eq_some_iff.mp hget
+  exact holdsFr_congr_of_outside a.1 hmem (hbase a.2 (by simpa using hi))
+
+/-- `Frame` is a function of the environment and the two locals, not of memory, so writing
+    `success` leaves it intact. -/
+theorem Frame_set_success {R : Render p G₁ G₂ Gₜ} {H : Hash} {vkAddr : U256} {cd : Bytes}
+    {c : ExternalCalls} {g : ExternalGas} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    (h : Frame R H vkAddr cd V st) (w : U256) :
+    Frame R H vkAddr cd (VEnv.set V "success" w) st := by
+  refine ⟨h.calldata, h.keccak, h.vkCode, h.vkHash, h.vkNonEmpty, ?_, ?_, h.cdSize⟩
+  · obtain ⟨rv, hlk, hget⟩ := h.r
+    refine ⟨rv, hlk, ?_⟩
+    rw [venv_get_set_ne_tot (D := Bridge.Dialect c g) (x := "success") (y := "r") (v := w)
+      (by decide)]
+    exact hget
+  · rw [venv_get_set_ne_tot (D := Bridge.Dialect c g) (x := "success") (y := "vk") (v := w)
+      (by decide)]
+    exact h.vk
+
+theorem alignUp_mono {n n' m : Nat} (h : n ≤ n') : alignUp n m ≤ alignUp n' m := by
+  unfold alignUp
+  exact Nat.mul_le_mul_right m (Nat.div_le_div_right (by omega))
+
+/-- A word-count `Ptr.add` never lowers a planner pointer: its value is an integer, and `Value.add`
+    adds a nonnegative multiple of `wordBytes`. -/
+theorem ptrAddr_add_ge_of_integer (q : Ptr)
+    (h : ∃ n : ℕ, ptrValue q = Value.integer ↑n) (k : Nat) :
+    ptrAddr q ≤ ptrAddr (Ptr.add q k) := by
+  rw [Midfall.LoweringV3.VkClean.ptrAddr_ptr_add_of_integer q k h]
+  exact Nat.le_add_right _ _
+
+
+/-- **THE SCRATCH-WINDOW `Inv .pcs` TRANSPORT.** If the two states agree outside the finalPairing
+    scratch window, on the environment and on the halt record, then every `Inv .pcs` memory clause
+    reads the same word in both. The write window sits at `0x1240` and every `Inv .pcs` read is at
+    the theta block or above, whose start is at least `0x1560` (`generated_theta_floor`). -/
+theorem Inv_pcs_of_mem_outside {calls : ExternalCalls} {gas : ExternalGas}
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    {S : Snapshot p G₁ G₂ Gₜ} {V : VEnv (Bridge.Dialect calls gas)} {st st' : EvmState}
+    (h : Midfall.Lowering.Inv R.E R.params Checkpoint.pcs R.pv S V st)
+    (hmem : ∀ x, x < R.pv.memory.finalPairingScratchMptr ∨
+      R.pv.memory.finalPairingScratchMptr + 768 ≤ x → st'.memory x = st.memory x)
+    (henv : st'.env = st.env) (hhalt : st'.halted = st.halted) (w : U256) :
+    Midfall.Lowering.Inv R.E R.params Checkpoint.pcs R.pv S (VEnv.set V "success" w) st' := by
+  obtain ⟨meta_, vkMptr, config, vkBase, hlayout, -, -⟩ := plan_size_of_generated hR.generated
+  have hfpconst : R.pv.memory.finalPairingScratchMptr = finalPairingScratchStart :=
+    generated_finalPairingScratchMptr R hR
+  have hthfloor : 0x1560 ≤ ptrAddr R.pv.memory.thetaMptr := generated_theta_floor R hR
+  have hmem' : ∀ x, x < finalPairingScratchStart ∨ finalPairingScratchStart + 768 ≤ x →
+      st'.memory x = st.memory x := by
+    intro x hx
+    exact hmem x (by simpa [hfpconst] using hx)
+  have h' := h
+  unfold Midfall.Lowering.Inv at h' ⊢
+  simp only [Midfall.Lowering.InvAt] at h' ⊢
+  rw [hlayout] at h' ⊢
+  rw [hlayout, new_thetaMptr, MemoryPairs.ptrAddr_valueFromNat] at hthfloor
+  -- theta start
+  set T := alignUp (alignUp (ptrAddr vkMptr + R.pv.vk.len) Midfall.Generator.wordBytes
+    + meta_.challengeIndices.length * Midfall.Generator.wordBytes)
+    Midfall.Generator.wordBytes with hT
+  have hthT : 0x1560 ≤ T := by rw [hT]; exact hthfloor
+  have hfloor : finalPairingScratchStart + 768 ≤ T := by
+    have h768 : finalPairingScratchStart + 768 ≤ 0x1560 := by decide
+    omega
+
+  have hp_theta : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).thetaMptr := by
+    show T ≤ T + 0
+    omega
+  have hp_beta : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).betaMptr := by
+    show T ≤ T + 32
+    omega
+  have hp_gamma : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).gammaMptr := by
+    show T ≤ T + 64
+    omega
+  have hp_trashChallenge : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).trashChallengeMptr := by
+    show T ≤ T + 96
+    omega
+  have hp_y : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).yMptr := by
+    show T ≤ T + 128
+    omega
+  have hp_x : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).xMptr := by
+    show T ≤ T + 160
+    omega
+  have hp_x1 : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x1Mptr := by
+    show T ≤ T + 192
+    omega
+  have hp_x2 : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x2Mptr := by
+    show T ≤ T + 224
+    omega
+  have hp_x3 : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x3Mptr := by
+    show T ≤ T + 256
+    omega
+  have hp_x4 : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x4Mptr := by
+    show T ≤ T + 288
+    omega
+  have hp_fCom : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).fComMptr := by
+    show T ≤ T + 320
+    omega
+  have hp_pi : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).piMptr := by
+    show T ≤ T + 448
+    omega
+  have hp_xN : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).xNMptr := by
+    show T ≤ T + 832
+    omega
+  have hp_lLast : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lLastMptr := by
+    show T ≤ T + 896
+    omega
+  have hp_lBlind : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lBlindMptr := by
+    show T ≤ T + 928
+    omega
+  have hp_l0 : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).l0Mptr := by
+    show T ≤ T + 960
+    omega
+  have hp_instanceEval : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).instanceEvalMptr := by
+    show T ≤ T + 992
+    omega
+  have hp_quotientEval : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientEvalMptr := by
+    show T ≤ T + 1024
+    omega
+  have hp_quotient : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientMptr := by
+    show T ≤ T + 1056
+    omega
+  have hp_fEval : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).fEvalMptr := by
+    show T ≤ T + 1216
+    omega
+  have hp_v : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vMptr := by
+    show T ≤ T + 1248
+    omega
+  have hp_finalCom : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).finalComMptr := by
+    show T ≤ T + 1280
+    omega
+  have hp_pairingLhs : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).pairingLhsMptr := by
+    show T ≤ T + 1408
+    omega
+  have hp_pairingRhs : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).pairingRhsMptr := by
+    show T ≤ T + 1536
+    omega
+  have hp_qEvalCptr : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).qEvalCptrMptr := by
+    show T ≤ T + 6432
+    omega
+  have hp_g1Identity : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).g1IdentityMptr := by
+    show T ≤ T + 6688
+    omega
+  have hcomms_eq : ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).commsMptrBase =
+      alignUp (T + 220 * Midfall.Generator.wordBytes
+        + meta_.numEvals * Midfall.Generator.wordBytes) Midfall.Generator.wordBytes := by
+    unfold VerifierMemoryLayout.new
+    rw [MemoryPairs.ptrAddr_valueFromNat]
+    rfl
+  have hp_comms : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).adviceCommsMptrBase := by
+    have h : ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).adviceCommsMptrBase =
+        alignUp (T + 220 * Midfall.Generator.wordBytes
+          + meta_.numEvals * Midfall.Generator.wordBytes) Midfall.Generator.wordBytes := by
+      unfold VerifierMemoryLayout.new
+      rw [MemoryPairs.ptrAddr_valueFromNat]
+      rfl
+    rw [h]
+    exact Nat.le_trans
+      (by show T ≤ T + 220 * Midfall.Generator.wordBytes + meta_.numEvals * Midfall.Generator.wordBytes; omega)
+      (MemoryPairs.alignUp_le _ _ MemoryPairs.wordBytes_pos)
+  have hp_quotLimb : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientLimbCommsMptrBase := by
+    have hA : ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).commsMptrBase ≤
+        ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lookupMCommsMptrBase :=
+      ptrAddr_add_ge_of_integer _ ⟨_, rfl⟩ _
+    have hB : ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lookupMCommsMptrBase ≤
+        ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).permZCommsMptrBase :=
+      ptrAddr_add_ge_of_integer _ ⟨_, rfl⟩ _
+    have hC : ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).permZCommsMptrBase ≤
+        ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lookupHelperCommsMptrBase :=
+      ptrAddr_add_ge_of_integer _ ⟨_, rfl⟩ _
+    have hD : ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lookupHelperCommsMptrBase ≤
+        ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lookupZCommsMptrBase :=
+      ptrAddr_add_ge_of_integer _ ⟨_, rfl⟩ _
+    have hE : ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lookupZCommsMptrBase ≤
+        ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).trashcanCommsMptrBase :=
+      ptrAddr_add_ge_of_integer _ ⟨_, rfl⟩ _
+    have hF : ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).trashcanCommsMptrBase ≤
+        ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientLimbCommsMptrBase :=
+      ptrAddr_add_ge_of_integer _ ⟨_, rfl⟩ _
+    have hbase : T ≤ ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).commsMptrBase := by
+      rw [hcomms_eq]
+      exact Nat.le_trans
+        (by show T ≤ T + 220 * Midfall.Generator.wordBytes + meta_.numEvals * Midfall.Generator.wordBytes; omega)
+        (MemoryPairs.alignUp_le _ _ MemoryPairs.wordBytes_pos)
+    exact Nat.le_trans hbase (Nat.le_trans hA (Nat.le_trans hB (Nat.le_trans hC
+      (Nat.le_trans hD (Nat.le_trans hE hF)))))
+  have hp_selector : T ≤ (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).selectorAccMptr := by
+    have h : (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).selectorAccMptr =
+        alignUp (alignUp (T + 220 * Midfall.Generator.wordBytes
+          + meta_.numEvals * Midfall.Generator.wordBytes) Midfall.Generator.wordBytes
+          + commitmentG1Count meta_ * Midfall.Generator.g1Bytes) Midfall.Generator.wordBytes := by
+      show alignUp (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).commsMptrBase
+          + commitmentG1Count meta_ * Midfall.Generator.g1Bytes) Midfall.Generator.wordBytes = _
+      rw [hcomms_eq]
+    rw [h]
+    exact Nat.le_trans
+      (Nat.le_trans
+        (Nat.le_trans
+          (by show T ≤ T + 220 * Midfall.Generator.wordBytes + meta_.numEvals * Midfall.Generator.wordBytes; omega)
+          (MemoryPairs.alignUp_le _ _ MemoryPairs.wordBytes_pos))
+        (Nat.le_add_right _ _))
+      (MemoryPairs.alignUp_le _ _ MemoryPairs.wordBytes_pos)
+  have hvkfloor : finalPairingScratchStart + 768 ≤
+      ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vkMptr := by
+    have h := generated_vkMptr_floor R hR
+    rw [hlayout] at h
+    have h768 : finalPairingScratchStart + 768 ≤ 0x1560 := by decide
+    omega
+  have hc_theta : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).thetaMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).thetaMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_theta; omega))
+  have hc_beta : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).betaMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).betaMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_beta; omega))
+  have hc_gamma : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).gammaMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).gammaMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_gamma; omega))
+  have hc_trashChallenge : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).trashChallengeMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).trashChallengeMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_trashChallenge; omega))
+  have hc_y : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).yMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).yMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_y; omega))
+  have hc_x : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).xMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).xMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_x; omega))
+  have hc_x1 : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x1Mptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x1Mptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_x1; omega))
+  have hc_x2 : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x2Mptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x2Mptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_x2; omega))
+  have hc_x3 : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x3Mptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x3Mptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_x3; omega))
+  have hc_x4 : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x4Mptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).x4Mptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_x4; omega))
+  have hc_fCom : holdsG1 R.E st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).fComMptr) (S.b.fCom) =
+      holdsG1 R.E st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).fComMptr) (S.b.fCom) :=
+    holdsG1_congr_of_outside R.E (S.b.fCom) hmem' (Or.inr (by have := hp_fCom; omega))
+  have hc_pi : holdsG1 R.E st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).piMptr) (S.c.pi) =
+      holdsG1 R.E st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).piMptr) (S.c.pi) :=
+    holdsG1_congr_of_outside R.E (S.c.pi) hmem' (Or.inr (by have := hp_pi; omega))
+  have hc_xN : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).xNMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).xNMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_xN; omega))
+  have hc_lLast : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lLastMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lLastMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_lLast; omega))
+  have hc_lBlind : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lBlindMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).lBlindMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_lBlind; omega))
+  have hc_l0 : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).l0Mptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).l0Mptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_l0; omega))
+  have hc_instanceEval : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).instanceEvalMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).instanceEvalMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_instanceEval; omega))
+  have hc_quotientEval : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientEvalMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientEvalMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_quotientEval; omega))
+  have hc_quotient : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_quotient; omega))
+  have hc_fEval : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).fEvalMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).fEvalMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_fEval; omega))
+  have hc_v : ∀ x : Fr p, holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vMptr) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vMptr) x :=
+    fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_v; omega))
+  have hc_finalCom : holdsG1 R.E st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).finalComMptr) (S.c.finalCom.eval) =
+      holdsG1 R.E st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).finalComMptr) (S.c.finalCom.eval) :=
+    holdsG1_congr_of_outside R.E (S.c.finalCom.eval) hmem' (Or.inr (by have := hp_finalCom; omega))
+  have hc_pairingLhs : holdsG1 R.E st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).pairingLhsMptr) (S.c.dual.left.eval) =
+      holdsG1 R.E st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).pairingLhsMptr) (S.c.dual.left.eval) :=
+    holdsG1_congr_of_outside R.E (S.c.dual.left.eval) hmem' (Or.inr (by have := hp_pairingLhs; omega))
+  have hc_pairingRhs : holdsG1 R.E st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).pairingRhsMptr) (S.c.dual.right.eval) =
+      holdsG1 R.E st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).pairingRhsMptr) (S.c.dual.right.eval) :=
+    holdsG1_congr_of_outside R.E (S.c.dual.right.eval) hmem' (Or.inr (by have := hp_pairingRhs; omega))
+  have hc_qEvalCptr : wordAt st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).qEvalCptrMptr) =
+      wordAt st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).qEvalCptrMptr) :=
+    wordAt_congr_of_outside hmem' (Or.inr (by have := hp_qEvalCptr; omega))
+  have hc_g1Identity : bytesAt st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).g1IdentityMptr) 128 =
+      bytesAt st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).g1IdentityMptr) 128 :=
+    bytesAt_congr_of_outside hmem' (Or.inr (by have := hp_g1Identity; omega))
+  have hc_quotient32 : ∀ x : Fr p,
+      holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientMptr + 32) x =
+      holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientMptr + 32) x :=
+    fun x => holdsFr_congr_of_outside x hmem'
+      (Or.inr (by have := hp_quotient; omega))
+  have hc_advice : holdsG1s R.E st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).adviceCommsMptrBase)
+      (S.trace.adviceCommitments.getD 0 #[]) =
+      holdsG1s R.E st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).adviceCommsMptrBase)
+      (S.trace.adviceCommitments.getD 0 #[]) :=
+    holdsG1s_congr_of_outside R.E _ hmem' (fun i _ => Or.inr (by have := hp_comms; omega))
+  have hc_quotLimb : holdsG1s R.E st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientLimbCommsMptrBase)
+      S.alg.quotientLimbComs =
+      holdsG1s R.E st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientLimbCommsMptrBase)
+      S.alg.quotientLimbComs :=
+    holdsG1s_congr_of_outside R.E _ hmem' (fun i _ => Or.inr (by have := hp_quotLimb; omega))
+  have hc_vk : bytesAt st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vkMptr) R.pv.vk.len =
+      bytesAt st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vkMptr) R.pv.vk.len :=
+    bytesAt_congr_of_outside hmem' (Or.inr hvkfloor)
+  -- the checkpoint guards
+  have h15 : (1 : Nat) ≤ 5 := by decide
+  have h25 : (2 : Nat) ≤ 5 := by decide
+  have h35 : (3 : Nat) ≤ 5 := by decide
+  have h45 : (4 : Nat) ≤ 5 := by decide
+  have h55 : (5 : Nat) ≤ 5 := by decide
+  have hpcs : (Checkpoint.pcs == Checkpoint.pairing) = false := by decide
+  simp only [Midfall.Lowering.checkpoint_le_def, Checkpoint.idx, h15, h25, h35, h45, h55,
+    ite_true, hpcs, Bool.false_eq_true, ite_false] at h' ⊢
+  -- LocalsOk is the same (r is not success)
+  have hlock : LocalsOk (p := p) (calls := calls) (gas := gas) (VEnv.set V "success" w) =
+      LocalsOk (p := p) (calls := calls) (gas := gas) V := by
+    unfold LocalsOk
+    rw [venv_get_set_ne_tot (D := Bridge.Dialect calls gas) (x := "success") (y := "r") (v := w)
+      (by decide)]
+  cases hlin : S.lin with
+  | none =>
+    simp only [hlin] at h' ⊢
+    simpa only [hc_g1Identity, hc_theta, hc_beta, hc_gamma, hc_trashChallenge, hc_y, hc_x,
+      hc_x1, hc_x2, hc_x3, hc_x4, hc_advice, hc_quotLimb, hc_fCom, hc_pi, hc_qEvalCptr,
+      hc_xN, hc_lLast, hc_lBlind, hc_l0, hc_instanceEval, hc_quotient, hc_quotient32,
+      hc_fEval, hc_v, hc_finalCom, hc_pairingLhs, hc_pairingRhs, hc_vk, hlock, hhalt, henv]
+      using h'
+  | some L =>
+    simp only [hlin] at h' ⊢
+    have hc_quotientEval : ∀ x : Fr p,
+        holdsFr st' (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientEvalMptr) x =
+        holdsFr st (ptrAddr (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).quotientEvalMptr) x :=
+      fun x => holdsFr_congr_of_outside x hmem' (Or.inr (by have := hp_quotientEval; omega))
+    have hc_selector : holdsFrs st' (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).selectorAccMptr
+        (linComBuckets L.linCom) =
+        holdsFrs st (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).selectorAccMptr
+        (linComBuckets L.linCom) :=
+      holdsFrs_congr_of_outside _ hmem' (fun i _ => Or.inr (by have := hp_selector; omega))
+    simpa only [hc_g1Identity, hc_theta, hc_beta, hc_gamma, hc_trashChallenge, hc_y, hc_x,
+      hc_x1, hc_x2, hc_x3, hc_x4, hc_advice, hc_quotLimb, hc_fCom, hc_pi, hc_qEvalCptr,
+      hc_xN, hc_lLast, hc_lBlind, hc_l0, hc_instanceEval, hc_quotient, hc_quotient32,
+      hc_quotientEval, hc_selector, hc_fEval, hc_v, hc_finalCom, hc_pairingLhs,
+      hc_pairingRhs, hc_vk, hlock, hhalt, henv] using h'
+
 
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
