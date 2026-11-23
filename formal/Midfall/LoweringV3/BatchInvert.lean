@@ -1680,12 +1680,153 @@ theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
     exact absurd ho1 hne1
 
 
+theorem eval_iszero_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x : String} {cv : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.var x]) (.vals [cv] st')) :
+    ∃ rv, VEnv.get V x = some rv ∧ st' = st ∧ cv = b2w (rv = 0) := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil hvar =>
+      cases hnil with
+      | argsNil =>
+          cases hvar with
+          | var hget =>
+              simp only [builtinWithExternal, stepOp, un] at hbi
+              cases hbi
+              exact ⟨_, hget, rfl, rfl⟩
+
+theorem eval_iszero_var_no_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x : String}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.var x]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_unary (op := .iszero)
+    (by
+      intro a st r hr
+      simp only [builtinWithExternal, stepOp, un] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) h
+
+theorem exec_guard_iszero_var {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome} {x : String} {rv : U256}
+    (hget : VEnv.get V x = some rv)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Expr.var x]) [Stmt.leave]) V' st' o) :
+    (rv ≠ 0 → o = .normal ∧ V' = V ∧ st' = st) ∧
+      (rv = 0 → o = .leave ∧ V' = V ∧ st' = st) := by
+  constructor
+  · intro hrv
+    cases h with
+    | ifTrue hc hnz hbody =>
+        obtain ⟨vv, hgetv, hst, hcv⟩ := eval_iszero_var_inv hc
+        rw [hget] at hgetv
+        injection hgetv with hvv
+        subst hvv
+        subst hst
+        subst hcv
+        simp [b2w, hrv] at hnz
+        exact absurd rfl hnz
+    | ifFalse hc hz =>
+        obtain ⟨vv, hgetv, hst, hcv⟩ := eval_iszero_var_inv hc
+        rw [hget] at hgetv
+        injection hgetv with hvv
+        subst hvv
+        subst hst
+        exact ⟨rfl, rfl, rfl⟩
+    | ifHalt hc => exact (eval_iszero_var_no_halt hc).elim
+  · intro hrv
+    subst hrv
+    cases h with
+    | ifTrue hc hnz hbody =>
+        obtain ⟨vv, hgetv, hst, hcv⟩ := eval_iszero_var_inv hc
+        rw [hget] at hgetv
+        injection hgetv with hvv
+        subst hvv
+        subst hst
+        cases hbody with
+        | block hb =>
+            cases hb with
+            | seqCons hleave hrest => cases hleave
+            | seqStop hleave hne =>
+                cases hleave
+                refine ⟨rfl, ?_, rfl⟩
+                simp [restore]
+    | ifFalse hc hz =>
+        obtain ⟨vv, hgetv, hst, hcv⟩ := eval_iszero_var_inv hc
+        rw [hget] at hgetv
+        injection hgetv with hvv
+        subst hvv
+        subst hst
+        subst hcv
+        exfalso
+        exact absurd (show (1 : U256) = 0 from hz) (by decide)
+    | ifHalt hc => exact (eval_iszero_var_no_halt hc).elim
+
+theorem bi_head_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 0 2 =
+      [ GenAst.yset "ret" (GenAst.yvar "success"),
+        GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"]) [Stmt.leave] ] := by
+  kernel_rfl
+
+
+
+theorem bi_prelude_head (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (succ rv0 : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 0 2)
+      (fun V _ => VEnv.get V "success" = some succ ∧ VEnv.get V "ret" = some rv0)
+      (fun Vpre st V' st' o =>
+        (succ ≠ 0 ∧ o = .normal ∧ V' = VEnv.set Vpre "ret" succ ∧ st' = st) ∨
+        (succ = 0 ∧ o = .leave ∧ V' = VEnv.set Vpre "ret" 0 ∧ st' = st)) := by
+  rw [bi_head_form]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hsucc, hrv0⟩ := hpre
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨v, he, hV1⟩ := exec_assign_inv h1
+    obtain ⟨hsv, rfl⟩ := eval_var_inv he
+    rw [hsucc] at hsv
+    injection hsv with hv
+    subst hv
+    subst hV1
+    have hget : VEnv.get (VEnv.set V "ret" succ) "ret" = some succ :=
+      venv_get_set_same (D := Bridge.Dialect c g) hrv0
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
+      ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · cases hrest2
+      by_cases hs : succ = 0
+      · obtain ⟨ho, -, -⟩ := (exec_guard_iszero_var (x := "ret") hget h2).2 hs
+        exact absurd ho (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+      · obtain ⟨ho, hV2, hst2⟩ := (exec_guard_iszero_var (x := "ret") hget h2).1 hs
+        subst hV2
+        subst hst2
+        exact Or.inl ⟨hs, rfl, rfl, rfl⟩
+    · by_cases hs : succ = 0
+      · obtain ⟨ho, hV2, hst2⟩ := (exec_guard_iszero_var (x := "ret") hget h2).2 hs
+        subst hV2
+        subst hst2
+        subst hs
+        rw [ho]
+        exact Or.inr ⟨rfl, rfl, rfl, rfl⟩
+      · obtain ⟨ho, -, -⟩ := (exec_guard_iszero_var (x := "ret") hget h2).1 hs
+        exact absurd ho hne2
+  · cases h1 with
+    | assignVal he hl => exact absurd rfl hne1
+    | assignHalt he => cases he
+
+
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_mstore_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_tail_form [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_tail_contract [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_iszero_var_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_iszero_var_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_iszero_var [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_head_form [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_prelude_head [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
