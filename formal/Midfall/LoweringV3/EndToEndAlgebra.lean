@@ -26,6 +26,7 @@
   `expectedPermZEvals := 3 * numPermutationZs - 1` agrees.
 -/
 import Midfall.LoweringV3.EndToEnd
+import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
 
@@ -2727,6 +2728,137 @@ theorem PrepareLogSlots_of_parsed {G₁ G₂ Gₜ : Type}
   rw [hinit]
   simp only [List.nil_append]
   exact hslots
+
+/-- **THE A6 RESIDUAL, NAMED (parseTrace's G1 width block).** `Verifier.parseTrace`
+    appends exactly one `g1` width per non-quotient commitment, and that block
+    together with the quotient limbs `readAlgebra` reads is the plan's
+    `prefixG1Count`. This is the parseTrace half of the shared schedule walk; A6
+    proves the EMITTED parser's static schedule (`tp_events_slots`) but not this
+    Lean-side run, so the two are kept as separate named residuals. -/
+def ParseTraceSchedule (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) : Prop :=
+  ∃ nParse : Nat,
+    (∀ (inst : Array (Fr p)),
+      ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse) ∧
+    nParse + readAlgebraQuotientCount Features.solidity R.vk =
+      (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).prefixG1Count
+
+/-- **THE KZG RESIDUAL, NAMED (multiPrepare's scalar block).** `multiPrepare`
+    appends `[g1]`, one scalar per quotient-opening point set, `[g1]`; the count
+    is pinned to the plan's `numPointSets`. The unconditional count equality is
+    FALSE at `x = 0` (`kzgPartitionBridge_false_at_x0`), so this is the
+    D-GATE5 `ChallengesGood.xNonzero` / partition-bridge obligation, stated with
+    no weakening. -/
+def KzgMultiPrepareWidths (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) : Prop :=
+  MultiPrepareBlockWidth R.E.g1
+    (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+      R.E.fewerPointSetsRuntime)
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+      R.plan.proofLayout).numPointSets
+
+/-- **`PrepareLogSlots` FROM EXACTLY THE TWO NAMED RESIDUALS.** The parseTrace
+    block, the KZG scalar block, and the plan's eval count (`numEvals`, proved in
+    this file) are the whole of the bridge; nothing else is assumed. -/
+theorem PrepareLogSlots_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hA6 : ParseTraceSchedule R) (hKZG : KzgMultiPrepareWidths R) :
+    Midfall.LoweringV3.PrepareLogSlots R := by
+  obtain ⟨nParse, hParse, hQuot⟩ := hA6
+  refine PrepareLogSlots_of_parsed R hR nParse
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+      R.plan.proofLayout).numPointSets hParse hKZG hQuot ?_
+  rfl
+
+/-- **THE A6 LINK.** If `prepare`'s log widths are the emitted parser's own
+    schedule `R.tpEvents`, then A6's `tp_events_slots` closes `PrepareLogSlots`
+    outright. This is the exact project-level refinement A6's report names; the
+    remaining width walk is `PrepareLogSlots_of_A6_KZG`'s two residuals. -/
+theorem PrepareLogSlots_of_tpEvents (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R)
+    (hEv : ∀ (inst : Array (Fr p)) (π : Bytes)
+        (d : DualMSM (Fr p) G₁ G₂ Gₜ) (t : Transcript),
+      (Midfall.Halo2.prepare (Gₜ := Gₜ) R.E Features.solidity R.vk
+          [[1]] [[inst.toList]]).run (Transcript.initFromBytes π) = .ok (d, t) →
+        t.log.toList.map (fun r =>
+          if r.1 = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+          else Midfall.Lowering.WireSlot.fr) =
+          R.tpEvents.filterMap Midfall.LoweringV3.TranscriptRows.TEv.slot?) :
+    Midfall.LoweringV3.PrepareLogSlots R := by
+  intro inst π d t hrun
+  rw [hEv inst π d t hrun]
+  exact Midfall.LoweringV3.TranscriptRows.tp_events_slots R hR
+
+/-- **END-TO-END FROM EXACTLY THE TWO NAMED RESIDUALS.** The full `EndToEndV3`
+    statement, with the A6 `parseTrace` width block and the KZG `multiPrepare`
+    scalar block as the only extra premises. Nothing is added to `ValidV3`, to
+    any row or to the root: both residuals are Props local to this lane. -/
+theorem end_to_end_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (product : Midfall.Yul.PairingProduct)
+    (hR : ValidV3 R) (hEq : LoweringEquivalenceV3 R product)
+    (W : YulSemantics.EVM.ExecEnv) (Lyt : YulSemantics.EVM.Layout) (vkAddr : YulSemantics.EVM.U256)
+    (hdep : Midfall.LoweringV2.DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
+    (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
+    (hcodec : G1CodecLawsV3 R.E.g1)
+    (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
+      Midfall.LoweringV2.SoundSide R keccak256 cd ∧
+        Midfall.LoweringV2.CompleteSide R keccak256 cd)
+    (hA6 : ParseTraceSchedule R) (hKZG : KzgMultiPrepareWidths R) :
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
+  end_to_end_of_prepareLogSlots R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
+    inst π hn hside (PrepareLogSlots_of_A6_KZG R hR hA6 hKZG)
+
+/-- **END-TO-END FROM THE A6 STATIC SCHEDULE.** The A6 half is stated exactly as
+    the project-level refinement between `prepare`'s log widths and `R.tpEvents`;
+    A6's `tp_events_slots` then produces the plan slots. This absorbs the KZG
+    q-eval block into the event list (whose `tpEvents` already carries the plan's
+    `numPointSets` scalars), so it is the strongest A6-only link; the split form
+    with both residuals named is `end_to_end_of_A6_KZG`. -/
+theorem end_to_end_of_tpEvents (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (product : Midfall.Yul.PairingProduct)
+    (hR : ValidV3 R) (hEq : LoweringEquivalenceV3 R product)
+    (W : YulSemantics.EVM.ExecEnv) (Lyt : YulSemantics.EVM.Layout) (vkAddr : YulSemantics.EVM.U256)
+    (hdep : Midfall.LoweringV2.DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
+    (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
+    (hcodec : G1CodecLawsV3 R.E.g1)
+    (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
+      Midfall.LoweringV2.SoundSide R keccak256 cd ∧
+        Midfall.LoweringV2.CompleteSide R keccak256 cd)
+    (hEv : ∀ (inst : Array (Fr p)) (π : Bytes)
+        (d : DualMSM (Fr p) G₁ G₂ Gₜ) (t : Transcript),
+      (Midfall.Halo2.prepare (Gₜ := Gₜ) R.E Features.solidity R.vk
+          [[1]] [[inst.toList]]).run (Transcript.initFromBytes π) = .ok (d, t) →
+        t.log.toList.map (fun r =>
+          if r.1 = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+          else Midfall.Lowering.WireSlot.fr) =
+          R.tpEvents.filterMap Midfall.LoweringV3.TranscriptRows.TEv.slot?) :
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
+  end_to_end_of_prepareLogSlots R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
+    inst π hn hside (PrepareLogSlots_of_tpEvents R hR hEv)
+
+/-! ### Gates for the two named residuals -/
+
+#check @ParseTraceSchedule
+#check @KzgMultiPrepareWidths
+#check @PrepareLogSlots_of_A6_KZG
+#check @PrepareLogSlots_of_tpEvents
+#check @end_to_end_of_A6_KZG
+#check @end_to_end_of_tpEvents
+
+#cone_sorries Midfall.LoweringV3.end_to_end_of_A6_KZG
+#cone_sorries Midfall.LoweringV3.end_to_end_of_tpEvents
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV3.end_to_end_of_tpEvents
+  [propext, Classical.choice, Quot.sound, sorryAx] native []
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV3.PrepareLogSlots_of_tpEvents
+  [propext, Classical.choice, Quot.sound, sorryAx] native []
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV3.end_to_end_of_A6_KZG
+  [propext, Classical.choice, Quot.sound, sorryAx] native []
 
 end Composition
 
