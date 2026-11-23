@@ -1504,6 +1504,10 @@ theorem runsAll_readFrGroups_append (E : VerifierEnv p G₁ G₂ Gₜ) :
       · intro _
         exact ih counts₂ (Qs₁.drop n) Qs₂ hlen₂ h₂
 
+/-- The advice-phase segment of the parser schedule: one G1 group per user phase. -/
+def seqAdvice (userPhases : List UserPhase) : List (WireSlot × Nat) :=
+  userPhases.map (fun ph => (WireSlot.g1, ph.adviceBytes / 128))
+
 /-- A mixed schedule of homogeneous groups: one `(slot, count)` pair per group. -/
 def readGroupSeq (E : VerifierEnv p G₁ G₂ Gₜ) : List (WireSlot × Nat) → TranscriptM Unit
   | [] => pure ()
