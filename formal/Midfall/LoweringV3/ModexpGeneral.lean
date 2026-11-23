@@ -874,7 +874,7 @@ theorem bi_staticcall_tail_lets {c : ExternalCalls} {g : ExternalGas}
 
 variable {c : ExternalCalls} {g : ExternalGas}
 
-structure RestSucc (p a : Nat) (v : Nat) (x : U256) (st : EvmState)
+structure RestSucc (p a mp : Nat) (v : Nat) (x : U256) (st : EvmState)
     (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome) : Prop where
   hok : o = .normal
   hret : VEnv.get V' "ret" = some 1
@@ -884,6 +884,7 @@ structure RestSucc (p a : Nat) (v : Nat) (x : U256) (st : EvmState)
   hsecond : VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 a + 32)
   hgp_mptr : VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p - 32)
   hmptr_start : VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a)
+  hmptr : VEnv.get V' "mptr" = some (BitVec.ofNat 256 mp)
   hr : VEnv.get V' "r" = some (BitVec.ofNat 256 blsR)
   hgp : VEnv.get V' "gp" = some x
   hstate : st' = touchMemory st (BitVec.ofNat 256 p).toNat 32
@@ -908,12 +909,13 @@ abbrev rest4 : Block EVM.Op :=
     GenAst.yset "gp_mptr" (GenAst.yop EVM.Op.sub
       [GenAst.yvar "gp_mptr", GenAst.ylit 32]) ]
 
-structure RestPre (M : Nat → UInt8) (p a : Nat) (v : Nat) (x : U256)
+structure RestPre (M : Nat → UInt8) (p a mp : Nat) (v : Nat) (x : U256)
     (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop where
   hret : VEnv.get V "ret" = some 1
   hlen : st.returndata.length = 32
   hgp_mptr : VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p)
   hmstart : VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a)
+  hmptr : VEnv.get V "mptr" = some (BitVec.ofNat 256 mp)
   hr : VEnv.get V "r" = some (BitVec.ofNat 256 blsR)
   hgp : VEnv.get V "gp" = some x
   hpf_some : (VEnv.get V "precompile_failed").isSome = true
@@ -925,12 +927,12 @@ structure RestFailPre (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop whe
   hpf_some : (VEnv.get V "precompile_failed").isSome = true
 
 theorem rest_success (funs : FunEnv (Bridge.Dialect c g))
-    (M : Nat → UInt8) (p a : Nat) (v : Nat) (x : U256) (hp : p < 2 ^ 256) :
+    (M : Nat → UInt8) (p a mp : Nat) (v : Nat) (x : U256) (hp : p < 2 ^ 256) :
     StmtsContractAll (D := Bridge.Dialect c g) funs rest4
-      (fun V st => RestPre (c := c) (g := g) M p a v x V st)
-      (fun _ st V' st' o => RestSucc (c := c) (g := g) p a v x st V' st' o) := by
+      (fun V st => RestPre (c := c) (g := g) M p a mp v x V st)
+      (fun _ st V' st' o => RestSucc (c := c) (g := g) p a mp v x st V' st' o) := by
   intro V st hpre V' st' o hrun
-  obtain ⟨hret, hlen, hgp_mptr, hmstart, hr, hgp, hpf_some, hmem, hload⟩ := hpre
+  obtain ⟨hret, hlen, hgp_mptr, hmstart, hmptr, hr, hgp, hpf_some, hmem, hload⟩ := hpre
   obtain ⟨pfv, hpfv⟩ := Option.isSome_iff_exists.mp hpf_some
   rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
     ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
@@ -981,7 +983,7 @@ theorem rest_success (funs : FunEnv (Bridge.Dialect c g))
           (M := M) (p := p) (a := a) (v := v) hp
           V4 st4 ⟨hgpV4, hmstartV4, hst4mem, hload⟩ V' st' o hrest4
         obtain ⟨ho_tail, hall, hfirst, hsecond, hgpm, hmstart', hst', hV'⟩ := h5c
-        refine ⟨ho_tail, ?_, ?_, hall, hfirst, hsecond, hgpm, hmstart', ?_, ?_, ?_⟩
+        refine ⟨ho_tail, ?_, ?_, hall, hfirst, hsecond, hgpm, hmstart', ?_, ?_, ?_, ?_⟩
         · -- ret
           rw [hV']
           rw [Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
@@ -1007,6 +1009,22 @@ theorem rest_success (funs : FunEnv (Bridge.Dialect c g))
                 (x := "all_inv") (y := "precompile_failed") (by decide)]
           rw [hV4, hV3, hV2]
           simpa [b2w] using Midfall.LoweringV3.PcsRows.venv_get_set_same (D := Bridge.Dialect c g) hpfV2
+        · -- mptr
+          rw [hV']
+          rw [Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
+                (x := "gp_mptr") (y := "mptr") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                (x := "second_mptr") (y := "mptr") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                (x := "first_mptr") (y := "mptr") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                (x := "all_inv") (y := "mptr") (by decide)]
+          rw [hV4, hV3, hV2]
+          rw [Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
+                (x := "precompile_failed") (y := "mptr") (by decide),
+              Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
+                (x := "ret") (y := "mptr") (by decide)]
+          exact hmptr
         · -- r
           rw [hV']
           rw [Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
@@ -1104,13 +1122,13 @@ theorem rest_failure (funs : FunEnv (Bridge.Dialect c g)) :
     | assignHalt he => exact (eval_ret_and_eq32_no_halt he).elim
 
 theorem rest_success_run (funs : FunEnv (Bridge.Dialect c g))
-    (M : Nat → UInt8) (p a : Nat) (v : Nat) (x : U256) (hp : p < 2 ^ 256)
+    (M : Nat → UInt8) (p a mp : Nat) (v : Nat) (x : U256) (hp : p < 2 ^ 256)
     (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
-    (hpre : RestPre (c := c) (g := g) M p a v x V st)
+    (hpre : RestPre (c := c) (g := g) M p a mp v x V st)
     (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome)
     (h : ExecStmts (D := Bridge.Dialect c g) funs V st rest4 V' st' o) :
-    RestSucc (c := c) (g := g) p a v x st V' st' o :=
-  rest_success (c := c) (g := g) funs M p a v x hp V st hpre V' st' o h
+    RestSucc (c := c) (g := g) p a mp v x st V' st' o :=
+  rest_success (c := c) (g := g) funs M p a mp v x hp V st hpre V' st' o h
 
 theorem rest_failure_run (funs : FunEnv (Bridge.Dialect c g))
     (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
@@ -1122,7 +1140,7 @@ theorem rest_failure_run (funs : FunEnv (Bridge.Dialect c g))
 
 
 
-structure WalkSucc (mem : Nat → UInt8) (p a : Nat) (x : U256) (st : EvmState)
+structure WalkSucc (mem : Nat → UInt8) (p a mp : Nat) (x : U256) (st : EvmState)
     (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome) : Prop where
   hok : o = .normal
   hret : VEnv.get V' "ret" = some 1
@@ -1133,6 +1151,7 @@ structure WalkSucc (mem : Nat → UInt8) (p a : Nat) (x : U256) (st : EvmState)
   hsecond : VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 (a + 32))
   hgp_mptr : VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 (p - 32))
   hmptr_start : VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a)
+  hmptr : VEnv.get V' "mptr" = some (BitVec.ofNat 256 mp)
   hr : VEnv.get V' "r" = some (BitVec.ofNat 256 blsR)
   hgp : VEnv.get V' "gp" = some x
   henv : st'.env = st.env
@@ -1149,21 +1168,21 @@ structure WalkFail (mem : Nat → UInt8) (p a : Nat) (x : U256) (st : EvmState)
   hhalt : st'.halted = st.halted
   hmem : ∃ rd, st'.memory = copyReturn (mxMem mem p x) p 32 rd
 
-def WalkPost (mem : Nat → UInt8) (p a : Nat) (x : U256) (st : EvmState)
+def WalkPost (mem : Nat → UInt8) (p a mp : Nat) (x : U256) (st : EvmState)
     (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome) : Prop :=
-  WalkSucc mem p a x st V' st' o ∨ WalkFail mem p a x st V' st' o
+  WalkSucc mem p a mp x st V' st' o ∨ WalkFail mem p a x st V' st' o
 
-theorem walk_success_build (mem : Nat → UInt8) (p a : Nat) (x : U256) (hp : p < 2 ^ 256) (hp32 : 32 ≤ p) (ha : a + 32 < 2 ^ 256)
+theorem walk_success_build (mem : Nat → UInt8) (p a mp : Nat) (x : U256) (hp : p < 2 ^ 256) (hp32 : 32 ≤ p) (ha : a + 32 < 2 ^ 256)
     (st st1 st' : EvmState) (resp : CallResponse)
     (V' : VEnv (Bridge.Dialect c g))
     (hst1 : st1 = finishCall .staticcall st resp (BitVec.ofNat 256 p).toNat 192
       (BitVec.ofNat 256 p).toNat 32)
     (hrd : resp.returndata = (bytesNatBE ((x.toNat : ZMod blsR)⁻¹).val 32).data.toList)
     (hmem : st.memory = mxMem mem p x)
-    (hrest : RestSucc (c := c) (g := g) p a ((x.toNat : ZMod blsR)⁻¹).val x st1 V' st' .normal) :
-    WalkSucc (c := c) (g := g) mem p a x st V' st' .normal := by
+    (hrest : RestSucc (c := c) (g := g) p a mp ((x.toNat : ZMod blsR)⁻¹).val x st1 V' st' .normal) :
+    WalkSucc (c := c) (g := g) mem p a mp x st V' st' .normal := by
   refine ⟨hrest.hok, hrest.hret, hrest.hpf, hrest.hall, hrest.hfirst, ?_,
-    ?_, hrest.hmptr_start, hrest.hr, hrest.hgp, ?_, ?_, ?_⟩
+    ?_, hrest.hmptr_start, hrest.hmptr, hrest.hr, hrest.hgp, ?_, ?_, ?_⟩
   · rw [hrest.hsecond]
     change some (BitVec.ofNat 256 a + BitVec.ofNat 256 32) = some (BitVec.ofNat 256 (a + 32))
     exact congrArg some (ofNat_add_32 a ha)
@@ -1222,6 +1241,14 @@ theorem head_mptr_start {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
   rw [hV1, hflag]
   exact (Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
     (x := "ret") (y := "mptr_start") (by decide)).trans h
+
+theorem head_mptr {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
+    {mp : Nat} (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
+    (h : VEnv.get V "mptr" = some (BitVec.ofNat 256 mp)) :
+    VEnv.get V1 "mptr" = some (BitVec.ofNat 256 mp) := by
+  rw [hV1, hflag]
+  exact (Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
+    (x := "ret") (y := "mptr") (by decide)).trans h
 
 theorem head_r {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
     (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
@@ -1477,7 +1504,7 @@ theorem staticcallGuard_contract (product : PairingProduct)
 
 
 theorem walk_success_rest (funs : FunEnv (Bridge.Dialect c g))
-    (M : Nat → UInt8) (p a : Nat) (x : U256) (hp : p < 2 ^ 256)
+    (M : Nat → UInt8) (p a mp : Nat) (x : U256) (hp : p < 2 ^ 256)
     (V V1 : VEnv (Bridge.Dialect c g)) (st st1 : EvmState) (resp : CallResponse)
     (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome)
     (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
@@ -1486,6 +1513,7 @@ theorem walk_success_rest (funs : FunEnv (Bridge.Dialect c g))
     (hgp_mptr : VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p))
     (hgp : VEnv.get V "gp" = some x)
     (hmstart : VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a))
+    (hmptr : VEnv.get V "mptr" = some (BitVec.ofNat 256 mp))
     (hr : VEnv.get V "r" = some (BitVec.ofNat 256 blsR))
     (hpf_some : (VEnv.get V "precompile_failed").isSome = true)
     (hrv0 : ∃ rv0, VEnv.get V "ret" = some rv0)
@@ -1494,10 +1522,11 @@ theorem walk_success_rest (funs : FunEnv (Bridge.Dialect c g))
     (hst1mem : st1.memory = M)
     (hload : loadWord M p = BitVec.ofNat 256 ((x.toNat : ZMod blsR)⁻¹).val)
     (hrec : ExecStmts (D := Bridge.Dialect c g) funs V1 st1 rest4 V' st' o) :
-    RestSucc (c := c) (g := g) p a ((x.toNat : ZMod blsR)⁻¹).val x st1 V' st' o :=
-  rest_success_run (c := c) (g := g) funs M p a ((x.toNat : ZMod blsR)⁻¹).val x hp
+    RestSucc (c := c) (g := g) p a mp ((x.toNat : ZMod blsR)⁻¹).val x st1 V' st' o :=
+  rest_success_run (c := c) (g := g) funs M p a mp ((x.toNat : ZMod blsR)⁻¹).val x hp
     V1 st1 (RestPre.mk (head_ret hV1 hflag hrv0) hlen1 (head_gp_mptr hV1 hflag hgp_mptr)
-      (head_mptr_start hV1 hflag hmstart) (head_r hV1 hflag hr) (head_gp hV1 hflag hgp)
+      (head_mptr_start hV1 hflag hmstart) (head_mptr hV1 hflag hmptr)
+      (head_r hV1 hflag hr) (head_gp hV1 hflag hgp)
       (head_pf_some hV1 hflag hpf_some) hst1mem hload)
     V' st' o hrec
 
@@ -1522,7 +1551,7 @@ theorem walk_failure_rest (funs : FunEnv (Bridge.Dialect c g)) (p : Nat)
 theorem bi_staticcall_walk (consts : Inline.Consts) (product : PairingProduct) (g : ExternalGas)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
     (gas : Nat) (hgas : consts.lookup "MODEXP_GAS" = some gas)
-    (mem : Nat → UInt8) (p a : Nat) (x : U256)
+    (mem : Nat → UInt8) (p a mp : Nat) (x : U256)
     (hp : p < 2 ^ 256) (hp32 : 32 ≤ p) (ha : a + 32 < 2 ^ 256)
     (hx0 : 0 < x.toNat) (hxr : x.toNat < blsR) :
     StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
@@ -1531,13 +1560,14 @@ theorem bi_staticcall_walk (consts : Inline.Consts) (product : PairingProduct) (
         VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p) ∧
         VEnv.get V "gp" = some x ∧
         VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "mptr" = some (BitVec.ofNat 256 mp) ∧
         VEnv.get V "r" = some (BitVec.ofNat 256 blsR) ∧
         (VEnv.get V "ret").isSome ∧ (VEnv.get V "precompile_failed").isSome ∧
         st.memory = mxMem mem p x)
-      (fun V st V' st' o => WalkPost mem p a x st V' st' o) := by
+      (fun V st V' st' o => WalkPost mem p a mp x st V' st' o) := by
   rw [bi_staticcall_segment_form, hgas]
   intro V st hpre V' st' o hrun
-  obtain ⟨hgp_mptr, hgp, hmstart, hr, hret_some, hpf_some, hmem⟩ := hpre
+  obtain ⟨hgp_mptr, hgp, hmstart, hmptr, hr, hret_some, hpf_some, hmem⟩ := hpre
   have hout := mxMem_modexpOutput mem p x hx0 hxr
   have hvalid := modexpValidInput_of_output_some hout
   change ExecStmts (D := Bridge.Dialect (permissive (callsOf product)) g) funs V st
@@ -1597,12 +1627,12 @@ theorem bi_staticcall_walk (consts : Inline.Consts) (product : PairingProduct) (
           (v := ((x.toNat : ZMod blsR)⁻¹).val) (zmod_inv_val_lt x)
       have hrest := walk_success_rest (c := permissive (callsOf product)) (g := g) funs
         ((finishCall .staticcall st resp (BitVec.ofNat 256 p).toNat 192
-          (BitVec.ofNat 256 p).toNat 32).memory) p a x hp
-        V V1 st st1 resp V' st' o hV1 hflag hst1 hgp_mptr hgp hmstart hr hpf_some
+          (BitVec.ofNat 256 p).toNat 32).memory) p a mp x hp
+        V V1 st st1 resp V' st' o hV1 hflag hst1 hgp_mptr hgp hmstart hmptr hr hpf_some
         ⟨rv0, hrv0⟩ hrd hlen1 hst1mem hload hrest1
       have hok := hrest.hok
       rw [hok] at ⊢
-      exact Or.inl (walk_success_build mem p a x hp hp32 ha st st1 st' resp V' hst1 hrd hmem
+      exact Or.inl (walk_success_build mem p a mp x hp hp32 ha st st1 st' resp V' hst1 hrd hmem
         (hok ▸ hrest))
     · -- FAILURE
       have hflag0 : resp.flag = 0 := by simp [CallResponse.flag, hsucc]
