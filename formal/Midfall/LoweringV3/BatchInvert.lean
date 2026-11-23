@@ -212,6 +212,7 @@ def fwdWords (mem : Nat → UInt8) (a : Nat) (rw : U256) (i : Nat) : U256 :=
   fwdProd mem a rw (i + 1)
 
 /-- The definition's own equation, as a rewrite rule. -/
+
 theorem fwdProd_succ (mem : Nat → UInt8) (a : Nat) (rw : U256) (i : Nat) :
     fwdProd mem a rw (i + 1) =
       wMulmodAt (fwdProd mem a rw i) (loadWord mem (a + 32 * (i + 1))) rw := rfl
@@ -293,6 +294,28 @@ theorem wMulmodAt_ne_zero_iff {r x y : U256} (hp : Nat.Prime r.toNat)
     (hx : x.toNat < r.toNat) (hy : y.toNat < r.toNat) :
     wMulmodAt x y r ≠ 0 ↔ x ≠ 0 ∧ y ≠ 0 := by
   rw [Ne, wMulmodAt_eq_zero_iff hp hx hy, not_or]
+
+/-- A prefix product of canonical, non-zero words remains canonical and non-zero. -/
+theorem fwdProd_canonical_nonzero (mem : Nat → UInt8) (a : Nat) (rw : U256)
+    (hp : Nat.Prime rw.toNat) (n j : Nat)
+    (hcanon : ∀ i, i ≤ n → (loadWord mem (a + 32 * i)).toNat < rw.toNat)
+    (hne : ∀ i, i ≤ n → loadWord mem (a + 32 * i) ≠ 0) (hj : j ≤ n) :
+    (fwdProd mem a rw j).toNat < rw.toNat ∧ fwdProd mem a rw j ≠ 0 := by
+  have hr : rw ≠ 0 := by
+    intro h0
+    have : rw.toNat = 0 := by rw [h0]; rfl
+    exact hp.ne_zero this
+  induction j with
+  | zero =>
+      simpa [fwdProd] using ⟨hcanon 0 (by omega), hne 0 (by omega)⟩
+  | succ j ih =>
+      have hj' : j ≤ n := by omega
+      obtain ⟨hcj, hnj⟩ := ih hj'
+      have hc1 : (loadWord mem (a + 32 * (j + 1))).toNat < rw.toNat := hcanon (j + 1) (by omega)
+      have hn1 : loadWord mem (a + 32 * (j + 1)) ≠ 0 := hne (j + 1) (by omega)
+      rw [fwdProd_succ]
+      exact ⟨wMulmodAt_toNat_lt hr,
+        (wMulmodAt_ne_zero_iff hp hcj hc1).mpr ⟨hnj, hn1⟩⟩
 
 
 /-- **ASSOCIATIVITY OF EVM `mulmod` AT A NON-ZERO MODULUS.** For any `a b c` and `r ≠ 0`,
@@ -886,6 +909,20 @@ theorem bwdEnv_get_second_mptr (mem : Nat → UInt8) (a s k : Nat) (rw invAll : 
         venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "second_mptr") (by decide)]
       exact ih
 
+
+theorem bwdEnv_get_first_mptr (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g)) (v : U256)
+    (h : VEnv.get V "first_mptr" = some v) (j : Nat) :
+    VEnv.get (bwdEnv mem a s k rw invAll V j) "first_mptr" = some v := by
+  induction j with
+  | zero => exact h
+  | succ j ih =>
+      simp only [bwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "first_mptr") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "first_mptr") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "first_mptr") (by decide)]
+      exact ih
+
 theorem bwdEnv_get_r (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
     (V : VEnv (Bridge.Dialect c g)) (h : VEnv.get V "r" = some rw) (j : Nat) :
     VEnv.get (bwdEnv mem a s k rw invAll V j) "r" = some rw := by
@@ -1094,10 +1131,11 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
       (fun V st =>
         VEnv.get V "mptr" = some (bwdMptr a k 0) ∧
         VEnv.get V "gp_mptr" = some (bwdGp s k 0) ∧
+        VEnv.get V "first_mptr" = some (BitVec.ofNat 256 a) ∧
         VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
         VEnv.get V "all_inv" = some invAll ∧ VEnv.get V "r" = some rw ∧
         (VEnv.get V "ret").isSome ∧
-        (∀ i, i ≤ k - 2 → loadWord st.memory (s + 32 * i) = fwdProd st.memory a rw (i + 1)) ∧
+        (∀ i, i ≤ k - 3 → loadWord st.memory (s + 32 * i) = fwdProd st.memory a rw (i + 1)) ∧
         (∀ i, i < k → (loadWord st.memory (a + 32 * i)).toNat < rw.toNat) ∧
         wMulmodAt invAll (fwdProd st.memory a rw (k - 1)) rw = 1)
       (fun _ st V' st' o => o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
@@ -1109,12 +1147,15 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         (∀ i, i < 2 → loadWord st'.memory (a + 32 * i) = loadWord st.memory (a + 32 * i)) ∧
         (∀ x, (x < a ∨ a + 32 * k ≤ x) → (x < s ∨ s + 32 * k ≤ x) →
           st'.memory x = st.memory x) ∧
-        (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat)) := by
+        (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat) ∧
+        VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+        VEnv.get V' "r" = some rw) := by
   rw [bi_backward_loop_form]
   simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
     GenAst.yexpr]
   intro V st hpre
-  obtain ⟨hmptr, hgpm, hsecond, hinv0, hr, hret, hscratch, hcanon, hinvAll⟩ := hpre
+  obtain ⟨hmptr, hgpm, hfirst, hsecond, hinv0, hr, hret, hscratch, hcanon, hinvAll⟩ := hpre
   have he' : e = a + 32 * k := by omega
   have hsubea : e - a = 32 * k := by omega
   have hk3 : 3 ≤ k := by omega
@@ -1133,7 +1174,10 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         bwdInvVal st.memory a k rw invAll (k - 1 - i)) ∧
       (∀ i, i < 2 → loadWord st'.memory (a + 32 * i) = loadWord st.memory (a + 32 * i)) ∧
       (∀ x, (x < a ∨ a + 32 * k ≤ x) → (x < s ∨ s + 32 * k ≤ x) → st'.memory x = st.memory x) ∧
-      (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat)
+      (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat) ∧
+      VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
+      VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+      VEnv.get V' "r" = some rw
   change Midfall.Yul.WpTac.AllRuns funs V st
     [Stmt.forLoop []
       (Expr.builtin Op.lt [Expr.var "second_mptr", Expr.var "mptr"])
@@ -1216,7 +1260,7 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
           simp [restore, hl]
         rw [hres]
         dsimp only [Q]
-        refine ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        refine ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
         · -- mptr
           clear hs hsk hdisj' hgpm0 hdisj hgpm
           rw [bwdEnv_get_mptr st.memory a s k rw invAll V hmptr0 (k - 2)]
@@ -1252,6 +1296,12 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
           · rw [loadWord_bwdMem_written st.memory a k (bwdInvVal st.memory a k rw invAll)
               (k - 2) i hk1 (by omega) (by omega) hik]
             exact wMulmodAt_toNat_lt hrw0
+        · -- first_mptr
+          rw [bwdEnv_get_first_mptr st.memory a s k rw invAll V (BitVec.ofNat 256 a) hfirst (k - 2)]
+        · -- second_mptr
+          rw [bwdEnv_get_second_mptr st.memory a s k rw invAll V (BitVec.ofNat 256 (a + 32)) hsecond (k - 2)]
+        · -- r
+          rw [bwdEnv_get_r st.memory a s k rw invAll V hr (k - 2)]
       · -- iteration: j < k-2
         intro hguard
         have h0 : b2w ((BitVec.ofNat 256 (a + 32)).ult (bwdMptr a k j)) ≠ (0 : U256) := hguard
@@ -1619,7 +1669,7 @@ theorem bi_tail_form (consts : Inline.Consts) :
 open Midfall.Yul.Word
 
 theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
-    (rw : U256) (a : Nat) (w0 w1 invAll : U256) (ha : a + 32 < 2 ^ 256) (hr : rw ≠ 0)
+    (rw : U256) (a : Nat) (w0 w1 invAll retv pfv : U256) (ha : a + 32 < 2 ^ 256) (hr : rw ≠ 0)
     (hinv : wMulmodAt invAll (wMulmodAt w0 w1 rw) rw = 1) :
     StmtsContractAll (D := Bridge.Dialect c g) funs
       (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 30 4)
@@ -1628,6 +1678,8 @@ theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         VEnv.get V "first_mptr" = some (BitVec.ofNat 256 a) ∧
         VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
         VEnv.get V "r" = some rw ∧
+        VEnv.get V "ret" = some retv ∧
+        VEnv.get V "precompile_failed" = some pfv ∧
         loadWord st.memory a = w0 ∧ loadWord st.memory (a + 32) = w1)
       (fun _ st V' st' o => o = .normal ∧
         VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
@@ -1636,10 +1688,14 @@ theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         loadWord st'.memory a = wMulmodAt invAll w1 rw ∧
         loadWord st'.memory (a + 32) = wMulmodAt invAll w0 rw ∧
         wMulmodAt (wMulmodAt invAll w1 rw) w0 rw = 1 ∧
-        wMulmodAt (wMulmodAt invAll w0 rw) w1 rw = 1) := by
+        wMulmodAt (wMulmodAt invAll w0 rw) w1 rw = 1 ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ x, (x < a ∨ a + 64 ≤ x) → st'.memory x = st.memory x) ∧
+        VEnv.get V' "ret" = some retv ∧
+        VEnv.get V' "precompile_failed" = some pfv) := by
   rw [bi_tail_form]
   intro V st hpre V' st' o hrun
-  obtain ⟨hinvAll, hfirst, hsecond, hrget, hw0, hw1⟩ := hpre
+  obtain ⟨hinvAll, hfirst, hsecond, hrget, hretv, hpfv, hw0, hw1⟩ := hpre
   rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
     ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
   · obtain ⟨av, pv, rv, hav, hpv, hrv, -, hV1, hst1⟩ :=
@@ -1680,7 +1736,7 @@ theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
             rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
           have htoNat_a32 : (BitVec.ofNat 256 (a + 32)).toNat = a + 32 := by
             rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt ha]
-          refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+          refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
           · -- first_mptr
             rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_second") (y := "first_mptr") (by decide),
               venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "first_mptr") (by decide)]
@@ -1710,6 +1766,35 @@ theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
           · -- second inverse
             rw [wMulmodAt_assoc hr]
             exact hinv
+          · -- env
+            rfl
+          · -- halted
+            rfl
+          · -- outside memory
+            intro x hx
+            simp only [touchMemory]
+            have h1 : (a + 32) % 115792089237316195423570985008687907853269984665640564039457584007913129639936 = a + 32 := by omega
+            have h2 : a % 115792089237316195423570985008687907853269984665640564039457584007913129639936 = a := by omega
+            rw [h1, h2, hw1, hw0]
+            change storeWord (storeWord st.memory (BitVec.ofNat 256 a).toNat
+              (wMulmodAt invAll w1 rw)) (BitVec.ofNat 256 (a + 32)).toNat
+              (wMulmodAt invAll w0 rw) x = st.memory x
+            rw [show (BitVec.ofNat 256 a).toNat = a from htoNat_a,
+              show (BitVec.ofNat 256 (a + 32)).toNat = a + 32 from htoNat_a32]
+            rw [storeWord_outside _ (a + 32) x _ (by omega)]
+            rw [storeWord_outside _ a x _ (by omega)]
+          · -- ret
+            rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "inv_second") (y := "ret") (by decide),
+                Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "inv_first") (y := "ret") (by decide)]
+            exact hretv
+          · -- precompile_failed
+            rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "inv_second") (y := "precompile_failed") (by decide),
+                Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "inv_first") (y := "precompile_failed") (by decide)]
+            exact hpfv
         · obtain ⟨-, -, -, -, ho4, -, -⟩ := exec_mstore_var_inv (x := "second_mptr") (y := "inv_second") h4
           exact absurd ho4 hne4
       · obtain ⟨-, -, -, -, ho3, -, -⟩ := exec_mstore_var_inv (x := "first_mptr") (y := "inv_first") h3
@@ -2653,6 +2738,7 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms bi_forward_loop_form [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_backward_loop_form [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdProd_succ [propext, Classical.choice, Quot.sound]
+#assert_axioms fwdProd_canonical_nonzero [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdWords_eq [propext, Classical.choice, Quot.sound]
 #assert_axioms loadWord_writeWords_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_eq_zero_iff [propext, Classical.choice, Quot.sound]
@@ -2668,6 +2754,7 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms bwdEnv_get_all_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_second_mptr [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_r [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_get_first_mptr [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_ret [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdMem_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdMem_scratch [propext, Classical.choice, Quot.sound]
