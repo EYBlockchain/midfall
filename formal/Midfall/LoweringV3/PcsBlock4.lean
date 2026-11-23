@@ -281,6 +281,37 @@ theorem b1_eval_calldataload_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)
           cases hbi
           exact ⟨pv, hpv, by rw [haddr], rfl⟩
 
+theorem b1_eval_sub_var_mload_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {q : String} {off : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.sub
+        [GenAst.yvar "r",
+         GenAst.yop EVM.Op.mload
+           [GenAst.yop EVM.Op.add [GenAst.yvar q, GenAst.ylit off]]]) (.vals [cv] st')) :
+    ∃ rv qv, VEnv.get V "r" = some rv ∧ VEnv.get V q = some qv ∧
+      cv = rv - loadWord st.memory (qv + BitVec.ofNat 256 off).toNat := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hr =>
+      cases hrest with
+      | argsCons hnil hmload =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨qep, hqep, hmloadVal, hstm⟩ :=
+                b1_eval_mload_add_var_lit_inv hmload
+              obtain ⟨rv, hrv, hstr⟩ := b1_eval_var_vals hr
+              obtain ⟨hrvProj, _⟩ := b1_eval_var_inv hr
+              rw [hrv] at hrvProj
+              cases hrvProj
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              rw [hmloadVal]
+              exact ⟨_, qep, hrv, hqep, rfl⟩
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_sub_var_mload_add_var_lit_inv
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mload_add_var_lit_inv
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_calldataload_add_var_lit_inv
