@@ -1132,9 +1132,11 @@ def generateBaseVkPrefix (inputs : VerifierBuildInputs p G₁ G₂) :
     throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:180")
   Except.ok (vkDigest, nInv, omega, omegaInv, omegaInvToL)
 
-def generateBaseVk (codecs : VkPointCodecs G₁ G₂)
-    (inputs : VerifierBuildInputs p G₁ G₂) : Except Fault Halo2VerifyingKey := do
-  let (vkDigest, nInv, omega, omegaInv, omegaInvToL) ← generateBaseVkPrefix inputs
+def generateBaseVkBody (codecs : VkPointCodecs G₁ G₂)
+    (inputs : VerifierBuildInputs p G₁ G₂)
+    (pre : Word256 × Word256 × Word256 × Word256 × Word256) :
+    Except Fault Halo2VerifyingKey := do
+  let (vkDigest, nInv, omega, omegaInv, omegaInvToL) := pre
   let domain := inputs.vk.domain
   -- VK:110-111: U256::from(usize) for the instance count and the domain exponent.
   let numInstancesW : Word256 := BitVec.ofNat 256 inputs.numInstances
@@ -1227,6 +1229,11 @@ def generateBaseVk (codecs : VkPointCodecs G₁ G₂)
       quotientConstHeaders := [] }
   Except.ok vkBase
 
+
+def generateBaseVk (codecs : VkPointCodecs G₁ G₂)
+    (inputs : VerifierBuildInputs p G₁ G₂) : Except Fault Halo2VerifyingKey := do
+  let pre ← generateBaseVkPrefix inputs
+  generateBaseVkBody codecs inputs pre
 
 /-- rust: VK:301-357 (VerifierBuildInputs::generate_vk_direct) @formal-baseline.
     The Rust takes program: &DirectQuotientProgram and calls program.table_words()
