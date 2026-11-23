@@ -1800,6 +1800,101 @@ theorem snapshotXcriptRun_of_algebra {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ G
   rw [assertEmpty_run_ok t5 (by rw [hbuf5, hpos5])]
   exact ⟨_, rfl⟩
 
+/-! ### SIM.10 — `xcript_total`'s MISSING DATA CLAUSE, NAMED
+
+`snapshotXcriptRun_of_algebra` reduces the transcript-only Lean prefix to ONE input: an
+`snapshotAlgebraRun` success on the decoded wire, with the eval tail (`pref ++ fCom ++ qs ++ pi`)
+exposed. That input is the parser-side analogue of D1's `prepare_logSlots`, and it is NOT a theorem
+of `ValidV3` + `Decoded` today:
+
+* the WIDTH SCHEDULE is pinned (`parseTraceSchedule` in `EndToEndAlgebra.lean`, the
+  `readAlgebraEvalCount_parseTrace*` counts, and `prepareSlots_of_counts`), but all of those are
+  CONDITIONAL on a successful run (`PresWidthSeq`/`ParseTraceWidths` say "if it runs, it reads
+  these widths");
+* the monadic READ WALK itself — `parseTrace`'s twenty steps (advice phases, lookup multiplicities
+  and commitments, permutation products, trashcans, the scatters) and `readAlgebra`'s commitment /
+  eval / q-eval reads — has no existence theorem in the tree (`grep` finds none: no
+  `parseTrace_run`, no `readAlgebra_run`, no `snapshotAlgebraRun` totality);
+* that is the same refinement `gap_readScheduleAgrees` (`EndToEnd.lean:967`) names for
+  `decodeRust`: `ValidV3` pins the plan and the key's well-formedness, but nothing relates the
+  verifier's read sequence to the generated slot list. `decodeSlots_map_slot` here gives the
+  calldata side (`ms.map Msg.slot = plan.slots`); the Lean side is owed.
+
+The two `def`s below are that clause, named rather than sorried (the `PrepareLogSlots` /
+`KzgPartitionBridge` pattern): `XcriptAlgebraTail` is the run-and-tail statement at a FIXED decoded
+message list, and `XcriptAlgebraRun` wraps it in the `∀ decoding` shape the boundary needs. The
+theorems after them spend the clause exactly: `xcript_total_of_algebraRun` is `xcript_total`'s
+existence conclusion, and `leanStage_transcript_exists_*` is the existence half of
+`Agree .transcript` (`tp_agrees`'s only decode-relative obligation). -/
+
+/-- **SIM.10's MISSING DATA CLAUSE, AT A DECODED MESSAGE LIST.** The algebra prefix succeeds on the
+    wire of `ms`, and the bytes it leaves are the eval tail: a consumed prefix, `fCom`, the `nSets`
+    q-eval scalars, and `pi`. The `pos`/`buffer` fields are what `snapshotXcriptRun_of_algebra`
+    consumes verbatim. -/
+def XcriptAlgebraTail (R : Render p G₁ G₂ Gₜ) (H : Hash)
+    (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) : Prop :=
+  ∃ (s2 : SnapAlgebra p G₁) (t2 : Transcript) (pref : Bytes) (fCom pi : G₁)
+    (qs : List (Fr p)),
+    snapshotAlgebraRun R.E H R.vk inst ms = .ok (s2, t2) ∧
+      t2.buffer = pref ++ R.E.g1.toCompressed fCom ++ wireOf qs ++
+        R.E.g1.toCompressed pi ∧
+      t2.pos = pref.size ∧ qs.length = R.nSets
+
+/-- **SIM.10's MISSING DATA CLAUSE, AT THE BOUNDARY.** For EVERY decoding of the calldata, the
+    algebra prefix exists with the eval tail exposed. This is the parser-side `prepare_logSlots`
+    analogue described in the section comment; it is a DATA clause, not a `ValidV3` theorem. -/
+def XcriptAlgebraRun (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
+  ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+    Decoded R cd ms instW inst → XcriptAlgebraTail R H inst ms
+
+/-- `xcript_total` at one fixed decoded message list, directly from the tail clause. -/
+theorem xcript_total_at (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
+    {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    (h : XcriptAlgebraTail R H inst ms) :
+    ∃ x, snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x := by
+  obtain ⟨s2, t2, pref, fCom, pi, qs, hAlg, hbuf, hpos, hlen⟩ := h
+  exact snapshotXcriptRun_of_algebra R.E H R.vk inst ms R.nSets s2 t2 hAlg pref fCom pi qs
+    hlen hbuf hpos hcodec.compressedEncoderFirst hcodec.compressedWidth
+    (by rw [hR.env.modulus]; norm_num [frModulusConstant])
+
+/-- **`xcript_total`'s EXISTENCE CONCLUSION, FROM THE NAMED CLAUSE.** The codec laws are the
+    headline's (`compressedEncoderFirst`, `compressedWidth`), and `p ≤ 2^256` is
+    `EnvAgrees.modulus` on the literal `FR_MODULUS`. No other hypothesis is spent. -/
+theorem xcript_total_of_algebraRun (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (cd : Bytes)
+    (h : XcriptAlgebraRun R H cd) :
+    ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+      Decoded R cd ms instW inst →
+        ∃ x, snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x := by
+  intro ms instW inst hdec
+  exact xcript_total_at R hR hcodec H (h ms instW inst hdec)
+
+/-- **THE EXISTENCE HALF OF `Agree .transcript`, AT A FIXED DECODE.** The Lean stage is
+    `snapshotXcriptRun` followed by `padSnap`, so the witness is `padSnap x` at the run's `x`. -/
+theorem leanStage_transcript_exists_at (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
+    {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    (h : XcriptAlgebraTail R H inst ms) :
+    ∃ S, leanStage R H inst ms Checkpoint.transcript = .ok S := by
+  obtain ⟨x, hx⟩ := xcript_total_at R hR hcodec H h
+  refine ⟨padSnap x ⟨0, 0, 0⟩ none #[], ?_⟩
+  unfold leanStage
+  rw [hx]
+  rfl
+
+/-- **THE EXISTENCE HALF OF `Agree .transcript`, FOR EVERY DECODING.** This is what
+    `tp_agrees` needs from the Lean side; the `Inv` half is the separate slot/mirror assembly. -/
+theorem leanStage_transcript_exists_of_algebraRun (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (cd : Bytes)
+    (h : XcriptAlgebraRun R H cd) :
+    ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+      Decoded R cd ms instW inst →
+        ∃ S, leanStage R H inst ms Checkpoint.transcript = .ok S := by
+  intro ms instW inst hdec
+  exact leanStage_transcript_exists_at R hR hcodec H (h ms instW inst hdec)
+
+
 /-! ## 4. ROW.TP.6'S BRIDGE — THE MODEL'S PARSER FACTS AND THE PLAN'S LAYOUT -/
 
 /-- `metaDataForVk` rewrites only `numEvals`, `numDummyEvals` and `numPointSets`: the seven fields
@@ -3157,14 +3252,57 @@ theorem tp_agrees_of_agree (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U2
   obtain ⟨hframe, hsucc, hbase, hraw, hmirror, hslots⟩ := h
   exact ⟨hframe, hsucc, hbase, hraw, hmirror, hagree⟩
 
+/-- **`Agree .transcript` FROM ITS TWO HALVES.** The existence half is
+    `leanStage_transcript_exists_of_algebraRun` (the named SIM.10 clause); the second argument is
+    the `Inv .transcript` assembly at the stage's own `padSnap` witness. This is exactly the shape
+    `tp_agrees` consumes, with the two remaining obligations named. -/
+theorem agree_transcript_of_exists_and_inv (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hx : ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+      Decoded R cd ms instW inst →
+        ∃ S, leanStage R H inst ms Checkpoint.transcript = .ok S)
+    (hinv : ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+      Decoded R cd ms instW inst →
+        ∀ S, leanStage R H inst ms Checkpoint.transcript = .ok S →
+          Midfall.Lowering.Inv (calls := c) (gas := g) R.E R.params
+            Checkpoint.transcript R.pv S V st) :
+    Agree R H cd Checkpoint.transcript V st := by
+  intro ms instW inst hdec
+  obtain ⟨S, hS⟩ := hx ms instW inst hdec
+  exact ⟨S, hS, hinv ms instW inst hdec S hS⟩
+
+/-- **ROW.TP.8 SHARPENED: `tp_agrees` FROM THE NAMED SIM.10 CLAUSE + THE `Inv` ASSEMBLY.** The
+    first hypothesis is the missing parser-side `prepare_logSlots` analogue
+    (`XcriptAlgebraRun`); the second is `Inv .transcript` at the stage's own witness, i.e. the
+    slot/mirror assembly the evidence attributes to `XcriptSlots` + `MirrorAt` + `SimPins.eipRt`.
+    Nothing else stands between `TpPost` and `StageInv .transcript`. -/
+theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TpPost R H vkAddr cd V st)
+    (h : XcriptAlgebraRun R H cd)
+    (hinv : ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+      Decoded R cd ms instW inst →
+        ∀ S, leanStage R H inst ms Checkpoint.transcript = .ok S →
+          Midfall.Lowering.Inv (calls := c) (gas := g) R.E R.params
+            Checkpoint.transcript R.pv S V st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st :=
+  tp_agrees_of_agree R H vkAddr cd V st hpost
+    (agree_transcript_of_exists_and_inv R H cd V st
+      (leanStage_transcript_exists_of_algebraRun R hR hcodec H cd h) hinv)
+
 /-- **THE ALG LEAF.** `TpPost` is the staged boundary at `.transcript`: `Agree` follows from
     `xcript_total` (the Lean prefix exists), `MirrorAt` with `SimPins.eipRt` (the commitment
     windows hold `toEip` of the decoded points) and `XcriptSlots`. LEAF ROW.TP.8. No Yul.
     Evidence :798-805, statement verbatim with the same hypothesis move.
 
-    DEPENDENCY, NAMED AND OPEN: SIM.10's `xcript_total` is NOT IN THE TREE (grep finds it only in
-    WideningStages.lean's prose), and ROW.TP.6's `MirrorAt` half is `tp_events_slots` above. The
-    card's own VERIFY FIRST is SIM.10 closed; it is not. -/
+    THE REDUCTION IS LANDED: `tp_agrees_of_xcript` proves this row from `XcriptAlgebraRun` (the
+    named SIM.10 parser-side clause, §3b) plus the `Inv .transcript` assembly, and
+    `tp_agrees_of_agree` isolates the latter. DEPENDENCY, NAMED AND OPEN: `XcriptAlgebraRun` is a
+    DATA clause, not a theorem of `ValidV3` + `Decoded` (no `parseTrace`/`readAlgebra`/`snapshotAlgebraRun`
+    existence theorem exists; the width schedule is pinned but conditional, see §3b), and the
+    `Inv .transcript` half still needs the decode→`toEip` commitment bridge. ROW.TP.6's `MirrorAt`
+    half is `tp_events_slots` above. -/
 theorem tp_agrees (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
     (vkAddr : U256) (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
@@ -3395,6 +3533,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #check @Midfall.LoweringV3.TranscriptRows.tp_computes
 #check @Midfall.LoweringV3.TranscriptRows.tp_agrees
 #check @Midfall.LoweringV3.TranscriptRows.tp_poison
+#check @Midfall.LoweringV3.TranscriptRows.xcript_total_of_algebraRun
+#check @Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_of_algebraRun
+#check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript
 #check @Midfall.LoweringV3.TranscriptRows.inline_g1WalkLoop
 
 #cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockSim
@@ -3417,5 +3558,11 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_poison_falsifier_empty_block [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_blockSim_falsifier_return_is_not_the_post [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_blockProgS_falsifier_reverting_block_is_not_total [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_at [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_of_algebraRun [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_at [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_of_algebraRun [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.agree_transcript_of_exists_and_inv [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
