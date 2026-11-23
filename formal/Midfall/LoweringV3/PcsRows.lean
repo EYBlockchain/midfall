@@ -3101,6 +3101,210 @@ theorem b3_exec_seed {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dial
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_wordExpr_halt
   [propext, Classical.choice, Quot.sound] native []
 
+
+/-! ### Block 1: the walk as an iteration count, the list shapes, and the back reset -/
+
+/-- The walk count: `k` mulmod steps. -/
+def wIter (v b rv : U256) : Nat → U256
+  | 0 => v
+  | k + 1 => wMulmodAt (wIter v b rv k) b rv
+
+theorem wIter_shift (v b rv : U256) : ∀ k,
+    wIter (wMulmodAt v b rv) b rv k = wIter v b rv (k + 1)
+  | 0 => rfl
+  | k + 1 => by
+      rw [show wIter (wMulmodAt v b rv) b rv (k + 1) =
+        wMulmodAt (wIter (wMulmodAt v b rv) b rv k) b rv from rfl,
+        wIter_shift v b rv k]
+      rfl
+
+theorem wWalk_eq (v b rv : U256) (l : List Int) : wWalk v b rv l = wIter v b rv l.length := by
+  induction l generalizing v with
+  | nil => rfl
+  | cons a rest ih =>
+      rw [show wWalk v b rv (a :: rest) = wWalk (wMulmodAt v b rv) b rv rest from rfl,
+        ih (wMulmodAt v b rv), wIter_shift, List.length_cons]
+
+theorem intRangeInclusive_one_length (m : Int) (hm : 0 ≤ m) :
+    (Midfall.Generator.intRangeInclusive 1 m).length = Int.toNat m := by
+  unfold Midfall.Generator.intRangeInclusive
+  by_cases h : m < 1
+  · rw [if_pos h]
+    have : m = 0 := by omega
+    subst this
+    rfl
+  · rw [if_neg h]
+    simp only [List.length_map, List.length_range]
+    congr 1
+    omega
+
+theorem intRange_rev_length (mn : Int) (hm : mn < 0) :
+    (Midfall.Generator.intRange mn 0).reverse.length = Int.toNat (-mn) := by
+  unfold Midfall.Generator.intRange
+  rw [if_neg (by omega)]
+  simp only [List.length_reverse, List.length_map, List.length_range]
+  congr 1
+  omega
+
+/-- The table entry a rotation holds, as a pure iteration count. -/
+def rotValI (xv om oi rv : U256) (rot : Int) : U256 :=
+  wIter xv (if 0 ≤ rot then om else oi) rv rot.natAbs
+
+theorem rotVal_eq (xv om oi rv : U256) (rot : Int) :
+    rotVal xv om oi rv rot = rotValI xv om oi rv rot := by
+  unfold rotVal rotValI
+  by_cases h : 0 ≤ rot
+  · rw [if_pos h, if_pos h, wWalk_eq, intRangeInclusive_one_length rot (by omega)]
+    congr 1
+    omega
+  · rw [if_neg h, if_neg h, wWalk_eq, intRangeInclusive_one_length (-rot) (by omega)]
+    congr 1
+    omega
+
+/-! ### The block-1 list shapes -/
+
+def b1WalkL (rots : List Int) (l : List Int) (w : String) : Block EVM.Op :=
+  l.flatMap (fun rot => [GenAstPcs.walkStep w] ++ (b1Store rots rot).toList)
+
+def b1Fwd (rots : List Int) (maxRot : Int) : Block EVM.Op :=
+  b1WalkL rots (Midfall.Generator.intRangeInclusive 1 maxRot) "omega"
+
+def b1Back (rots : List Int) (minRot : Int) : Block EVM.Op :=
+  if minRot < 0 then
+    [GenAst.yset "x_pow_of_omega" (GenAst.yvar "x")] ++
+      b1WalkL rots ((Midfall.Generator.intRange minRot 0).reverse) "omega_inv"
+  else []
+
+def b1All (rots : List Int) (maxRot minRot : Int) : Block EVM.Op :=
+  b1Head rots ++ b1Fwd rots maxRot ++ b1Back rots minRot
+
+/-- `pcsBlock1Ast` at `trace = false` is the three named pieces: head, forward walk, back walk
+    (the trace serialiser arm is dead at the slice's flag). -/
+theorem pcsBlock1Ast_eq (rots : List Int) (maxRot minRot : Int)
+    (ps : List (List Int)) :
+    GenAstPcs.pcsBlock1Ast rots maxRot minRot false ps = b1All rots maxRot minRot := by
+  simp only [GenAstPcs.pcsBlock1Ast, b1All, b1Head, b1Fwd, b1Back, b1WalkL, b1Store,
+    GenAstPcs.walkStep, GenAstPcs.mstoreAdd]
+  split_ifs <;> simp_all
+
+theorem b1_reset_contract {funs : FunEnv (Bridge.Dialect c g)} (xv : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [GenAst.yset "x_pow_of_omega" (GenAst.yvar "x")]
+      (fun V _ => VEnv.get V "x" = some xv)
+      (fun V st V' st' o => o = .normal ∧
+        V' = VEnv.set V "x_pow_of_omega" xv ∧ st' = st) := by
+  intro V st hpre V' st' o hrun
+  have h := b1_stmt_of_singleton hrun
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨hav, hst⟩ := b1_eval_var_inv he
+      subst hst
+      have hcv : cv = xv := Option.some.inj (hav.symm.trans hpre)
+      subst hcv
+      exact ⟨rfl, rfl, rfl⟩
+  | assignHalt he =>
+      exact (Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts he).elim
+
+theorem natAbs_one_add (j : Nat) : ((1 : Int) + Int.ofNat j).natAbs = j + 1 := by
+  rw [Int.natAbs_eq_iff]
+  left
+  simp only [Int.ofNat_eq_natCast]
+  omega
+
+theorem natAbs_neg_one_sub (j : Nat) : ((-1 : Int) - Int.ofNat j).natAbs = j + 1 := by
+  rw [Int.natAbs_eq_iff]
+  right
+  simp only [Int.ofNat_eq_natCast]
+  omega
+
+theorem fwd_mem {maxRot rot : Int} (h : 0 < rot) (hle : rot ≤ maxRot) :
+    rot ∈ Midfall.Generator.intRangeInclusive 1 maxRot := by
+  rw [intRangeInclusive_one_eq maxRot (by omega), List.mem_map]
+  refine ⟨(rot.toNat - 1), ?_, ?_⟩
+  · rw [List.mem_range]
+    have hr : ((rot.toNat : Nat) : Int) = rot := Int.toNat_of_nonneg (by omega)
+    have hm : ((maxRot.toNat : Nat) : Int) = maxRot := Int.toNat_of_nonneg (by omega)
+    omega
+  · have hr : ((rot.toNat : Nat) : Int) = rot := Int.toNat_of_nonneg (by omega)
+    have hge : 1 ≤ rot.toNat := by omega
+    have hc : (((rot.toNat - 1 : Nat)) : Int) = (rot.toNat : Int) - 1 := by
+      rw [Nat.cast_sub hge, Nat.cast_one]
+    simp only [Int.ofNat_eq_natCast]
+    rw [hc]
+    omega
+
+theorem fwd_pos {maxRot rot : Int} (h : rot ∈ Midfall.Generator.intRangeInclusive 1 maxRot) :
+    0 < rot := by
+  rw [intRangeInclusive_one_eq maxRot (by
+    rcases List.mem_iff_getElem.mp h with ⟨i, hi, _⟩
+    unfold Midfall.Generator.intRangeInclusive at hi
+    split at hi
+    · simp at hi
+    · simp only [List.length_map, List.length_range] at hi
+      omega), List.mem_map] at h
+  obtain ⟨k, _, rfl⟩ := h
+  simp only [Int.ofNat_eq_natCast]
+  omega
+
+theorem back_mem {mn rot : Int} (h : rot < 0) (hle : mn ≤ rot) :
+    rot ∈ (Midfall.Generator.intRange mn 0).reverse := by
+  rw [intRange_rev_eq mn (by omega), List.mem_map]
+  refine ⟨((-rot).toNat - 1), ?_, ?_⟩
+  · rw [List.mem_range]
+    have hr : (((-rot).toNat : Nat) : Int) = -rot := Int.toNat_of_nonneg (by omega)
+    have hm : (((-mn).toNat : Nat) : Int) = -mn := Int.toNat_of_nonneg (by omega)
+    omega
+  · have hr : (((-rot).toNat : Nat) : Int) = -rot := Int.toNat_of_nonneg (by omega)
+    have hge : 1 ≤ (-rot).toNat := by omega
+    have hc : ((((-rot).toNat - 1 : Nat)) : Int) = ((-rot).toNat : Int) - 1 := by
+      rw [Nat.cast_sub hge, Nat.cast_one]
+    simp only [Int.ofNat_eq_natCast]
+    rw [hc]
+    omega
+
+theorem back_neg {mn rot : Int} (h : rot ∈ (Midfall.Generator.intRange mn 0).reverse) :
+    rot < 0 := by
+  unfold Midfall.Generator.intRange at h
+  split at h
+  · simp at h
+  · rw [List.mem_reverse, List.mem_map] at h
+    obtain ⟨k, hk, rfl⟩ := h
+    rw [List.mem_range] at hk
+    simp only [Int.ofNat_eq_natCast]
+    omega
+
+theorem b1_env4_x (V : VEnv (Bridge.Dialect c g)) (xv om oi : U256) :
+    VEnv.get (("x_pow_of_omega", xv) :: ("omega_inv", oi) :: ("omega", om) ::
+      ("x", xv) :: V) "x" = some xv := by
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_pow_of_omega") (y := "x") (by decide)]
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega_inv") (y := "x") (by decide)]
+  rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "omega") (y := "x") (by decide)]
+  exact venv_get_cons_self (D := Bridge.Dialect c g) _ "x" xv
+
+theorem b1_restore4 (V : VEnv (Bridge.Dialect c g)) (xv om oi a b cc : U256) :
+    restore V (VEnv.set (VEnv.set (("x_pow_of_omega", a) :: ("omega_inv", oi) ::
+      ("omega", om) :: ("x", xv) :: V) "x_pow_of_omega" b) "x_pow_of_omega" cc) = V := by
+  rw [venv_set_cons_same (D := Bridge.Dialect c g)]
+  rw [venv_set_cons_same (D := Bridge.Dialect c g)]
+  simp only [restore, venv_set_length, List.length_cons]
+  rw [show List.length V + 1 + 1 + 1 + 1 - List.length V = 4 by omega]
+  rfl
+
+theorem b1_restore4_one (V : VEnv (Bridge.Dialect c g)) (xv om oi a : U256) :
+    restore V (VEnv.set (("x_pow_of_omega", a) :: ("omega_inv", oi) ::
+      ("omega", om) :: ("x", xv) :: V) "x_pow_of_omega" a) = V := by
+  rw [venv_set_cons_same (D := Bridge.Dialect c g)]
+  simp only [restore, venv_set_length, List.length_cons]
+  rw [show List.length V + 1 + 1 + 1 + 1 - List.length V = 4 by omega]
+  rfl
+#assert_axioms Midfall.LoweringV3.PcsRows.wWalk_eq
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.rotVal_eq
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b1_reset_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b1_lets_contract
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b1_store_only
