@@ -1021,6 +1021,44 @@ theorem tmReadN_run_eq {T : Type} (h : Midfall.Halo2.Hashable T) (n : Nat)
   | error e => simp only [hr]
   | ok p => cases p with | mk vs t2 => simp only [hr]
 
+
+/-- `readN.go` appends exactly `n` elements (`EndToEndAlgebra`'s proof, ported below `Totality`). -/
+theorem readN_go_size {T : Type} (h : Midfall.Halo2.Hashable T) :
+    ∀ (n : Nat) (t : Transcript) (acc : Array T) (acc' : Array T) (t' : Transcript),
+      Transcript.readN.go h t acc n = .ok (acc', t') → acc'.size = acc.size + n := by
+  intro n
+  induction n with
+  | zero =>
+      intro t acc acc' t' hr
+      rw [Transcript.readN.go.eq_1] at hr
+      cases hr
+      simp
+  | succ m ih =>
+      intro t acc acc' t' hr
+      rw [Transcript.readN.go.eq_2] at hr
+      simp only [Bind.bind, Except.bind] at hr
+      split at hr
+      · cases hr
+      · rename_i x hx
+        obtain ⟨v, t2⟩ := x
+        have := ih t2 (acc.push v) acc' t' hr
+        simp only [Array.size_push] at this
+        omega
+
+theorem readN_size {T : Type} (h : Midfall.Halo2.Hashable T) (t : Transcript) (n : Nat)
+    {acc : Array T} {t' : Transcript} (hr : t.readN h n = .ok (acc, t')) :
+    acc.size = n := by
+  unfold Transcript.readN at hr
+  have := readN_go_size h n t #[] acc t' hr
+  simpa using this
+
+/-- A successful `tmReadN` returns exactly `n` values. -/
+theorem tmReadN_size {T : Type} (h : Midfall.Halo2.Hashable T) (n : Nat)
+    {s : Transcript} {acc : Array T} {t' : Transcript}
+    (hr : (Midfall.Halo2.tmReadN h n).run s = .ok (acc, t')) : acc.size = n := by
+  rw [tmReadN_run_eq] at hr
+  exact readN_size h s n hr
+
 /-- `readN` of a list of G1 points from the exact wired tail. -/
 theorem readN_g1_wire {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
@@ -1352,6 +1390,82 @@ theorem RunsAll.squeeze (E : VerifierEnv p G₁ G₂ Gₜ) :
   refine ⟨x, t', hrun, hbuf', ?_⟩
   rw [hpos', hpos, List.map_nil, List.sum_nil, Nat.add_zero]
 
+
+/-- `RunsAll` with a postcondition on the program's result: the composition needs the
+    read arrays' LENGTHS, which plain `RunsAll` existentially hides. -/
+def RunsAllP (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (m : TranscriptM α)
+    (ms : List (Msg (Fr p) G₁)) (P : α → Prop) : Prop :=
+  ∀ (t : Transcript) (pref rest : Bytes),
+    t.buffer = pref ++ (wireMsgs E ms ++ rest) → t.pos = pref.size →
+    p ≤ 2 ^ 256 →
+    (∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q) →
+    (∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth) →
+    ∃ a t', m.run t = .ok (a, t') ∧ t'.buffer = t.buffer ∧
+      t'.pos = pref.size + (ms.map fun m => (msgWire E m).size).sum ∧ P a
+
+theorem RunsAllP.toRunsAll (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} {m : TranscriptM α}
+    {ms : List (Msg (Fr p) G₁)} {P : α → Prop} (h : RunsAllP E m ms P) :
+    RunsAll E m ms := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨a, t', hrun, hbuf', hpos', _⟩ := h t pref rest hbuf hpos hp henc hwidth
+  exact ⟨a, t', hrun, hbuf', hpos'⟩
+
+theorem RunsAllP.mono (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} {m : TranscriptM α}
+    {ms : List (Msg (Fr p) G₁)} {P Q : α → Prop} (h : RunsAllP E m ms P)
+    (hPQ : ∀ a, P a → Q a) : RunsAllP E m ms Q := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨a, t', hrun, hbuf', hpos', hP⟩ := h t pref rest hbuf hpos hp henc hwidth
+  exact ⟨a, t', hrun, hbuf', hpos', hPQ a hP⟩
+
+theorem RunsAllP.pure (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (a : α) (P : α → Prop)
+    (ha : P a) : RunsAllP E (pure a : TranscriptM α) [] P := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨a, t, rfl, rfl, ?_, ha⟩
+  rw [hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+
+theorem RunsAllP.common (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type}
+    (h : Midfall.Halo2.Hashable T) (x : T) :
+    RunsAllP E (tmCommon h x) [] (fun _ => True) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨(), t.common h x, ?_, rfl, ?_, trivial⟩
+  · unfold tmCommon
+    rfl
+  · rw [show (Transcript.common h t x).pos = t.pos from rfl, hpos, List.map_nil,
+      List.sum_nil, Nat.add_zero]
+
+theorem RunsAllP.squeeze (E : VerifierEnv p G₁ G₂ Gₜ) :
+    RunsAllP E (tmSqueezeChallenge (p := p)) [] (fun _ => True) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨x, t', hrun, hpos', hbuf'⟩ := tmSqueezeChallenge_run_spec (p := p) t
+  refine ⟨x, t', hrun, hbuf', ?_, trivial⟩
+  rw [hpos', hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+
+theorem RunsAllP.lift_ok (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (a : α) (P : α → Prop)
+    (ha : P a) : RunsAllP E (StateT.lift (.ok a : Except Fault α)) [] P := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨a, t, rfl, rfl, ?_, ha⟩
+  rw [hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+
+theorem RunsAllP.bind (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    {m : TranscriptM α} {f : α → TranscriptM β} {ms₁ ms₂ : List (Msg (Fr p) G₁)}
+    {P : α → Prop} {Q : β → Prop}
+    (hm : RunsAllP E m ms₁ P) (hf : ∀ a, P a → RunsAllP E (f a) ms₂ Q) :
+    RunsAllP E (m >>= f) (ms₁ ++ ms₂) Q := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  rw [wireMsgs_append] at hbuf
+  simp only [ByteArray.append_assoc] at hbuf
+  obtain ⟨a, t1, hrun1, hbuf1, hpos1, hP⟩ := hm t pref (wireMsgs E ms₂ ++ rest) hbuf hpos hp henc hwidth
+  have hbuf1' : t1.buffer = (pref ++ wireMsgs E ms₁) ++ (wireMsgs E ms₂ ++ rest) := by
+    rw [hbuf1, hbuf, ← ByteArray.append_assoc]
+  have hpos1' : t1.pos = (pref ++ wireMsgs E ms₁).size := by
+    rw [hpos1, ByteArray.size_append, wireMsgs_size]
+  obtain ⟨b, t2, hrun2, hbuf2, hpos2, hQ⟩ := hf a hP t1 (pref ++ wireMsgs E ms₁) rest hbuf1' hpos1' hp henc hwidth
+  refine ⟨b, t2, ?_, hbuf2.trans hbuf1, ?_, hQ⟩
+  · simp only [StateT.run_bind]
+    rw [hrun1]
+    exact hrun2
+  · rw [hpos2, ByteArray.size_append, wireMsgs_size, List.map_append, List.sum_append]
+    omega
 
 /-- Read a list of homogeneous G1 groups in order. -/
 def readG1Groups (E : VerifierEnv p G₁ G₂ Gₜ) : List Nat → TranscriptM Unit
@@ -1846,6 +1960,16 @@ theorem runsAll_tmReadN_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs : Li
     tmReadN_g1_wire E n t pref Qs rest hlen hbuf hpos hp henc hwidth
   refine ⟨arr, t', hrun, hbuf', ?_⟩
   simpa only [List.map_map, Function.comp_def] using hpos'
+
+/-- The group read, WITH the length postcondition the scatter step needs. -/
+theorem runsAllP_tmReadN_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs : List G₁)
+    (hlen : Qs.length = n) :
+    RunsAllP E (tmReadN (hashableG1 E.g1) n)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (fun arr => arr.size = n) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨arr, t', hrun, hbuf', hpos'⟩ :=
+    runsAll_tmReadN_g1 E n Qs hlen t pref rest hbuf hpos hp henc hwidth
+  exact ⟨arr, t', hrun, hbuf', hpos', tmReadN_size (hashableG1 E.g1) n hrun⟩
 
 /-- The permutation-product fragment of `parseTrace`, verbatim. -/
 def parseTracePermutations (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁)
@@ -2432,6 +2556,176 @@ theorem runsAll_absorb_instance (E : VerifierEnv p G₁ G₂ Gₜ)
       (fun _ => RunsAll.pure E (ForInStep.yield PUnit.unit))
     rw [List.append_nil] at hb
     exact hb)
+
+
+
+def scatStep {α : Type} (n : Nat) (acc : List (Option α)) (e : Nat × α) : List (Option α) :=
+  if e.1 < n then acc.take e.1 ++ [some e.2] ++ acc.drop (e.1 + 1) else acc
+
+theorem scatStep_length {α : Type} (n : Nat) (acc : List (Option α)) (e : Nat × α)
+    (h : acc.length = n) : (scatStep n acc e).length = n := by
+  unfold scatStep
+  by_cases he : e.1 < n
+  · rw [if_pos he]
+    simp only [List.length_append, List.length_take, List.length_drop, List.length_cons,
+      List.length_nil, h]
+    omega
+  · rw [if_neg he]; exact h
+
+theorem scatStep_cover_self {α : Type} (n : Nat) (acc : List (Option α)) (e : Nat × α)
+    (h : acc.length = n) (hi : e.1 < n) :
+    ∃ a, (scatStep n acc e)[e.1]? = some (some a) := by
+  refine ⟨e.2, ?_⟩
+  unfold scatStep
+  rw [if_pos hi]
+  have htake : (acc.take e.1).length = e.1 := by
+    rw [List.length_take, h]; omega
+  have htake_le : (acc.take e.1).length ≤ e.1 := by omega
+  have houter : e.1 < (acc.take e.1 ++ [some e.2]).length := by
+    simp only [List.length_append, List.length_cons, List.length_nil, htake]; omega
+  rw [List.getElem?_append_left houter]
+  rw [List.getElem?_append_right htake_le]
+  rw [show e.1 - (acc.take e.1).length = 0 by omega]
+  rfl
+
+theorem scatStep_cover_other {α : Type} (n : Nat) (acc : List (Option α)) (e : Nat × α)
+    (h : acc.length = n) (hi : e.1 < n) {i : Nat} (hij : e.1 ≠ i)
+    (hsome : ∃ a, acc[i]? = some (some a)) :
+    ∃ a, (scatStep n acc e)[i]? = some (some a) := by
+  obtain ⟨a, ha⟩ := hsome
+  refine ⟨a, ?_⟩
+  unfold scatStep
+  rw [if_pos hi]
+  have htake : (acc.take e.1).length = e.1 := by
+    rw [List.length_take, h]; omega
+  by_cases hlt : i < e.1
+  · have houter : i < (acc.take e.1 ++ [some e.2]).length := by
+      simp only [List.length_append, List.length_cons, List.length_nil, htake]; omega
+    rw [List.getElem?_append_left houter]
+    rw [List.getElem?_append_left (by omega)]
+    rw [List.getElem?_take]
+    rw [if_pos hlt]
+    exact ha
+  · have hgt : e.1 < i := by omega
+    have houter : (acc.take e.1 ++ [some e.2]).length ≤ i := by
+      simp only [List.length_append, List.length_cons, List.length_nil, htake]; omega
+    rw [List.getElem?_append_right houter]
+    rw [show i - (acc.take e.1 ++ [some e.2]).length = i - (e.1 + 1) by
+      simp only [List.length_append, List.length_cons, List.length_nil, htake]]
+    rw [List.getElem?_drop]
+    rw [show e.1 + 1 + (i - (e.1 + 1)) = i by omega]
+    exact ha
+
+theorem scatterIndexed_placed_length {α : Type} (n : Nat) :
+    ∀ (pairs : List (Nat × α)) (acc : List (Option α)),
+      acc.length = n → (pairs.foldl (scatStep n) acc).length = n := by
+  intro pairs
+  induction pairs with
+  | nil => intro acc h; exact h
+  | cons p ps ih =>
+      intro acc h
+      exact ih (scatStep n acc p) (scatStep_length n acc p h)
+
+theorem scatterIndexed_cover_fold {α : Type} (n : Nat) :
+    ∀ (pairs : List (Nat × α)) (acc : List (Option α)),
+      acc.length = n →
+      ∀ i, i < n →
+        ((∃ a, (i, a) ∈ pairs) ∨ (∃ a, acc[i]? = some (some a))) →
+        ∃ a', (pairs.foldl (scatStep n) acc)[i]? = some (some a') := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro acc hacc i hi h
+      rcases h with ⟨a, ha⟩ | hsome
+      · simp at ha
+      · exact hsome
+  | cons p ps ih =>
+      intro acc hacc i hi h
+      rw [List.foldl_cons]
+      refine ih (scatStep n acc p) (scatStep_length n acc p hacc) i hi ?_
+      by_cases hps : ∃ a, (i, a) ∈ ps
+      · exact Or.inl hps
+      · rcases h with ⟨a, ha⟩ | hsome
+        · rcases List.mem_cons.mp ha with heq | hmem
+          · have hp1 : p.1 = i := (congrArg Prod.fst heq).symm
+            exact Or.inr (by
+              simpa [hp1] using scatStep_cover_self n acc p hacc (by rw [hp1]; exact hi))
+          · exact absurd ⟨a, hmem⟩ hps
+        · by_cases hpi : p.1 = i
+          · exact Or.inr (by
+              simpa [hpi] using scatStep_cover_self n acc p hacc (by rw [hpi]; exact hi))
+          · by_cases hp : p.1 < n
+            · exact Or.inr (scatStep_cover_other n acc p hacc hp hpi hsome)
+            · have hstep : scatStep n acc p = acc := by
+                unfold scatStep
+                rw [if_neg (by omega)]
+              rw [hstep]
+              exact Or.inr hsome
+
+theorem mapM_id_ok {α : Type} :
+    ∀ (l : List (Option α)), (∀ x ∈ l, x ≠ none) →
+      ∃ ys, l.mapM (fun x => x) = some ys := by
+  intro l
+  induction l with
+  | nil => intro h; exact ⟨[], rfl⟩
+  | cons x xs ih =>
+      intro h
+      cases x with
+      | none => exact absurd rfl (h none (by simp))
+      | some a =>
+          have hxs : ∀ y ∈ xs, y ≠ none := fun y hy => h y (by simp [hy])
+          obtain ⟨ys, hys⟩ := ih hxs
+          refine ⟨a :: ys, ?_⟩
+          simp only [List.mapM_cons, hys]
+          rfl
+
+theorem scatterIndexed_ok_of_cover {α : Type} (n : Nat) (pairs : List (Nat × α))
+    (site : String)
+    (h : ∀ i, i < n → ∃ a, (i, a) ∈ pairs) :
+    ∃ xs, Midfall.Halo2.scatterIndexed n pairs site = .ok xs := by
+  unfold Midfall.Halo2.scatterIndexed
+  change ∃ xs, (match List.mapM (fun x => x)
+      (pairs.foldl (scatStep n) (List.replicate n (none : Option α))) with
+    | some xs => Except.ok xs.toArray
+    | none => Except.error (Midfall.Halo2.Fault.panic site)) = Except.ok xs
+  have hlen0 : (List.replicate n (none : Option α)).length = n := by simp
+  have hlen : (pairs.foldl (scatStep n) (List.replicate n none)).length = n :=
+    scatterIndexed_placed_length n pairs _ hlen0
+  have hsome : ∀ i, i < n →
+      ∃ a, (pairs.foldl (scatStep n) (List.replicate n none))[i]? = some (some a) :=
+    fun i hi => scatterIndexed_cover_fold n pairs _ hlen0 i hi (Or.inl (h i hi))
+  have hnon : ∀ x ∈ pairs.foldl (scatStep n) (List.replicate n none), x ≠ none := by
+    intro x hx
+    rw [List.mem_iff_getElem?] at hx
+    obtain ⟨i, hi⟩ := hx
+    have hi' : i < n := by
+      by_contra hge
+      have hle : (pairs.foldl (scatStep n) (List.replicate n none)).length ≤ i := by omega
+      rw [List.getElem?_eq_none_iff.mpr hle] at hi
+      cases hi
+    obtain ⟨a, ha⟩ := hsome i hi'
+    rw [hi] at ha
+    intro hx0
+    rw [hx0] at ha
+    cases ha
+  obtain ⟨ys, hys⟩ := mapM_id_ok _ hnon
+  rw [hys]
+  exact ⟨ys.toArray, rfl⟩
+
+/-- A column index of `cols` is paired with SOME read in `zip cols reads`, provided the read
+    array is at least as long as `cols` (`tmReadN_size` supplies this at the advice site). -/
+theorem mem_zip_of_mem {α : Type} (cols : List Nat) (reads : List α)
+    (hlen : cols.length ≤ reads.length) {i : Nat} (hi : i ∈ cols) :
+    ∃ a, (i, a) ∈ List.zip cols reads := by
+  rw [List.mem_iff_getElem?] at hi
+  obtain ⟨k, hk⟩ := hi
+  have hklt : k < cols.length := (List.getElem?_eq_some_iff.mp hk).1
+  have hkreads : k < reads.length := by omega
+  have hsome : reads[k]? = some reads[k] := List.getElem?_eq_getElem hkreads
+  obtain ⟨a, ha⟩ : ∃ a, reads[k]? = some a := ⟨reads[k], hsome⟩
+  refine ⟨a, ?_⟩
+  rw [List.mem_iff_getElem?]
+  exact ⟨k, by rw [List.getElem?_zip_eq_some]; exact ⟨hk, ha⟩⟩
 
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
@@ -4317,8 +4611,16 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.nbParallelLookupsPerChunk_ok_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.rustChunks_ok [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.chunkByDegree_ok_of_wf [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.readN_go_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.readN_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tmReadN_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.scatterIndexed_ok_of_cover [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.mem_zip_of_mem [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.bind [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_tmReadN_g1 [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_hashInto [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_absorb_committed [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_absorb_instance [propext, Classical.choice, Quot.sound] native []
