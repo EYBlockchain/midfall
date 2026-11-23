@@ -494,9 +494,102 @@ theorem env_negLagranges (hg : Generates gi o) (hs : SupportedInput gi) :
     (renderOf gi o).pv.numNegLagranges = gi.vk.cs.blindingFactors.toOption.getD 0 + 1 := by
   sorry -- CERT.6
 
+/-- The `vk.rs:180` check, from the small `generateBaseVkPrefix`. PROVED. -/
+theorem generateBaseVkPrefix_g2 {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    (h : generateBaseVkPrefix inputs = .ok pre) :
+    (inputs.params.g2 == P.g₂) = true := by
+  simp only [generateBaseVkPrefix, Bind.bind, Except.bind] at h
+  generalize h1 : feToU256 (bytesToNats (frToRepr inputs.vk.transcriptRepr)) = fe1 at h
+  cases fe1 with
+  | error e => cases h
+  | ok v1 =>
+    dsimp only at h
+    generalize h2 : invert ((2 ^ inputs.vk.domain.k : ℕ) : Fr p) = o2 at h
+    cases o2 with
+    | none => cases h
+    | some x2 =>
+      dsimp only at h
+      generalize h3 : feToU256 (bytesToNats (frToRepr x2)) = fe3 at h
+      cases fe3 with
+      | error e => cases h
+      | ok v3 =>
+        dsimp only at h
+        generalize h4 : feToU256 (bytesToNats (frToRepr
+          (EvaluationDomain.getOmega inputs.vk.domain))) = fe4 at h
+        cases fe4 with
+        | error e => cases h
+        | ok v4 =>
+          dsimp only at h
+          generalize h5 : feToU256 (bytesToNats (frToRepr
+            (EvaluationDomain.getOmegaInv inputs.vk.domain))) = fe5 at h
+          cases fe5 with
+          | error e => cases h
+          | ok v5 =>
+            dsimp only at h
+            generalize h6 : feToU256 (bytesToNats (frToRepr
+                (powVartime (EvaluationDomain.getOmegaInv inputs.vk.domain)
+                  (Int.natAbs inputs.meta_.rotationLast)))) = fe6 at h
+            cases fe6 with
+            | error e => cases h
+            | ok v6 =>
+              dsimp only at h
+              generalize hg1 : decideBool (P.decEqG₁
+                (List.foldl (fun acc g => acc * g) 1 inputs.params.gLagrange) P.g₁) = b1 at h
+              cases b1 with
+              | false => cases h
+              | true =>
+                generalize hg2 : (inputs.params.g2 == P.g₂) = b2 at h
+                cases b2 with
+                | false => cases h
+                | true => rfl
+
+/-- `generateBaseVk` success gives the prefix success. PROVED. -/
+theorem generateBaseVk_g2_check {codecs : VkPointCodecs G₁ G₂}
+    {inputs : VerifierBuildInputs p G₁ G₂} {payload : Halo2VerifyingKey}
+    (h : generateBaseVk codecs inputs = .ok payload) :
+    (inputs.params.g2 == P.g₂) = true := by
+  simp only [generateBaseVk, Bind.bind, Except.bind] at h
+  generalize hp : generateBaseVkPrefix inputs = pre at h
+  cases pre with
+  | error e => cases h
+  | ok p => exact generateBaseVkPrefix_g2 hp
+
+theorem except_isOk_bind {ε α β : Type} {x : Except ε α} {f : α → Except ε β}
+    (h : (x >>= f).isOk = true) : x.isOk = true := by
+  cases x with
+  | error e => change (Except.error e).isOk = true at h; cases h
+  | ok a => rfl
+
+def certGetOk {ε α : Type} : (e : Except ε α) → e.isOk = true → α
+  | .ok a, _ => a
+  | .error _, h => by change (Except.error _).isOk = true at h; cases h
+
+theorem cert_eq_ok_getOk {ε α : Type} (e : Except ε α) (h : e.isOk = true) :
+    e = .ok (certGetOk e h) := by
+  cases e with
+  | ok a => rfl
+  | error _ => change (Except.error _).isOk = true at h; cases h
+
+/-- `generateVk`'s first bind is `generateBaseVk`. PROVED. -/
+theorem generateVk_base {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {codecs : VkPointCodecs G₁ G₂} {inputs : VerifierBuildInputs p G₁ G₂}
+    {payload : Halo2VerifyingKey}
+    (h : generateVk feat env codecs inputs = .ok payload) :
+    ∃ vk0, generateBaseVk codecs inputs = .ok vk0 := by
+  have his : (generateVk feat env codecs inputs).isOk = true := by rw [h]; rfl
+  rw [generateVk] at his
+  have hbase : (generateBaseVk codecs inputs).isOk = true := except_isOk_bind his
+  exact ⟨certGetOk _ hbase, cert_eq_ok_getOk _ hbase⟩
+
 theorem env_nG2 (hg : Generates gi o) (hs : SupportedInput gi) :
     (renderOf gi o).params.nG2Prepared = P.g₂⁻¹ := by
-  sorry -- CERT.4
+  obtain ⟨_m0, _payload, _hraw, hgenvk, _hfp, _h4⟩ := generate_spec hg
+  obtain ⟨_vk0, hbase⟩ := generateVk_base hgenvk
+  have hg2c := generateBaseVk_g2_check hbase
+  have hg2 : gi.srs.g2 = P.g₂ := beq_iff_eq.mp hg2c
+  show gi.srs.g2⁻¹ = P.g₂⁻¹
+  rw [hg2]
 
 theorem env_vkDigest (hg : Generates gi o) (hs : SupportedInput gi) :
     ((renderOf gi o).pv.vk.constants.getD 0 ("", 0)).2 = frWord gi.vk.transcriptRepr := by

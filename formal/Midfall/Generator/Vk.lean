@@ -755,15 +755,12 @@ The bulk of the file, and hazard 7's home. -/
     that generate_vk / generate_vk_direct append, then the G1 commitment words,
     which is the order VkPayloadLayout::for_vk reserves (VP:76-94). The gate that
     pins the ORDER and not just the counts is payloadOrder_sectionsTiled_ok. -/
-def generateBaseVk (codecs : VkPointCodecs G₁ G₂)
-    (inputs : VerifierBuildInputs p G₁ G₂) : Except Fault Halo2VerifyingKey := do
+def generateBaseVkPrefix (inputs : VerifierBuildInputs p G₁ G₂) :
+    Except Fault (Word256 × Word256 × Word256 × Word256 × Word256) := do
   -- VK:100: let domain = self.vk.get_domain();
   let domain := inputs.vk.domain
   -- VK:109: fe_to_u256::<Fq>(&self.vk.transcript_repr())
   let vkDigest ← feToU256 (bytesToNats (frToRepr inputs.vk.transcriptRepr))
-  -- VK:110-111: U256::from(usize) for the instance count and the domain exponent.
-  let numInstancesW : Word256 := BitVec.ofNat 256 inputs.numInstances
-  let kW : Word256 := BitVec.ofNat 256 domain.k
   -- VK:112: Fq::from(1u64 << domain.k()).invert().unwrap(). The shift panics for
   -- k >= 64 in both profiles (unreachable: k <= F::S = 32); the unwrap is a real
   -- panic site and is ported as one.
@@ -778,6 +775,28 @@ def generateBaseVk (codecs : VkPointCodecs G₁ G₂)
   let l := Int.natAbs inputs.meta_.rotationLast
   let omegaInvToL ← feToU256 (bytesToNats (frToRepr
     (powVartime (EvaluationDomain.getOmegaInv domain) l)))
+  -- VK:145-150: srs_g1_base = sum of g_lagrange, from the identity.
+  let g_lagrange := inputs.params.gLagrange
+  let srsG1Base := g_lagrange.foldl (fun acc g => acc * g) 1
+  -- VK:151-156: assert_eq!(srs_g1_base, G1Affine::generator()). The first of the
+  -- three SRS controls the audit calls H-1: the only build-time check that can
+  -- catch a substituted SRS, because every other control in the repository checks
+  -- self-consistency and a substituted SRS is perfectly self-consistent.
+  unless (decideBool (P.decEqG₁ srsG1Base P.g₁)) do
+    throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:151")
+  -- VK:180-185: assert_eq!(g2_pt, G2Affine::generator()).
+  let g2Pt : G₂ := inputs.params.g2
+  unless (g2Pt == P.g₂) do
+    throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:180")
+  Except.ok (vkDigest, nInv, omega, omegaInv, omegaInvToL)
+
+def generateBaseVk (codecs : VkPointCodecs G₁ G₂)
+    (inputs : VerifierBuildInputs p G₁ G₂) : Except Fault Halo2VerifyingKey := do
+  let (vkDigest, nInv, omega, omegaInv, omegaInvToL) ← generateBaseVkPrefix inputs
+  let domain := inputs.vk.domain
+  -- VK:110-111: U256::from(usize) for the instance count and the domain exponent.
+  let numInstancesW : Word256 := BitVec.ofNat 256 inputs.numInstances
+  let kW : Word256 := BitVec.ofNat 256 domain.k
   -- VK:119-131: the accumulator quadruple; unwrap_or_default() is the zero word.
   let hasAccumulator : Word256 := BitVec.ofNat 256 (if inputs.accEncoding.isSome then 1 else 0)
   let accOffset : Word256 := match inputs.accEncoding with
@@ -789,22 +808,11 @@ def generateBaseVk (codecs : VkPointCodecs G₁ G₂)
   let numAccLimbBits : Word256 := match inputs.accEncoding with
     | some e => BitVec.ofNat 256 e.numLimbBits
     | none => 0
-  -- VK:145-150: srs_g1_base = sum of g_lagrange, from the identity.
   let g_lagrange := inputs.params.gLagrange
-  let srsG1Base := g_lagrange.foldl (fun acc g => acc * g) 1
-  -- VK:151-156: assert_eq!(srs_g1_base, G1Affine::generator()). The first of the
-  -- three SRS controls the audit calls H-1: the only build-time check that can
-  -- catch a substituted SRS, because every other control in the repository checks
-  -- self-consistency and a substituted SRS is perfectly self-consistent.
-  unless (decideBool (P.decEqG₁ srsG1Base P.g₁)) do
-    throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:151")
   -- VK:157-159
   let g1Pt : G₁ := P.g₁
   let g2Pt : G₂ := inputs.params.g2
   let negSG2Pt : G₂ := inputs.params.sG2⁻¹
-  -- VK:180-185: assert_eq!(g2_pt, G2Affine::generator()).
-  unless (g2Pt == P.g₂) do
-    throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:180")
   -- VK:189-199: assert!(srs_tau_is_consistent(...)).
   unless (srsTauIsConsistent g_lagrange (EvaluationDomain.getOmega domain)
       inputs.params.sG2) do
@@ -876,6 +884,7 @@ def generateBaseVk (codecs : VkPointCodecs G₁ G₂)
       quotientConstLabels := []
       quotientConstHeaders := [] }
   Except.ok vkBase
+
 
 /-- rust: VK:301-357 (VerifierBuildInputs::generate_vk_direct) @formal-baseline.
     The Rust takes program: &DirectQuotientProgram and calls program.table_words()
