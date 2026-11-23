@@ -1015,6 +1015,68 @@ def MultiPrepareBlockWidth {G₁ G₂ Gₜ : Type}
         [(hashableG1 g1).width])
       (pcs.multiPrepare queries)
 
+/-- The width block of ONE `multiPrepare` call, at a fixed query vector. This is
+    the true KZG obligation (the `∀ queries` form is refuted at `#[]`; see
+    `MultiPrepareBlockWidth.eq_zero_of_empty_run`). -/
+def MultiPrepareBlockWidthAt {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (pcs : Pcs p G₁ G₂ Gₜ) (n : Nat)
+    (queries : Array (VerifierQuery (Fr p) G₁)) : Prop :=
+  PresWidthSeq
+    ([(hashableG1 g1).width] ++ List.replicate n (hashableFr (p := p)).width ++
+      [(hashableG1 g1).width])
+    (pcs.multiPrepare queries)
+
+/-- The repaired KZG residual: the width block at the query vectors
+    `Verifier.linearize` actually produces. Quantified over the algebra-read state
+    and the linearize equation, so the empty query vector cannot refute it. -/
+def MultiPrepareWidthsLinearize {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (pcs : Pcs p G₁ G₂ Gₜ) (n : Nat)
+    (delta : Fr p) (vk : VerifyingKey (Fr p) G₁) (feat : Features)
+    (trace : VerifierTrace (Fr p) G₁)
+    (committedInstances : Array (Array G₁))
+    (instances : Array (Array (Array (Fr p)))) : Prop :=
+  ∀ (alg : Verifier.AlgebraRead (Fr p) G₁)
+    (queries : Array (VerifierQuery (Fr p) G₁)),
+    Verifier.linearize (p := p) (delta := delta) vk
+      (adviceCommitments := trace.adviceCommitments)
+      (committedInstances := if feat.committedInstances then committedInstances
+        else arrayReplicate instances.size (#[] : Array G₁))
+      (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+      (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg
+      = .ok queries →
+    MultiPrepareBlockWidthAt g1 pcs n queries
+
+/-- The per-query width obligation, discharged from the point-set count (an
+    unconditional consequence of `PresWidthSeq.multiPrepare_width`). -/
+theorem MultiPrepareBlockWidthAt_of_pointSets {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (n : Nat)
+    (queries : Array (VerifierQuery (Fr p) G₁))
+    (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p)))
+    (hNoDummies : ¬ (feat.outerFewerPointSets && fewerPointSetsRuntime))
+    (hCI : constructIntermediateSets (F := Fr p) (C := G₁)
+      (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries
+      = .ok (cm, pointSets))
+    (hPoint : pointSets.size = n) :
+    MultiPrepareBlockWidthAt g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat fewerPointSetsRuntime) n queries := by
+  have hw := PresWidthSeq.multiPrepare_width (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat
+    fewerPointSetsRuntime queries hNoDummies cm pointSets hCI
+  rw [hPoint] at hw
+  exact hw
+
 /-- **The residual for A6's `parseTrace` schedule.** `parseTrace` appends one
     `g1` per non-quotient commitment, in the phase-interleaved order of
     `parse_trace`; this is the exact statement the A6 lane owes. It is not a
@@ -1271,7 +1333,8 @@ variable {G₁ G₂ Gₜ : Type}
 /-- **The two proved halves compose.** `readAlgebra`'s exact widths plus the
     `linearize` lift (no reads) plus the multiPrepare block (`[g1]`, `n`
     scalars, `[g1]`). This is the algebraic half of `prepare` with the KZG
-    point-set count supplied by the residual `MultiPrepareBlockWidth`. -/
+    point-set count supplied at each `linearize` output (`MultiPrepareBlockWidthAt`),
+    the D-GATE10 repaired form. -/
 theorem readAlgebra_multiPrepare_widths (g1 : G1Codec G₁) (feat : Features)
     (vk : VerifyingKey (Fr p) G₁)
     (permutations : Array (Permutation.Committed G₁))
@@ -1279,8 +1342,10 @@ theorem readAlgebra_multiPrepare_widths (g1 : G1Codec G₁) (feat : Features)
     (trashcans : Array (Array (Trash.Committed G₁)))
     (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p))))
     (pcs : Pcs p G₁ G₂ Gₜ) (n : Nat)
-    (hMulti : MultiPrepareBlockWidth g1 pcs n)
-    (lin : Verifier.AlgebraRead (Fr p) G₁ → Except Fault (Array (VerifierQuery (Fr p) G₁))) :
+    (lin : Verifier.AlgebraRead (Fr p) G₁ → Except Fault (Array (VerifierQuery (Fr p) G₁)))
+    (hMulti : ∀ (alg : Verifier.AlgebraRead (Fr p) G₁)
+      (queries : Array (VerifierQuery (Fr p) G₁)),
+      lin alg = .ok queries → MultiPrepareBlockWidthAt g1 pcs n queries) :
     PresWidthSeq
       (readAlgebraWidths g1 feat vk permutations lookups trashcans
         nbCommitted numProofs instances
@@ -1294,19 +1359,31 @@ theorem readAlgebra_multiPrepare_widths (g1 : G1Codec G₁) (feat : Features)
     trashcans nbCommitted numProofs instances)
     (PresWidthSeq.readAlgebra_widths g1 feat vk permutations lookups trashcans
       nbCommitted numProofs instances) (fun alg => ?_)
-  refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift (lin alg))
-    (fun queries => ?_)
-  exact hMulti queries
+  intro t2 t' d hd
+  change (StateT.lift (lin alg) >>= fun queries => pcs.multiPrepare queries).run t2
+    = .ok (d, t') at hd
+  rw [StateT.run_bind] at hd
+  cases hlin : lin alg with
+  | error e =>
+      rw [hlin] at hd
+      cases hd
+  | ok queries =>
+      rw [hlin] at hd
+      simp only [StateT.run_lift] at hd
+      exact hMulti alg queries hlin t2 t' d hd
 
 /-- **The `verifyAlgebraicConstraints` run glue.** `readAlgebra`'s exact
-    widths, the width-free `linearize` lift, and the `multiPrepare` block (via
-    `MultiPrepareBlockWidth`), with the `committed.isEmpty` guard and the
+    widths, the width-free `linearize` lift, and the `multiPrepare` block at the
+    query vector `linearize` produced (via `MultiPrepareWidthsLinearize`, the
+    D-GATE10 repaired form), with the `committed.isEmpty` guard and the
     `StateT.get`/`match`/`StateT.set` re-run dance discharged. -/
 theorem verifyAlgebraicConstraints_width (g1 : G1Codec G₁) (delta : Fr p)
     (feat : Features) (pcs : Pcs p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁)
     (trace : VerifierTrace (Fr p) G₁)
     (committedInstances : Array (Array G₁)) (instances : Array (Array (Array (Fr p))))
-    (n : Nat) (hMulti : MultiPrepareBlockWidth g1 pcs n)
+    (n : Nat)
+    (hMulti : MultiPrepareWidthsLinearize (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+      g1 pcs n delta vk feat trace committedInstances instances)
     (hCommit : feat.committedInstances = true) :
     PresWidthSeq
       (readAlgebraWidths g1 feat vk trace.permutations trace.lookups trace.trashcans
@@ -1319,75 +1396,71 @@ theorem verifyAlgebraicConstraints_width (g1 : G1Codec G₁) (delta : Fr p)
           [(hashableG1 g1).width]))
       (Verifier.verifyAlgebraicConstraints (p := p) g1 delta feat pcs vk trace
         committedInstances instances) := by
+  have hif : (if feat.committedInstances then committedInstances
+        else arrayReplicate instances.size (#[] : Array G₁))
+      = (if True then committedInstances
+        else arrayReplicate instances.size (#[] : Array G₁)) := by
+    simp [hCommit]
   unfold Verifier.verifyAlgebraicConstraints
   dsimp only
   simp only [hCommit]
   refine PresWidthSeq.ite ?_ ?_
-  · refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.throwFault _) (fun _ => ?_)
-    refine PresWidthSeq.bind
-      (ws1 := readAlgebraWidths g1 feat vk trace.permutations trace.lookups trace.trashcans
-        _ instances.size instances)
-      (PresWidthSeq.readAlgebra_widths g1 feat vk trace.permutations trace.lookups
-        trace.trashcans _ instances.size instances) (fun alg => ?_)
-    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun queries => ?_)
-    intro t2 t' d hd
-    rw [StateT.run_bind, StateT_get_run] at hd
-    change StateT.run (match (pcs.multiPrepare queries).run t2 with
-        | .ok (guard, t3) => (do StateT.set t3; (pure guard : TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ)))
-        | .error (Fault.panic site) => throw (Fault.panic site)
-        | .error (Fault.error e) => throw (Fault.error Error.opening)) t2 = .ok (d, t') at hd
-    cases hmr : (pcs.multiPrepare queries).run t2 with
-    | error e =>
-        cases e with
-        | panic site =>
-            simp only [hmr] at hd
-            change (Except.error (Fault.panic site) :
-              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
-            cases hd
-        | error e2 =>
-            simp only [hmr] at hd
-            change (Except.error (Fault.error Error.opening) :
-              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
-            cases hd
-    | ok p =>
-        obtain ⟨a0, t3⟩ := p
-        simp only [hmr] at hd
-        have hh : (a0, t3) = (d, t') := Except.ok.inj hd
-        have hw := hMulti queries t2 t3 a0 hmr
-        cases hh
-        simpa using hw
+  · -- the empty-committed-instances check throws: any width list is vacuous
+    intro t t' a h
+    change (Except.error (Fault.error Error.invalidInstances) :
+      Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (a, t') at h
+    cases h
   · refine PresWidthSeq.bind
       (ws1 := readAlgebraWidths g1 feat vk trace.permutations trace.lookups trace.trashcans
         _ instances.size instances)
       (PresWidthSeq.readAlgebra_widths g1 feat vk trace.permutations trace.lookups
         trace.trashcans _ instances.size instances) (fun alg => ?_)
-    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun queries => ?_)
     intro t2 t' d hd
-    rw [StateT.run_bind, StateT_get_run] at hd
-    change StateT.run (match (pcs.multiPrepare queries).run t2 with
-        | .ok (guard, t3) => (do StateT.set t3; (pure guard : TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ)))
-        | .error (Fault.panic site) => throw (Fault.panic site)
-        | .error (Fault.error e) => throw (Fault.error Error.opening)) t2 = .ok (d, t') at hd
-    cases hmr : (pcs.multiPrepare queries).run t2 with
+    simp only [StateT.run_bind, StateT.run_lift] at hd
+    cases hlin : Verifier.linearize (p := p) (delta := delta) vk
+        (adviceCommitments := trace.adviceCommitments)
+        (committedInstances := if True then committedInstances
+          else arrayReplicate instances.size (#[] : Array G₁))
+        (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+        (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg with
     | error e =>
-        cases e with
-        | panic site =>
+        rw [hlin] at hd
+        cases hd
+    | ok queries =>
+        rw [hlin] at hd
+        simp only [StateT.run_bind, StateT.run_lift, StateT.run_pure, StateT_get_run] at hd
+        change StateT.run (match (pcs.multiPrepare queries).run t2 with
+            | .ok (guard, t3) => (do StateT.set t3; (pure guard : TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ)))
+            | .error (Fault.panic site) => throw (Fault.panic site)
+            | .error (Fault.error e) => throw (Fault.error Error.opening)) t2 = .ok (d, t') at hd
+        cases hmr : (pcs.multiPrepare queries).run t2 with
+        | error e =>
+            cases e with
+            | panic site =>
+                simp only [hmr] at hd
+                change (Except.error (Fault.panic site) :
+                  Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+                cases hd
+            | error e2 =>
+                simp only [hmr] at hd
+                change (Except.error (Fault.error Error.opening) :
+                  Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+                cases hd
+        | ok p =>
+            obtain ⟨a0, t3⟩ := p
             simp only [hmr] at hd
-            change (Except.error (Fault.panic site) :
-              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
-            cases hd
-        | error e2 =>
-            simp only [hmr] at hd
-            change (Except.error (Fault.error Error.opening) :
-              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
-            cases hd
-    | ok p =>
-        obtain ⟨a0, t3⟩ := p
-        simp only [hmr] at hd
-        have hh : (a0, t3) = (d, t') := Except.ok.inj hd
-        have hw := hMulti queries t2 t3 a0 hmr
-        cases hh
-        simpa using hw
+            have hh : (a0, t3) = (d, t') := Except.ok.inj hd
+            have hlin' : Verifier.linearize (p := p) (delta := delta) vk
+                (adviceCommitments := trace.adviceCommitments)
+                (committedInstances := if feat.committedInstances then committedInstances
+                  else arrayReplicate instances.size (#[] : Array G₁))
+                (y := trace.y) (beta := trace.beta) (gamma := trace.gamma)
+                (theta := trace.theta) (trashChallenge := trace.trashChallenge)
+                (challenges := trace.challenges) alg = .ok queries := by
+              rwa [← hif] at hlin
+            have hw := hMulti alg queries hlin' t2 t3 a0 hmr
+            cases hh
+            simpa using hw
 
 /-- The plan-slot identity: once the three protocol counts match the three block
     counts (`prefixG1Count = nonQuotient + nbQuotient`, `numEvals = evalCount`,
@@ -1571,9 +1644,11 @@ theorem PrepareLogSlots_of_parts (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ
     (nParse n : Nat)
     (hParse : ∀ (inst : Array (Fr p)),
       ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
-    (hMulti : MultiPrepareBlockWidth R.E.g1
-      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
-        R.E.fewerPointSetsRuntime) n)
+    (hMulti : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
+      MultiPrepareWidthsLinearize (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        R.E.g1 (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+          R.E.fewerPointSetsRuntime) n R.E.delta R.vk Features.solidity trace
+        #[#[(1 : G₁)]] #[#[inst.toList.toArray]])
     (hSlots : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
       (List.replicate nParse (hashableG1 R.E.g1).width
         ++ (readAlgebraWidths R.E.g1 Features.solidity R.vk trace.permutations
@@ -1602,8 +1677,8 @@ theorem PrepareLogSlots_of_parts (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ
             ++ [(hashableG1 R.E.g1).width])) :=
     verifyAlgebraicConstraints_width R.E.g1 R.E.delta Features.solidity
       (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
-        R.E.fewerPointSetsRuntime) R.vk trace #[#[(1 : G₁)]] #[#[inst.toList.toArray]] n hMulti
-      rfl t1 t d hver
+        R.E.fewerPointSetsRuntime) R.vk trace #[#[(1 : G₁)]] #[#[inst.toList.toArray]] n
+      (hMulti inst trace) rfl t1 t d hver
   have hcompose : ∀ (l : List (Nat × Bytes)),
       l.map (fun r => if r.1 = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
                       else Midfall.Lowering.WireSlot.fr)
@@ -1628,9 +1703,11 @@ theorem PrepareLogSlots_of_counts (R : Midfall.LoweringV2.Render p G₁ G₂ G�
     (nParse n : Nat)
     (hParse : ∀ (inst : Array (Fr p)),
       ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
-    (hMulti : MultiPrepareBlockWidth R.E.g1
-      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
-        R.E.fewerPointSetsRuntime) n)
+    (hMulti : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
+      MultiPrepareWidthsLinearize (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        R.E.g1 (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+          R.E.fewerPointSetsRuntime) n R.E.delta R.vk Features.solidity trace
+        #[#[(1 : G₁)]] #[#[inst.toList.toArray]])
     (hCounts : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
       nParse + readAlgebraQuotientCount Features.solidity R.vk
         = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
@@ -1918,9 +1995,11 @@ theorem PrepareLogSlots_of_counts' (R : Midfall.LoweringV2.Render p G₁ G₂ G�
     (hR : ValidV3 R) (nParse n : Nat)
     (hParse : ∀ (inst : Array (Fr p)),
       ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
-    (hMulti : MultiPrepareBlockWidth R.E.g1
-      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
-        R.E.fewerPointSetsRuntime) n)
+    (hMulti : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
+      MultiPrepareWidthsLinearize (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        R.E.g1 (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+          R.E.fewerPointSetsRuntime) n R.E.delta R.vk Features.solidity trace
+        #[#[(1 : G₁)]] #[#[inst.toList.toArray]])
     (hCounts : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
       nParse + readAlgebraQuotientCount Features.solidity R.vk
         = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
@@ -3625,9 +3704,11 @@ theorem PrepareLogSlots_of_parsed {G₁ G₂ Gₜ : Type}
     (hR : ValidV3 R) (nParse n : Nat)
     (hParse : ∀ (inst : Array (Fr p)),
       ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
-    (hMulti : MultiPrepareBlockWidth R.E.g1
-      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
-        R.E.fewerPointSetsRuntime) n)
+    (hMulti : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
+      MultiPrepareWidthsLinearize (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        R.E.g1 (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+          R.E.fewerPointSetsRuntime) n R.E.delta R.vk Features.solidity trace
+        #[#[(1 : G₁)]] #[#[inst.toList.toArray]])
     (hQuot : nParse + readAlgebraQuotientCount Features.solidity R.vk
       = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
           R.plan.proofLayout).prefixG1Count)
@@ -3659,8 +3740,8 @@ theorem PrepareLogSlots_of_parsed {G₁ G₂ Gₜ : Type}
             ++ [(hashableG1 R.E.g1).width])) :=
     verifyAlgebraicConstraints_width R.E.g1 R.E.delta Features.solidity
       (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
-        R.E.fewerPointSetsRuntime) R.vk trace #[#[(1 : G₁)]] #[#[inst.toList.toArray]] n hMulti
-      rfl t1 t d hver
+        R.E.fewerPointSetsRuntime) R.vk trace #[#[(1 : G₁)]] #[#[inst.toList.toArray]] n
+      (hMulti inst trace) rfl t1 t d hver
   have hcompose : ∀ (l : List (Nat × Bytes)),
       l.map (fun r => if r.1 = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
                       else Midfall.Lowering.WireSlot.fr)
@@ -3981,59 +4062,82 @@ theorem parseTraceSchedule {G₁ G₂ Gₜ : Type}
     ParseTraceSchedule R :=
   parseTraceSchedule_of_advicePhase R hR (advicePhaseCountFit_of_wellFormed R.vk hR.supported.wf)
 
-/-- **THE KZG RESIDUAL, NAMED (multiPrepare's scalar block).** `multiPrepare`
-    appends `[g1]`, one scalar per quotient-opening point set, `[g1]`; the count
-    is pinned to the plan's `numPointSets`. The unconditional count equality is
-    FALSE at `x = 0` (`kzgPartitionBridge_false_at_x0`), so this is the
-    D-GATE5 `ChallengesGood.xNonzero` / partition-bridge obligation, stated with
-    no weakening.
-
-    **W12 REPAIR NOTE (measured).** In THIS `∀ queries` form the statement is also
-    false at the EMPTY query vector for any plan with `numPointSets ≠ 0`: the empty
-    construction yields zero point sets (`constructIntermediateSets_empty`) and the
-    empty run appends only the two `g1` widths (`multiPrepare_width_empty`), so a
-    successful empty run forces `n = 0` (`MultiPrepareBlockWidth.eq_zero_of_empty_run`).
-    The width half is unconditionally `PresWidthSeq.multiPrepare_width`; the true
-    residual is the COUNT at `Verifier.linearize`'s query vector, which is what the
-    D-GATE6 decision fixes under `x ≠ 0` + `omega` order `n` + rotation distinctness.
-    `KzgMultiPrepareWidths_of_pointSets` and
-    `KzgMultiPrepareWidths_of_kzgPartitionBridge` are the exact reductions: the
-    latter consumes the already-named `KzgPartitionBridge` and leaves the query-map
-    correspondence to the generator's query list as the only missing input. -/
+/-- **THE KZG RESIDUAL, REPAIRED (D-GATE10), AT `linearize`'S QUERY VECTOR.**
+    `multiPrepare` appends `[g1]`, one scalar per quotient-opening point set, `[g1]`;
+    the count is the plan's `numPointSets`. The OLD `∀ queries` form is FALSE at
+    `#[]` (`MultiPrepareBlockWidth.eq_zero_of_empty_run`), so the residual is stated
+    at the query vectors `Verifier.linearize` actually produces (which always include
+    the linearization query and whose point-set count is fixed by the VK under
+    D-GATE5 `x ≠ 0` + D-GATE6 rotation distinctness). This is the form the consumers
+    use; `KzgMultiPrepareWidths_of_pointSets` and
+    `KzgMultiPrepareWidths_of_kzgPartitionBridge` reduce it to the count and to the
+    already-named `KzgPartitionBridge` respectively. -/
 def KzgMultiPrepareWidths (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) : Prop :=
-  MultiPrepareBlockWidth R.E.g1
-    (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
-      R.E.fewerPointSetsRuntime)
-    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
-      R.plan.proofLayout).numPointSets
+  ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
+    MultiPrepareWidthsLinearize (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+      R.E.g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime)
+      (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).numPointSets
+      R.E.delta R.vk Features.solidity trace #[#[(1 : G₁)]] #[#[inst.toList.toArray]]
 
-/-- **`KzgMultiPrepareWidths` FROM THE POINT-SET COUNT** (the plan's
-    `numPointSets` is read from the proof layout). -/
+/-- **`KzgMultiPrepareWidths` FROM THE POINT-SET COUNT AT `linearize`.** This is the
+    exact remaining count obligation: for each query vector `linearize` produces, the
+    `constructIntermediateSets` point-set count is the plan's `numPointSets`. -/
 theorem KzgMultiPrepareWidths_of_pointSets (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
-    (hPoint : ∀ (queries : Array (VerifierQuery (Fr p) G₁))
-      (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p))),
-      constructIntermediateSets (F := Fr p) (C := G₁)
-        (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries
-        = .ok (cm, pointSets) →
-      pointSets.size = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
-        R.plan.proofLayout).numPointSets) :
+    (hPoint : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
+      (alg : Verifier.AlgebraRead (Fr p) G₁)
+      (queries : Array (VerifierQuery (Fr p) G₁)),
+      Verifier.linearize (p := p) (delta := R.E.delta) R.vk
+        (adviceCommitments := trace.adviceCommitments)
+        (committedInstances := if Features.solidity.committedInstances then
+          #[#[(1 : G₁)]] else arrayReplicate (#[#[inst.toList.toArray]]).size
+            (#[] : Array G₁))
+        (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+        (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg
+        = .ok queries →
+      ∀ (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p))),
+        constructIntermediateSets (F := Fr p) (C := G₁)
+          (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries
+          = .ok (cm, pointSets) →
+        pointSets.size = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numPointSets) :
     KzgMultiPrepareWidths R := by
+  intro inst trace alg queries hlin
   have hNoDummies : ¬ (Features.solidity.outerFewerPointSets && R.E.fewerPointSetsRuntime) := by
     simp [Features.solidity]
-  unfold KzgMultiPrepareWidths
-  exact MultiPrepareBlockWidth_of_pointSets R.E.g1 R.E.field Features.solidity
-    R.E.fewerPointSetsRuntime _ hNoDummies hPoint
+  by_cases hok : ∃ (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p))),
+      constructIntermediateSets (F := Fr p) (C := G₁)
+        (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries
+        = .ok (cm, pointSets)
+  · obtain ⟨cm, pointSets, hCI⟩ := hok
+    exact MultiPrepareBlockWidthAt_of_pointSets R.E.g1 R.E.field Features.solidity
+      R.E.fewerPointSetsRuntime _ queries cm pointSets hNoDummies hCI
+      (hPoint inst trace alg queries hlin cm pointSets hCI)
+  · intro t t' a hrun
+    obtain ⟨cm, pointSets, hCI⟩ :=
+      multiPrepare_constructIntermediateSets_ok R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime queries hNoDummies hrun
+    exact absurd ⟨cm, pointSets, hCI⟩ hok
 
-/-- **`KzgMultiPrepareWidths` FROM THE PORT-AUDIT PARTITION BRIDGE.** This consumes
-    the bridge that is already named in `LoweringV3.EndToEnd`
-    (`KzgPartitionBridge`): per query vector it supplies a generator query list and
-    the point-set count identity. The generator-side count is then the plan's
-    `numPointSets`. What is still missing is the QUERY-MAP correspondence
-    `linearize's queries ↔ Generator.queries` (and the generator count identity);
-    this theorem reduces the width residual to exactly those. -/
+/-- **`KzgMultiPrepareWidths` FROM THE PORT-AUDIT PARTITION BRIDGE**, at the
+    linearized query vectors. Consumes the already-named `KzgPartitionBridge` plus
+    the generator's `pointSets.length = plan.numPointSets`; the remaining input is
+    the query-map correspondence `linearize's queries ↔ Generator.Query`. -/
 theorem KzgMultiPrepareWidths_of_kzgPartitionBridge
     (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
-    (hG : ∀ (queries : Array (VerifierQuery (Fr p) G₁)),
+    (hG : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
+      (alg : Verifier.AlgebraRead (Fr p) G₁)
+      (queries : Array (VerifierQuery (Fr p) G₁)),
+      Verifier.linearize (p := p) (delta := R.E.delta) R.vk
+        (adviceCommitments := trace.adviceCommitments)
+        (committedInstances := if Features.solidity.committedInstances then
+          #[#[(1 : G₁)]] else arrayReplicate (#[#[inst.toList.toArray]]).size
+            (#[] : Array G₁))
+        (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+        (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg
+        = .ok queries →
       ∃ (queriesG : List Midfall.Generator.Query)
         (setsG : Midfall.Generator.IntermediateSets),
         Midfall.Generator.constructIntermediateSetsImpl queriesG = .ok setsG ∧
@@ -4042,11 +4146,9 @@ theorem KzgMultiPrepareWidths_of_kzgPartitionBridge
           R.plan.proofLayout).numPointSets) :
     KzgMultiPrepareWidths R := by
   refine KzgMultiPrepareWidths_of_pointSets R ?_
-  intro queries cm pointSets hCI
-  obtain ⟨queriesG, setsG, hGok, hBridge, hLen⟩ := hG queries
+  intro inst trace alg queries hlin cm pointSets hCI
+  obtain ⟨queriesG, setsG, hGok, hBridge, hLen⟩ := hG inst trace alg queries hlin
   exact (hBridge (cm, pointSets) setsG hCI hGok).trans hLen
-
-
 
 /-- **`PrepareLogSlots` FROM EXACTLY THE TWO NAMED RESIDUALS.** The parseTrace
     block, the KZG scalar block, and the plan's eval count (`numEvals`, proved in
@@ -4202,6 +4304,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms constructIntermediateSets_empty [propext, Classical.choice, Quot.sound]
 #assert_axioms pointSetsCount_forces_zero [propext, Classical.choice, Quot.sound]
+#assert_axioms MultiPrepareBlockWidthAt_of_pointSets
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms MultiPrepareBlockWidth_of_pointSets
   [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgMultiPrepareWidths_of_pointSets
