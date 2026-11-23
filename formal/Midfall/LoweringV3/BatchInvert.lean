@@ -1816,6 +1816,135 @@ theorem bi_prelude_head (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
     | assignHalt he => cases he
 
 
+theorem eval_sub_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y : String} {cv : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.sub [Expr.var x, Expr.var y]) (.vals [cv] st')) :
+    ∃ xv yv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      cv = xv - yv ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hx with
+      | var hxv =>
+          cases hrest with
+          | argsCons hnil hy =>
+              cases hnil with
+              | argsNil =>
+                  cases hy with
+                  | var hyv =>
+                      simp only [builtinWithExternal, stepOp, bin] at hbi
+                      cases hbi
+                      exact ⟨_, _, hxv, hyv, rfl, rfl⟩
+
+theorem eval_sub_vars_no_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y : String}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.sub [Expr.var x, Expr.var y]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := .sub)
+    (by
+      intro a b st r hr
+      simp only [builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) h
+
+theorem exec_let_sub_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x y z : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.builtin Op.sub [Expr.var y, Expr.var z]))) V' st' o) :
+    ∃ yv zv, VEnv.get V y = some yv ∧ VEnv.get V z = some zv ∧
+      o = .normal ∧ V' = (x, yv - zv) :: V ∧ st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨yv, zv, hyv, hzv, hv, hst⟩ := eval_sub_vars_inv he
+      subst hv hst
+      exact ⟨yv, zv, hyv, hzv, rfl, rfl, rfl⟩
+  | letHalt he => exact (eval_sub_vars_no_halt he).elim
+
+theorem eval_eq_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x : String} {k : Nat} {cv : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.eq [Expr.var x, Expr.lit (Literal.number k)]) (.vals [cv] st')) :
+    ∃ xv, VEnv.get V x = some xv ∧ cv = b2w (xv = BitVec.ofNat 256 k) ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hx with
+      | var hxv =>
+          cases hrest with
+          | argsCons hnil hlit =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨hk, rfl⟩ := eval_lit_inv hlit
+                  simp only [builtinWithExternal, stepOp, bin, hk] at hbi
+                  cases hbi
+                  exact ⟨_, hxv, rfl, rfl⟩
+
+theorem eval_eq_var_lit_no_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x : String} {k : Nat}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.eq [Expr.var x, Expr.lit (Literal.number k)]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := .eq)
+    (by
+      intro a b st r hr
+      simp only [builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) h
+
+theorem eval_iszero_lt_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y : String} {cv : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.builtin Op.lt [Expr.var x, Expr.var y]])
+      (.vals [cv] st')) :
+    ∃ xv yv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      cv = b2w (b2w (xv.ult yv) = 0) ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil hlt =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨xv, yv, hxv, hyv, hcv, hst⟩ := eval_lt_vars_inv hlt
+          subst hst
+          simp only [builtinWithExternal, stepOp, un, hcv] at hbi
+          cases hbi
+          exact ⟨_, _, hxv, hyv, rfl, rfl⟩
+
+theorem eval_iszero_lt_vars_no_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y : String}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.builtin Op.lt [Expr.var x, Expr.var y]])
+      (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_unary (op := .iszero)
+    (by
+      intro a st r hr
+      simp only [builtinWithExternal, stepOp, un] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => eval_lt_halt_false hh) h
+
+theorem exec_guard_ret0_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {cond : Expr EVM.Op}
+    (hfalse : ∀ st1 cv, EvalExpr (Bridge.Dialect c g) funs V st cond (.vals [cv] st1) → cv = 0)
+    (hstate : ∀ st1 cv, EvalExpr (Bridge.Dialect c g) funs V st cond (.vals [cv] st1) → st1 = st)
+    (hne : ∀ st1, EvalExpr (Bridge.Dialect c g) funs V st cond (.halt st1) → False)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond cond [Stmt.assign ["ret"] (Expr.lit (Literal.number 0)), Stmt.leave])
+      V' st' o) :
+    o = .normal ∧ V' = V ∧ st' = st := by
+  cases h with
+  | ifTrue hc hnz hbody =>
+      exact absurd (hfalse _ _ hc) hnz
+  | ifFalse hc hz => exact ⟨rfl, rfl, hstate _ _ hc⟩
+  | ifHalt hc => exact (hne _ hc).elim
+
+
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
@@ -1827,6 +1956,14 @@ theorem bi_prelude_head (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
 #assert_axioms exec_guard_iszero_var [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_head_form [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_prelude_head [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_sub_vars_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_sub_vars_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_let_sub_vars_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_eq_var_lit_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_eq_var_lit_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_iszero_lt_vars_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_iszero_lt_vars_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_ret0_false [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
