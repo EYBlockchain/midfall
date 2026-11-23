@@ -833,6 +833,33 @@ theorem ecPairingBodyLit_trim {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Br
   fun h V' st' o hrun => h V' st' o (ecPairing_trim_exec funs V st rest hsucc hbound hrun)
 
 set_option maxHeartbeats 200000 in
+theorem copyWithin_outside (mem : Nat → UInt8) (dst src n x : Nat)
+    (h : x < dst ∨ dst + n ≤ x) : copyWithin mem dst src n x = mem x := by
+  simp only [copyWithin]
+  rw [if_neg]
+  omega
+theorem copyReturn_outside (mem : Nat → UInt8) (dst size : Nat) (dat : List UInt8) (x : Nat)
+    (h : x < dst ∨ dst + min size dat.length ≤ x) : copyReturn mem dst size dat x = mem x := by
+  simp only [copyReturn]
+  rw [if_neg]
+  omega
+theorem copyReturn_four_outside (mem : Nat → UInt8) (dst s1 s2 s3 s4 : Nat)
+    (size : Nat) (dat : List UInt8) (x : Nat)
+    (hsize : min size dat.length ≤ 768) (h : x < dst ∨ dst + 768 ≤ x) :
+    copyReturn
+      (copyWithin
+        (copyWithin
+          (copyWithin
+            (copyWithin mem dst s1 128) (dst + 128) s2 256)
+          (dst + 384) s3 128)
+        (dst + 512) s4 256) dst size dat x = mem x := by
+  rw [copyReturn_outside _ _ _ _ _ (by omega)]
+  rw [copyWithin_outside _ _ _ _ _ (by omega)]
+  rw [copyWithin_outside _ _ _ _ _ (by omega)]
+  rw [copyWithin_outside _ _ _ _ _ (by omega)]
+  rw [copyWithin_outside _ _ _ _ _ (by omega)]
+
+set_option maxHeartbeats 200000 in
 theorem ecPairingBodyLit_product_runs (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)) (st : EvmState)
     (hfail : ∃ cenv, lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
@@ -853,12 +880,16 @@ theorem ecPairingBodyLit_product_runs (product : PairingProduct)
       (fun V' st' o => Hold (
         (o = .halt ∧ Reverted st') ∨
         (o = .normal ∧ VEnv.get V' "ret" = some (1 : U256) ∧
+          (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
+            st'.memory x = st.memory x) ∧
           product (pairingFrame [(LA, GB), (LB, GN)]) = true))) := by
   obtain ⟨cenv, hc⟩ := hfail
   unfold ecPairingBodyLit
   refine ecPairingBodyLit_trim (Q := fun V' st' o => Hold (
       (o = .halt ∧ Reverted st') ∨
       (o = .normal ∧ VEnv.get V' "ret" = some (1 : U256) ∧
+        (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
+          st'.memory x = st.memory x) ∧
         product (pairingFrame [(LA, GB), (LB, GN)]) = true)))
     (hsucc := rfl) (hbound := rfl) ?_
   refine allRuns_of_wp_fail 100 ?_
@@ -871,66 +902,79 @@ theorem ecPairingBodyLit_product_runs (product : PairingProduct)
        | exact Or.inl ⟨rfl, by assumption⟩
        | (refine Or.inr ⟨rfl, ⟨?_, ?_⟩⟩
           · rfl
-          · refine ecPairing_normal_product (product := product)
-              (c := permissive (callsOf product)) (g := g)
-              (LA := LA) (GB := GB) (LB := LB) (GN := GN)
-              (hcall := by assumption) (htarget := rfl)
-              (hguard1 := by assumption) (hguard2 := by assumption)
-              (hst5 := rfl) (hinput := ?_)
-            simp +zetaDelta only [YulSemantics.EVM.litValue, BitVec.toNat_ofNat, BitVec.toNat_add]
-            have h128 : (128 : Nat) % 2^256 = 128 := by simp
-            have h256 : (256 : Nat) % 2^256 = 256 := by simp
-            have h768 : (768 : Nat) % 2^256 = 768 := by simp
-            have hd128 : ((scratch % 2^256) + 128 % 2^256) % 2^256 = (scratch % 2^256) + 128 := by
-              rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h128]
-              exact Nat.mod_eq_of_lt (by omega)
-            have hd384 : ((scratch % 2^256) + 384 % 2^256) % 2^256 = (scratch % 2^256) + 384 := by
-              have h384 : (384 : Nat) % 2^256 = 384 := by norm_num
-              rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h384]
-              exact Nat.mod_eq_of_lt (by omega)
-            have hd512 : ((scratch % 2^256) + 512 % 2^256) % 2^256 = (scratch % 2^256) + 512 := by
-              have h512 : (512 : Nat) % 2^256 = 512 := by norm_num
-              rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h512]
-              exact Nat.mod_eq_of_lt (by omega)
-            rw [hd128, hd384, hd512, h128, h256, h768]
-            set mem4 : Nat → UInt8 := copyWithin
-              (copyWithin
+          · trace_state
+            refine ⟨?_, ?_⟩
+            · intro x hx
+              simp +zetaDelta only [YulSemantics.EVM.litValue, BitVec.toNat_ofNat, BitVec.toNat_add]
+              have h32 : (32 : Nat) % 2^256 = 32 := by simp
+              have h128 : (128 : Nat) % 2^256 = 128 := by simp
+              have h256 : (256 : Nat) % 2^256 = 256 := by simp
+              have h768 : (768 : Nat) % 2^256 = 768 := by simp
+              have hd128 : ((scratch % 2^256) + 128 % 2^256) % 2^256 = (scratch % 2^256) + 128 := by
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h128]
+                exact Nat.mod_eq_of_lt (by omega)
+              have hd384 : ((scratch % 2^256) + 384 % 2^256) % 2^256 = (scratch % 2^256) + 384 := by
+                have h384 : (384 : Nat) % 2^256 = 384 := by norm_num
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h384]
+                exact Nat.mod_eq_of_lt (by omega)
+              have hd512 : ((scratch % 2^256) + 512 % 2^256) % 2^256 = (scratch % 2^256) + 512 := by
+                have h512 : (512 : Nat) % 2^256 = 512 := by norm_num
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h512]
+                exact Nat.mod_eq_of_lt (by omega)
+              rw [hd128, hd384, hd512, h32, h128, h256, h768]
+              exact copyReturn_four_outside st.memory (scratch % 2^256) lhsW.toNat
+                (g2 % 2^256) rhsW.toNat (neg % 2^256) 32 resp.returndata x
+                (by omega) hx
+            · refine ecPairing_normal_product (product := product)
+                (c := permissive (callsOf product)) (g := g)
+                (LA := LA) (GB := GB) (LB := LB) (GN := GN)
+                (hcall := by assumption) (htarget := rfl)
+                (hguard1 := by assumption) (hguard2 := by assumption)
+                (hst5 := rfl) (hinput := ?_)
+              simp +zetaDelta only [YulSemantics.EVM.litValue, BitVec.toNat_ofNat, BitVec.toNat_add]
+              have h128 : (128 : Nat) % 2^256 = 128 := by simp
+              have h256 : (256 : Nat) % 2^256 = 256 := by simp
+              have h768 : (768 : Nat) % 2^256 = 768 := by simp
+              have hd128 : ((scratch % 2^256) + 128 % 2^256) % 2^256 = (scratch % 2^256) + 128 := by
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h128]
+                exact Nat.mod_eq_of_lt (by omega)
+              have hd384 : ((scratch % 2^256) + 384 % 2^256) % 2^256 = (scratch % 2^256) + 384 := by
+                have h384 : (384 : Nat) % 2^256 = 384 := by norm_num
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h384]
+                exact Nat.mod_eq_of_lt (by omega)
+              have hd512 : ((scratch % 2^256) + 512 % 2^256) % 2^256 = (scratch % 2^256) + 512 := by
+                have h512 : (512 : Nat) % 2^256 = 512 := by norm_num
+                rw [Nat.mod_eq_of_lt (by omega : scratch < 2^256), h512]
+                exact Nat.mod_eq_of_lt (by omega)
+              rw [hd128, hd384, hd512, h128, h256, h768]
+              set mem4 : Nat → UInt8 := copyWithin
                 (copyWithin
-                  (copyWithin st.memory (scratch % 2^256) lhsW.toNat 128)
-                  ((scratch % 2^256) + 128) (g2 % 2^256) 256)
-                ((scratch % 2^256) + 384) rhsW.toNat 128)
-              ((scratch % 2^256) + 512) (neg % 2^256) 256 with hmem4
-            rw [readBytes_mem4_eq mem4 st.memory (scratch % 2^256) lhsW.toNat
-              (g2 % 2^256) rhsW.toNat (neg % 2^256) hmem4 hdisj1 hdisj2 hdisj3 hdisj4]
-            have hs1 : readBytes st.memory lhsW.toNat 128 = LA.data.toList := by
-              have := congrArg Array.toList (congrArg ByteArray.data hsrc1)
-              simpa [bytesAt] using this
-            have hs2 : readBytes st.memory (g2 % 2^256) 256 = GB.data.toList := by
-              have := congrArg Array.toList (congrArg ByteArray.data hsrc2)
-              simpa [bytesAt] using this
-            have hs3 : readBytes st.memory rhsW.toNat 128 = LB.data.toList := by
-              have := congrArg Array.toList (congrArg ByteArray.data hsrc3)
-              simpa [bytesAt] using this
-            have hs4 : readBytes st.memory (neg % 2^256) 256 = GN.data.toList := by
-              have := congrArg Array.toList (congrArg ByteArray.data hsrc4)
-              simpa [bytesAt] using this
-            rw [hs1, hs2, hs3, hs4]
-            rw [pairingFrame_two]
-            rw [← bytesAppend_four_left]
-            apply ByteArray.ext
-            simp [bytesAppend, List.append_assoc]
+                  (copyWithin
+                    (copyWithin st.memory (scratch % 2^256) lhsW.toNat 128)
+                    ((scratch % 2^256) + 128) (g2 % 2^256) 256)
+                  ((scratch % 2^256) + 384) rhsW.toNat 128)
+                ((scratch % 2^256) + 512) (neg % 2^256) 256 with hmem4
+              rw [readBytes_mem4_eq mem4 st.memory (scratch % 2^256) lhsW.toNat
+                (g2 % 2^256) rhsW.toNat (neg % 2^256) hmem4 hdisj1 hdisj2 hdisj3 hdisj4]
+              have hs1 : readBytes st.memory lhsW.toNat 128 = LA.data.toList := by
+                have := congrArg Array.toList (congrArg ByteArray.data hsrc1)
+                simpa [bytesAt] using this
+              have hs2 : readBytes st.memory (g2 % 2^256) 256 = GB.data.toList := by
+                have := congrArg Array.toList (congrArg ByteArray.data hsrc2)
+                simpa [bytesAt] using this
+              have hs3 : readBytes st.memory rhsW.toNat 128 = LB.data.toList := by
+                have := congrArg Array.toList (congrArg ByteArray.data hsrc3)
+                simpa [bytesAt] using this
+              have hs4 : readBytes st.memory (neg % 2^256) 256 = GN.data.toList := by
+                have := congrArg Array.toList (congrArg ByteArray.data hsrc4)
+                simpa [bytesAt] using this
+              rw [hs1, hs2, hs3, hs4]
+              rw [pairingFrame_two]
+              rw [← bytesAppend_four_left]
+              apply ByteArray.ext
+              simp [bytesAppend, List.append_assoc]
           ))
 
-#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.iszero_ret_one_val
-  [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.cond_ret_one_skip
-  [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.assign_ret_success
-  [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.ecPairing_trim_exec
-  [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.ecPairingBodyLit_trim
-  [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV2.Blocks.EcPairing.ecPairingBodyLit_product_runs
   [propext, Classical.choice, Quot.sound] native []
 
