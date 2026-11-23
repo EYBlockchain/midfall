@@ -210,6 +210,7 @@ import Midfall.LoweringV3.Rows
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.LoweringV3.LagrangeRows
 import Midfall.LoweringV3.BatchInvert
+import Midfall.LoweringV3.LagrangeBlock
 import Midfall.LoweringV3.ModexpGeneral
 import Midfall.LoweringV3.PcsRows
 import Midfall.LoweringV3.ScalarInv
