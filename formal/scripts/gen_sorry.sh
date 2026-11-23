@@ -111,6 +111,16 @@ owner() {
       echo 'V3 ROW.TP (WP A6) - the transcriptParser simulation row (Rows.lean); children tp_computes / tp_agrees / tp_poison land with ROW.TP; evidence GeneratorRows.lean:817' ;;
     Midfall.LoweringV3.tp_blockProgS)
       echo 'V3 ROW.TP (WP A6) - the transcriptParser progress row (Rows.lean); evidence GeneratorRows.lean:830, leaf ROW.TP.10' ;;
+    Midfall.LoweringV3.TranscriptRows.g1walk_loop_sem)
+      echo 'V3 ROW.TP.2 (WP A6) - the g1WalkBody loop semantics: 128-byte walk/copy per iteration with the OUTSIDE frame (TranscriptRows.lean); children of ROW.TP.tp_computes' ;;
+    Midfall.LoweringV3.TranscriptRows.tp_computes)
+      echo 'V3 ROW.TP.7 (WP A6) - the transcriptParser SEM row: every run from StageInv .vk reverts or exits in TpPost (TranscriptRows.lean); glue of ROW.TP.2-5' ;;
+    Midfall.LoweringV3.TranscriptRows.tp_agrees)
+      echo 'V3 ROW.TP.8 (WP A6) - TpPost reaches StageInv .transcript via xcript_total/MirrorAt/XcriptSlots (TranscriptRows.lean); SIM.10 dependency named' ;;
+    Midfall.LoweringV3.TranscriptRows.tp_poison)
+      echo 'V3 ROW.TP.9 (WP A6) - the poisoned boundary always reverts on success = 0 (TranscriptRows.lean)' ;;
+    Midfall.LoweringV3.TranscriptRows.tp_blockProgS)
+      echo 'V3 ROW.TP.10 (WP A6) - the transcriptParser progress row, stated in its own module (TranscriptRows.lean); children ROW.TP.2-9' ;;
     Midfall.LoweringV3.lag_blockSim)
       echo 'V3 T3.9 (WP A4) - the lagrange simulation row (Rows.lean); children loops a-e, HLP.1.b, lag_agrees, lag_poison; evidence GeneratorRows.lean:621' ;;
     Midfall.LoweringV3.lag_blockProgS)
