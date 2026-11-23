@@ -3402,9 +3402,23 @@ def quotientProgramFits (p : QuotientProgram) : Prop :=
   p.traceIdMptr + 32 < 2 ^ 256 ∧
   p.selectorPowerMptr + 32 * (p.selectorMaxPower + 1) < 2 ^ 256
 
+/-- **D-GATE8 (signed 2026-11-23): THE STATIC WORKING-SET FIT.** `traceU256Mptr` is the
+    aligned maximum of every registered static region end (`LayoutMemory`'s `traceU256Bound`,
+    twenty-three candidates including the challenge and theta blocks, the VK payload, the
+    commitment census, the pairing scratch, and the PCS tables); the log word itself is one
+    `wordBytes` cell at that address. Bounding `traceU256Mptr + wordBytes` therefore bounds
+    every static region the emitted code addresses, in particular the pairing slots
+    `pairingLhsMptr`/`pairingRhsMptr` and the G2 header pointers inside the VK payload.
+    The VK-only bounds below are NOT enough: `MemoryPairs.new_vkMptr_image_unbounded` shows the
+    post-payload `allocAfter` chain can cross `2^256`, where the emitted `BitVec.ofNat 256`
+    register wraps (A11's `PG-PAIRINGFIT` falsifier). -/
+def staticWorkingSetFits (pv : PlanView) : Prop :=
+  pv.memory.traceU256Mptr + Midfall.Generator.wordBytes < 2 ^ 256
+
 def programFits (pv : PlanView) (m : Model) : Prop :=
   ptrAddr pv.memory.vkMptr + pv.vk.len < 2 ^ 256 ∧
   ptrAddr pv.memory.vkMptr + pv.vk.runtimeLen < 2 ^ 256 ∧
+  staticWorkingSetFits pv ∧
   match m.quotientProgram with
   | some p => quotientProgramFits p
   | none => True
@@ -3429,13 +3443,14 @@ theorem quotientProgramFitB_eq_true_iff {p : QuotientProgram} :
 def programFitB (pv : PlanView) (m : Model) : Bool :=
   decide (ptrAddr pv.memory.vkMptr + pv.vk.len < 2 ^ 256) &&
   decide (ptrAddr pv.memory.vkMptr + pv.vk.runtimeLen < 2 ^ 256) &&
+  decide (pv.memory.traceU256Mptr + Midfall.Generator.wordBytes < 2 ^ 256) &&
   match m.quotientProgram with
   | some p => quotientProgramFitB p
   | none => true
 
 theorem programFitB_eq_true_iff {pv : PlanView} {m : Model} :
     programFitB pv m = true ↔ programFits pv m := by
-  unfold programFitB programFits
+  unfold programFitB programFits staticWorkingSetFits
   cases m.quotientProgram <;>
     simp [Bool.and_eq_true, decide_eq_true_eq, quotientProgramFitB_eq_true_iff]
     <;> tauto
@@ -3618,6 +3633,11 @@ theorem programFit_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
     programFits R.pv R.model :=
   hR.program.2.2.2.2
 
+/-- **D-GATE8 projection**: the full static working set fits a word. -/
+theorem staticWorkingSetFits_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    staticWorkingSetFits R.pv :=
+  (programFit_of_valid hR).2.2.1
+
 /-- The interpreter's own window, at the model's quotient program. -/
 theorem quotientProgramFits_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
     {p : QuotientProgram} (hp : R.model.quotientProgram = some p) :
@@ -3625,7 +3645,7 @@ theorem quotientProgramFits_of_valid {R : Render p G₁ G₂ Gₜ} (hR : ValidV3
   have h := programFit_of_valid hR
   unfold programFits at h
   rw [hp] at h
-  exact h.2.2
+  exact h.2.2.2
 
 theorem noShadow_of_programOk {R : Render p G₁ G₂ Gₜ} (hp : programOkB R = true) :
     noShadowCore R.pv R.model = true := by

@@ -1,0 +1,17 @@
+import time
+q = 39128794508258790515072383975390806261898062361839764511933549761670978999997096053314214965077731424736773956742363
+Nq = 39128794508258790515072383975390806261898062361839764511942298258964034969666402898545021947551664725330970305070780
+p = 21448884629509455597215930748900681159323242237303782800136123960324312583790994045488533691889446581945518026508097
+print("Nq bits", Nq.nbits())
+print("t = q+1-Nq =", q+1-Nq)
+print("Hasse ok:", abs(q+1-Nq) <= 2*isqrt(q))
+print("Nq prime?", is_prime(Nq))
+t0=time.time()
+f = factor(Nq, limit=10^7, proof=False)
+print("factor(limit=1e7) =", f)
+print("time", time.time()-t0)
+# remaining cofactor
+rem = Nq
+for prime,e in f:
+    rem //= prime^e
+print("remaining bits:", rem.nbits(), "remaining:", rem, "pseudoprime:", is_pseudoprime(rem))

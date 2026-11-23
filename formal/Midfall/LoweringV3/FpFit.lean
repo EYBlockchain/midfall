@@ -3,13 +3,12 @@
 
   ROW.FP (WP A11) - the named pairing-slot fit obligation `PG-PAIRINGFIT`.
 
-  The clean finalPairing arm converts the slice's `BitVec.ofNat 256` pointer
-  literals to the `Nat` addresses `Inv`/`FpWire` read.  That needs
-  `cAddr M.pairingLhsMptr < 2^256` etc., and the current `ValidV3` only bounds
-  `vkMptr + vk.len`/`runtimeLen` (`programFits`).  The pairing slots are
-  `allocAfter` the VK payload; with `vkMptr + vk.len` just below `2^256`, the
-  `alignUp` of the challenge block is `2^256` and every later slot wraps.  This
-  file names the obligation and the falsifier; no clause is added to `ValidV3`.
+  D-GATE8 (signed 2026-11-23) repaired `programFits` with `staticWorkingSetFits`
+  (`pv.memory.traceU256Mptr + wordBytes < 2^256`, the aligned maximum of every
+  static region end), so `PG-PAIRINGFIT` is now a THEOREM-target of `ValidV3`,
+  not a gap: the clean arm converts the slice's `BitVec.ofNat 256` pointer
+  literals back to `Nat` via the slot fits derived from that clause.  The
+  falsifier below records why the old VK-only bound was insufficient.
 -/
 import Midfall.LoweringV3.Totality
 
@@ -26,18 +25,16 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
   [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
 
-/-- **PG-PAIRINGFIT (candidate clause).** The three pairing input pointers fit a
-    word.  This is what the clean arm's `BitVec.ofNat 256 … .toNat` conversions
-    need; it is deliberately a *named obligation*, not a hypothesis on the row. -/
+/-- **PG-PAIRINGFIT (the rows' target, now derivable from D-GATE8).** The three
+    pairing input pointers fit a word.  This is what the clean arm's
+    `BitVec.ofNat 256 … .toNat` conversions need. -/
 def PG_PAIRINGFIT (R : Render p G₁ G₂ Gₜ) : Prop :=
   cAddr R.pv.memory.pairingLhsMptr < 2 ^ 256 ∧
   cAddr R.pv.memory.pairingRhsMptr < 2 ^ 256 ∧
   cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base) < 2 ^ 256 ∧
   cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base) < 2 ^ 256
 
-/-- **PG-PAIRINGFIT (margin form).** The post-payload static working set fits:
-    the VK payload end plus the challenge/theta block.  This is the clause a
-    signed `programFits`/`programOkCore` repair should carry. -/
+/-- **PG-PAIRINGFIT (the clause D-GATE8 adopted, in margin form).** -/
 def PG_PAIRINGFIT_MARGIN (R : Render p G₁ G₂ Gₜ) : Prop :=
   ptrAddr R.pv.memory.vkMptr + R.pv.vk.len +
       (R.pv.memory.thetaWindows.rotPointsWord * Midfall.Generator.wordBytes) < 2 ^ 256

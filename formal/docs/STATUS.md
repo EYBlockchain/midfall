@@ -227,6 +227,15 @@ the `lowering_correct` cone. No row, bundle, `ValidV3` or root hypothesis was ad
 - **D-GATE5/6/7 are statement repairs**, all signed: no row, bundle, `ValidV3` or root hypothesis was
   added. The closure manifest will be regenerated once after the three repairs merge; until then the
   only valid global gate is `verify.sh --quick` (KAT replay deferred).
+- **D-GATE8 (signed 2026-11-23).** A11 proved the pairing-slot pointer-fit is not derivable from
+  `programFits`: the VK bounds cover only `vkMptr + vk.len`/`runtimeLen`, while `pairingLhsMptr`/
+  `pairingRhsMptr` and the G2 header pointers are post-payload `allocAfter` blocks that can cross
+  `2^256`; the emitted `BitVec.ofNat 256` literal then wraps (A11's `PG-PAIRINGFIT` falsifier).
+  The repair adds `staticWorkingSetFits pv` — `pv.memory.traceU256Mptr + wordBytes < 2^256`, where
+  `traceU256Mptr` is the aligned maximum of all twenty-three static region ends — as a conjunct of
+  `programFits` and `programFitB`, with `staticWorkingSetFits_of_valid` as the projection. No row,
+  bundle or root hypothesis was added; the producers re-decided with no proof changes. A11 now
+  derives `PG_PAIRINGFIT` from the new clause by unfolding `traceU256Bound`'s candidate list.
 
 ## 9. Calldata ownership
 
