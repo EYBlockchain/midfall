@@ -1619,7 +1619,7 @@ theorem bi_tail_form (consts : Inline.Consts) :
 open Midfall.Yul.Word
 
 theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
-    (rw : U256) (a : Nat) (w0 w1 invAll : U256) (ha : a + 32 < 2 ^ 256) (hr : rw ≠ 0)
+    (rw : U256) (a : Nat) (w0 w1 invAll retv pfv : U256) (ha : a + 32 < 2 ^ 256) (hr : rw ≠ 0)
     (hinv : wMulmodAt invAll (wMulmodAt w0 w1 rw) rw = 1) :
     StmtsContractAll (D := Bridge.Dialect c g) funs
       (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 30 4)
@@ -1628,6 +1628,8 @@ theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         VEnv.get V "first_mptr" = some (BitVec.ofNat 256 a) ∧
         VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
         VEnv.get V "r" = some rw ∧
+        VEnv.get V "ret" = some retv ∧
+        VEnv.get V "precompile_failed" = some pfv ∧
         loadWord st.memory a = w0 ∧ loadWord st.memory (a + 32) = w1)
       (fun _ st V' st' o => o = .normal ∧
         VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
@@ -1636,10 +1638,14 @@ theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         loadWord st'.memory a = wMulmodAt invAll w1 rw ∧
         loadWord st'.memory (a + 32) = wMulmodAt invAll w0 rw ∧
         wMulmodAt (wMulmodAt invAll w1 rw) w0 rw = 1 ∧
-        wMulmodAt (wMulmodAt invAll w0 rw) w1 rw = 1) := by
+        wMulmodAt (wMulmodAt invAll w0 rw) w1 rw = 1 ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ x, (x < a ∨ a + 64 ≤ x) → st'.memory x = st.memory x) ∧
+        VEnv.get V' "ret" = some retv ∧
+        VEnv.get V' "precompile_failed" = some pfv) := by
   rw [bi_tail_form]
   intro V st hpre V' st' o hrun
-  obtain ⟨hinvAll, hfirst, hsecond, hrget, hw0, hw1⟩ := hpre
+  obtain ⟨hinvAll, hfirst, hsecond, hrget, hretv, hpfv, hw0, hw1⟩ := hpre
   rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
     ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
   · obtain ⟨av, pv, rv, hav, hpv, hrv, -, hV1, hst1⟩ :=
@@ -1680,7 +1686,7 @@ theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
             rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
           have htoNat_a32 : (BitVec.ofNat 256 (a + 32)).toNat = a + 32 := by
             rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt ha]
-          refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+          refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
           · -- first_mptr
             rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_second") (y := "first_mptr") (by decide),
               venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "first_mptr") (by decide)]
@@ -1710,6 +1716,35 @@ theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
           · -- second inverse
             rw [wMulmodAt_assoc hr]
             exact hinv
+          · -- env
+            rfl
+          · -- halted
+            rfl
+          · -- outside memory
+            intro x hx
+            simp only [touchMemory]
+            have h1 : (a + 32) % 115792089237316195423570985008687907853269984665640564039457584007913129639936 = a + 32 := by omega
+            have h2 : a % 115792089237316195423570985008687907853269984665640564039457584007913129639936 = a := by omega
+            rw [h1, h2, hw1, hw0]
+            change storeWord (storeWord st.memory (BitVec.ofNat 256 a).toNat
+              (wMulmodAt invAll w1 rw)) (BitVec.ofNat 256 (a + 32)).toNat
+              (wMulmodAt invAll w0 rw) x = st.memory x
+            rw [show (BitVec.ofNat 256 a).toNat = a from htoNat_a,
+              show (BitVec.ofNat 256 (a + 32)).toNat = a + 32 from htoNat_a32]
+            rw [storeWord_outside _ (a + 32) x _ (by omega)]
+            rw [storeWord_outside _ a x _ (by omega)]
+          · -- ret
+            rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "inv_second") (y := "ret") (by decide),
+                Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "inv_first") (y := "ret") (by decide)]
+            exact hretv
+          · -- precompile_failed
+            rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "inv_second") (y := "precompile_failed") (by decide),
+                Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+                  (x := "inv_first") (y := "precompile_failed") (by decide)]
+            exact hpfv
         · obtain ⟨-, -, -, -, ho4, -, -⟩ := exec_mstore_var_inv (x := "second_mptr") (y := "inv_second") h4
           exact absurd ho4 hne4
       · obtain ⟨-, -, -, -, ho3, -, -⟩ := exec_mstore_var_inv (x := "first_mptr") (y := "inv_first") h3
