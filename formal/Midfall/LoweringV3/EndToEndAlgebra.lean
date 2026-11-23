@@ -154,7 +154,195 @@ theorem range_width_map (w : Nat) : ∀ k : Nat,
 
 end AlgebraWidths
 
+namespace AlgebraWidths
+
+/-! ## 4. The `buildQ` size link
+
+    `buildQ` builds `qEvalSets` from `pointSets` by `arrayReplicate pointSets.size`,
+    a size-preserving `arraySetD` fold, a length-preserving `mapM` and the
+    `sortById` permutation; hence the first q-eval-set array has exactly
+    `pointSets.size` entries. This is the link the `multiPrepare` width needs to
+    name `a.qEvalSets.size` from `constructIntermediateSets`. -/
+
+/-- The `ok`-projection of an `Except` bind. -/
+theorem except_bind_ok {ε α β : Type} {m : Except ε α} {f : α → Except ε β} {b : β}
+    (h : (m >>= f) = .ok b) : ∃ a, m = .ok a ∧ f a = .ok b := by
+  cases m with
+  | error e =>
+      change (Except.error e : Except ε β) = .ok b at h
+      cases h
+  | ok a =>
+      refine ⟨a, rfl, ?_⟩
+      change f a = .ok b at h
+      exact h
+
+/-- `throw` is never `ok`. -/
+theorem throw_ok_false {ε β : Type} (e : ε) {b : β}
+    (h : (MonadExcept.throw e : Except ε β) = .ok b) : False := by
+  change (Except.error e : Except ε β) = .ok b at h
+  cases h
+
+/-- `arraySetD` preserves the size. -/
+theorem arraySetD_size {α : Type} (a : Array α) (i : Nat) (v : α) :
+    (arraySetD a i v).size = a.size := by
+  unfold arraySetD
+  split
+  · rename_i h
+    rw [Array.size_set h]
+  · rfl
+
+/-- `arrayReplicate` has the requested size. -/
+theorem arrayReplicate_size {α : Type} (n : Nat) (v : α) :
+    (arrayReplicate n v).size = n := by
+  unfold arrayReplicate
+  rw [List.size_toArray, List.length_replicate]
+
+/-- A `foldlM` whose steps preserve the second component's size. -/
+theorem foldlM_pair_snd_size {α β γ : Type} {l : List α}
+    {f : β × Array γ → α → Except Fault (β × Array γ)}
+    (hf : ∀ st a st', f st a = .ok st' → st'.2.size = st.2.size) :
+    ∀ {init : β × Array γ} {st' : β × Array γ},
+      l.foldlM f init = .ok st' → st'.2.size = init.2.size := by
+  induction l with
+  | nil =>
+      intro init st' h
+      cases h
+      rfl
+  | cons a as ih =>
+      intro init st' h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, hstep, hrest⟩ := except_bind_ok h
+      rw [ih hrest, hf init a st1 hstep]
+
+/-- `List.mapM` over `Except` preserves the length. -/
+theorem list_mapM_length {α β ε : Type} {f : α → Except ε β} :
+    ∀ (l : List α) (l' : List β), l.mapM f = .ok l' → l'.length = l.length := by
+  intro l
+  induction l with
+  | nil =>
+      intro l' h
+      cases h
+      rfl
+  | cons a as ih =>
+      intro l' h
+      rw [List.mapM_cons] at h
+      obtain ⟨b, hb, h1⟩ := except_bind_ok h
+      obtain ⟨bs, hbs, h2⟩ := except_bind_ok h1
+      cases h2
+      simp only [List.length_cons]
+      rw [ih bs hbs]
+
+/-- `sortById.insert` is a permutation of the cons. -/
+theorem sortById_insert_perm (key : Nat → Nat × Nat) (i : Nat) :
+    ∀ l : List Nat, (MultiPrepare.sortById.insert key i l).Perm (i :: l) := by
+  intro l
+  induction l with
+  | nil =>
+      rw [MultiPrepare.sortById.insert.eq_1]
+  | cons j js ih =>
+      rw [MultiPrepare.sortById.insert.eq_2]
+      split
+      · exact List.Perm.refl _
+      · exact (ih.cons j).trans (List.Perm.swap i j js)
+
+/-- `sortById` is a permutation of its input. -/
+theorem sortById_perm (key : Nat → Nat × Nat) :
+    ∀ l : List Nat, (MultiPrepare.sortById key l).Perm l
+  | [] => List.Perm.nil
+  | i :: rest =>
+      (sortById_insert_perm key i (MultiPrepare.sortById key rest)).trans
+        ((sortById_perm key rest).cons i)
+
+/-- A valid index filter through an array keeps the list's length. -/
+theorem filterMap_getElem?_length {α : Type} (order : List Nat) (xs : Array α)
+    (h : ∀ i ∈ order, i < xs.size) :
+    ((order.filterMap (fun i => xs[i]?)).toArray).size = order.length := by
+  rw [List.size_toArray]
+  exact filterMap_length_of_forall_some order _ (fun i hi => by
+    exact ⟨_, Array.getElem?_eq_getElem (h i hi)⟩)
+
+end AlgebraWidths
+
 namespace PresWidthSeq
+
+section MultiPrepareWidths
+
+variable {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+/-- **The `constructIntermediateSets` size link.** `buildQ` builds its
+    q-eval-set array at exactly the input `pointSets` length: the initial value
+    is `arrayReplicate pointSets.size`, the `arraySetD` fold preserves the size,
+    the `mapM` over `evalsInnerProduct` preserves the length, and the
+    `sortById` order is a permutation of `List.range pointSets.size`. -/
+theorem buildQ_qEvalSets_size (feat : Features) (fc : FieldConsts (Fr p)) (x1 : Fr p)
+    (commitmentMap : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p)))
+    (r : Array (MSMKZG (Fr p) G₁) × Array (Array (Fr p)) × Array (Array (Fr p)))
+    (h : MultiPrepare.buildQ (G₂ := G₂) (Gₜ := Gₜ) feat fc x1 commitmentMap pointSets
+      = .ok r) :
+    r.2.1.size = pointSets.size := by
+  unfold MultiPrepare.buildQ at h
+  dsimp only at h
+  obtain ⟨st, hfold, h1⟩ := AlgebraWidths.except_bind_ok h
+  split at h1
+  · obtain ⟨qes', hmap, h3⟩ := AlgebraWidths.except_bind_ok h1
+    cases h3
+    have hst : st.2.size = pointSets.size := by
+      have hsize := AlgebraWidths.foldlM_pair_snd_size
+        (l := commitmentMap.toList)
+        (f := fun st0 cd => do
+          let terms ← cd.commitment.asTerms
+          let termLabels := match cd.commitment with
+            | .linear _ _ labels => labels
+            | _ => arrayReplicate terms.size cd.commitmentLabel
+          let msm := (List.zip terms.toList termLabels.toList).foldl
+            (init := MSMKZG.init) fun m (t, l) => MSMKZG.appendTerm m t.1 t.2 l
+          let qComs := arraySetD st0.1 cd.setIndex ((st0.1.getD cd.setIndex #[]).push msm)
+          let qEvalSets := arraySetD st0.2 cd.setIndex ((st0.2.getD cd.setIndex #[]).push cd.evals)
+          Pure.pure (qComs, qEvalSets))
+        (init := (arrayReplicate pointSets.size (#[] : Array (MSMKZG (Fr p) G₁)),
+                   arrayReplicate pointSets.size (#[] : Array (Array (Fr p)))))
+        (hf := by
+          intro st0 cd st0' hstep
+          dsimp only at hstep
+          obtain ⟨terms, _, hstep2⟩ := AlgebraWidths.except_bind_ok
+            (m := cd.commitment.asTerms) hstep
+          cases hstep2
+          simp only [AlgebraWidths.arraySetD_size])
+        hfold
+      simpa [AlgebraWidths.arrayReplicate_size] using hsize
+    have hqes : qes'.length = pointSets.size := by
+      have hlen : qes'.length = st.2.toList.length :=
+        AlgebraWidths.list_mapM_length (l := st.2.toList) (l' := qes') hmap
+      have hlen2 : st.2.toList.length = st.2.size := Array.length_toList
+      rw [hlen, hlen2, hst]
+    have horder_len : (MultiPrepare.sortById
+        (fun i => ((pointSets.getD i #[]).size, i))
+        (List.range pointSets.size)).length = pointSets.size := by
+      have hp := AlgebraWidths.sortById_perm
+        (fun i => ((pointSets.getD i #[]).size, i)) (List.range pointSets.size)
+      rw [hp.length_eq, List.length_range]
+    have hidx : ∀ i ∈ MultiPrepare.sortById
+        (fun i => ((pointSets.getD i #[]).size, i))
+        (List.range pointSets.size), i < qes'.toArray.size := by
+      intro i hi
+      have hp := AlgebraWidths.sortById_perm
+        (fun i => ((pointSets.getD i #[]).size, i)) (List.range pointSets.size)
+      have hmem : i ∈ List.range pointSets.size := hp.mem_iff.mp hi
+      rw [List.mem_range] at hmem
+      rw [List.size_toArray]
+      omega
+    rw [AlgebraWidths.filterMap_getElem?_length
+      (order := MultiPrepare.sortById (fun i => ((pointSets.getD i #[]).size, i))
+        (List.range pointSets.size)) (xs := qes'.toArray) hidx]
+    exact horder_len
+  · obtain ⟨_, hthrow, _⟩ := AlgebraWidths.except_bind_ok h1
+    exact (AlgebraWidths.throw_ok_false _ hthrow).elim
+
+end MultiPrepareWidths
 
 open AlgebraWidths
 
@@ -660,5 +848,6 @@ theorem phaseC_width (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Featu
 end MultiPrepareWidths
 
 end PresWidthSeq
+
 
 end Midfall.LoweringV3
