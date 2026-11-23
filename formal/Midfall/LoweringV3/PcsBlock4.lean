@@ -1732,6 +1732,42 @@ theorem pcsBq_contract {g : ExternalGas} (product : PairingProduct)
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBq_contract
   [propext, Classical.choice, Quot.sound] native []
 
+/-- `SIInv` commutes with `QuotientRows.wMulmodAt` at the field modulus. -/
+theorem pcsSIInv_wMulmod_quot (b a : U256) :
+    SIInv (Midfall.LoweringV3.QuotientRows.wMulmodAt b a (BitVec.ofNat 256 blsR)) =
+      Midfall.LoweringV3.QuotientRows.wMulmodAt (SIInv b) (SIInv a) (BitVec.ofNat 256 blsR) := by
+  have hb : blsR < 2 ^ 256 := by decide
+  apply BitVec.eq_of_toNat_eq
+  have hval (x : U256) : ((x.toNat : ZMod blsR)⁻¹).val < 2 ^ 256 :=
+    lt_trans (ZMod.val_lt _) hb
+  rw [show (SIInv (Midfall.LoweringV3.QuotientRows.wMulmodAt b a (BitVec.ofNat 256 blsR))).toNat
+      = ((Midfall.LoweringV3.QuotientRows.wMulmodAt b a (BitVec.ofNat 256 blsR)).toNat
+          : ZMod blsR)⁻¹.val by
+    simp only [SIInv, BitVec.toNat_ofNat]
+    exact Nat.mod_eq_of_lt (hval _)]
+  rw [LagrangeRows.wMulmodAt_toNat hb b a]
+  rw [LagrangeRows.wMulmodAt_toNat hb (SIInv b) (SIInv a)]
+  simp only [SIInv, BitVec.toNat_ofNat]
+  rw [Nat.mod_eq_of_lt (hval b), Nat.mod_eq_of_lt (hval a)]
+  rw [← ZMod.val_mul]
+  congr 1
+  rw [ZMod.natCast_mod]
+  push_cast
+  rw [mul_inv_rev]
+  ring
+
+/-- `SIInv` commutes with `PcsRows.wMulmodAt` at the field modulus. -/
+theorem pcsSIInv_wMulmod (b a : U256) :
+    SIInv (Midfall.LoweringV3.PcsRows.wMulmodAt b a (BitVec.ofNat 256 blsR)) =
+      Midfall.LoweringV3.PcsRows.wMulmodAt (SIInv b) (SIInv a) (BitVec.ofNat 256 blsR) := by
+  simpa [Midfall.LoweringV3.PcsRows.wMulmodAt, Midfall.LoweringV3.QuotientRows.wMulmodAt]
+    using pcsSIInv_wMulmod_quot b a
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsSIInv_wMulmod_quot
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsSIInv_wMulmod
+  [propext, Classical.choice, Quot.sound] native []
+
 /-- The field modulus word is nonzero. -/
 theorem pcsR_ne_zero : (BitVec.ofNat 256 Midfall.Yul.blsR : U256) ≠ 0 := by
   intro h
