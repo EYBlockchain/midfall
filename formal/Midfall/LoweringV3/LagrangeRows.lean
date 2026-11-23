@@ -4272,3 +4272,30 @@ theorem lag_stmt15_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inlin
       | letVal _ _ => simp at hne
       | letHalt he => exact (eval_add_lit_lit_halt_false (c := c) (g := g)
           (funs := funs) (V := V) he).elim
+
+theorem lag_stmt17_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 17 1 =
+      [GenAst.ylet "instance_eval" (GenAst.ylit 0)] := by
+  kernel_rfl
+
+theorem lag_stmt17_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m : Nat) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 17 1)
+      (fun _ _ => True)
+      (fun V st V' st' o => o = .normal ∧ st' = st ∧
+        V' = ("instance_eval", (0 : U256)) :: V) := by
+  rw [lag_stmt17_form]
+  intro V st _ V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              cases he with
+              | lit =>
+                  rw [Midfall.Yul.Bridge.litValue_number_nat]
+                  simp
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => cases he
