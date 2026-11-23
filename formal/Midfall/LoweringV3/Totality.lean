@@ -2891,6 +2891,199 @@ theorem block_live_finalPairing_clean_of_call
     refine ⟨V, st', .halt, ?_, Or.inr (by decide)⟩
     refine Step.seqCons hguard (Step.seqStop (Step.assignHalt hev) (by decide))
 
+/-- The exact `ec_pairing` body-run residual: a `Step` of the 13-statement `ecPairingBodyLit`
+    from the helper's own entry environment, ending normally with the return word 1, the 768-byte
+    scratch write and nothing else, the environment and halt record preserved, and the wire answer
+    -- or halting.  `Step.block` at this is the premise of `Step.callOk`; this is the missing
+    existence half A11's `ecPairingBodyLit_product_runs` does not supply. -/
+def FpBodyRun (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) : Prop :=
+  ∀ (st : EvmState) (lhsW rhsW : U256),
+      ∃ (Vend : VEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0)))
+        (stend : EvmState) (o : Outcome),
+        Step (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+          (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+          (["success", "lhs_mptr", "rhs_mptr"].zip
+            [(1 : U256), lhsW, rhsW] ++ bindZeros (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0)) ["ret"]) st
+          (.stmt (.block (Midfall.LoweringV2.Blocks.EcPairing.ecPairingBodyLit
+            (GenAst.pairingScratchOf R.pv)
+            (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base))
+            (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base))
+            R.model.templateConstants.gas.pairingTwoPair 0x0f 768 32 0x84e81692 0xc3b0d8cd)))
+          (.sres Vend stend o) ∧
+        (((o = .normal ∨ o = .leave) ∧ VEnv.get Vend "ret" = some (1 : U256) ∧
+            (∀ x, x < R.pv.memory.finalPairingScratchMptr ∨
+                  R.pv.memory.finalPairingScratchMptr + 768 ≤ x → stend.memory x = st.memory x) ∧
+            stend.env = st.env ∧ stend.halted = st.halted ∧
+            product (fpWireFrame R st) = true) ∨ o = .halt)
+
+/-- **THE `ec_pairing` CALL FROM THE 13-STATEMENT BODY RUN.** The one hypothesis is the body's
+    `Step` at `(.stmt (.block ecPairingBodyLit …))` from the helper's own entry environment - i.e.
+    `Step.block` applied to a run of the 13 statements - with the normal post (the return word 1,
+    the 768-byte scratch write and nothing else, the environment and halt record preserved, and the
+    wire answer) or a halt. `Step.callOk`/`Step.callHalt` turn it into the `EvalExpr` the slice's
+    assignment reads, at the two swapped `PAIRING_*_MPTR` sites. This is the exact interface
+    between the clean slice (proved) and the missing body run. -/
+theorem ecPairing_call_of_body
+    (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (hbody : FpBodyRun R product) :
+    ∀ (V : VEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0)))
+      (st : EvmState),
+      VEnv.get V "success" = some (1 : U256) →
+      ∃ st' : EvmState,
+        (EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+            (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+            (Expr.call "ec_pairing"
+              [Expr.var "success", Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+               Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"]) (.vals [1] st') ∧
+          (∀ x, x < R.pv.memory.finalPairingScratchMptr ∨
+                R.pv.memory.finalPairingScratchMptr + 768 ≤ x → st'.memory x = st.memory x) ∧
+          st'.env = st.env ∧ st'.halted = st.halted ∧ product (fpWireFrame R st) = true)
+        ∨ EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+            (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+            (Expr.call "ec_pairing"
+              [Expr.var "success", Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+               Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"]) (.halt st') := by
+  intro V st hsucc
+  -- the declaration and its literal body
+  have hdecl := Midfall.LoweringV3.ecPairingDecl_eq_lit R hR
+    (callsOf product) (ExternalGas.ofFun fun _ => 0)
+  have hlook : lookupFun (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) "ec_pairing" =
+      some (Midfall.LoweringV2.Blocks.EcPairing.ecPairingDecl R
+        (callsOf product) (ExternalGas.ofFun fun _ => 0),
+        R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) :=
+    Midfall.LoweringV2.Blocks.EcPairing.ecPairing_lookup R
+  -- the three argument evaluations
+  have hsuccE : EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (Expr.var "success") (.vals [(1 : U256)] st) :=
+    Step.var hsucc
+  have hRhs : Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR" =
+      Expr.lit (.number (cAddr R.pv.memory.pairingRhsMptr)) := by
+    unfold Midfall.LoweringV2.Blocks.FinalPairing.fpVal
+    rw [consts_lookup_PAIRING_RHS_MPTR R hR]
+  have hLhs : Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR" =
+      Expr.lit (.number (cAddr R.pv.memory.pairingLhsMptr)) := by
+    unfold Midfall.LoweringV2.Blocks.FinalPairing.fpVal
+    rw [consts_lookup_PAIRING_LHS_MPTR R hR]
+  have hRhsE : EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR")
+      (.vals [BitVec.ofNat 256
+        (cAddr R.pv.memory.pairingRhsMptr)] st) := by
+    rw [hRhs]; exact Step.lit
+  have hLhsE : EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR")
+      (.vals [BitVec.ofNat 256
+        (cAddr R.pv.memory.pairingLhsMptr)] st) := by
+    rw [hLhs]; exact Step.lit
+  have hargs : Step (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (.args [Expr.var "success", Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+        Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"])
+      (.eres (.vals [1, BitVec.ofNat 256
+          (cAddr R.pv.memory.pairingRhsMptr),
+        BitVec.ofNat 256
+          (cAddr R.pv.memory.pairingLhsMptr)] st)) :=
+    Step.argsCons
+      (Step.argsCons (Step.argsCons Step.argsNil hLhsE) hRhsE) hsuccE
+  -- the body run, at the swapped binders
+  obtain ⟨Vend, stend, o, hstep, hpost⟩ :=
+    hbody st (BitVec.ofNat 256
+      (cAddr R.pv.memory.pairingRhsMptr))
+      (BitVec.ofNat 256
+        (cAddr R.pv.memory.pairingLhsMptr))
+  -- the call's parameter/return binders at the literal declaration
+  have hparams : (Midfall.LoweringV2.Blocks.EcPairing.ecPairingDecl R
+      (callsOf product) (ExternalGas.ofFun fun _ => 0)).params =
+      ["success", "lhs_mptr", "rhs_mptr"] := by
+    rw [hdecl]
+  have hrets : (Midfall.LoweringV2.Blocks.EcPairing.ecPairingDecl R
+      (callsOf product) (ExternalGas.ofFun fun _ => 0)).rets = ["ret"] := by
+    rw [hdecl]
+  rcases hpost with ⟨hoc, hret, hmem, henv, hhalt, hprod⟩ | hoh
+  · -- normal/leave: the call evaluates to the word 1
+    have hlen : ([1, BitVec.ofNat 256
+        (cAddr R.pv.memory.pairingRhsMptr),
+      BitVec.ofNat 256
+        (cAddr R.pv.memory.pairingLhsMptr)] : List U256).length =
+        (Midfall.LoweringV2.Blocks.EcPairing.ecPairingDecl R
+          (callsOf product) (ExternalGas.ofFun fun _ => 0)).params.length := by
+      rw [hparams]; rfl
+    have hstep' : Step (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) (["success", "lhs_mptr",
+          "rhs_mptr"].zip [1, BitVec.ofNat 256
+            (cAddr R.pv.memory.pairingRhsMptr),
+          BitVec.ofNat 256
+            (cAddr R.pv.memory.pairingLhsMptr)] ++
+          bindZeros (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0)) ["ret"]) st
+        (.stmt (.block (Midfall.LoweringV2.Blocks.EcPairing.ecPairingBodyLit
+          (GenAst.pairingScratchOf R.pv)
+          (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base))
+          (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base))
+          R.model.templateConstants.gas.pairingTwoPair 0x0f 768 32 0x84e81692 0xc3b0d8cd)))
+        (.sres Vend stend o) := hstep
+    have hev : EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+        (Expr.call "ec_pairing"
+          [Expr.var "success", Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+           Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"]) (.vals [1] stend) := by
+      have hcall := Step.callOk (D := Bridge.Dialect (callsOf product)
+          (ExternalGas.ofFun fun _ => 0)) (funs := R.scope (callsOf product)
+            (ExternalGas.ofFun fun _ => 0)) (Vend := Vend) (st2 := stend)
+            hargs hlook hlen ?_ hoc
+      · simpa only [hdecl, List.map_cons, List.map_nil, hret, Option.getD_some] using hcall
+      · simpa only [hdecl] using hstep'
+    exact ⟨stend, Or.inl ⟨hev, hmem, henv, hhalt, hprod⟩⟩
+  · subst hoh
+    refine ⟨stend, Or.inr ?_⟩
+    have hlen : ([1, BitVec.ofNat 256
+        (cAddr R.pv.memory.pairingRhsMptr),
+      BitVec.ofNat 256
+        (cAddr R.pv.memory.pairingLhsMptr)] : List U256).length =
+        (Midfall.LoweringV2.Blocks.EcPairing.ecPairingDecl R
+          (callsOf product) (ExternalGas.ofFun fun _ => 0)).params.length := by
+      rw [hparams]; rfl
+    have hcall := Step.callHalt (D := Bridge.Dialect (callsOf product)
+        (ExternalGas.ofFun fun _ => 0)) (funs := R.scope (callsOf product)
+          (ExternalGas.ofFun fun _ => 0)) (Vend := Vend) (st2 := stend)
+          hargs hlook hlen ?_
+    · exact hcall
+    · simpa only [hdecl] using hstep
+
+
+/-- The clean `.finalPairing` arm from the body run, by composing the call constructor with the
+    clean slice assembly. -/
+theorem block_live_finalPairing_clean_of_body
+    (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
+    (vkAddr : U256) (cd : Bytes)
+    (hbody : FpBodyRun R product) :
+    ∀ V st, StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+        R H vkAddr cd Checkpoint.pcs V st →
+      ∃ V' st' o, ExecStmts (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+        (R.slice Partial.finalPairing) V' st' o ∧
+        ((o = .normal ∧ Mid (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+            R H vkAddr cd Checkpoint.pairing V' st') ∨ o ≠ .normal) :=
+  block_live_finalPairing_clean_of_call R product hR hpc H vkAddr cd
+    (fun V st hclean =>
+      ecPairing_call_of_body R product hR hbody V st hclean.2.1)
+
+/-- **THE finalPairing CASE OF `block_live`, REDUCED TO THE BODY RUN.** The clean boundary is the
+    assembled slice, the poisoned boundary is `block_live_finalPairing_poison`; both still carry the
+    body-run residual as an arm hypothesis and nothing is added to `block_live`. -/
+theorem block_live_finalPairing_of_body
+    (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
+    (vkAddr : U256) (cd : Bytes)
+    (hbody : FpBodyRun R product) :
+    BlockLive R .finalPairing H vkAddr product cd := by
+  intro V st hpre
+  rcases hpre with hclean | hpois
+  · exact block_live_finalPairing_clean_of_body R product hR hpc H vkAddr cd hbody V st hclean
+  · exact block_live_finalPairing_poison R product hR H vkAddr cd V st hpois
+
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
     answering at the four precompile addresses, and the block's all-runs row to classify the
