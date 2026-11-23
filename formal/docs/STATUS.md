@@ -250,6 +250,11 @@ At `7a55dc8d` (2026-11-23): register **96 rows / 11 ROOT / 22 CERT**, 0 REFUTED,
 (`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
 620 external leaves / digest 209cde2f48115a76**; quick gate green.
 
+**D-GATE13 (signed, 2026-11-23)**: `calldata_roundtrip` carries the size bound
+`proofEnd + 32 + 32*numInstances < 2^256`, supplied from the entry frame's `cdBoundB`/`cdSize`
+(ABI length words are `u256`). It is a calldata/entry-frame bound, not a row/root hypothesis; the
+roundtrip is proved at `Midfall.Lowering.calldata_roundtrip` with standard axioms.
+
 **D-GATE12 (signed, 2026-11-23)**: `WellFormed` gains `lookupChunkable` — every lookup's
 `nbParallelLookupsPerChunk vk.csDegree` succeeds and is positive, so `chunkByDegree`/`rustChunks` is
 total on the verifier's lookups. This is the missing static fact the parseTrace multiplicity walk
