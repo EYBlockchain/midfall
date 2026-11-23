@@ -286,10 +286,77 @@ theorem prog_codegenStruct (hg : Generates gi o) (hs : SupportedInput gi) :
       = true := by
   sorry -- CERT.2
 
+/-- A VM plan has `direct := none`. PROVED from the `newFromVk` peel. -/
+theorem newFromVk_direct_none {F : Type} [BEq F] (feat : Features) (field : FieldCtx F)
+    (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding)
+    (payload : Halo2VerifyingKey) (plan : LoweringPlan Unit Unit)
+    (h : Midfall.Generator.PlanNew.newFromVk feat field cs rawMeta numInstances accEncoding
+        payload = .ok plan) : plan.direct = none := by
+  simp only [Midfall.Generator.PlanNew.newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨_q, _, h1⟩ := cert_except_bind_ok h
+  obtain ⟨_proofLayout, _, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨_qplan, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨_build, _, h4⟩ := cert_except_bind_ok h3
+  obtain ⟨_nw, _, h5⟩ := cert_except_bind_ok h4
+  obtain ⟨_pcs, _, h6⟩ := cert_except_bind_ok h5
+  obtain ⟨_acc, _, h7⟩ := cert_except_bind_ok h6
+  obtain ⟨_memory, _, h8⟩ := cert_except_bind_ok h7
+  obtain ⟨_op, _, h9⟩ := cert_except_bind_ok h8
+  obtain ⟨_trip, _, h10⟩ := cert_except_bind_ok h9
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals rfl
+
+/-- The compact rendering arm's `intoTemplateParts` fourth component is `none`. PROVED. -/
+theorem quotientRendering_direct_none {L : LoweringPlan Unit Unit} {trace : Bool}
+    {compactBlocks : LoweringPlan Unit Unit → Bool →
+      Midfall.Generator.QuotientFold.QuotientComputationBlocks}
+    {rendering : Midfall.Generator.QuotientRendering}
+    (h : LoweringPlan.quotientRendering compactBlocks L trace false = .ok rendering)
+    (hd : L.direct = none) : (rendering.intoTemplateParts).2.2.2 = none := by
+  unfold LoweringPlan.quotientRendering at h
+  simp only [Bool.false_eq_true, if_false, hd] at h
+  cases hv : L.vmQuotient with
+  | error e => simp only [hv] at h; cases h
+  | ok q => simp only [hv] at h; cases h; rfl
+
+/-- `generateVerifierFromPlan` copies the rendering's `quotientDirect` (ART:320), so a VM plan
+    with no direct quotient section renders none. PROVED. -/
+theorem model_quotientDirect_none {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) (hext : R.flags.externalQuotient = false)
+    (hd : R.plan.direct = none) : R.model.quotientDirect.isNone = true := by
+  have hg := Midfall.LoweringV3.MemoryPairs.gvfp_of_generated h
+  simp only [generateVerifierFromPlan, Bind.bind, Except.bind] at hg
+  split at hg
+  · cases hg
+  · cases hg
+  · obtain ⟨_a1, _, h1⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp hg
+    obtain ⟨rendering, hrend, h2⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h1
+    obtain ⟨_a3, _, h3⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h2
+    obtain ⟨_a4, _, h4⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h3
+    obtain ⟨_a5, _, h5⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h4
+    obtain ⟨_a6, _, h6⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h5
+    obtain ⟨_a7, _, h7⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h6
+    have hrec := Except.ok.inj h7
+    rw [hext] at hrend
+    have hlow : (rendering.intoTemplateParts).2.2.2 = none :=
+      quotientRendering_direct_none hrend hd
+    have hdir := congrArg (fun x => x.quotientDirect) hrec
+    rw [← hdir, hlow]
+    rfl
+
 /-- P2a. A VM-lowered plan renders no Direct section. -/
 theorem prog_noDirect (hg : Generates gi o) (hs : SupportedInput gi) :
     (renderOf gi o).model.quotientDirect.isNone = true := by
-  sorry -- CERT.6
+  obtain ⟨_rawMeta, plan, _hraw, hpl, hp⟩ :=
+    Midfall.LoweringV3.MemoryPairs.plan_of_generated (generated_of hg)
+  have hdPlan : plan.direct = none :=
+    newFromVk_direct_none Features.solidity (frFieldCtx gi.E.delta) gi.vk.cs _rawMeta
+      gi.cfg.numInstances gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
+  have hd : (renderOf gi o).plan.direct = none := by rw [hp]; exact hdPlan
+  exact model_quotientDirect_none (generated_of hg) hs.embeddedQuotient.1 hd
 
 /-- P2b. Every `uint256 internal constant` line of `renderConstants` has a literal right side. -/
 theorem prog_constLinesLiteral (hg : Generates gi o) (hs : SupportedInput gi) :
