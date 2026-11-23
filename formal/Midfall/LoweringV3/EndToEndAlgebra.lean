@@ -29,6 +29,7 @@ import Midfall.LoweringV3.EndToEnd
 import Midfall.LoweringV3.KzgQueryMap
 import Midfall.LoweringV3.RotationInjectivity
 import Midfall.LoweringV3.LinearizeEntry
+import Midfall.LoweringV3.QueryTail
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -4503,6 +4504,14 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms pairQueries_snd
   [propext, Classical.choice, Quot.sound]
+#assert_axioms mapM_getLast?_some
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queries_mapM_ok
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queries_getLast?_some
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queries_last_rotation
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgQueryMapData.ofRotations
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Data.new_dummyEvalWords
@@ -4532,6 +4541,10 @@ open Midfall.Tools.Done in
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms VerifierQuery.newLinear_commitment
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms computeLinearizationCommitment_commitment
   [propext, Classical.choice, Quot.sound]
 #assert_axioms linearize_back?_point
   [propext, Classical.choice, Quot.sound]

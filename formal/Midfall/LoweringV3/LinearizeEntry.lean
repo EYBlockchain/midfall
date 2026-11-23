@@ -65,6 +65,27 @@ theorem VerifierQuery.newLinear_point {F C : Type} (point : F) (label : Commitme
       Except Fault (VerifierQuery F C)) = .ok q at h
     cases h
 
+theorem VerifierQuery.newLinear_commitment {F C : Type} (point : F) (label : CommitmentLabel)
+    (pts : Array C) (scals : Array F) (labs : Array CommitmentLabel) (ev : F)
+    (q : VerifierQuery F C)
+    (h : VerifierQuery.newLinear point label pts scals labs ev = .ok q) :
+    q.commitment = CommitmentReference.linear pts scals labs := by
+  unfold VerifierQuery.newLinear at h
+  by_cases h1 : (pts.size == scals.size) = true
+  · rw [if_pos h1] at h
+    by_cases h2 : (pts.size == labs.size) = true
+    · rw [if_pos h2] at h
+      cases h
+      rfl
+    · rw [if_neg h2] at h
+      change (Except.error (Fault.panic "proofs/src/poly/query.rs:222") :
+        Except Fault (VerifierQuery F C)) = .ok q at h
+      cases h
+  · rw [if_neg h1] at h
+    change (Except.error (Fault.panic "proofs/src/poly/query.rs:217") :
+      Except Fault (VerifierQuery F C)) = .ok q at h
+    cases h
+
 theorem computeLinearizationCommitment_point
     (expressions : Array (Option Nat × Fr p)) (vk : VerifyingKey (Fr p) G)
     (x y xn splittingFactor : Fr p) (quotientLimbCommitments : Array G)
@@ -81,6 +102,24 @@ theorem computeLinearizationCommitment_point
     obtain ⟨pts, scals, labs, ev⟩ := tuple
     exact VerifierQuery.newLinear_point x (CommitmentLabel.custom "linearization_poly")
       pts.toArray scals.toArray labs.toArray ev linCom hfinal
+
+theorem computeLinearizationCommitment_commitment
+    (expressions : Array (Option Nat × Fr p)) (vk : VerifyingKey (Fr p) G)
+    (x y xn splittingFactor : Fr p) (quotientLimbCommitments : Array G)
+    (linCom : VerifierQuery (Fr p) G)
+    (h : Midfall.Halo2.computeLinearizationCommitment
+      (F := Fr p) (G₁ := G) expressions vk x y xn splittingFactor quotientLimbCommitments
+      = .ok linCom) :
+    ∃ pts scals labs, linCom.commitment = CommitmentReference.linear pts scals labs := by
+  unfold Midfall.Halo2.computeLinearizationCommitment at h
+  split at h
+  · cases h
+  · simp only [Bind.bind, Except.bind] at h
+    obtain ⟨tuple, _hfold, hfinal⟩ := except_bind_ok h
+    obtain ⟨pts, scals, labs, ev⟩ := tuple
+    exact ⟨pts.toArray, scals.toArray, labs.toArray,
+      VerifierQuery.newLinear_commitment x (CommitmentLabel.custom "linearization_poly")
+        pts.toArray scals.toArray labs.toArray ev linCom hfinal⟩
 
 theorem linearize_back?_point (delta : Fr p) (vk : VerifyingKey (Fr p) G₁)
     (adviceCommitments : Array (Array G₁)) (committedInstances : Array (Array G₁))
