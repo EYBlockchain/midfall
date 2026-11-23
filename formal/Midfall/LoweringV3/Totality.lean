@@ -23,6 +23,8 @@
 import Midfall.LoweringV3.Statements
 import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV2.Stages
+import Midfall.LoweringV2.Blocks.TraceReturn
+import Midfall.LoweringV3.VkClean
 import Midfall.Tools.ConeSorries
 import Midfall.Tools.Done
 set_option autoImplicit false
@@ -844,6 +846,749 @@ def BlockLive (R : Render p G₁ G₂ Gₜ) (q : Partial) (H : Hash) (vkAddr : U
     (R.scope _ _) (R.slice q)
     (fun V st => LivePre R H vkAddr cd q.pre V st)
     (fun V st => LivePre R H vkAddr cd q.pre.next V st)
+
+/-- `ERR_PROOF_REJECTED` is in every render's constant table. -/
+theorem consts_errProof_of_validV3 {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    R.consts.lookup "ERR_PROOF_REJECTED" = some 0xc3b0d8cd :=
+  Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR "ERR_PROOF_REJECTED" 0xc3b0d8cd (by
+    cases h1 : R.model.expectedVkCodehash <;> cases h2 : R.model.quotientExternal <;>
+      cases h3 : R.model.expectedQuotientCodehash <;>
+        cases h4 : R.model.expectedHasAccumulator <;>
+          simp [Midfall.LoweringV3.expectedConsts, h1, h2, h3, h4, List.lookup])
+
+/-- The `fail` helper body HAS a run from the callee environment, and it halts. The forward dual of
+    `tr_fail_body`; the same construction `pfxRevertBody_exists` uses for the prefix's inline copy. -/
+theorem fail_body_run {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (err : U256) (st : EvmState) :
+    ∃ st', ExecStmts (Bridge.Dialect c g) funs
+      ([("sel", err)] : VEnv (Bridge.Dialect c g)) st
+      [Stmt.exprStmt (Expr.builtin Op.mstore
+          [Expr.lit (.number 0),
+           Expr.builtin Op.shl [Expr.lit (.number 224), Expr.var "sel"]]),
+       Stmt.exprStmt (Expr.builtin Op.revert [Expr.lit (.number 0), Expr.lit (.number 4)])]
+      [("sel", err)] st' .halt := by
+  let shlE : Expr EVM.Op := Expr.builtin Op.shl [Expr.lit (.number 224), Expr.var "sel"]
+  let stM : EvmState :=
+    { touchMemory st 0 32 with memory := storeWord st.memory 0 (err <<< 224) }
+  let stR : EvmState :=
+    { touchMemory stM 0 4 with halted := some (.revert, readBytes stM.memory 0 4) }
+  have hSel : EvalExpr (Bridge.Dialect c g) funs [("sel", err)] st (Expr.var "sel")
+      (.vals [err] st) := Step.var rfl
+  have hShl : EvalExpr (Bridge.Dialect c g) funs [("sel", err)] st shlE (.vals [err <<< 224] st) := by
+    refine Step.builtinOk (D := Bridge.Dialect c g) (args := [Expr.lit (.number 224), Expr.var "sel"])
+      (argvals := [(224 : U256), err]) (st1 := st) (rets := [err <<< 224]) (st2 := st) ?_ ?_
+    · exact Step.argsCons (D := Bridge.Dialect c g) (rest := [Expr.var "sel"]) (restvals := [err])
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (Step.argsNil (D := Bridge.Dialect c g)) hSel)
+        (Step.lit (D := Bridge.Dialect c g) (l := Literal.number 224))
+    · show (Bridge.Dialect c g).Builtin Op.shl [(224 : U256), err] st (.ok [err <<< 224] st)
+      rfl
+  have hMstore : Step (Bridge.Dialect c g) funs [("sel", err)] st
+      (.expr (Expr.builtin Op.mstore [Expr.lit (.number 0), shlE])) (.eres (.vals [] stM)) := by
+    refine Step.builtinOk (D := Bridge.Dialect c g) (args := [Expr.lit (.number 0), shlE])
+      (argvals := [(0 : U256), err <<< 224]) (st1 := st) (rets := []) (st2 := stM) ?_ ?_
+    · exact Step.argsCons (D := Bridge.Dialect c g) (rest := [shlE]) (restvals := [err <<< 224])
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := [])
+          (Step.argsNil (D := Bridge.Dialect c g)) hShl)
+        (Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0))
+    · show (Bridge.Dialect c g).Builtin Op.mstore [(0 : U256), err <<< 224] st (.ok [] stM)
+      rfl
+  have hMstoreStmt : Step (Bridge.Dialect c g) funs [("sel", err)] st
+      (.stmt (.exprStmt (Expr.builtin Op.mstore [Expr.lit (.number 0), shlE])))
+      (.sres [("sel", err)] stM .normal) := Step.exprStmt hMstore
+  have hRevert : Step (Bridge.Dialect c g) funs [("sel", err)] stM
+      (.expr (Expr.builtin Op.revert [Expr.lit (.number 0), Expr.lit (.number 4)]))
+      (.eres (.halt stR)) := by
+    refine Step.builtinHalt (D := Bridge.Dialect c g)
+      (args := [Expr.lit (.number 0), Expr.lit (.number 4)])
+      (argvals := [(0 : U256), (4 : U256)]) (st1 := stM) (st2 := stR) ?_ ?_
+    · exact Step.argsCons (D := Bridge.Dialect c g) (rest := [Expr.lit (.number 4)])
+        (restvals := [(4 : U256)])
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := [])
+          (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.lit (D := Bridge.Dialect c g) (l := Literal.number 4)))
+        (Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0))
+    · show (Bridge.Dialect c g).Builtin Op.revert [(0 : U256), (4 : U256)] stM (.halt stR)
+      rfl
+  have hRevertStmt : Step (Bridge.Dialect c g) funs [("sel", err)] stM
+      (.stmt (.exprStmt (Expr.builtin Op.revert [Expr.lit (.number 0), Expr.lit (.number 4)])))
+      (.sres [("sel", err)] stR .halt) := Step.exprStmtHalt hRevert
+  refine ⟨stR, ?_⟩
+  show Step (Bridge.Dialect c g) funs [("sel", err)] st
+      (.stmts [Stmt.exprStmt (Expr.builtin Op.mstore
+          [Expr.lit (.number 0),
+           Expr.builtin Op.shl [Expr.lit (.number 224), Expr.var "sel"]]),
+       Stmt.exprStmt (Expr.builtin Op.revert [Expr.lit (.number 0), Expr.lit (.number 4)])])
+      (.sres [("sel", err)] stR .halt)
+  simp only [shlE, stM, stR] at hMstoreStmt hRevertStmt ⊢
+  exact Step.seqCons hMstoreStmt (Step.seqStop hRevertStmt (by decide))
+
+/-- The TraceReturn slice HAS a run from a poisoned boundary: the `iszero(success)` guard fires and
+    the `fail` arm reverts. The existence dual of `tr_poison_walk_noarm`. -/
+theorem tr_poison_exists {R : Render p G₁ G₂ Gₜ} (product : PairingProduct) (hR : ValidV3 R)
+    (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {V : VEnv (Blocks.TraceReturn.Dhonest product)} {st : EvmState}
+    (hpois : Poisoned R H vkAddr cd V st) :
+    ∃ V' st' o, ExecStmts (Blocks.TraceReturn.Dhonest product) (R.scope (callsOf product)
+      (ExternalGas.ofFun fun _ => 0)) V st (R.slice Partial.traceReturn) V' st' o ∧ o ≠ .normal := by
+  obtain ⟨-, hsucc0⟩ := hpois
+  have herr : R.consts.lookup "ERR_PROOF_REJECTED" = some 0xc3b0d8cd :=
+    consts_errProof_of_validV3 hR
+  have herrE : Blocks.TraceReturn.trErrExpr R.consts = Expr.lit (.number 0xc3b0d8cd) := by
+    simp [Blocks.TraceReturn.trErrExpr, herr]
+  let body : Block EVM.Op :=
+    [Stmt.exprStmt (Expr.builtin Op.mstore
+        [Expr.lit (.number 0),
+         Expr.builtin Op.shl [Expr.lit (.number 224), Expr.var "sel"]]),
+     Stmt.exprStmt (Expr.builtin Op.revert [Expr.lit (.number 0), Expr.lit (.number 4)])]
+  let decl : FDecl (Blocks.TraceReturn.Dhonest product) :=
+    { params := ["sel"], rets := [], body := body }
+  have hlookup : lookupFun (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) "fail" =
+      some (decl, R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) :=
+    Blocks.TraceReturn.fail_lookup R
+  obtain ⟨stR, hbody⟩ := fail_body_run (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+    (hoist (Blocks.TraceReturn.Dhonest product) body ::
+      R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+    (BitVec.ofNat 256 0xc3b0d8cd) st
+  have hvar : EvalExpr (Blocks.TraceReturn.Dhonest product) (R.scope _ _) V st
+      (Expr.var "success") (.vals [(0 : U256)] st) := Step.var hsucc0
+  have hz : EvalExpr (Blocks.TraceReturn.Dhonest product) (R.scope _ _) V st
+      (Expr.builtin Op.iszero [Expr.var "success"]) (.vals [1] st) :=
+    Step.builtinOk (D := Blocks.TraceReturn.Dhonest product)
+      (Step.argsCons (D := Blocks.TraceReturn.Dhonest product) (rest := [])
+        (Step.argsNil (D := Blocks.TraceReturn.Dhonest product)) hvar)
+      (by simp [builtinWithExternal, stepOp, un, b2w])
+  let e : Expr EVM.Op := Expr.lit (.number 0xc3b0d8cd)
+  have harg : EvalExpr (Blocks.TraceReturn.Dhonest product)
+      (([] : FScope (Blocks.TraceReturn.Dhonest product)) :: R.scope _ _) V st
+      e (.vals [BitVec.ofNat 256 0xc3b0d8cd] st) := Step.lit
+  have hlookup' : lookupFun (([] : FScope (Blocks.TraceReturn.Dhonest product)) :: R.scope _ _)
+      "fail" = some (decl, R.scope _ _) := hlookup
+  have hcall : Step (Blocks.TraceReturn.Dhonest product)
+      (([] : FScope (Blocks.TraceReturn.Dhonest product)) :: R.scope _ _)
+      V st (.expr (.call "fail" [e])) (.eres (.halt stR)) :=
+    Step.callHalt (D := Blocks.TraceReturn.Dhonest product) (fn := "fail")
+      (args := [e])
+      (argvals := [BitVec.ofNat 256 0xc3b0d8cd]) (decl := decl)
+      (cenv := R.scope _ _) (Vend := [("sel", BitVec.ofNat 256 0xc3b0d8cd)]) (st1 := st) (st2 := stR)
+      (Step.argsCons (D := Blocks.TraceReturn.Dhonest product) (rest := [])
+        (Step.argsNil (D := Blocks.TraceReturn.Dhonest product)) harg)
+      hlookup' (by rfl)
+      (Step.block (D := Blocks.TraceReturn.Dhonest product)
+        (funs := R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) (body := body) hbody)
+  have hstmt : Step (Blocks.TraceReturn.Dhonest product)
+      (([] : FScope (Blocks.TraceReturn.Dhonest product)) :: R.scope _ _) V st
+      (.stmt (.exprStmt (.call "fail" [e])))
+      (.sres V stR .halt) := Step.exprStmtHalt hcall
+  have hbodyCond : ExecStmts (Blocks.TraceReturn.Dhonest product)
+      (([] : FScope (Blocks.TraceReturn.Dhonest product)) :: R.scope _ _) V st
+      [Stmt.exprStmt (.call "fail" [e])] V stR .halt :=
+    Step.seqStop hstmt (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide)
+  have hcond : Step (Blocks.TraceReturn.Dhonest product) (R.scope _ _) V st
+      (.stmt (.cond (Expr.builtin Op.iszero [Expr.var "success"])
+        [Stmt.exprStmt (.call "fail" [e])]))
+      (.sres (restore V V) stR .halt) :=
+    Step.ifTrue (D := Blocks.TraceReturn.Dhonest product)
+      (body := [Stmt.exprStmt (.call "fail" [e])])
+      hz (by show (1 : U256) ≠ 0; decide)
+      (Step.block (D := Blocks.TraceReturn.Dhonest product)
+        (funs := R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (body := [Stmt.exprStmt (.call "fail" [e])]) hbodyCond)
+  rw [Blocks.TraceReturn.tr_slice R, herrE]
+  refine ⟨restore V V, stR, .halt, ?_, by decide⟩
+  exact Step.seqStop hcond (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide)
+
+/-- **THE TRACERETURN ARM OF `block_live`.** Existence only: `TraceReturn` halts on every run, so
+    the `LiveTo` post is its second disjunct whatever the exhibited run is, and
+    `tr_progress_ex` (clean) / `tr_poison_exists` (poisoned) supply the run. -/
+theorem block_live_traceReturn (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (H : Hash) (vkAddr : U256) (cd : Bytes) :
+    BlockLive R .traceReturn H vkAddr product cd := by
+  intro V st hpre
+  have hpre' : Mid R H vkAddr cd Checkpoint.pairing V st := hpre
+  rcases hpre' with hclean | hpois
+  · obtain ⟨hframe, hsucc, -, hraw, -, hagree⟩ := hclean
+    obtain ⟨ms, instW, inst, hdecd⟩ := hraw
+    obtain ⟨S, -, hinv⟩ := hagree ms instW inst hdecd
+    have hcl : Clean R Checkpoint.pairing S H vkAddr cd V st := ⟨hinv, hframe, hsucc⟩
+    obtain ⟨V', st', o, hrun, hexit⟩ :=
+      Blocks.TraceReturn.tr_progress_ex R product (returnMptr_of_valid hR) S H vkAddr cd hcl
+    refine ⟨V', st', o, hrun, Or.inr ?_⟩
+    rw [hexit.1]
+    exact (by decide : (Outcome.halt : Outcome) ≠ Outcome.normal)
+  · obtain ⟨V', st', o, hrun, hne⟩ := tr_poison_exists (R := R) product hR H vkAddr cd hpois
+    exact ⟨V', st', o, hrun, Or.inr hne⟩
+
+/-! ### 2a-bis. THE vkLoading ARM: existence of the thirteen-statement run
+
+`block_live_vkLoading_of_exists` above spends the block's all-runs row; what remains is a run.
+The three step lemmas below expose each assign's `success` word SYMBOLICALLY (`vk_step_hdr` /
+`vk_step_cdl` / `vk_step_cdsz` are the matching instances), so the walk in `vk_run_exists` below
+never has to decide a header word: it decides only the two guard bits it must branch on. -/
+
+section VkLiveSteps
+
+variable {c : ExternalCalls} {g : ExternalGas}
+
+/-- The six VK-header cross-checks as a STEP at an ARBITRARY memory word: the assigned value is
+    `succ &&& b2w (loadWord ... = n)`, left symbolic. `vk_step_hdr` is the `= n` instance. -/
+theorem vk_hdr_step_any (R : Render p G₁ G₂ Gₜ) (slot : String) (i n : Nat)
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {succExpr : Expr EVM.Op} {av : U256}
+    (hsuccE : EvalExpr (Bridge.Dialect c g) funs V
+      (touchMemory st (BitVec.ofNat 256
+        (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))).toNat 32) succExpr
+      (.vals [av] (touchMemory st (BitVec.ofNat 256
+        (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))).toNat 32)))
+    (hlookup : R.consts.lookup slot =
+      some (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i)))
+    (hfit : Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i) < 2 ^ 256) :
+    ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign ["success"] (Expr.builtin Op.and [succExpr,
+        Expr.builtin Op.eq [Expr.builtin Op.mload [Blocks.VkLoading.vkSite slot R.consts],
+          Expr.lit (.number n)]]))
+      (VEnv.set V "success" (av &&& b2w (loadWord st.memory
+        (ptrAddr (Ptr.add R.pv.memory.vkMptr i)) = BitVec.ofNat 256 n)))
+      (touchMemory st (BitVec.ofNat 256
+        (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))).toNat 32) .normal := by
+  have hsite : EvalExpr (Bridge.Dialect c g) funs V st
+      (Blocks.VkLoading.vkSite slot R.consts)
+      (.vals [BitVec.ofNat 256 (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))] st) := by
+    rw [show Blocks.VkLoading.vkSite slot R.consts =
+      Expr.lit (.number (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))) from by
+      simp [Blocks.VkLoading.vkSite, hlookup]]
+    exact Step.lit
+  have hmload : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mload [Blocks.VkLoading.vkSite slot R.consts])
+      (.vals [loadWord st.memory
+        (BitVec.ofNat 256 (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))).toNat]
+        (touchMemory st
+          (BitVec.ofNat 256 (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))).toNat 32)) :=
+    Step.builtinOk (D := Bridge.Dialect c g)
+      (Step.argsCons Step.argsNil hsite)
+      (by simp [builtinWithExternal, stepOp])
+  have hfit' : (BitVec.ofNat 256
+      (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))).toNat =
+      ptrAddr (Ptr.add R.pv.memory.vkMptr i) := by
+    rw [BitVec.toNat_ofNat]
+    exact Nat.mod_eq_of_lt (by simpa [Midfall.LoweringV2.cAddr_eq_ptrAddr] using hfit)
+  have hlit : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (.number n))
+      (.vals [BitVec.ofNat 256 n] st) := Step.lit
+  have heq : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.eq [Expr.builtin Op.mload [Blocks.VkLoading.vkSite slot R.consts],
+        Expr.lit (.number n)]) (.vals [b2w (loadWord st.memory (ptrAddr
+          (Ptr.add R.pv.memory.vkMptr i)) = BitVec.ofNat 256 n)] (touchMemory st (BitVec.ofNat 256
+            (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))).toNat 32)) := by
+    refine Step.builtinOk (D := Bridge.Dialect c g)
+      (Step.argsCons (D := Bridge.Dialect c g)
+        (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil hlit) hmload) ?_
+    simp only [builtinWithExternal, stepOp, bin, hfit']
+  have hand : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.and [succExpr,
+        Expr.builtin Op.eq [Expr.builtin Op.mload [Blocks.VkLoading.vkSite slot R.consts],
+          Expr.lit (.number n)]])
+      (.vals [av &&& b2w (loadWord st.memory (ptrAddr
+          (Ptr.add R.pv.memory.vkMptr i)) = BitVec.ofNat 256 n)] (touchMemory st (BitVec.ofNat 256
+            (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr i))).toNat 32)) :=
+    Step.builtinOk (D := Bridge.Dialect c g)
+      (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil heq)
+        hsuccE)
+      (by simp [builtinWithExternal, stepOp, bin])
+  exact Step.assignVal (D := Bridge.Dialect c g) (vars := ["success"]) hand (by rfl)
+
+/-- The three calldata checks as a STEP at an arbitrary word: the assigned value is
+    `succ &&& b2w (wordFrom ... = m)`, left symbolic. `vk_step_cdl` is the `= m` instance. -/
+theorem vk_cdl_step_any (R : Render p G₁ G₂ Gₜ) (slot : String) (aVal m : Nat)
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {succExpr : Expr EVM.Op} {av : U256}
+    (hsuccE : EvalExpr (Bridge.Dialect c g) funs V st succExpr (.vals [av] st))
+    (hlookup : R.consts.lookup slot = some aVal) :
+    ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign ["success"] (Expr.builtin Op.and [succExpr,
+        Expr.builtin Op.eq [Expr.lit (.number m),
+          Expr.builtin Op.calldataload [Blocks.VkLoading.vkSite slot R.consts]]]))
+      (VEnv.set V "success" (av &&& b2w (BitVec.ofNat 256 m =
+        wordFrom st.env.calldata (BitVec.ofNat 256 aVal).toNat))) st
+      .normal := by
+  have hsite : EvalExpr (Bridge.Dialect c g) funs V st (Blocks.VkLoading.vkSite slot R.consts)
+      (.vals [BitVec.ofNat 256 aVal] st) := by
+    rw [show Blocks.VkLoading.vkSite slot R.consts = Expr.lit (.number aVal) from by
+      simp [Blocks.VkLoading.vkSite, hlookup]]
+    exact Step.lit
+  have hcdl : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.calldataload [Blocks.VkLoading.vkSite slot R.consts])
+      (.vals [wordFrom st.env.calldata (BitVec.ofNat 256 aVal).toNat] st) :=
+    Step.builtinOk (D := Bridge.Dialect c g) (Step.argsCons Step.argsNil hsite)
+      (by simp [builtinWithExternal, stepOp, rd1])
+  have hlit : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (.number m))
+      (.vals [BitVec.ofNat 256 m] st) := Step.lit
+  have heq : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.eq [Expr.lit (.number m),
+        Expr.builtin Op.calldataload [Blocks.VkLoading.vkSite slot R.consts]])
+      (.vals [b2w (BitVec.ofNat 256 m = wordFrom st.env.calldata
+        (BitVec.ofNat 256 aVal).toNat)] st) := by
+    refine Step.builtinOk (D := Bridge.Dialect c g)
+      (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil hcdl)
+        hlit) ?_
+    simp only [builtinWithExternal, stepOp, bin]
+  have hand : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.and [succExpr,
+        Expr.builtin Op.eq [Expr.lit (.number m),
+          Expr.builtin Op.calldataload [Blocks.VkLoading.vkSite slot R.consts]]])
+      (.vals [av &&& b2w (BitVec.ofNat 256 m = wordFrom st.env.calldata
+        (BitVec.ofNat 256 aVal).toNat)] st) :=
+    Step.builtinOk (D := Bridge.Dialect c g)
+      (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil heq)
+        hsuccE)
+      (by simp [builtinWithExternal, stepOp, bin])
+  exact Step.assignVal (D := Bridge.Dialect c g) (vars := ["success"]) hand (by rfl)
+
+/-- The calldatasize check as a STEP at an arbitrary length: `succ &&& b2w (size = aVal + m)`. -/
+theorem vk_cdsz_step_any (R : Render p G₁ G₂ Gₜ) (slot : String) (aVal m : Nat)
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {succExpr : Expr EVM.Op} {av : U256}
+    (hsuccE : EvalExpr (Bridge.Dialect c g) funs V st succExpr (.vals [av] st))
+    (hlookup : R.consts.lookup slot = some aVal) :
+    ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign ["success"] (Expr.builtin Op.and [succExpr,
+        Expr.builtin Op.eq [Expr.builtin Op.calldatasize [],
+          Expr.builtin Op.add [Blocks.VkLoading.vkSite slot R.consts, Expr.lit (.number m)]]]))
+      (VEnv.set V "success" (av &&& b2w (BitVec.ofNat 256 st.env.calldata.length =
+        BitVec.ofNat 256 aVal + BitVec.ofNat 256 m))) st .normal := by
+  have hsize : EvalExpr (Bridge.Dialect c g) funs V st (Expr.builtin Op.calldatasize [])
+      (.vals [BitVec.ofNat 256 st.env.calldata.length] st) :=
+    Step.builtinOk (D := Bridge.Dialect c g) Step.argsNil
+      (by simp [builtinWithExternal, stepOp, rd0])
+  have hsite : EvalExpr (Bridge.Dialect c g) funs V st (Blocks.VkLoading.vkSite slot R.consts)
+      (.vals [BitVec.ofNat 256 aVal] st) := by
+    rw [show Blocks.VkLoading.vkSite slot R.consts = Expr.lit (.number aVal) from by
+      simp [Blocks.VkLoading.vkSite, hlookup]]
+    exact Step.lit
+  have hlit : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (.number m))
+      (.vals [BitVec.ofNat 256 m] st) := Step.lit
+  have hadd : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.add [Blocks.VkLoading.vkSite slot R.consts, Expr.lit (.number m)])
+      (.vals [BitVec.ofNat 256 aVal + BitVec.ofNat 256 m] st) :=
+    Step.builtinOk (D := Bridge.Dialect c g)
+      (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil hlit)
+        hsite)
+      (by simp [builtinWithExternal, stepOp, bin])
+  have heq : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.eq [Expr.builtin Op.calldatasize [],
+        Expr.builtin Op.add [Blocks.VkLoading.vkSite slot R.consts, Expr.lit (.number m)]])
+      (.vals [b2w (BitVec.ofNat 256 st.env.calldata.length =
+        BitVec.ofNat 256 aVal + BitVec.ofNat 256 m)] st) := by
+    refine Step.builtinOk (D := Bridge.Dialect c g)
+      (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil hadd)
+        hsize) ?_
+    simp only [builtinWithExternal, stepOp, bin]
+  have hand : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.and [succExpr,
+        Expr.builtin Op.eq [Expr.builtin Op.calldatasize [],
+          Expr.builtin Op.add [Blocks.VkLoading.vkSite slot R.consts, Expr.lit (.number m)]]])
+      (.vals [av &&& b2w (BitVec.ofNat 256 st.env.calldata.length =
+        BitVec.ofNat 256 aVal + BitVec.ofNat 256 m)] st) :=
+    Step.builtinOk (D := Bridge.Dialect c g)
+      (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil heq)
+        hsuccE)
+      (by simp [builtinWithExternal, stepOp, bin])
+  exact Step.assignVal (D := Bridge.Dialect c g) (vars := ["success"]) hand (by rfl)
+
+/-- The `success` guard SKIPS at any nonzero value (the `= 1` instance is `vk_step_gate`). -/
+theorem vk_gate_skip_any (R : Render p G₁ G₂ Gₜ) (err : String)
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {s : U256} (hsucc : VEnv.get V "success" = some s) (hne : s ≠ 0) :
+    ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Blocks.VkLoading.vkSucc])
+        [Stmt.exprStmt (Expr.call "fail" [Blocks.VkLoading.vkSite err R.consts])]) V st .normal := by
+  have hvar : EvalExpr (Bridge.Dialect c g) funs V st Blocks.VkLoading.vkSucc (.vals [s] st) :=
+    Step.var hsucc
+  have hb : b2w (s = 0) = 0 := by
+    unfold b2w
+    split
+    · rename_i h
+      exact absurd (of_decide_eq_true h) hne
+    · rfl
+  have hz : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Blocks.VkLoading.vkSucc]) (.vals [0] st) :=
+    Step.builtinOk (D := Bridge.Dialect c g) (Step.argsCons Step.argsNil hvar)
+      (by
+        simp only [builtinWithExternal, stepOp, un, b2w, decide_eq_false hne]
+        rfl)
+  exact Step.ifFalse hz rfl
+
+/-- The `success` guard FIRES at zero: the `fail` arm reverts. The existence dual of the guard
+    inversion, at an arbitrary selector site. -/
+theorem vk_gate_halts_any (R : Render p G₁ G₂ Gₜ) (sel : String) (err : Nat)
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    (hsel : R.consts.lookup sel = some err)
+    (hlookup : lookupFun funs "fail" = some (Blocks.TraceReturn.failFDecl, cenv))
+    (hsucc0 : VEnv.get V "success" = some (0 : U256)) :
+    ∃ V' st', ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Blocks.VkLoading.vkSucc])
+        [Stmt.exprStmt (Expr.call "fail" [Blocks.VkLoading.vkSite sel R.consts])]) V' st' .halt := by
+  let e : Expr EVM.Op := Expr.lit (.number err)
+  have hsite : Blocks.VkLoading.vkSite sel R.consts = e := by
+    simp [Blocks.VkLoading.vkSite, hsel, e]
+  obtain ⟨stR, hbody⟩ := fail_body_run (c := c) (g := g)
+    (([] : FScope (Bridge.Dialect c g)) :: cenv) (BitVec.ofNat 256 err) st
+  have hvar : EvalExpr (Bridge.Dialect c g) funs V st Blocks.VkLoading.vkSucc (.vals [0] st) :=
+    Step.var hsucc0
+  have hz : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Blocks.VkLoading.vkSucc]) (.vals [1] st) :=
+    Step.builtinOk (D := Bridge.Dialect c g) (Step.argsCons Step.argsNil hvar)
+      (by simp [builtinWithExternal, stepOp, un, b2w])
+  have harg : EvalExpr (Bridge.Dialect c g)
+      (([] : FScope (Bridge.Dialect c g)) :: funs) V st e
+      (.vals [BitVec.ofNat 256 err] st) := Step.lit
+  have hlookup' : lookupFun (([] : FScope (Bridge.Dialect c g)) :: funs) "fail" =
+      some (Blocks.TraceReturn.failFDecl, cenv) := hlookup
+  have hbody' : ExecStmts (Bridge.Dialect c g) (([] : FScope (Bridge.Dialect c g)) :: cenv)
+      ([("sel", BitVec.ofNat 256 err)] : VEnv (Bridge.Dialect c g)) st
+      (Blocks.TraceReturn.failFDecl.body) [("sel", BitVec.ofNat 256 err)] stR .halt := hbody
+  have hcall : Step (Bridge.Dialect c g) (([] : FScope (Bridge.Dialect c g)) :: funs) V st
+      (.expr (.call "fail" [e])) (.eres (.halt stR)) := by
+    refine Step.callHalt (D := Bridge.Dialect c g) (fn := "fail") (args := [e])
+      (argvals := [BitVec.ofNat 256 err]) (decl := Blocks.TraceReturn.failFDecl)
+      (cenv := cenv) (Vend := [("sel", BitVec.ofNat 256 err)]) (st1 := st) (st2 := stR)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [])
+        (Step.argsNil (D := Bridge.Dialect c g)) harg) hlookup' (by rfl) ?_
+    exact Step.block (D := Bridge.Dialect c g) (funs := cenv)
+      (body := Blocks.TraceReturn.failFDecl.body) hbody'
+  have hstmt : Step (Bridge.Dialect c g) (([] : FScope (Bridge.Dialect c g)) :: funs) V st
+      (.stmt (.exprStmt (.call "fail" [e]))) (.sres V stR .halt) :=
+    Step.exprStmtHalt hcall
+  have hbodyCond : ExecStmts (Bridge.Dialect c g) (([] : FScope (Bridge.Dialect c g)) :: funs) V st
+      [Stmt.exprStmt (.call "fail" [e])] V stR .halt :=
+    Step.seqStop hstmt (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide)
+  have hcond : Step (Bridge.Dialect c g) funs V st
+      (.stmt (.cond (Expr.builtin Op.iszero [Blocks.VkLoading.vkSucc])
+        [Stmt.exprStmt (.call "fail" [e])]))
+      (.sres (restore V V) stR .halt) :=
+    Step.ifTrue (D := Bridge.Dialect c g) (body := [Stmt.exprStmt (.call "fail" [e])])
+      hz (by show (1 : U256) ≠ 0; decide)
+      (Step.block (D := Bridge.Dialect c g) (funs := funs)
+        (body := [Stmt.exprStmt (.call "fail" [e])]) hbodyCond)
+  refine ⟨restore V V, stR, ?_⟩
+  rw [← hsite] at hcond
+  exact hcond
+
+end VkLiveSteps
+
+/-- **TOT.1.b's EXISTENCE HALF for vkLoading.** A run of the 13-statement slice from ANY
+    `StageInv .start` boundary: S1's guard is silent (the frame pins the VK), the six header assigns
+    step with symbolic bits, and the two guards (S9/S13) are branched on their ACTUAL bit, so no case
+    analysis of the VK header words or the calldata is needed. The revert branches go through the
+    `fail` helper (`vk_gate_halts_any` + `fail_body_run`). -/
+theorem vk_run_exists (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {V : VEnv (Blocks.TraceReturn.Dhonest product)} {st : EvmState}
+    (hpre : StageInv R H vkAddr cd Checkpoint.start V st) :
+    ∃ V' st' o, ExecStmts (Blocks.TraceReturn.Dhonest product)
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (R.slice Partial.vkLoading) V' st' o := by
+  obtain ⟨hframe, hsucc, -, hraw, -, -⟩ := hpre
+  have hcode : vkCodehashArm R.model :=
+    (Midfall.LoweringV3.MemoryPairs.generated_model_facts hR.generated).2 hR.supported.separateVk
+  obtain ⟨hVK, hPL, hP1, hP2, hP3⟩ := Midfall.LoweringV3.VkWindow.vkTableV3 hR hcode
+  obtain ⟨hSN, hSK, hSA, hSO, hSL, hSB⟩ := Midfall.LoweringV3.VkClean.vkHeaderLookupsV3 hR
+  have hEN : R.consts.lookup "ERR_VK_MISMATCH" = some 0xa447d73e :=
+    Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR "ERR_VK_MISMATCH" 0xa447d73e (by
+      cases h1 : R.model.expectedVkCodehash <;> cases h2 : R.model.quotientExternal <;>
+        cases h3 : R.model.expectedQuotientCodehash <;>
+          cases h4 : R.model.expectedHasAccumulator <;>
+            simp [Midfall.LoweringV3.expectedConsts, h1, h2, h3, h4, List.lookup])
+  have hEC : R.consts.lookup "ERR_BAD_CALLDATA_SHAPE" = some 0x1b99e37c :=
+    Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR "ERR_BAD_CALLDATA_SHAPE" 0x1b99e37c (by
+      cases h1 : R.model.expectedVkCodehash <;> cases h2 : R.model.quotientExternal <;>
+        cases h3 : R.model.expectedQuotientCodehash <;>
+          cases h4 : R.model.expectedHasAccumulator <;>
+            simp [Midfall.LoweringV3.expectedConsts, h1, h2, h3, h4, List.lookup])
+  have hfail : lookupFun (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) "fail" =
+      some (Blocks.TraceReturn.failFDecl,
+        R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) :=
+    Blocks.TraceReturn.fail_lookup R
+  let funs : FunEnv (Blocks.TraceReturn.Dhonest product) :=
+    hoist (Blocks.TraceReturn.Dhonest product)
+        (Blocks.VkLoading.vkBody R.consts R.pv.numInstances R.pv.k R.pv.expectedHasAccumulatorWord
+          R.pv.expectedAccOffset R.pv.expectedNumAccLimbs R.pv.expectedNumAccLimbBits
+          R.pv.proofLayout.proofLen) ::
+      R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)
+  have hfail' : lookupFun funs "fail" = some (Blocks.TraceReturn.failFDecl,
+      R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) :=
+    Midfall.LoweringV3.VkRow.vkBody_fail_lookup R R.pv.numInstances R.pv.k
+      R.pv.expectedHasAccumulatorWord R.pv.expectedAccOffset R.pv.expectedNumAccLimbs
+      R.pv.expectedNumAccLimbBits R.pv.proofLayout.proofLen hfail
+  let st2 : EvmState :=
+    { touchMemory st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len with
+      memory := copyInto st.memory (ptrAddr R.pv.memory.vkMptr) 1 R.pv.vk.len
+        (st.env.extCodeOf vkAddr) }
+  let a3 : Nat := (BitVec.ofNat 256 (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numInstances))).toNat
+  let st3 : EvmState := touchMemory st2 a3 32
+  let v3 : U256 := (1 : U256) &&& b2w (loadWord st2.memory
+    (ptrAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numInstances)) =
+      BitVec.ofNat 256 R.pv.numInstances)
+  let a4 : Nat := (BitVec.ofNat 256 (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.k))).toNat
+  let st4 : EvmState := touchMemory st3 a4 32
+  let v4 : U256 := v3 &&& b2w (loadWord st3.memory
+    (ptrAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.k)) =
+      BitVec.ofNat 256 R.pv.k)
+  let a5 : Nat := (BitVec.ofNat 256 (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.hasAccumulator))).toNat
+  let st5 : EvmState := touchMemory st4 a5 32
+  let v5 : U256 := v4 &&& b2w (loadWord st4.memory
+    (ptrAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.hasAccumulator)) =
+      BitVec.ofNat 256 R.pv.expectedHasAccumulatorWord)
+  let a6 : Nat := (BitVec.ofNat 256 (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.accOffset))).toNat
+  let st6 : EvmState := touchMemory st5 a6 32
+  let v6 : U256 := v5 &&& b2w (loadWord st5.memory
+    (ptrAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.accOffset)) =
+      BitVec.ofNat 256 R.pv.expectedAccOffset)
+  let a7 : Nat := (BitVec.ofNat 256 (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numAccLimbs))).toNat
+  let st7 : EvmState := touchMemory st6 a7 32
+  let v7 : U256 := v6 &&& b2w (loadWord st6.memory
+    (ptrAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numAccLimbs)) =
+      BitVec.ofNat 256 R.pv.expectedNumAccLimbs)
+  let a8 : Nat := (BitVec.ofNat 256 (Midfall.LoweringV2.cAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numAccLimbBits))).toNat
+  let st8 : EvmState := touchMemory st7 a8 32
+  let v8 : U256 := v7 &&& b2w (loadWord st7.memory
+    (ptrAddr (Ptr.add R.pv.memory.vkMptr vkHeaderTemplateSlotsDefault.numAccLimbBits)) =
+      BitVec.ofNat 256 R.pv.expectedNumAccLimbBits)
+  let V3 : VEnv (Blocks.TraceReturn.Dhonest product) := VEnv.set V "success" v3
+  let V4 : VEnv (Blocks.TraceReturn.Dhonest product) := VEnv.set V3 "success" v4
+  let V5 : VEnv (Blocks.TraceReturn.Dhonest product) := VEnv.set V4 "success" v5
+  let V6 : VEnv (Blocks.TraceReturn.Dhonest product) := VEnv.set V5 "success" v6
+  let V7 : VEnv (Blocks.TraceReturn.Dhonest product) := VEnv.set V6 "success" v7
+  let V8 : VEnv (Blocks.TraceReturn.Dhonest product) := VEnv.set V7 "success" v8
+  have hs3 : VEnv.get V3 "success" = some v3 :=
+    Blocks.VkLoading.vk_get_set_of_some hsucc
+  have hs4 : VEnv.get V4 "success" = some v4 :=
+    Blocks.VkLoading.vk_get_set_of_some hs3
+  have hs5 : VEnv.get V5 "success" = some v5 :=
+    Blocks.VkLoading.vk_get_set_of_some hs4
+  have hs6 : VEnv.get V6 "success" = some v6 :=
+    Blocks.VkLoading.vk_get_set_of_some hs5
+  have hs7 : VEnv.get V7 "success" = some v7 :=
+    Blocks.VkLoading.vk_get_set_of_some hs6
+  have hs8 : VEnv.get V8 "success" = some v8 :=
+    Blocks.VkLoading.vk_get_set_of_some hs7
+  have h1 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V st
+      (Blocks.VkLoading.vkS1 R.consts) V st .normal :=
+    Midfall.LoweringV3.VkClean.vk_step_s1 (funs := funs) R hR hcode H vkAddr cd hframe
+  have h2 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V st
+      (Blocks.VkLoading.vkS2 R.consts) V st2 .normal :=
+    Midfall.LoweringV3.VkClean.vk_step_s2 (funs := funs) (st := st) R hR vkAddr hframe.vk hVK hPL
+  have h3 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V st2
+      (Blocks.VkLoading.vkHdr "NUM_INSTANCES_MPTR" R.pv.numInstances R.consts
+        (Blocks.VkLoading.vkSucc0 R.consts)) V3 st3 .normal := by
+    have hsuccE : EvalExpr (Blocks.TraceReturn.Dhonest product) funs V (touchMemory st2 a3 32)
+        (Blocks.VkLoading.vkSucc0 R.consts) (.vals [1] (touchMemory st2 a3 32)) := by
+      rw [Blocks.VkLoading.vkSucc0_var R]; exact Step.var hsucc
+    exact vk_hdr_step_any (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0) R
+      "NUM_INSTANCES_MPTR" vkHeaderTemplateSlotsDefault.numInstances R.pv.numInstances
+      (funs := funs) (V := V) (st := st2) (succExpr := Blocks.VkLoading.vkSucc0 R.consts)
+      (av := 1) hsuccE hSN (Midfall.LoweringV3.VkClean.vk_hdr_addr_fit R hR _ (by decide))
+  have h4 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V3 st3
+      (Blocks.VkLoading.vkHdr "K_MPTR" R.pv.k R.consts Blocks.VkLoading.vkSucc)
+      V4 st4 .normal := by
+    have hsuccE : EvalExpr (Blocks.TraceReturn.Dhonest product) funs V3 (touchMemory st3 a4 32)
+        Blocks.VkLoading.vkSucc (.vals [v3] (touchMemory st3 a4 32)) := Step.var hs3
+    exact vk_hdr_step_any (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0) R
+      "K_MPTR" vkHeaderTemplateSlotsDefault.k R.pv.k
+      (funs := funs) (V := V3) (st := st3) (succExpr := Blocks.VkLoading.vkSucc) (av := v3)
+      hsuccE hSK (Midfall.LoweringV3.VkClean.vk_hdr_addr_fit R hR _ (by decide))
+  have h5 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V4 st4
+      (Blocks.VkLoading.vkHdr "HAS_ACCUMULATOR_MPTR" R.pv.expectedHasAccumulatorWord R.consts
+        Blocks.VkLoading.vkSucc) V5 st5 .normal := by
+    have hsuccE : EvalExpr (Blocks.TraceReturn.Dhonest product) funs V4 (touchMemory st4 a5 32)
+        Blocks.VkLoading.vkSucc (.vals [v4] (touchMemory st4 a5 32)) := Step.var hs4
+    exact vk_hdr_step_any (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0) R
+      "HAS_ACCUMULATOR_MPTR" vkHeaderTemplateSlotsDefault.hasAccumulator
+      R.pv.expectedHasAccumulatorWord
+      (funs := funs) (V := V4) (st := st4) (succExpr := Blocks.VkLoading.vkSucc) (av := v4)
+      hsuccE hSA (Midfall.LoweringV3.VkClean.vk_hdr_addr_fit R hR _ (by decide))
+  have h6 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V5 st5
+      (Blocks.VkLoading.vkHdr "ACC_OFFSET_MPTR" R.pv.expectedAccOffset R.consts
+        Blocks.VkLoading.vkSucc) V6 st6 .normal := by
+    have hsuccE : EvalExpr (Blocks.TraceReturn.Dhonest product) funs V5 (touchMemory st5 a6 32)
+        Blocks.VkLoading.vkSucc (.vals [v5] (touchMemory st5 a6 32)) := Step.var hs5
+    exact vk_hdr_step_any (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0) R
+      "ACC_OFFSET_MPTR" vkHeaderTemplateSlotsDefault.accOffset R.pv.expectedAccOffset
+      (funs := funs) (V := V5) (st := st5) (succExpr := Blocks.VkLoading.vkSucc) (av := v5)
+      hsuccE hSO (Midfall.LoweringV3.VkClean.vk_hdr_addr_fit R hR _ (by decide))
+  have h7 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V6 st6
+      (Blocks.VkLoading.vkHdr "NUM_ACC_LIMBS_MPTR" R.pv.expectedNumAccLimbs R.consts
+        Blocks.VkLoading.vkSucc) V7 st7 .normal := by
+    have hsuccE : EvalExpr (Blocks.TraceReturn.Dhonest product) funs V6 (touchMemory st6 a7 32)
+        Blocks.VkLoading.vkSucc (.vals [v6] (touchMemory st6 a7 32)) := Step.var hs6
+    exact vk_hdr_step_any (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0) R
+      "NUM_ACC_LIMBS_MPTR" vkHeaderTemplateSlotsDefault.numAccLimbs R.pv.expectedNumAccLimbs
+      (funs := funs) (V := V6) (st := st6) (succExpr := Blocks.VkLoading.vkSucc) (av := v6)
+      hsuccE hSL (Midfall.LoweringV3.VkClean.vk_hdr_addr_fit R hR _ (by decide))
+  have h8 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V7 st7
+      (Blocks.VkLoading.vkHdr "NUM_ACC_LIMB_BITS_MPTR" R.pv.expectedNumAccLimbBits R.consts
+        Blocks.VkLoading.vkSucc) V8 st8 .normal := by
+    have hsuccE : EvalExpr (Blocks.TraceReturn.Dhonest product) funs V7 (touchMemory st7 a8 32)
+        Blocks.VkLoading.vkSucc (.vals [v7] (touchMemory st7 a8 32)) := Step.var hs7
+    exact vk_hdr_step_any (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0) R
+      "NUM_ACC_LIMB_BITS_MPTR" vkHeaderTemplateSlotsDefault.numAccLimbBits
+      R.pv.expectedNumAccLimbBits
+      (funs := funs) (V := V7) (st := st7) (succExpr := Blocks.VkLoading.vkSucc) (av := v7)
+      hsuccE hSB (Midfall.LoweringV3.VkClean.vk_hdr_addr_fit R hR _ (by decide))
+  have hpre8 : ExecStmts (Blocks.TraceReturn.Dhonest product) funs V st
+      [Blocks.VkLoading.vkS1 R.consts, Blocks.VkLoading.vkS2 R.consts,
+       Blocks.VkLoading.vkHdr "NUM_INSTANCES_MPTR" R.pv.numInstances R.consts
+         (Blocks.VkLoading.vkSucc0 R.consts),
+       Blocks.VkLoading.vkHdr "K_MPTR" R.pv.k R.consts Blocks.VkLoading.vkSucc,
+       Blocks.VkLoading.vkHdr "HAS_ACCUMULATOR_MPTR" R.pv.expectedHasAccumulatorWord R.consts
+         Blocks.VkLoading.vkSucc,
+       Blocks.VkLoading.vkHdr "ACC_OFFSET_MPTR" R.pv.expectedAccOffset R.consts
+         Blocks.VkLoading.vkSucc,
+       Blocks.VkLoading.vkHdr "NUM_ACC_LIMBS_MPTR" R.pv.expectedNumAccLimbs R.consts
+         Blocks.VkLoading.vkSucc,
+       Blocks.VkLoading.vkHdr "NUM_ACC_LIMB_BITS_MPTR" R.pv.expectedNumAccLimbBits R.consts
+         Blocks.VkLoading.vkSucc] V8 st8 .normal :=
+    Step.seqCons h1 (Step.seqCons h2 (Step.seqCons h3 (Step.seqCons h4
+      (Step.seqCons h5 (Step.seqCons h6 (Step.seqCons h7 (Step.seqCons h8 Step.seqNil)))))))
+  by_cases hz8 : v8 = 0
+  · have hsucc0 : VEnv.get V8 "success" = some (0 : U256) := by rw [hs8, hz8]
+    obtain ⟨V9, st9, h9⟩ := vk_gate_halts_any (c := callsOf product)
+      (g := ExternalGas.ofFun fun _ => 0) R "ERR_VK_MISMATCH" 0xa447d73e
+      (funs := funs) (cenv := R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      hEN hfail' hsucc0
+    have hbody : ExecStmts (Blocks.TraceReturn.Dhonest product) funs V st
+        (Blocks.VkLoading.vkBody R.consts R.pv.numInstances R.pv.k
+          R.pv.expectedHasAccumulatorWord R.pv.expectedAccOffset R.pv.expectedNumAccLimbs
+          R.pv.expectedNumAccLimbBits R.pv.proofLayout.proofLen) V9 st9 .halt :=
+      ExecStmts.append hpre8
+        (Step.seqStop h9 (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide))
+    refine ⟨restore V V9, st9, .halt, ?_⟩
+    rw [Midfall.LoweringV3.VkRow.vk_sliceV3 R hR]
+    exact Step.seqStop (Step.block (D := Blocks.TraceReturn.Dhonest product) (funs := R.scope _ _)
+      (body := Blocks.VkLoading.vkBody R.consts R.pv.numInstances R.pv.k
+        R.pv.expectedHasAccumulatorWord R.pv.expectedAccOffset R.pv.expectedNumAccLimbs
+        R.pv.expectedNumAccLimbBits R.pv.proofLayout.proofLen) hbody)
+      (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide)
+  · have h9 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V8 st8
+        (Blocks.VkLoading.vkS9 R.consts) V8 st8 .normal :=
+      vk_gate_skip_any R "ERR_VK_MISMATCH" (funs := funs) hs8 hz8
+    let v10 : U256 := v8 &&& b2w (BitVec.ofNat 256 R.pv.proofLayout.proofLen =
+      wordFrom st8.env.calldata ((BitVec.ofNat 256 (R.pv.proofLayout.proofCptr - 32)).toNat))
+    let V10 : VEnv (Blocks.TraceReturn.Dhonest product) := VEnv.set V8 "success" v10
+    have hs10 : VEnv.get V10 "success" = some v10 :=
+      Blocks.VkLoading.vk_get_set_of_some (x := "success") (v := v8) (w := v10) hs8
+    have h10 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V8 st8
+        (Blocks.VkLoading.vkS10 R.consts R.pv.proofLayout.proofLen) V10 st8 .normal := by
+      have hsuccE : EvalExpr (Blocks.TraceReturn.Dhonest product) funs V8 st8
+          Blocks.VkLoading.vkSucc (.vals [v8] st8) := Step.var hs8
+      exact vk_cdl_step_any (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0) R
+        "PROOF_LEN_CPTR" (R.pv.proofLayout.proofCptr - 32) R.pv.proofLayout.proofLen
+        (funs := funs) (V := V8) (st := st8)
+        (succExpr := Blocks.VkLoading.vkSucc) (av := v8) hsuccE hP1
+    let v11 : U256 := v10 &&& b2w (BitVec.ofNat 256 R.pv.numInstances =
+      wordFrom st8.env.calldata ((BitVec.ofNat 256 R.pv.proofLayout.proofEnd).toNat))
+    let V11 : VEnv (Blocks.TraceReturn.Dhonest product) := VEnv.set V10 "success" v11
+    have hs11 : VEnv.get V11 "success" = some v11 :=
+      Blocks.VkLoading.vk_get_set_of_some (x := "success") (v := v10) (w := v11) hs10
+    have h11 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V10 st8
+        (Blocks.VkLoading.vkS11 R.consts R.pv.numInstances) V11 st8 .normal := by
+      have hsuccE : EvalExpr (Blocks.TraceReturn.Dhonest product) funs V10 st8
+          Blocks.VkLoading.vkSucc (.vals [v10] st8) := Step.var hs10
+      exact vk_cdl_step_any (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0) R
+        "NUM_INSTANCE_CPTR" R.pv.proofLayout.proofEnd R.pv.numInstances
+        (funs := funs) (V := V10) (st := st8)
+        (succExpr := Blocks.VkLoading.vkSucc) (av := v10) hsuccE hP2
+    let v12 : U256 := v11 &&& b2w (BitVec.ofNat 256 st8.env.calldata.length =
+      BitVec.ofNat 256 (R.pv.proofLayout.proofEnd + 32) + BitVec.ofNat 256 (R.pv.numInstances * 32))
+    let V12 : VEnv (Blocks.TraceReturn.Dhonest product) := VEnv.set V11 "success" v12
+    have h12 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V11 st8
+        (Blocks.VkLoading.vkS12 R.consts R.pv.numInstances) V12 st8 .normal := by
+      have hsuccE : EvalExpr (Blocks.TraceReturn.Dhonest product) funs V11 st8
+          Blocks.VkLoading.vkSucc (.vals [v11] st8) := Step.var hs11
+      exact vk_cdsz_step_any (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0) R
+        "INSTANCE_CPTR" (R.pv.proofLayout.proofEnd + 32) (R.pv.numInstances * 32)
+        (funs := funs) (V := V11) (st := st8)
+        (succExpr := Blocks.VkLoading.vkSucc) (av := v11) hsuccE hP3
+    have hs12 : VEnv.get V12 "success" = some v12 :=
+      Blocks.VkLoading.vk_get_set_of_some (x := "success") (v := v11) (w := v12) hs11
+    by_cases hz12 : v12 = 0
+    · have hsucc0 : VEnv.get V12 "success" = some (0 : U256) := by rw [hs12, hz12]
+      obtain ⟨V13, st13, h13⟩ := vk_gate_halts_any (c := callsOf product)
+        (g := ExternalGas.ofFun fun _ => 0) R "ERR_BAD_CALLDATA_SHAPE" 0x1b99e37c
+        (funs := funs) (cenv := R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        hEC hfail' hsucc0
+      have hbody : ExecStmts (Blocks.TraceReturn.Dhonest product) funs V st
+          (Blocks.VkLoading.vkBody R.consts R.pv.numInstances R.pv.k
+            R.pv.expectedHasAccumulatorWord R.pv.expectedAccOffset R.pv.expectedNumAccLimbs
+            R.pv.expectedNumAccLimbBits R.pv.proofLayout.proofLen) V13 st13 .halt :=
+        ExecStmts.append hpre8 (Step.seqCons h9 (Step.seqCons h10 (Step.seqCons h11
+          (Step.seqCons h12 (Step.seqStop h13
+            (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide))))))
+      refine ⟨restore V V13, st13, .halt, ?_⟩
+      rw [Midfall.LoweringV3.VkRow.vk_sliceV3 R hR]
+      exact Step.seqStop (Step.block (D := Blocks.TraceReturn.Dhonest product) (funs := R.scope _ _)
+        (body := Blocks.VkLoading.vkBody R.consts R.pv.numInstances R.pv.k
+          R.pv.expectedHasAccumulatorWord R.pv.expectedAccOffset R.pv.expectedNumAccLimbs
+          R.pv.expectedNumAccLimbBits R.pv.proofLayout.proofLen) hbody)
+        (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide)
+    · have h13 : ExecStmt (Blocks.TraceReturn.Dhonest product) funs V12 st8
+          (Blocks.VkLoading.vkS13 R.consts) V12 st8 .normal :=
+        vk_gate_skip_any R "ERR_BAD_CALLDATA_SHAPE" (funs := funs) hs12 hz12
+      have hbody : ExecStmts (Blocks.TraceReturn.Dhonest product) funs V st
+          (Blocks.VkLoading.vkBody R.consts R.pv.numInstances R.pv.k
+            R.pv.expectedHasAccumulatorWord R.pv.expectedAccOffset R.pv.expectedNumAccLimbs
+            R.pv.expectedNumAccLimbBits R.pv.proofLayout.proofLen) V12 st8 .normal :=
+        ExecStmts.append hpre8 (Step.seqCons h9 (Step.seqCons h10 (Step.seqCons h11
+          (Step.seqCons h12 (Step.seqCons h13 Step.seqNil)))))
+      refine ⟨restore V V12, st8, .normal, ?_⟩
+      rw [Midfall.LoweringV3.VkRow.vk_sliceV3 R hR]
+      exact Step.seqCons (Step.block (D := Blocks.TraceReturn.Dhonest product)
+        (funs := R.scope _ _) (body := Blocks.VkLoading.vkBody R.consts R.pv.numInstances R.pv.k
+          R.pv.expectedHasAccumulatorWord R.pv.expectedAccOffset R.pv.expectedNumAccLimbs
+          R.pv.expectedNumAccLimbBits R.pv.proofLayout.proofLen) hbody) Step.seqNil
+
+
+/-- **THE TOT.1 DECOMPOSITION, NAMED.** A `LiveTo` is exactly an existence statement plus a
+    classification of the exhibited run: the existential is `StmtsContract`'s first field, the
+    disjunction is its postcondition. This is the shape every block case takes (the plan's "the
+    existence form of the loop rule at each loop, and the block's all-runs row to classify the
+    exhibited run"). -/
+theorem liveTo_of_exists {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {b : Block D.Op} {pre mid : VEnv D → D.State → Prop}
+    (hex : ∀ V st, pre V st → ∃ V' st' o, ExecStmts D funs V st b V' st' o)
+    (hcls : ∀ V st, pre V st → ∀ V' st' o, ExecStmts D funs V st b V' st' o →
+      (o = .normal ∧ mid V' st') ∨ o ≠ .normal) :
+    LiveTo funs b pre mid := by
+  intro V st hpre
+  obtain ⟨V', st', o, hrun⟩ := hex V st hpre
+  exact ⟨V', st', o, hrun, hcls V st hpre V' st' o hrun⟩
+
+/-- **THE vkLoading CASE OF `block_live`, REDUCED TO EXISTENCE.** `VkClean.vk_clean_walkV3` is the
+    block's all-runs row at the HONEST dialect and it needs no accepted calldata: every run of the
+    slice from `StageInv .start` is a halted revert or a normal exit at `StageInv .vk`. So the
+    block's `LiveTo` follows from the existence half alone - TOT.1.b's residual obligation is
+    `hex` and nothing else. (The existence proof itself must reproduce the 13-statement walk with
+    the nine guards case-split; it is not in this commit.) -/
+theorem block_live_vkLoading_of_exists (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hR : ValidV3 R) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (hex : ∀ V st, StageInv R H vkAddr cd Checkpoint.start V st →
+      ∃ V' st' o, ExecStmts (Blocks.TraceReturn.Dhonest product)
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+        (R.slice Partial.vkLoading) V' st' o) :
+    BlockLive R .vkLoading H vkAddr product cd := by
+  refine liveTo_of_exists hex ?_
+  intro V st hpre V' st' o hrun
+  rcases VkClean.vk_clean_walkV3 R hR H vkAddr cd (ExternalGas.ofFun fun _ => 0)
+    V st hpre V' st' o hrun with hrev | hok
+  · exact Or.inr (by rw [hrev.1]; decide)
+  · exact Or.inl hok
+
+/-- **TOT.1.b CLOSED: vkLoading is live.** The existence half is `vk_run_exists`; the classification
+    is `block_live_vkLoading_of_exists`'s `vk_clean_walkV3`. Standard three, cone 0. -/
+theorem block_live_vkLoading (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hR : ValidV3 R) (H : Hash) (vkAddr : U256) (cd : Bytes) :
+    BlockLive R .vkLoading H vkAddr product cd :=
+  block_live_vkLoading_of_exists R product hR H vkAddr cd
+    (fun V st hpre => vk_run_exists R product hR H vkAddr cd hpre)
 
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
