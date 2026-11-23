@@ -65,6 +65,18 @@
   that turns `Mirror .quotient` + `Holds.g1Decodes` into `decode_exists`'s `hpts`, so the post's
   `∃ ms ..., Decoded` conjunct can be established. Both are named in the evidence's PG table, and
   neither is a hypothesis a row may take.
+
+  PG-PCS-EMIT'S FAULT ARMS, MEASURED. Only two are live at `trace = false`
+  (`GenAstPcs.lean`): the first `pcsBlock5Ast` panic (:432) is DEFINITIONAL and therefore
+  unreachable - `finalMsmLen = (FinalMsmShape.fromTerms (terms+1)).inputBytes` IS
+  `(terms+1) * g1MsmPairBytes` by `rfl` (`Layout.lean:880`); the second (:460) is a COUNTING
+  lemma over the same `ecPointBeq` tests `finalMsmShape` folds (`pcsLinExpansion` adds
+  `numQuotients + simpleSelectorCols.length` for the linearization commitment and 1 otherwise);
+  and `pcsLinExpansion`'s `listGetMut dat.fixedComms col` (:407) needs the generation invariant
+  `simpleSelectorCols ⊆ fixedComms.indices`. `intermediateSets`/`commitmentsBySet` have their own
+  fault arms (`Kzg.lean:930/1124`). The empty-plan arm is excluded by `ValidV3`'s
+  `hasMultiPointSet` clause (`Statements.lean:3462`), but no projection from `GeneratedBy` to
+  fault-freedom is in the tree. None of this is a row hypothesis; it is generator work.
 -/
 import Midfall.LoweringV2.Stages
 import Midfall.Lowering.GenAstPcs
