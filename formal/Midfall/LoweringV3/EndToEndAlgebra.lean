@@ -940,4 +940,147 @@ end MultiPrepareWidths
 end PresWidthSeq
 
 
+
+/-! ## 5. The `PrepareLogSlots` composition
+
+    The three read blocks of `prepare` are:
+
+      parseTrace        : the commitment prefix (A6's phase schedule / counts)
+      readAlgebra       : quotient commitments, then the scalar evals  (PROVED)
+      multiPrepare      : `[g1]`, the point-set scalars, `[g1]`        (PROVED,
+                          with the point-set count as the KZG residual)
+
+    `readAlgebraWidths` names the first block's exact list; the composition
+    below shows the readAlgebra and multiPrepare blocks add without loss. The
+    `parseTrace` slot and the KZG point-set-count identification
+    (`qEvalSetCount = plan.numPointSets`, which needs the challenge-nonzero pin
+    that `kzgPartitionBridge_false_at_x0` shows is missing) are the exact
+    residuals left as named props. -/
+
+/-- The exact width list `readAlgebra` appends, as a reusable function. -/
+def readAlgebraWidths {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁) (feat : Features) (vk : VerifyingKey (Fr p) G₁)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p)))) : List Nat :=
+  List.replicate
+      (if feat.outerSingleHCommitment then 1 else vk.domain.getQuotientPolyDegree)
+      (hashableG1 g1).width
+    ++ List.replicate
+        (instances.size *
+            (vk.cs.instanceQueries.toList.filter
+              (fun q => q.1.index < nbCommitted)).length
+          + numProofs * vk.cs.adviceQueries.size
+          + (vk.cs.numFixedColumns - vk.cs.numSimpleSelectors)
+          + vk.permutation.commitments.size
+          + (permutations.toList.map
+              (fun pc => 3 * pc.permutationProductCommitments.size - 1)).sum
+          + (lookups.toList.map
+              (fun row => (row.toList.map
+                (fun l => l.helperPolys.size + 3)).sum)).sum
+          + (trashcans.toList.map (fun row => row.size)).sum)
+        (hashableFr (p := p)).width
+
+theorem PresWidthSeq.readAlgebra_widths {G₁ : Type}
+    (g1 : G1Codec G₁) (feat : Features) (vk : VerifyingKey (Fr p) G₁)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p)))) :
+    PresWidthSeq
+      (readAlgebraWidths g1 feat vk permutations lookups trashcans
+        nbCommitted numProofs instances)
+      (Verifier.readAlgebra (p := p) g1 feat vk permutations lookups trashcans
+        nbCommitted numProofs instances) := by
+  unfold readAlgebraWidths
+  exact PresWidthSeq.readAlgebra g1 feat vk permutations lookups trashcans
+    nbCommitted numProofs instances
+
+/-- **The exact KZG residual.** Every `multiPrepare` call appends `[g1]`, `n`
+    scalars, `[g1]`. `n` is the protocol's `numPointSets`; the point-set count
+    is data-dependent (it collapses at x = 0, see
+    `LoweringV3.kzgPartitionBridge_false_at_x0`), so this is the KZG
+    partition-bridge / challenge-pin obligation, not a width fact of the code. -/
+def MultiPrepareBlockWidth {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (pcs : Pcs p G₁ G₂ Gₜ) (n : Nat) : Prop :=
+  ∀ (queries : Array (VerifierQuery (Fr p) G₁)),
+    PresWidthSeq
+      ([(hashableG1 g1).width] ++ List.replicate n (hashableFr (p := p)).width ++
+        [(hashableG1 g1).width])
+      (pcs.multiPrepare queries)
+
+/-- **The residual for A6's `parseTrace` schedule.** `parseTrace` appends one
+    `g1` per non-quotient commitment, in the phase-interleaved order of
+    `parse_trace`; this is the exact statement the A6 lane owes. It is not a
+    hypothesis of any row, bundle or root. -/
+def ParseTraceWidths {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features) (vk : VerifyingKey (Fr p) G₁)
+    (committed : Array (Array G₁)) (inst : Array (Array (Array (Fr p))))
+    (nCommit : Nat) : Prop :=
+  PresWidthSeq (List.replicate nCommit (hashableG1 E.g1).width)
+    (parseTrace E.g1 F vk committed inst)
+
+/-- **The KZG point-set-count identification.** The verifier's q-eval-set count
+    (the `constructIntermediateSets` point-set count on the queries
+    `linearize` produced) is the protocol's `numPointSets`. Stated here as a
+    run-level counter equality; the oracle falsifier at x = 0 shows an
+    unconditional version is false. -/
+def QEvalSetCountMatches {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (pcs : Pcs p G₁ G₂ Gₜ) (n : Nat) : Prop :=
+  MultiPrepareBlockWidth g1 pcs n
+
+section Composition
+
+variable {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+/-- **The two proved halves compose.** `readAlgebra`'s exact widths plus the
+    `linearize` lift (no reads) plus the multiPrepare block (`[g1]`, `n`
+    scalars, `[g1]`). This is the algebraic half of `prepare` with the KZG
+    point-set count supplied by the residual `MultiPrepareBlockWidth`. -/
+theorem readAlgebra_multiPrepare_widths (g1 : G1Codec G₁) (feat : Features)
+    (vk : VerifyingKey (Fr p) G₁)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p))))
+    (pcs : Pcs p G₁ G₂ Gₜ) (n : Nat)
+    (hMulti : MultiPrepareBlockWidth g1 pcs n)
+    (lin : Verifier.AlgebraRead (Fr p) G₁ → Except Fault (Array (VerifierQuery (Fr p) G₁))) :
+    PresWidthSeq
+      (readAlgebraWidths g1 feat vk permutations lookups trashcans
+        nbCommitted numProofs instances
+        ++ ([(hashableG1 g1).width] ++
+          List.replicate n (hashableFr (p := p)).width ++
+          [(hashableG1 g1).width]))
+      (Verifier.readAlgebra (p := p) g1 feat vk permutations lookups trashcans
+        nbCommitted numProofs instances >>= fun alg =>
+        StateT.lift (lin alg) >>= fun queries => pcs.multiPrepare queries) := by
+  refine PresWidthSeq.bind (ws1 := readAlgebraWidths g1 feat vk permutations lookups
+    trashcans nbCommitted numProofs instances)
+    (PresWidthSeq.readAlgebra_widths g1 feat vk permutations lookups trashcans
+      nbCommitted numProofs instances) (fun alg => ?_)
+  refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift (lin alg))
+    (fun queries => ?_)
+  exact hMulti queries
+
+end Composition
+
 end Midfall.LoweringV3
+
