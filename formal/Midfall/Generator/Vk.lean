@@ -661,6 +661,57 @@ def VkHeaderBuilder.finish (self : VkHeaderBuilder) :
               ++ " was not written"))
     (.ok [])
 
+/-- One step of `VkHeaderBuilder.finish`, named for the length proof. -/
+private def finishStep (acc : Except String (List (String × Word256)))
+    (pair : Nat × Option (String × Word256)) : Except String (List (String × Word256)) :=
+  match acc with
+  | .error e => .error e
+  | .ok xs =>
+      match pair.2 with
+      | some v => .ok (xs ++ [v])
+      | none => .error ("VK header word " ++ toString pair.1 ++ " was not written")
+
+private theorem finishFold_error (ps : List (Nat × Option (String × Word256))) (e : String) :
+    ps.foldl finishStep (.error e) = .error e := by
+  induction ps with
+  | nil => rfl
+  | cons p ps ih =>
+      cases p with
+      | mk word value =>
+          cases value <;> simp [finishStep, ih]
+
+private theorem finishFold_length (ws : List (Nat × Option (String × Word256)))
+    (xs : List (String × Word256)) (l : List (String × Word256))
+    (h : ws.foldl finishStep (.ok xs) = .ok l) :
+    l.length = xs.length + ws.length := by
+  induction ws generalizing xs l with
+  | nil =>
+      simp only [List.foldl_nil, Except.ok.injEq] at h
+      rw [← h]
+      simp
+  | cons p ps ih =>
+      cases p with
+      | mk word value =>
+          cases value with
+          | none =>
+              simp [finishStep, finishFold_error] at h
+          | some v =>
+              simp only [finishStep, List.foldl_cons] at h
+              have hl := ih (xs ++ [v]) l h
+              simp only [List.length_append, List.length_cons, List.length_nil] at hl ⊢
+              omega
+
+/-- **A SUCCESSFUL `finish` RETURNS ONE WORD PER HEADER SLOT.** The length half of the
+    `VkHeaderBuilder` spec the payload leaves need. PROVED. -/
+theorem VkHeaderBuilder.finish_length (b : VkHeaderBuilder) (l : List (String × Word256))
+    (h : b.finish = .ok l) : l.length = b.words.length := by
+  unfold VkHeaderBuilder.finish at h
+  have h' : ((List.range b.words.length).zip b.words).foldl finishStep (.ok []) = .ok l := by
+    unfold finishStep
+    exact h
+  have := finishFold_length _ _ _ h'
+  simpa using this
+
 /-! ## The SRS tau binding (rust: VK:29-62)
 
 MOVED: srs_tau_commitment (VK:50-62) is declared before srs_tau_is_consistent
