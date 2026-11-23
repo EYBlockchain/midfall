@@ -27,6 +27,7 @@
 -/
 import Midfall.LoweringV3.Composition
 import Midfall.LoweringV3.QuotientRows
+import Midfall.LoweringV3.TranscriptRows
 import Midfall.LoweringV3.VkClean
 import Midfall.LoweringV3.FpWire
 import Midfall.LoweringV3.FpInvTransfer
@@ -111,14 +112,18 @@ theorem vk_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (
 
 /-! ## 2. transcriptParser (owner ROW.TP, WP A6) -/
 
-/-- **LEAF (ROW.TP, WP A6): the transcriptParser simulation row.** Evidence `GeneratorRows.lean:817`;
-    its children (tp_computes, tp_agrees, tp_poison) land with ROW.TP (consumer first). -/
+/-- **ROW.TP, WP A6: the transcriptParser simulation row - PROVED HERE, FROM THE MODULE'S
+    `tp_blockSim`.** The row glue is `TranscriptRows.tp_blockSim`, which is the evidence's own
+    twelve-line argument spent on `tp_computes` / `tp_agrees` / `tp_poison`
+    (`TranscriptRows.lean` section 4). Those three are still registered leaves of ROW.TP, so the
+    row carries their cone; nothing is added to the row's statement and the `product` permit is
+    the only dialect input. -/
 theorem tp_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
     (vkAddr : U256) (cd : Bytes) (g : ExternalGas) :
-    BlockSim R Partial.transcriptParser H vkAddr (permissive (callsOf product)) g cd := by
-  sorry
+    BlockSim R Partial.transcriptParser H vkAddr (permissive (callsOf product)) g cd :=
+  TranscriptRows.tp_blockSim R product hR hcodec hpc H vkAddr cd g
 
 /-- **LEAF (ROW.TP, WP A6): the transcriptParser progress row.** Evidence `GeneratorRows.lean:830`. -/
 theorem tp_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
