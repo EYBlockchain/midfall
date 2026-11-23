@@ -39,7 +39,6 @@ gate tool, so it carries the word `sorry` in the message strings it prints, and 
 comments but not string literals. The environment scan needs no exemption.
 
 | declaration | module | kind | status | cone | statement | removed by |
-| Midfall.Generator.Certified.env_nG2 | Midfall.Generator.Certified | theorem | OPEN | - | `ce448f3485f23c4e` | V3 CERT.4 - generate_base_vk checks g2 == generator (vk.rs:180) |
 | Midfall.Generator.Certified.env_negLagranges | Midfall.Generator.Certified | theorem | OPEN | - | `b0cfe1fd7ad3a1fe` | V3 CERT.6 - ART builder from the plan meta; meta = ConstraintSystemMeta.new |
 | Midfall.Generator.Certified.env_vkDigest | Midfall.Generator.Certified | theorem | OPEN | - | `669009852444ef59` | V3 CERT.7 - header slot 0 survives the reservation loop; feToU256 o frToRepr = frWord |
 | Midfall.Generator.Certified.payload_comms | Midfall.Generator.Certified | theorem | OPEN | - | `7f86bf73bd42d399` | V3 CERT.7 - generate_base_vk mapM; untouched by the reservation loop, plus the G1 codec law |
