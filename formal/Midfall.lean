@@ -95,6 +95,7 @@ import Midfall.Instances.PayloadPointsF1
 import Midfall.Instances.GeneratorDone
 import Midfall.Instances.ValidV3F1Real
 import Midfall.Instances.GeneratorDoneAt
+import Midfall.Instances.VkKats
 import Midfall.Instances.PoseidonPins
 import Midfall.Instances.ConstsKats
 import Midfall.Generator.Vk
