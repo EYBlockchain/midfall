@@ -228,3 +228,90 @@ EXACT remaining input (unchanged in kind, now isolated to one datum):
 W12 remains the falsifier of the old unconditional form:
 `kzgPartitionBridge_false_at_x0` stays green, and the `∀ queries` statement is
 kept only as the refuted object (`MultiPrepareBlockWidth.eq_zero_of_empty_run`).
+
+## D-GATE10 datum increment: rotation injectivity, linearization entry, plan count
+
+This increment lands the three named sub-lemmas requested for the datum, and
+records the one interface obstruction that prevents the full merged
+`KzgQueryMapData` from being constructed as stated.
+
+PROVED (targeted `lake build Midfall.LoweringV3.RotationInjectivity
+Midfall.LoweringV3.LinearizeEntry Midfall.LoweringV3.KzgQueryMap
+Midfall.LoweringV3.EndToEndAlgebra Midfall.LoweringV3.EndToEnd`; new
+declarations have no `sorryAx`):
+
+* `Midfall/LoweringV3/RotationInjectivity.lean`
+  - `rotateOmega_eq_mul_zpow`: `rotateOmega x (Rotation.value z) = x * omega^z`
+    (using `powVartime_eq_pow`; `omegaInv * omega = 1` gives the negative-exponent
+    case).
+  - `rotateOmega_injective_on_rotations`: for `x ≠ 0` (D-GATE5
+    `ChallengesGood.xNonzero`), `omega` of exact order `n` (D-GATE6's
+    `EnvAgrees.omegaOrder`), and rotation-distinctness
+    `r ≡ s [ZMOD n] → r = s` (D-GATE6), equal rotation-image points force
+    `r = s`. The proof goes through `Units.mk0 omega`, Mathlib's
+    `zpow_eq_zpow_iff_modEq`, and `orderOf_eq_iff`.
+  - `rotationKey`/`rotationKey_injective`/`exists_pointKey`: the global
+    extension of the rotation key. On the rotation image it returns the
+    rotation; off the image it returns `N + ZMod.val q`, with `N` above every
+    `|rotation|`. The two ranges are disjoint, so the key is injective and
+    satisfies the global `(a == b) = (fk a == fk b)` obligation of
+    `KzgQueryMapData`, while still sending each rotation-image point to its
+    rotation. This closes the `fk` half of the datum.
+* `Midfall/LoweringV3/LinearizeEntry.lean`
+  - `collectQueries_back?`: the last query `collectQueries` emits is exactly the
+    supplied `linCom`.
+  - `VerifierQuery.newLinear_point` and
+    `computeLinearizationCommitment_point`: `computeLinearizationCommitment`
+    builds its query at point `x` (with label `custom "linearization_poly"` and
+    a `.linear` commitment).
+  - `linearize_back?_point`: the last query `linearize` emits has point
+    `alg.x`.
+* Plan count:
+  - `plan_numPointSets_eq_meta`: the repacked layout's `numPointSets`
+    (`proofLayout.qEvals.itemCount`) equals `R.plan.meta_.numPointSets`
+    (`newFromVk_meta_layout` + `fromProtocol_qEvals_itemCount`).
+  - `intermediateSets_parts` / `numPointSets_parts`: inversion of
+    `intermediateSets`/`numPointSets` into `queries` →
+    `constructIntermediateSetsImpl` → `sortSets`.
+  - `planMeta_numPointSets_generator`: from `PlanMeta R` and the `Data.new`
+    initialiser (`dummyEvalWords = []`), the generator's
+    `queries`/`constructIntermediateSetsImpl`/`sortSets` chain exists and
+    `R.plan.meta_.numPointSets` is its `sortSets` point-set count.
+  - `numPointSets_eq_of_queries_pointSets_length` (previous increment) closes
+    the reverse direction.
+
+EXACT RESIDUAL AND INTERFACE OBSTRUCTION:
+
+1. **The merged `KzgQueryMapData.hCommEq` is a global allocation-map
+   obligation, not a consequence of the per-index correspondence.**
+   `kzgCommitBeq` compares `.onePiece` by `CommitSlot` alone (`onePiece s _`)
+   and `.linear` by `(points, scalars)` (labels ignored); the generator's
+   `ecPointBeq` compares memory pointers. A global `ck` must therefore be a
+   tagged key: `.onePiece s _ ↦ inl s`, `.linear p sc _ ↦ inr (p, sc)`, and
+   `gk` must assign each paired generator pointer the same key. This is
+   constructible only after proving the allocation map: no generator pointer is
+   paired to two distinct slot keys at once (the committed-instance columns all
+   share `G1_IDENTITY_MPTR`, so aliasing must be ruled out on the actual query
+   list), and the linearization `.linear` key is assigned to `computedQuotientComm`.
+   The counting simulation needs equality reflection only on the commitments
+   that occur in the two query tails, so the natural next step is the
+   **local/relational** form of `hCommEq`/`hGCommEq`, or this tagged global
+   map plus the no-alias proof.
+2. **The linearization entry is `.linear` on the verifier side but `.onePiece`
+   on the generator side.** `linearize_back?_point` lands the point/order half;
+   the remaining half is that the `.linear` points/scalars/labels equal the
+   generator's `data.computedQuotientComm` entry (and its eval). Under (1), this
+   is naturally a per-entry relation, not a global `ck` equality.
+3. **`fk` instantiation.** The global key is proved (`exists_pointKey`). What
+   remains is to choose the finite `rots` list from `linearize`'s query vector
+   and supply D-GATE6's rotation-distinctness for that list; the field-algebra
+   core and the off-image injection are both landed.
+4. **Plan-side `hdummy`.** `planMeta_numPointSets_generator` takes
+   `R.plan.data.dummyEvalWords = []`; `Data.new` initialises it empty, but the
+   projection from `PlanMeta`'s `Data.new` equation to that fact is not yet a
+   named lemma. `PlanMeta` itself is not a field of `ValidV3` (it is a measured
+   candidate in `CertProbes`), so the final plan count remains conditional on
+   `PlanMeta`/`PlanMetaStable`.
+
+W12 remains green (`kzgPartitionBridge_false_at_x0`); no statement was weakened
+and no row/bundle/root gained a hypothesis.

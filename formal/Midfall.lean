@@ -226,6 +226,8 @@ import Midfall.Generator.Certified
 import Midfall.LoweringV3.EndToEnd
 import Midfall.LoweringV3.EndToEndAlgebra
 import Midfall.LoweringV3.KzgQueryMap
+import Midfall.LoweringV3.RotationInjectivity
+import Midfall.LoweringV3.LinearizeEntry
 import Midfall.Instances.StatementsV3Deploy
 import Midfall.Instances.VacuityWitnesses
 import Midfall.Instances.StatementsV3Falsifiers

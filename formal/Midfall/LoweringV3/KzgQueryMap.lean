@@ -1356,6 +1356,47 @@ theorem sortSets_pointSets_length (input : IntermediateSets) (out : Intermediate
     rw [hmap, insertionSortBy_length, List.length_range]
   exact hlen
 
+theorem numPointSets_setNumPointSets (m : ConstraintSystemMeta) (data : Data) (n : Nat) :
+    numPointSets (m.setNumPointSets n) data = numPointSets m data := by
+  cases m
+  rfl
+
+theorem queries_setNumPointSets (m : ConstraintSystemMeta) (data : Data) (n : Nat) :
+    queries (m.setNumPointSets n) data = queries m data := by
+  cases m
+  rfl
+
+theorem numPointSets_parts (meta_ : ConstraintSystemMeta) (data : Data) (n : Nat)
+    (h : numPointSets meta_ data = .ok n) :
+    ∃ out : IntermediateSets,
+      intermediateSets meta_ data = .ok out ∧ out.pointSets.length = n := by
+  unfold numPointSets at h
+  obtain ⟨out, hout, hlen⟩ := except_bind_ok h
+  cases hlen
+  exact ⟨out, hout, rfl⟩
+
+theorem intermediateSets_parts (meta_ : ConstraintSystemMeta) (data : Data)
+    (out : IntermediateSets) (hdummy : data.dummyEvalWords = [])
+    (h : intermediateSets meta_ data = .ok out) :
+    ∃ (qs : List Query) (sets : IntermediateSets),
+      queries meta_ data = .ok qs ∧
+      constructIntermediateSetsImpl qs = .ok sets ∧
+      sortSets sets = .ok out := by
+  unfold intermediateSets at h
+  rw [hdummy] at h
+  simp only [List.isEmpty_nil, if_true] at h
+  obtain ⟨qs, hq, hrest⟩ := except_bind_ok h
+  rw [show (pure qs : Except Fault (List Query)) = .ok qs from rfl] at hrest
+  simp only [Bind.bind, Except.bind] at hrest
+  cases hci : constructIntermediateSetsImpl qs with
+  | error e =>
+      rw [hci] at hrest
+      simp at hrest
+  | ok sets =>
+      rw [hci] at hrest
+      simp only [Bind.bind, Except.bind] at hrest
+      exact ⟨qs, sets, hq, hci, hrest⟩
+
 theorem numPointSets_eq_of_queries
     (meta_ : ConstraintSystemMeta) (data : Data)
     (qs : List Query) (sets out : IntermediateSets)
