@@ -28,6 +28,7 @@ import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.LoweringV3.FpConsts
 import Midfall.LoweringV3.VkClean
 import Midfall.LoweringV3.FpBody
+import Midfall.LoweringV3.FpG2Width
 import Midfall.Lowering.FrameWalk
 import Midfall.Tools.ConeSorries
 import Midfall.Tools.Done
@@ -2770,6 +2771,7 @@ theorem inv_pcs_pairing_pins {calls : ExternalCalls} {gas : ExternalGas}
           (E.g1.toEip S.c.dual.left.eval).data) = true at hh
         exact ByteArray.ext (beq_iff_eq.mp hh)
 
+
 /-- `Frame` reads the state only through `env.calldata`, `env.keccakOf` and `env.extCodeOf`,
     so an environment-preserving transition keeps it. -/
 theorem Frame_env_congr {R : Render p G₁ G₂ Gₜ} {H : Hash} {vkAddr : U256} {cd : Bytes}
@@ -2788,6 +2790,43 @@ def fpWireFrame (R : Render p G₁ G₂ Gₜ) (st : EvmState) : Bytes :=
   pairingFrame
     [(bytesAt st (ptrAddr R.pv.memory.pairingRhsMptr) 128, vkG2Words R.pv vkG2BaseSlot),
      (bytesAt st (ptrAddr R.pv.memory.pairingLhsMptr) 128, vkG2Words R.pv vkNegSG2BaseSlot)]
+
+/-- The frame the helper actually assembles on the wire, at the CALL'S OWN source arguments:
+    the two G1 slices at `lhsW`/`rhsW` and the two G2 header slices at the vk addresses. This is the
+    post `FpBodyRun` can state uniformly in `lhsW`/`rhsW`; at the clean call site the pins and the G2
+    width law identify it with `fpWireFrame`. -/
+def fpActualFrame (R : Render p G₁ G₂ Gₜ) (st : EvmState) (lhsW rhsW : U256) : Bytes :=
+  pairingFrame
+    [(bytesAt st lhsW.toNat 128,
+      bytesAt st (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base)) 256),
+     (bytesAt st rhsW.toNat 128,
+      bytesAt st (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base)) 256)]
+
+/-- **THE ACTUAL-SOURCE FRAME IS `fpWireFrame` AT THE CLEAN CALL SITE.** The two G1 slices are the
+    `.pcs` pins, the two header slices are `bytesAt_vkG2Base_of_valid`/neg, and the two `ofNat.toNat`
+    fit equations turn the program's word arguments into the addresses `Inv` reads. The fit
+    equations are the pairing-slot counterpart of A11's `fit1_of_valid`/`fit2_of_valid`; unlike the
+    VK pointer, `ValidV3` does not carry a bound for the theta block. -/
+theorem fpActualFrame_eq_fpWireFrame
+    {E : VerifierEnv p G₁ G₂ Gₜ}
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (product : PairingProduct)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (S : Snapshot p G₁ G₂ Gₜ) (st : EvmState)
+    (hpayload : bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes)
+    (hptr : ∃ n : ℕ, ptrValue R.pv.memory.vkMptr = Value.integer ↑n)
+    (hRpin : bytesAt st (ptrAddr R.pv.memory.pairingRhsMptr) 128 =
+      E.g1.toEip S.c.dual.right.eval)
+    (hLpin : bytesAt st (ptrAddr R.pv.memory.pairingLhsMptr) 128 =
+      E.g1.toEip S.c.dual.left.eval)
+    (hfitR : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr)).toNat =
+      ptrAddr R.pv.memory.pairingRhsMptr)
+    (hfitL : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)).toNat =
+      ptrAddr R.pv.memory.pairingLhsMptr) :
+    fpActualFrame R st (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr))
+      (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)) = fpWireFrame R st := by
+  have hGB := bytesAt_vkG2Base_of_valid R hR product hpc st hpayload hptr
+  have hGN := bytesAt_vkNegSG2Base_of_valid R hR product hpc st hpayload hptr
+  unfold fpActualFrame fpWireFrame
+  rw [hfitR, hfitL, hRpin, hLpin, hGB, hGN]
 
 /-- **THE CLEAN `.finalPairing` ARM, REDUCED TO THE HELPER CALL.** The hypothesis is exactly the
     existence half the `ec_pairing` body owes: on every clean `.pcs` boundary the call either
@@ -2914,7 +2953,7 @@ def FpBodyRun (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) : Prop :=
             (∀ x, x < R.pv.memory.finalPairingScratchMptr ∨
                   R.pv.memory.finalPairingScratchMptr + 768 ≤ x → stend.memory x = st.memory x) ∧
             stend.env = st.env ∧ stend.halted = st.halted ∧
-            product (fpWireFrame R st) = true) ∨ o = .halt)
+            product (fpActualFrame R st lhsW rhsW) = true) ∨ o = .halt)
 
 /-- **THE `ec_pairing` CALL FROM THE 13-STATEMENT BODY RUN.** The one hypothesis is the body's
     `Step` at `(.stmt (.block ecPairingBodyLit …))` from the helper's own entry environment - i.e.
@@ -2929,6 +2968,9 @@ theorem ecPairing_call_of_body
     ∀ (V : VEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0)))
       (st : EvmState),
       VEnv.get V "success" = some (1 : U256) →
+      (product (fpActualFrame R st (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr))
+          (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr))) = true →
+        product (fpWireFrame R st) = true) →
       ∃ st' : EvmState,
         (EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
             (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
@@ -2943,7 +2985,7 @@ theorem ecPairing_call_of_body
             (Expr.call "ec_pairing"
               [Expr.var "success", Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
                Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"]) (.halt st') := by
-  intro V st hsucc
+  intro V st hsucc hbridge
   -- the declaration and its literal body
   have hdecl := Midfall.LoweringV3.ecPairingDecl_eq_lit R hR
     (callsOf product) (ExternalGas.ofFun fun _ => 0)
@@ -3034,7 +3076,7 @@ theorem ecPairing_call_of_body
             hargs hlook hlen ?_ hoc
       · simpa only [hdecl, List.map_cons, List.map_nil, hret, Option.getD_some] using hcall
       · simpa only [hdecl] using hstep'
-    exact ⟨stend, Or.inl ⟨hev, hmem, henv, hhalt, hprod⟩⟩
+    exact ⟨stend, Or.inl ⟨hev, hmem, henv, hhalt, hbridge hprod⟩⟩
   · subst hoh
     refine ⟨stend, Or.inr ?_⟩
     have hlen : ([1, BitVec.ofNat 256
@@ -3058,17 +3100,40 @@ theorem block_live_finalPairing_clean_of_body
     (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
     (vkAddr : U256) (cd : Bytes)
-    (hbody : FpBodyRun R product) :
+    (hbody : FpBodyRun R product)
+    (hpayload : ∀ V st, StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+        R H vkAddr cd Checkpoint.pcs V st →
+      bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes)
+    (hfitR : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr)).toNat =
+      ptrAddr R.pv.memory.pairingRhsMptr)
+    (hfitL : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)).toNat =
+      ptrAddr R.pv.memory.pairingLhsMptr) :
     ∀ V st, StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
         R H vkAddr cd Checkpoint.pcs V st →
       ∃ V' st' o, ExecStmts (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
         (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
         (R.slice Partial.finalPairing) V' st' o ∧
         ((o = .normal ∧ Mid (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
-            R H vkAddr cd Checkpoint.pairing V' st') ∨ o ≠ .normal) :=
-  block_live_finalPairing_clean_of_call R product hR hpc H vkAddr cd
+            R H vkAddr cd Checkpoint.pairing V' st') ∨ o ≠ .normal) := by
+  -- the vk pointer is the generator's integer-valued pointer
+  obtain ⟨meta_, vkMptr, config, vkBase, hlayout, hvk, -⟩ := plan_size_of_generated hR.generated
+  have hptr : ∃ n : ℕ, ptrValue R.pv.memory.vkMptr = Value.integer ↑n := by
+    refine ⟨vkBase, ?_⟩
+    rw [hlayout, MemoryPairs.new_vkMptr, hvk]
+    rfl
+  refine block_live_finalPairing_clean_of_call R product hR hpc H vkAddr cd
     (fun V st hclean =>
-      ecPairing_call_of_body R product hR hbody V st hclean.2.1)
+      ecPairing_call_of_body R product hR hbody V st hclean.2.1 (by
+        intro hprod
+        obtain ⟨ms, instW, inst, hdec⟩ := hclean.2.2.2.1
+        obtain ⟨S, hstage, hinv⟩ := hclean.2.2.2.2.2 ms instW inst hdec
+        obtain ⟨hRpin, hLpin⟩ := inv_pcs_pairing_pins
+          (calls := callsOf product) (gas := ExternalGas.ofFun fun _ => 0)
+          (E := R.E) (params := R.params) (PV := R.pv) (S := S) hinv
+        have hframe := fpActualFrame_eq_fpWireFrame R hR product hpc S st
+          (hpayload V st hclean) hptr hRpin hLpin hfitR hfitL
+        rw [← hframe]
+        exact hprod))
 
 /-- **THE finalPairing CASE OF `block_live`, REDUCED TO THE BODY RUN.** The clean boundary is the
     assembled slice, the poisoned boundary is `block_live_finalPairing_poison`; both still carry the
@@ -3077,11 +3142,19 @@ theorem block_live_finalPairing_of_body
     (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
     (vkAddr : U256) (cd : Bytes)
-    (hbody : FpBodyRun R product) :
+    (hbody : FpBodyRun R product)
+    (hpayload : ∀ V st, StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+        R H vkAddr cd Checkpoint.pcs V st →
+      bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes)
+    (hfitR : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr)).toNat =
+      ptrAddr R.pv.memory.pairingRhsMptr)
+    (hfitL : (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)).toNat =
+      ptrAddr R.pv.memory.pairingLhsMptr) :
     BlockLive R .finalPairing H vkAddr product cd := by
   intro V st hpre
   rcases hpre with hclean | hpois
-  · exact block_live_finalPairing_clean_of_body R product hR hpc H vkAddr cd hbody V st hclean
+  · exact block_live_finalPairing_clean_of_body R product hR hpc H vkAddr cd hbody
+      hpayload hfitR hfitL V st hclean
   · exact block_live_finalPairing_poison R product hR H vkAddr cd V st hpois
 
 theorem ec_gate_halts {c : ExternalCalls} {g : ExternalGas}
