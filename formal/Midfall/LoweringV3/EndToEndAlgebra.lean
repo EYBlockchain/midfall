@@ -4687,6 +4687,16 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms ecPointBeq_quotient_g1
   [propext, Classical.choice, Quot.sound]
+#assert_axioms ecPointBeq_self
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_comm_classification
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms ecPointBeq_quotient_of_classification
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms listGetMut_mem
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms hashMapGet_mem
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point

@@ -398,4 +398,143 @@ theorem mem_map_snd_numeric {α : Type} {l : List (α × EcPoint)}
   obtain ⟨p, hp, rfl⟩ := hc
   exact h p hp
 
+theorem queryFromPlan_comm_classification (source : PcsQuerySource)
+    (meta_ : ConstraintSystemMeta) (data : Data) (q' : Query)
+    (hd : data.CommsNumericOrIdentity)
+    (hquot : data.computedQuotientComm = quotientComm)
+    (h : queryFromPlan source meta_ data = .ok q') :
+    q'.comm = quotientComm ∨ q'.comm.Numeric ∨ q'.comm = g1Identity := by
+  obtain ⟨hfix, hperm, hadv, hinst, hpz, hlm, hhl, hlz, htr⟩ := hd
+  cases source with
+  | advice q =>
+      unfold queryFromPlan at h
+      simp only [Bind.bind, Except.bind] at h
+      obtain ⟨comm, hcomm, h⟩ := except_bind_ok h
+      split at h
+      · cases h
+        exact Or.inr (Or.inl (hadv comm (listGetMut_mem hcomm)))
+      · cases h
+  | committedInstance q =>
+      unfold queryFromPlan at h
+      simp only [Bind.bind, Except.bind] at h
+      obtain ⟨comm, hcomm, h⟩ := except_bind_ok h
+      split at h
+      · cases h
+        exact Or.inr (Or.inr (hinst comm (listGetMut_mem hcomm)))
+      · cases h
+  | permutationZ set kind =>
+      unfold queryFromPlan at h
+      simp only [Bind.bind, Except.bind] at h
+      obtain ⟨evalTriple, heval, h⟩ := (dataMatchOk _ _).mp h
+      cases kind with
+      | cur =>
+          obtain ⟨comm, hcomm, h⟩ := (dataMatchOk _ _).mp h
+          cases h
+          exact Or.inr (Or.inl (hpz comm (listGetMut_mem hcomm)))
+      | next =>
+          obtain ⟨comm, hcomm, h⟩ := (dataMatchOk _ _).mp h
+          cases h
+          exact Or.inr (Or.inl (hpz comm (listGetMut_mem hcomm)))
+      | last =>
+          cases hlast : evalTriple.2.2 with
+          | none =>
+              rw [hlast] at h
+              cases h
+          | some e =>
+              rw [hlast] at h
+              obtain ⟨comm, hcomm, h⟩ := (dataMatchOk _ _).mp h
+              cases h
+              exact Or.inr (Or.inl (hpz comm (listGetMut_mem hcomm)))
+  | lookupMultiplicity lookup =>
+      unfold queryFromPlan at h
+      simp only [Bind.bind, Except.bind] at h
+      obtain ⟨evalTuple, heval, h⟩ := except_bind_ok h
+      obtain ⟨comm, hcomm, h⟩ := except_bind_ok h
+      cases h
+      exact Or.inr (Or.inl (hlm comm (listGetMut_mem hcomm)))
+  | lookupHelper lookup chunk =>
+      unfold queryFromPlan at h
+      simp only [Bind.bind, Except.bind] at h
+      obtain ⟨evalTuple, heval, h⟩ := except_bind_ok h
+      obtain ⟨helpers, hhelpers, h⟩ := except_bind_ok h
+      obtain ⟨comm, hcomm, h⟩ := except_bind_ok h
+      obtain ⟨eval, _, h⟩ := except_bind_ok h
+      cases h
+      exact Or.inr (Or.inl (hhl helpers (listGetMut_mem hhelpers) comm (listGetMut_mem hcomm)))
+  | lookupAccumulator lookup rotation =>
+      unfold queryFromPlan at h
+      simp only [Bind.bind, Except.bind] at h
+      obtain ⟨evalTuple, heval, h⟩ := except_bind_ok h
+      split at h
+      · obtain ⟨comm, hcomm, h⟩ := except_bind_ok h
+        cases h
+        exact Or.inr (Or.inl (hlz comm (listGetMut_mem hcomm)))
+      · obtain ⟨comm, hcomm, h⟩ := except_bind_ok h
+        cases h
+        exact Or.inr (Or.inl (hlz comm (listGetMut_mem hcomm)))
+      · cases h
+  | trash index =>
+      unfold queryFromPlan at h
+      simp only [Bind.bind, Except.bind] at h
+      obtain ⟨comm, hcomm, h⟩ := except_bind_ok h
+      obtain ⟨eval, _, h⟩ := except_bind_ok h
+      cases h
+      exact Or.inr (Or.inl (htr comm (listGetMut_mem hcomm)))
+  | fixed q =>
+      unfold queryFromPlan at h
+      simp only [Bind.bind, Except.bind] at h
+      obtain ⟨comm, hcomm, h⟩ := except_bind_ok h
+      split at h
+      · cases h
+        exact Or.inr (Or.inl (hfix comm (listGetMut_mem hcomm)))
+      · cases h
+  | permutationCommon column =>
+      unfold queryFromPlan at h
+      simp only [Bind.bind, Except.bind] at h
+      split at h
+      · split at h
+        · cases h
+          exact Or.inr (Or.inl (mem_map_snd_numeric hperm (hashMapGet_mem ‹_›)))
+        · cases h
+      · cases h
+  | linearization =>
+      unfold queryFromPlan at h
+      cases h
+      exact Or.inl hquot
+
 end Midfall.LoweringV3
+
+namespace Midfall.Generator
+
+theorem ecPointBeq_self (c : EcPoint) : ecPointBeq c c = true := by
+  rcases c with ⟨base⟩
+  rcases base with ⟨loc, value⟩
+  cases value <;> cases loc <;> simp [ecPointBeq, ptrBeq, locationBeq, valueBeq]
+
+theorem numeric_ne_quotient (c : EcPoint) (h : c.Numeric) : c ≠ quotientComm := by
+  intro hc
+  subst hc
+  obtain ⟨i, hi⟩ := h
+  simp only [quotientComm, EcPoint.Numeric, Ptr.Numeric, EcPoint.new, ptrMemory,
+    valueFromStr] at hi
+  cases hi
+
+theorem g1Identity_ne_quotient : g1Identity ≠ quotientComm := by
+  intro h
+  simp only [g1Identity, quotientComm, EcPoint.new, ptrMemory, valueFromStr] at h
+  injection h with hbase
+  injection hbase with hloc hval
+  injection hval with hname
+  exact absurd hname (by decide)
+
+theorem ecPointBeq_quotient_of_classification (c : EcPoint)
+    (hclass : c = quotientComm ∨ c.Numeric ∨ c = g1Identity)
+    (hne : c ≠ quotientComm) :
+    ecPointBeq quotientComm c = false := by
+  rcases hclass with h | h | h
+  · exact absurd h hne
+  · exact ecPointBeq_quotient_of_numeric c h
+  · subst h
+    exact ecPointBeq_quotient_g1
+
+end Midfall.Generator
