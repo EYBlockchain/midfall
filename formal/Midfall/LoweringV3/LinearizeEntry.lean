@@ -18,6 +18,27 @@ open Midfall Midfall.Halo2 Midfall.Generator
 
 variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
 
+theorem collectQueries_parts (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (committedInstances adviceCommitments : Array (Array G₁))
+    (instanceEvals adviceEvals : Array (Array (Fr p)))
+    (permutationsEvaluated : Array (Permutation.Evaluated (Fr p) G₁))
+    (lookupsEvaluated : Array (Array (Logup.Evaluated (Fr p) G₁)))
+    (trashcansEvaluated : Array (Array (Trash.Evaluated (Fr p) G₁)))
+    (fixedEvals : Array (Fr p)) (permutationsCommon : Permutation.CommonEvaluated (Fr p))
+    (linCom : VerifierQuery (Fr p) G₁) (queries : Array (VerifierQuery (Fr p) G₁))
+    (h : Verifier.collectQueries nbCommitted vk x committedInstances adviceCommitments
+      instanceEvals adviceEvals permutationsEvaluated lookupsEvaluated trashcansEvaluated
+      fixedEvals permutationsCommon linCom = .ok queries) :
+    ∃ (perProof : List (List (VerifierQuery (Fr p) G₁)))
+      (fixed : List (VerifierQuery (Fr p) G₁)),
+      queries.toList = perProof.flatten ++ fixed ++
+        (permutationsCommon.queries vk.permutation x).toList ++ [linCom] := by
+  unfold Verifier.collectQueries at h
+  obtain ⟨perProof, _hper, h1⟩ := except_bind_ok h
+  obtain ⟨fixed, _hfixed, h2⟩ := except_bind_ok h1
+  cases h2
+  exact ⟨perProof, fixed, by simp⟩
+
 theorem collectQueries_back? (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
     (committedInstances adviceCommitments : Array (Array G₁))
     (instanceEvals adviceEvals : Array (Array (Fr p)))

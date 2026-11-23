@@ -4562,6 +4562,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms collectQueries_back?
   [propext, Classical.choice, Quot.sound]
+#assert_axioms collectQueries_parts
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
