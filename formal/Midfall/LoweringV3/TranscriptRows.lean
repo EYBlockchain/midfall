@@ -62,6 +62,7 @@
 -- [propext, Classical.choice, Quot.sound] (the last only where 'List.find?'/'decide' needs it);
 -- no 'native_decide' (D-P17); no 'maxHeartbeats'/'maxRecDepth' raise.
 import Midfall.LoweringV3.QuotientRows
+import Midfall.LoweringV3.VkWindow
 import Midfall.LoweringV3.MemoryPairs
 import Midfall.Lowering.GenAst
 import Midfall.Lowering.Calldata
@@ -3084,6 +3085,51 @@ theorem tp_events_slots (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
     trivial
 
 set_option maxRecDepth 100000 in
+/-- **THE ENVELOPE'S CALldata SIZE.** `envelopeOk` pins `cd.size = proofEnd + 32 +
+    32*numInstances` (`Stage.lean:91-95`), which is the length the proof-wire slices live
+    in; `StageInv .vk` carries it as `LeanRaw .vk`. -/
+theorem cdSize_of_envelope (L : Midfall.Generator.ProofCalldataLayout) (numInstances : Nat)
+    (cd : Bytes) (h : Midfall.Lowering.Stage.envelopeOk L numInstances cd = true) :
+    cd.data.toList.length = L.proofEnd + 32 + 32 * numInstances := by
+  unfold Midfall.Lowering.Stage.envelopeOk at h
+  simp only [Bool.and_eq_true] at h
+  obtain ⟨⟨⟨_, _⟩, _⟩, hsz⟩ := h
+  have := beq_iff_eq.mp hsz
+  rw [← this]
+  simp
+
+/-- **THE PROOF-WIRE LENGTH, FROM THE ENVELOPE.** Every 128-byte proof-wire frame ending
+    inside `proofEnd` is inside the calldata, so `calldatacopy`'s window is the exact
+    `cdSlice` (not a zero-padded one). This is the premise the `common_uncompressed_g1`
+    contract needs on its normal path; no new clause. -/
+theorem cdSlice_length_of_envelope (L : Midfall.Generator.ProofCalldataLayout)
+    (numInstances : Nat) (cd : Bytes)
+    (h : Midfall.Lowering.Stage.envelopeOk L numInstances cd = true)
+    (cptr : Nat) (hsec : cptr + 128 ≤ L.proofEnd) :
+    cptr + 128 ≤ cd.data.toList.length := by
+  rw [cdSize_of_envelope L numInstances cd h]
+  omega
+
+/-- **THE `calldatacopy` WINDOW IS THE CALLDATA SLICE.** `calldatacopy(dst, src, n)`
+    writes exactly `cdSlice cd src n` when the source window is inside the calldata
+    (`src + n ≤ cd.size`); past the end it zero-pads, which is why the normal path of
+    `common_uncompressed_g1` carries that length bound (from the envelope / the walk's
+    `a + 128*j ≤ cd.size`, not a new clause). -/
+theorem bytesAt_calldatacopy_cdSlice (st : EvmState) (cd : Bytes) (dst src n : Nat)
+    (hcd : st.env.calldata = cd.data.toList)
+    (hlen : src + n ≤ cd.data.toList.length) :
+    bytesAt { touchMemory st dst n with
+        memory := copyInto st.memory dst src n st.env.calldata } dst n
+      = cdSlice cd src n := by
+  unfold bytesAt cdSlice
+  rw [hcd]
+  show ByteArray.mk (readBytes (copyInto st.memory dst src n cd.data.toList) dst n).toArray
+      = ByteArray.mk ((cd.data.toList.drop src).take n).toArray
+  rw [Midfall.LoweringV3.VkWindow.readBytes_copyInto_window st.memory dst src n dst n cd.data.toList
+    (Nat.le_refl _) (by omega) (by omega : src + (dst - dst) + n ≤ cd.data.toList.length)]
+  congr 1
+  rw [show src + (dst - dst) = src from by omega]
+
 /-- **THE WALK'S RANGE CHECK, PURE.** A coordinate whose high word is below `2^128`
     and whose `(hi, lo)` split passes `common_uncompressed_g1`'s range check is
     below `pBase`: `hi * 2^256 + lo + 1 = pBase` (the contract's `BLS_P_HI |
@@ -3544,6 +3590,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.coordLt_pBase [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1WordsOk_of_checks [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonG1_inline [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_calldatacopy_cdSlice [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.cdSize_of_envelope [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_length_of_envelope [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_slice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.inline_g1WalkLoop [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_inExpr_eq_of_shadowed [propext, Classical.choice, Quot.sound] native []
