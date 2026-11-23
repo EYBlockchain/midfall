@@ -86,3 +86,53 @@ the protocol's `numPointSets` under `ChallengesGood.xNonzero`.
 ```
 
 Targeted build used: `lake build Midfall.LoweringV3.EndToEndAlgebra`.
+
+## KZG increment: the width half closed, the count residual pinned
+
+This increment closes the *width* half of `KzgMultiPrepareWidths` and pins the
+remaining count obligation exactly.
+
+PROVED (targeted `lake build Midfall.LoweringV3.EndToEndAlgebra`, no new sorry):
+
+* `PresWidthSeq.multiPrepare_width` (already present): every `multiPrepare` run
+  with `constructIntermediateSets … queries = .ok (cm, pointSets)` appends
+  `[g1] ++ replicate pointSets.size fr ++ [g1]`.
+* `KzgMultiPrepareWidths_of_pointSets`: `KzgMultiPrepareWidths R` follows from the
+  point-set count equality at every query vector.
+* `KzgMultiPrepareWidths_of_kzgPartitionBridge`: the same, consuming the existing
+  named `KzgPartitionBridge` and the generator's `pointSets.length = plan.numPointSets`.
+* `multiPrepare_width_at`: the per-query form — for a query vector whose
+  `constructIntermediateSets` result has the plan's count, the width block is exact.
+* `multiPrepare_constructIntermediateSets_ok`: a successful `multiPrepare` run implies
+  `constructIntermediateSets` succeeded.
+
+W12 FINDING (in the tree): `MultiPrepareBlockWidth`'s `∀ queries` form is FALSE at
+the EMPTY query vector, independently of `x = 0`:
+
+* `constructIntermediateSets_empty`: the empty construction gives `#[]` point sets;
+* `multiPrepare_width_empty`: the empty run appends only the two `g1` widths;
+* `MultiPrepareBlockWidth.eq_zero_of_empty_run`: a successful empty run forces
+  `n = 0`;
+* `pointSetsCount_forces_zero`: any uniform count premise is `0`.
+
+So `KzgMultiPrepareWidths R` cannot be closed in its current `∀ queries` shape for
+a deployed plan (`numPointSets > 0`). The true residual is the count equality at
+`Verifier.linearize`'s query vector, under `ChallengesGood.xNonzero` + `omega`
+order `n` + D-GATE6 rotation-distinctness.
+
+EXACT RESIDUAL (not duplicated here):
+
+1. the port-audit query-map bridge: `KzgPartitionBridge`
+   (`LoweringV3/EndToEnd.lean:880`) is STATED but has no proof, and no theorem
+   identifies `linearize`'s queries with the generator's `Generator.Query` list
+   (the per-index slot/rotation correspondence);
+2. the generator-side count identity
+   `Generator.constructIntermediateSetsImpl queriesG.pointSets.length =
+   plan.numPointSets` for the plan's query list;
+3. the value→shape count lemma for `constructIntermediateSets` (equality pattern
+   determines the point-set count), which with (1) turns the concrete count into
+   `CircuitIndex.numPointSets`.
+
+The consumer-side repair, when (1)–(3) land, is to replace the `hMulti` argument of
+`verifyAlgebraicConstraints_width`/`PrepareLogSlots_of_parsed` with the per-query
+form `multiPrepare_width_at` at the linearized queries.
