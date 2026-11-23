@@ -225,6 +225,95 @@ owner() {
     Midfall.Instances.g1CodecC_compressedEncoderFirst)
       echo 'B3 REF.9 + REF.10 (D-P62, the codec laws at the deployment) - the encoder-first compressed law at g1CodecC: fpSqrt recovers y from x and the sign bit (REF.9), then the law (REF.10). Stated by B2 (REF.4) because the deployment needs the computable codec g1CodecC to EXIST before the reference gate can decode a proof point, and the decoder-first half is proved there; the gate does not read this direction.' ;;
 
+    # ---- CERT.0 / CERT.1 (D2, D-CERT1): the certified-generator statement, landed in
+    # Midfall/Generator/Certified.lean. The 33 scratch lemmas keep their PLAN-V3 section-5 M10
+    # card owners; the eight D-CERT1 additions (the current programOk conjuncts the scratch did
+    # not cover) carry D3/CERT.5 or D4/CERT.6; payload_constantsLength is the D-GATE1 field.
+    # NONE of these is in lowering_correct's cone (the root does not import Certified).
+    Midfall.Generator.Certified.plan_vk_of_generateAll)
+      echo 'V3 CERT.6 - newFromVk stores the payload; generateAll returns the plan (nine binds)' ;;
+    Midfall.Generator.Certified.prog_codegenStruct)
+      echo 'V3 CERT.2 - route A: the emitted tree is the generator text (today false until WP-G1 is certified)' ;;
+    Midfall.Generator.Certified.prog_noDirect)
+      echo 'V3 CERT.6 - newFromVk sets direct := none; the ART builder copies it' ;;
+    Midfall.Generator.Certified.prog_constLinesLiteral)
+      echo 'V3 CERT.6 - every Constants.sol line has a literal RHS; disappears when CERT.3 prints the table' ;;
+    Midfall.Generator.Certified.prog_constTable)
+      echo 'V3 CERT.6 with CERT.3 - constTableOf is expectedConsts once Constants.sol is printed from the table' ;;
+    Midfall.Generator.Certified.prog_constNodup)
+      echo 'V3 CERT.6 - the expectedConsts names are literals in two optional arms' ;;
+    Midfall.Generator.Certified.prog_constsDeclared)
+      echo 'V3 CERT.5 - free-name lemma per emitter against the fixed constant name list' ;;
+    Midfall.Generator.Certified.prog_callsResolved)
+      echo 'V3 CERT.5 - call-site lemma per emitter plus the helper signature table' ;;
+    Midfall.Generator.Certified.prog_noShadow)
+      echo 'V3 CERT.5 - every-binder scan: binder lemma per emitter (the tree name is noShadowProg)' ;;
+    Midfall.Generator.Certified.prog_closed)
+      echo 'V3 CERT.5 - from constsDeclared/constTable plus the inlineContractConstants free-name lemma' ;;
+    Midfall.Generator.Certified.prog_transcriptFloor)
+      echo 'V3 CERT.4 - memory.validate pins transcript_mptr = TRANSCRIPT_BUFFER_START' ;;
+    Midfall.Generator.Certified.prog_noWriters)
+      echo 'V3 CERT.5 - scan lemma per emitter; inlining substitutes literals only' ;;
+    Midfall.Generator.Certified.env_k)
+      echo 'V3 CERT.6 - pv.k = model.k = inputs.k = vk.domain.k' ;;
+    Midfall.Generator.Certified.env_negLagranges)
+      echo 'V3 CERT.6 - ART builder from the plan meta; meta = ConstraintSystemMeta.new' ;;
+    Midfall.Generator.Certified.env_nG2)
+      echo 'V3 CERT.4 - generate_base_vk checks g2 == generator (vk.rs:180)' ;;
+    Midfall.Generator.Certified.env_vkDigest)
+      echo 'V3 CERT.7 - header slot 0 survives the reservation loop; feToU256 o frToRepr = frWord' ;;
+    Midfall.Generator.Certified.payload_header)
+      echo 'V3 CERT.6 - VkHeaderBuilder slots (vk.rs:211-222); sizeBound makes the Nat-to-word write exact' ;;
+    Midfall.Generator.Certified.payload_g1Base)
+      echo 'V3 CERT.7 - slot 11 written from P.g1 plus the G1 codec law' ;;
+    Midfall.Generator.Certified.payload_g2Base)
+      echo 'V3 CERT.7 - vk.rs:180 plus the G2 codec law' ;;
+    Midfall.Generator.Certified.payload_negSG2)
+      echo 'V3 CERT.7 - slot 23 written from s_g2^-1 plus the G2 codec law' ;;
+    Midfall.Generator.Certified.payload_comms)
+      echo 'V3 CERT.7 - generate_base_vk mapM; untouched by the reservation loop, plus the G1 codec law' ;;
+    Midfall.Generator.Certified.payload_constantsLength)
+      echo 'V3 CERT.7 - D-GATE1 PayloadAgrees.constantsLength: generate_base_vk writes the 11 header constants' ;;
+    Midfall.Generator.Certified.supported_layout)
+      echo 'V3 CERT.4 - validateGeneratorInvariants runs memory.validate, which implies WellFormed and isOk' ;;
+    Midfall.Generator.Certified.v3_planMeta)
+      echo 'V3 CERT.1 probe - NEEDS CLAUSE: Data.new gets the FINAL memory in the port, the pre-point-set memory in Rust; candidate stability clause in Instances/CertProbes.lean' ;;
+    Midfall.Generator.Certified.v3_layout)
+      echo 'V3 CERT.6 - newFromVk computes proofLayout exactly' ;;
+    Midfall.Generator.Certified.v3_invariants)
+      echo 'V3 CERT.4 - plan.rs:307-308, checked in newFromVk' ;;
+    Midfall.Generator.Certified.v3_model)
+      echo 'V3 CERT.6 - generateAll third bind' ;;
+    Midfall.Generator.Certified.v3_codegen)
+      echo 'V3 CERT.2 - route A: CodegenAgrees (today false until WP-G1 is certified)' ;;
+    Midfall.Generator.Certified.v3_closed)
+      echo 'V3 CERT.5 - mainClosed restricted to the main block' ;;
+    Midfall.Generator.Certified.v3_exitDiscipline)
+      echo 'V3 CERT.5 - exit-scan lemma per emitter' ;;
+    Midfall.Generator.Certified.v3_noShadow)
+      echo 'V3 CERT.5 - top-level binder scan, as prog_noShadow' ;;
+    Midfall.Generator.Certified.v3_cdBound)
+      echo 'V3 CERT.1 probe - NEEDS CLAUSE: no generator check bounds proofEnd; candidate size clause in Instances/CertProbes.lean' ;;
+    Midfall.Generator.Certified.v3_payload)
+      echo 'V3 CERT.7 - the five payload groups at the V3 slot names' ;;
+    Midfall.Generator.Certified.v3_pins_of_valid)
+      echo 'V3 CERT.6 - the pin bundles are consequences of the one ValidV3, not of generation' ;;
+    Midfall.Generator.Certified.prog_hasMultiPointSet)
+      echo 'V3 CERT.6 (D4, D-CERT1) - intermediateSets has a point set of size at least two' ;;
+    Midfall.Generator.Certified.prog_transcriptRegionOk)
+      echo 'V3 CERT.6 (D4, D-CERT1) - PG-TPBUF: transcript window holds the longest absorb run and meets no walk window' ;;
+    Midfall.Generator.Certified.prog_g1IdentityFloor)
+      echo 'V3 CERT.6 (D4, D-CERT1) - PG-G1ID: the g1_identity window lies above 0x80' ;;
+    Midfall.Generator.Certified.prog_negLagrangesFloor)
+      echo 'V3 CERT.6 (D4, D-CERT1) - PG-NEGLAG: at least two Lagrange denominators' ;;
+    Midfall.Generator.Certified.prog_permCommMatchRepaired)
+      echo 'V3 CERT.6 (D4, D-CERT1) - D-P59 repair: one sigma commitment per permutation column' ;;
+    Midfall.Generator.Certified.prog_gasCallOk)
+      echo 'V3 CERT.5 (D3, D-CERT1) - gas() occurs only as a call gas argument' ;;
+    Midfall.Generator.Certified.prog_gasFree)
+      echo 'V3 CERT.5 (D3, D-CERT1) - the whole program executes no gas() (D-GATE1)' ;;
+    Midfall.Generator.Certified.prog_programFits)
+      echo 'V3 CERT.6 (D4, D-CERT1) - D-QVM1 address-fit: VK window and quotient interpreter' ;;
     # ---- everything else: the owner the register carried, re-keyed by declaration name ----
     Midfall.Halo2.Spec.*)         echo 'Phase 4 (spec layer)' ;;
     Midfall.Instances.PoseidonV2.*) echo 'V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap' ;;
