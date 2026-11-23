@@ -1926,6 +1926,424 @@ theorem foldlM_push_map {α β γ : Type} (l : List α) (f : α → TranscriptM 
       rw [hrest, Array.toList_push, List.map_append, List.map_cons, List.map_nil, hy]
       simp
 
+theorem lift_run_ok_iff {α : Type} {e : Except Fault α} {t t' : Transcript} {a : α} :
+    (StateT.lift e : TranscriptM α).run t = .ok (a, t') ↔ e = .ok a ∧ t' = t := by
+  cases e with
+  | error err =>
+      constructor
+      · intro h
+        change (Except.error err : Except Fault (α × Transcript)) = .ok (a, t') at h
+        cases h
+      · intro h
+        cases h.1
+  | ok x =>
+      constructor
+      · intro h
+        change (Except.ok (x, t) : Except Fault (α × Transcript)) = .ok (a, t') at h
+        cases h
+        exact ⟨rfl, rfl⟩
+      · intro h
+        obtain ⟨hx, ht⟩ := h
+        cases hx
+        cases ht
+        rfl
+
+theorem StateT_run_let {α σ : Type} {m : Type → Type} [Monad m] {β : Type}
+    (x : β) (f : β → StateT σ m α) (s : σ) :
+    StateT.run (let y := x; f y) s = StateT.run (f x) s := rfl
+
+/-- The chunking of a lookup list, as an `Option` so a failure is `none`. -/
+def chunkedOf {F : Type} (deg : Nat) (l : List (LogupBatchedArgument F)) :
+    Option (List (LogupChunkedArgument F)) :=
+  l.mapM (fun x => (x.chunkByDegree deg).toOption)
+
+/-- A fold that reads a chunked lookup and its multiplicity and pushes the pair
+    returns exactly the successive chunkings, in order. -/
+theorem foldlM_chunked {F G : Type} (l : List (LogupBatchedArgument F)) (deg : Nat)
+    (hg : Midfall.Halo2.Hashable G) :
+    ∀ (seed : Array (Logup.CommittedMultiplicities G × LogupChunkedArgument F))
+      (seedCl : List (LogupChunkedArgument F)),
+      seed.toList.map (fun p => p.2.numChunks) =
+        seedCl.map LogupChunkedArgument.numChunks →
+      ∀ (out : Array (Logup.CommittedMultiplicities G × LogupChunkedArgument F))
+        (t t' : Transcript),
+        (l.foldlM (fun (acc : Array (Logup.CommittedMultiplicities G ×
+              LogupChunkedArgument F)) (x : LogupBatchedArgument F) => do
+          let chunked ← StateT.lift (x.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked hg
+          pure (acc.push (m, chunked))) seed).run t = .ok (out, t') →
+        ∃ cl, chunkedOf deg l = some cl ∧
+          out.toList.map (fun p => p.2.numChunks) =
+            (seedCl ++ cl).map LogupChunkedArgument.numChunks := by
+  induction l with
+  | nil =>
+      intro seed seedCl hseed out t t' hr
+      rw [List.foldlM_nil] at hr
+      cases hr
+      refine ⟨[], ?_, ?_⟩
+      · simp [chunkedOf]
+      · simpa using hseed
+  | cons a as ih =>
+      intro seed seedCl hseed out t t' hr
+      rw [List.foldlM_cons] at hr
+      obtain ⟨p1, t1, hstep, h1⟩ := PresWidthSeq.run_bind_ok hr
+      obtain ⟨chunked, t2, hlift, h2⟩ := PresWidthSeq.run_bind_ok hstep
+      obtain ⟨hchunk, ht2⟩ := lift_run_ok_iff.mp hlift
+      subst ht2
+      obtain ⟨m, t3, hread, h3⟩ := PresWidthSeq.run_bind_ok h2
+      change (Except.ok (seed.push (m, chunked), t3) :
+        Except Fault (Array (Logup.CommittedMultiplicities G ×
+          LogupChunkedArgument F) × Transcript)) = .ok (p1, t1) at h3
+      have hp : p1 = seed.push (m, chunked) := (Prod.mk.inj (Except.ok.inj h3)).1.symm
+      have ht1 : t1 = t3 := (Prod.mk.inj (Except.ok.inj h3)).2.symm
+      subst hp
+      subst ht1
+      have hseed' : (seed.push (m, chunked)).toList.map (fun p => p.2.numChunks)
+          = (seedCl ++ [chunked]).map LogupChunkedArgument.numChunks := by
+        rw [Array.toList_push, List.map_append, List.map_singleton, hseed]
+        simp
+      obtain ⟨cl, hmap, hout⟩ := ih (seed.push (m, chunked)) (seedCl ++ [chunked]) hseed' out t1 t' h1
+      have hmap' : List.mapM (fun x => (x.chunkByDegree deg).toOption) as = some cl := by
+        simpa [chunkedOf] using hmap
+      refine ⟨chunked :: cl, ?_, ?_⟩
+      · unfold chunkedOf
+        rw [List.mapM_cons, hchunk, hmap']
+        rfl
+      · rw [hout]
+        simp [List.append_assoc]
+
+/-- The per-proof lookup-multiplicity rows each expose the chunk list. -/
+theorem lookupMultiplicities_shape {F G : Type} (lookups : List (LogupBatchedArgument F))
+    (deg n : Nat) (hg : Midfall.Halo2.Hashable G) :
+    ∀ (out : Array (Array (Logup.CommittedMultiplicities G × LogupChunkedArgument F)))
+      (t t' : Transcript),
+      ((List.range n).foldlM (fun (acc : Array (Array (Logup.CommittedMultiplicities G ×
+            LogupChunkedArgument F))) (_ : Nat) => do
+          let row ← lookups.foldlM (fun (acc' : Array (Logup.CommittedMultiplicities G ×
+                LogupChunkedArgument F)) (x : LogupBatchedArgument F) => do
+            let chunked ← StateT.lift (x.chunkByDegree deg)
+            let m ← Logup.readMultiplicities chunked hg
+            pure (acc'.push (m, chunked))) #[]
+          pure (acc.push row)) #[]).run t = .ok (out, t') →
+      ∀ row ∈ out.toList, ∃ cl, chunkedOf deg lookups = some cl ∧
+        row.toList.map (fun p => p.2.numChunks) = cl.map LogupChunkedArgument.numChunks := by
+  induction n with
+  | zero =>
+      intro out t t' hr row hrow
+      rw [List.range_zero, List.foldlM_nil] at hr
+      cases hr
+      simp at hrow
+  | succ n ih =>
+      intro out t t' hr row hrow
+      rw [List.range_succ, List.foldlM_append] at hr
+      obtain ⟨mid, tmid, hfirst, hlast⟩ := PresWidthSeq.run_bind_ok hr
+      rw [List.foldlM_cons] at hlast
+      simp only [List.foldlM_nil] at hlast
+      obtain ⟨p1, t1, hstep, hfin⟩ := PresWidthSeq.run_bind_ok hlast
+      cases hfin
+      obtain ⟨row', t2, hinner, hpush⟩ := PresWidthSeq.run_bind_ok hstep
+      have hout : out = mid.push row' := (Prod.mk.inj (Except.ok.inj hpush)).1.symm
+      have ht' : t' = t2 := (Prod.mk.inj (Except.ok.inj hpush)).2.symm
+      subst out
+      subst t'
+      rw [Array.toList_push, List.mem_append, List.mem_singleton] at hrow
+      rcases hrow with hrow | rfl
+      · exact ih mid t tmid hfirst row hrow
+      · exact foldlM_chunked lookups deg hg #[] [] (by simp) row tmid t2 hinner
+
+/-- The commitment pass over one multiplicity row has exactly the helper-poly
+    count of the chunked lookups, in order. -/
+theorem lookupRow_commit_map {F G : Type} (h : Midfall.Halo2.Hashable G)
+    (row : Array (Logup.CommittedMultiplicities G × LogupChunkedArgument F)) :
+    ∀ (out : Array (Logup.Committed G)) (t t' : Transcript),
+      (row.toList.foldlM (fun (acc : Array (Logup.Committed G))
+          (x : Logup.CommittedMultiplicities G × LogupChunkedArgument F) => do
+        let c ← x.1.readCommitment x.2.numChunks h
+        pure (acc.push c)) #[]).run t = .ok (out, t') →
+      out.toList.map (fun c => c.helperPolys.size) = row.toList.map (fun x => x.2.numChunks) := by
+  intro out t t' hr
+  have := foldlM_push_map row.toList
+    (fun x => x.1.readCommitment x.2.numChunks h)
+    (fun x => x.2.numChunks) (fun c => c.helperPolys.size)
+    (fun x t y t' hy => readCommitment_helperPolys_size x.1 x.2.numChunks h hy)
+    #[] out t t' hr
+  simpa using this
+
+/-- The commitment pass over all rows maps each row's helper sizes to its chunk
+    count list. -/
+theorem commitRows_map {F G : Type} (h : Midfall.Halo2.Hashable G)
+    (rows : List (Array (Logup.CommittedMultiplicities G × LogupChunkedArgument F))) :
+    ∀ (out : Array (Array (Logup.Committed G))) (t t' : Transcript),
+      (rows.foldlM (fun (acc : Array (Array (Logup.Committed G)))
+          (row : Array (Logup.CommittedMultiplicities G × LogupChunkedArgument F)) => do
+        let o ← row.toList.foldlM (fun (acc' : Array (Logup.Committed G))
+            (x : Logup.CommittedMultiplicities G × LogupChunkedArgument F) => do
+          let c ← x.1.readCommitment x.2.numChunks h
+          pure (acc'.push c)) #[]
+        pure (acc.push o)) #[]).run t = .ok (out, t') →
+      out.toList.map (fun row => row.toList.map (fun c => c.helperPolys.size))
+        = rows.map (fun row => row.toList.map (fun x => x.2.numChunks)) := by
+  intro out t t' hr
+  have := foldlM_push_map rows
+    (fun row => row.toList.foldlM (fun (acc' : Array (Logup.Committed G))
+        (x : Logup.CommittedMultiplicities G × LogupChunkedArgument F) => do
+      let c ← x.1.readCommitment x.2.numChunks h
+      pure (acc'.push c)) #[])
+    (fun row => row.toList.map (fun x => x.2.numChunks))
+    (fun row => row.toList.map (fun c => c.helperPolys.size))
+    (fun row t o t' hy => lookupRow_commit_map h row o t t' hy)
+    #[] out t t' hr
+  simpa using this
+
+theorem commitRows_shape {F G : Type} (deg : Nat) (lookups : List (LogupBatchedArgument F))
+    (hg : Midfall.Halo2.Hashable G)
+    (rows : List (Array (Logup.CommittedMultiplicities G × LogupChunkedArgument F))) :
+    (∀ row ∈ rows, ∃ cl, chunkedOf deg lookups = some cl ∧
+      row.toList.map (fun x => x.2.numChunks) = cl.map LogupChunkedArgument.numChunks) →
+    ∀ (seed : Array (Array (Logup.Committed G))),
+      (∀ o ∈ seed.toList, ∃ cl, chunkedOf deg lookups = some cl ∧
+        o.toList.map (fun c => c.helperPolys.size) = cl.map LogupChunkedArgument.numChunks) →
+      ∀ (out : Array (Array (Logup.Committed G))) (t t' : Transcript),
+        (rows.foldlM (fun (acc : Array (Array (Logup.Committed G)))
+            (row : Array (Logup.CommittedMultiplicities G × LogupChunkedArgument F)) => do
+          let o ← row.toList.foldlM (fun (acc' : Array (Logup.Committed G))
+              (x : Logup.CommittedMultiplicities G × LogupChunkedArgument F) => do
+            let c ← x.1.readCommitment x.2.numChunks hg
+            pure (acc'.push c)) #[]
+          pure (acc.push o)) seed).run t = .ok (out, t') →
+        ∀ o ∈ out.toList, ∃ cl, chunkedOf deg lookups = some cl ∧
+          o.toList.map (fun c => c.helperPolys.size) = cl.map LogupChunkedArgument.numChunks := by
+  induction rows with
+  | nil =>
+      intro hrows seed hseed out t t' hr o ho
+      rw [List.foldlM_nil] at hr
+      cases hr
+      exact hseed o ho
+  | cons a as ih =>
+      intro hrows seed hseed out t t' hr o ho
+      rw [List.foldlM_cons] at hr
+      obtain ⟨seed1, t1, hstep, h1⟩ := PresWidthSeq.run_bind_ok hr
+      obtain ⟨out0, t2, hinner, hpush⟩ := PresWidthSeq.run_bind_ok hstep
+      have hs1 : seed1 = seed.push out0 := (Prod.mk.inj (Except.ok.inj hpush)).1.symm
+      have ht1 : t1 = t2 := (Prod.mk.inj (Except.ok.inj hpush)).2.symm
+      subst seed1
+      subst t1
+      have hseed' : ∀ o' ∈ (seed.push out0).toList, ∃ cl,
+          chunkedOf deg lookups = some cl ∧
+          o'.toList.map (fun c => c.helperPolys.size) = cl.map LogupChunkedArgument.numChunks := by
+        intro o' ho'
+        rw [Array.toList_push, List.mem_append, List.mem_singleton] at ho'
+        rcases ho' with ho' | heq
+        · exact hseed o' ho'
+        · have ho' : o' = out0 := heq
+          subst o'
+          obtain ⟨cl, hcl, hrow⟩ := hrows a (by simp)
+          exact ⟨cl, hcl, (lookupRow_commit_map hg a out0 _ t2 hinner).trans hrow⟩
+      apply ih (fun row hrow => hrows row (by simp [hrow])) (seed.push out0) hseed'
+        out t2 t' h1 o ho
+
+theorem parseTrace_shapes {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁) (feat : Features) (vk : VerifyingKey (Fr p) G₁)
+    (committed₀ : Array (Array G₁)) (inst : Array (Array (Array (Fr p))))
+    {t : Transcript} {tr : VerifierTrace (Fr p) G₁} {t' : Transcript}
+    (h : (parseTrace g1 feat vk committed₀ inst).run t = .ok (tr, t')) :
+    tr.permutations.size = inst.size ∧
+    (∀ pc ∈ tr.permutations.toList, pc.permutationProductCommitments.size =
+      Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2)) ∧
+    tr.lookups.size = inst.size ∧
+    (∀ row ∈ tr.lookups.toList, ∃ cl : List (LogupChunkedArgument (Fr p)),
+      chunkedOf vk.csDegree vk.cs.lookups.toList = some cl ∧
+      row.toList.map (fun c => c.helperPolys.size) =
+        cl.map LogupChunkedArgument.numChunks) ∧
+    tr.trashcans.size = inst.size ∧
+    (∀ row ∈ tr.trashcans.toList, row.size = vk.cs.trashcans.size) := by
+  unfold parseTrace at h
+  rw [StateT_run_let] at h
+  set comm := (if feat.committedInstances = true then committed₀
+    else Array.map (fun _ => #[]) (List.range inst.size).toArray) with hcomm
+  rw [Midfall.LoweringV3.run_ite] at h
+  by_cases hc1 : comm.isEmpty = true
+  · simp only [hc1, if_true] at h
+    obtain ⟨u1', a1', ht1, _⟩ := PresWidthSeq.run_bind_ok h
+    change (Except.error (Fault.error Error.invalidInstances) :
+      Except Fault (Unit × Transcript)) = .ok (u1', a1') at ht1
+    cases ht1
+  · simp only [hc1, if_false] at h
+    rw [StateT_run_let] at h
+    rw [Midfall.LoweringV3.run_ite] at h
+    by_cases hc2 : comm.toList.any (fun r => r.size ≠
+        (Option.map (fun r => r.size) comm[0]?).getD 0) = true
+    · simp only [hc2, if_true] at h
+      obtain ⟨u2', a2', ht2, _⟩ := PresWidthSeq.run_bind_ok h
+      change (Except.error (Fault.error Error.invalidInstances) :
+        Except Fault (Unit × Transcript)) = .ok (u2', a2') at ht2
+      cases ht2
+    · simp only [hc2, if_false] at h
+      rw [Midfall.LoweringV3.run_ite] at h
+      by_cases hc3 : ((List.zip comm.toList inst.toList).any
+          fun (c, i) => c.size + i.size ≠ vk.cs.numInstanceColumns) = true
+      · simp only [hc3, if_true] at h
+        obtain ⟨u3', a3', ht3, _⟩ := PresWidthSeq.run_bind_ok h
+        change (Except.error (Fault.error Error.invalidInstances) :
+          Except Fault (Unit × Transcript)) = .ok (u3', a3') at ht3
+        cases ht3
+      · simp only [hc3, if_false] at h
+        rw [StateT_run_let] at h
+        obtain ⟨_, _, _, h1⟩ := PresWidthSeq.run_bind_ok h
+        obtain ⟨_, _, _, h2⟩ := PresWidthSeq.run_bind_ok h1
+        obtain ⟨_, _, _, h3⟩ := PresWidthSeq.run_bind_ok h2
+        obtain ⟨_, _, _, h4⟩ := PresWidthSeq.run_bind_ok h3
+        obtain ⟨_, _, _, h5⟩ := PresWidthSeq.run_bind_ok h4
+        obtain ⟨_, _, _, h6⟩ := PresWidthSeq.run_bind_ok h5
+        obtain ⟨_, _, _, h7⟩ := PresWidthSeq.run_bind_ok h6
+        obtain ⟨lm, t8, hlm, h8⟩ := PresWidthSeq.run_bind_ok h7
+        obtain ⟨_, _, _, h9⟩ := PresWidthSeq.run_bind_ok h8
+        obtain ⟨_, _, _, h10⟩ := PresWidthSeq.run_bind_ok h9
+        obtain ⟨perms, tp, hperm, h11⟩ := PresWidthSeq.run_bind_ok h10
+        obtain ⟨lks, tl, hlks, h12⟩ := PresWidthSeq.run_bind_ok h11
+        obtain ⟨_, _, _, h13⟩ := PresWidthSeq.run_bind_ok h12
+        obtain ⟨trs, tt, htrs, h14⟩ := PresWidthSeq.run_bind_ok h13
+        obtain ⟨_, _, _, h15⟩ := PresWidthSeq.run_bind_ok h14
+        cases h15
+        -- permutation row count and per-row product count
+        have hpermSz := foldlM_push_size (List.range inst.size)
+          (fun _ => Permutation.readProductCommitments vk.cs.permutation vk.csDegree
+            (hashableG1 g1)) #[] perms _ tp hperm
+        simp only [List.length_range] at hpermSz
+        have hpermProp := foldlM_push_prop (List.range inst.size)
+          (fun _ => Permutation.readProductCommitments vk.cs.permutation vk.csDegree
+            (hashableG1 g1))
+          (fun pc => pc.permutationProductCommitments.size =
+            Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2))
+          (fun _ _ _ _ hfy => permReadProductCommitments_size _ _ _ hfy)
+          #[] (by intro y hy; simp at hy) perms _ tp hperm
+        -- lookup multiplicity rows: count and chunk shape
+        have hlmSz := foldlM_push_size (List.range inst.size)
+          (fun _ => vk.cs.lookups.toList.foldlM
+            (fun (acc' : Array (Logup.CommittedMultiplicities G₁ ×
+                LogupChunkedArgument (Fr p)))
+                (x : LogupBatchedArgument (Fr p)) => do
+              let chunked ← StateT.lift (x.chunkByDegree vk.csDegree)
+              let m ← Logup.readMultiplicities chunked (hashableG1 g1)
+              pure (acc'.push (m, chunked))) #[]) #[] lm _ t8 hlm
+        simp only [List.length_range] at hlmSz
+        have hlmShape := lookupMultiplicities_shape vk.cs.lookups.toList vk.csDegree
+          inst.size (hashableG1 g1) lm _ t8 hlm
+        -- lookup commitment rows
+        have hlksSz := foldlM_push_size lm.toList
+          (fun row => row.toList.foldlM
+            (fun (acc' : Array (Logup.Committed G₁))
+                (x : Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)) => do
+              let c ← x.1.readCommitment x.2.numChunks (hashableG1 g1)
+              pure (acc'.push c)) #[]) #[] lks _ tl hlks
+        have hlmLen : lm.toList.length = inst.size := by
+          have h : lm.size = inst.size := by simpa using hlmSz
+          rw [Array.length_toList]
+          exact h
+        have hlksSize : lks.size = inst.size := by
+          have h : lks.size = lm.toList.length := by simpa using hlksSz
+          rw [h]
+          exact hlmLen
+        have hlksShape := commitRows_shape vk.csDegree vk.cs.lookups.toList (hashableG1 g1)
+          lm.toList hlmShape #[] (by intro o ho; simp at ho) lks _ tl hlks
+        -- trashcan rows
+        have htrsSz := foldlM_push_size (List.range inst.size)
+          (fun _ => vk.cs.trashcans.toList.foldlM
+            (fun (acc' : Array (Trash.Committed G₁)) (x : TrashArgument (Fr p)) => do
+              let c ← Trash.readCommitted x (hashableG1 g1)
+              pure (acc'.push c)) #[]) #[] trs _ tt htrs
+        simp only [List.length_range] at htrsSz
+        have htrsMap : ∀ row ∈ trs.toList, row.size = vk.cs.trashcans.size := by
+          intro row hrow
+          have hmap := foldlM_push_map (List.range inst.size)
+            (fun _ => vk.cs.trashcans.toList.foldlM
+              (fun (acc' : Array (Trash.Committed G₁)) (x : TrashArgument (Fr p)) => do
+                let c ← Trash.readCommitted x (hashableG1 g1)
+                pure (acc'.push c)) #[])
+            (fun _ => vk.cs.trashcans.toList.length) (fun row => row.size)
+            (fun _ t0 o t0' hy => by
+              have := foldlM_push_size vk.cs.trashcans.toList
+                (fun x => Trash.readCommitted x (hashableG1 g1)) #[] o _ t0' hy
+              simpa using this)
+            #[] trs _ tt htrs
+          have hmem : row.size ∈ trs.toList.map (fun r => r.size) :=
+            List.mem_map_of_mem hrow
+          rw [hmap] at hmem
+          simp only [List.map_nil, List.nil_append, List.map_const', List.length_range,
+            Array.length_toList, List.mem_replicate] at hmem
+          exact hmem.2
+        exact ⟨by simpa using hpermSz, hpermProp, hlksSize, hlksShape,
+          by simpa using htrsSz, htrsMap⟩
+
+theorem map_add_three_map {α : Type} (l : List α) (f : α → Nat) :
+    (l.map f).map (fun x => x + 3) = l.map (fun x => f x + 3) := by
+  induction l with
+  | nil => rfl
+  | cons a as ih => simp [ih]
+
+/-- The lookup eval count implied by the chunking: `nbChunks + 3` per lookup. -/
+def lookupEvalCount {F : Type} (deg : Nat) (lookups : List (LogupBatchedArgument F)) : Nat :=
+  (((chunkedOf deg lookups).getD []).map (fun c => c.numChunks + 3)).sum
+
+theorem lookupEvalCount_eq {F : Type} (deg : Nat) (lookups : List (LogupBatchedArgument F))
+    (cl : List (LogupChunkedArgument F)) (h : chunkedOf deg lookups = some cl) :
+    lookupEvalCount deg lookups = (cl.map (fun c => c.numChunks + 3)).sum := by
+  simp [lookupEvalCount, h]
+
+/-- **The per-argument eval count of a parsed trace.** For the deployed profile
+    (committed instances on, one proof, one committed instance row), the
+    verifier's eval count is the seven-group sum: committed-instance queries,
+    advice queries, the fixed (non-simple-selector) queries, permutation-common
+    evals, `3 k - 1` for the product sets, `nbChunks + 3` per lookup, and one
+    trash eval per trashcan. -/
+theorem readAlgebraEvalCount_parseTrace {G₁ : Type} (g1 : G1Codec G₁)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (xc : G₁) (inst : Array (Fr p))
+    {t : Transcript} {tr : VerifierTrace (Fr p) G₁} {t' : Transcript}
+    (h : (parseTrace g1 Features.solidity vk #[#[xc]] #[#[inst.toList.toArray]]).run t
+      = .ok (tr, t')) :
+    readAlgebraEvalCount vk tr.permutations tr.lookups tr.trashcans 1 1
+        #[#[inst.toList.toArray]]
+      = (vk.cs.instanceQueries.toList.filter (fun q => q.1.index < 1)).length
+        + vk.cs.adviceQueries.size
+        + (vk.cs.numFixedColumns - vk.cs.numSimpleSelectors)
+        + vk.permutation.commitments.size
+        + (3 * Permutation.numChunksOf vk.cs.permutation.columns.size
+            (vk.csDegree - 2) - 1)
+        + lookupEvalCount vk.csDegree vk.cs.lookups.toList
+        + vk.cs.trashcans.size := by
+  obtain ⟨hpermN, hpermP, hlksN, hlksShape, htrsN, htrsMap⟩ :=
+    parseTrace_shapes g1 Features.solidity vk #[#[xc]] #[#[inst.toList.toArray]] h
+  have hpermN' : tr.permutations.size = 1 := by simpa using hpermN
+  have hlksN' : tr.lookups.size = 1 := by simpa using hlksN
+  have htrsN' : tr.trashcans.size = 1 := by simpa using htrsN
+  have hone : (#[#[inst.toList.toArray]] : Array (Array (Array (Fr p)))).size = 1 := rfl
+  unfold readAlgebraEvalCount
+  rw [hone]
+  simp only [Nat.one_mul, List.length_singleton]
+  -- permutations: one product set
+  obtain ⟨pc, hpc⟩ := Array.size_eq_one_iff.mp hpermN'
+  rw [hpc] at hpermP ⊢
+  rw [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil]
+  rw [hpermP pc (by simp)]
+  -- lookups: one row
+  obtain ⟨row, hrow⟩ := Array.size_eq_one_iff.mp hlksN'
+  rw [hrow] at hlksShape ⊢
+  obtain ⟨cl, hcl, hclmap⟩ := hlksShape row (by simp)
+  have hrowmap : row.toList.map (fun l => l.helperPolys.size + 3)
+      = cl.map (fun c => c.numChunks + 3) := by
+    conv_rhs => rw [← map_add_three_map]
+    rw [← hclmap]
+    rw [map_add_three_map]
+  rw [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, hrowmap]
+  rw [lookupEvalCount_eq vk.csDegree vk.cs.lookups.toList cl hcl]
+  -- trashcans: one row
+  obtain ⟨rowT, hrowT⟩ := Array.size_eq_one_iff.mp htrsN'
+  rw [hrowT] at htrsMap ⊢
+  rw [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil]
+  rw [htrsMap rowT (by simp)]
+  omega
+
 end Composition
 
 end Midfall.LoweringV3
