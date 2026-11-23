@@ -68,6 +68,72 @@ abbrev fpEntry (lhsW rhsW : U256) : VEnv (Bridge.Dialect c g) :=
   ["success", "lhs_mptr", "rhs_mptr"].zip [(1 : U256), lhsW, rhsW] ++
     bindZeros (Bridge.Dialect c g) ["ret"]
 
+/-- `VEnv.set` preserves the name list (only the bound value changes). -/
+theorem venv_set_fst (V : VEnv (Bridge.Dialect c g)) (x : Ident) (v : U256) :
+    (VEnv.set V x v).map Prod.fst = V.map Prod.fst := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, w⟩ := p
+      unfold VEnv.set
+      by_cases h : y = x
+      · simp [h]
+      · simp [h, ih]
+
+/-- `VEnv.setMany` preserves the name list. -/
+theorem venv_setMany_fst (V : VEnv (Bridge.Dialect c g)) (xs : List Ident) (vs : List U256) :
+    (VEnv.setMany V xs vs).map Prod.fst = V.map Prod.fst := by
+  unfold VEnv.setMany
+  generalize xs.zip vs = ps
+  induction ps generalizing V with
+  | nil => rfl
+  | cons p ps ih =>
+      obtain ⟨x, v⟩ := p
+      simp only [List.foldl_cons]
+      rw [ih, venv_set_fst]
+
+/-- A `find?` past a prefix none of whose names match is the tail's `find?`. -/
+theorem find?_append_of_forall_false {α : Type} {xs ys : List α} {p : α → Bool}
+    (h : ∀ x ∈ xs, p x = false) :
+    (xs ++ ys).find? p = ys.find? p := by
+  induction xs with
+  | nil => rfl
+  | cons a as ih =>
+      simp only [List.cons_append, List.find?_cons, h a (by simp), ite_false]
+      exact ih (fun x hx => h x (by simp [hx]))
+
+/-- `restore` keeps an outer binding when the dropped block-local prefix does not bind it. The
+    prefix is named by `extra`, the block-added names; the equation `hnames` is what the helper
+    evidence exposes about its final environment (only `scratch` is added, `ret` is updated in
+    place). -/
+theorem venv_get_restore_of_names {V V' : VEnv (Bridge.Dialect c g)} {extra : List Ident}
+    {x : Ident} {v : U256}
+    (hnames : V'.map Prod.fst = extra ++ V.map Prod.fst)
+    (hx : x ∉ extra)
+    (hget : VEnv.get V' x = some v) :
+    VEnv.get (restore V V') x = some v := by
+  unfold VEnv.get at hget ⊢
+  have hlen : V'.length - V.length = extra.length := by
+    have h := congrArg List.length hnames
+    simp only [List.length_map, List.length_append] at h
+    omega
+  rw [show restore V V' = V'.drop (V'.length - V.length) from rfl, hlen]
+  have htake : (V'.take extra.length).map Prod.fst = extra := by
+    rw [List.map_take, hnames, List.take_left]
+  have hpre : ∀ p ∈ V'.take extra.length,
+      (fun p : Ident × U256 => decide (p.1 = x)) p = false := by
+    intro p hp
+    have hp' : p.1 ∈ (V'.take extra.length).map Prod.fst := List.mem_map_of_mem hp
+    rw [htake] at hp'
+    have hne : p.1 ≠ x := fun hxx => hx (hxx ▸ hp')
+    simp [hne]
+  have hfind : V'.find? (fun p : Ident × U256 => decide (p.1 = x)) =
+      (V'.drop extra.length).find? (fun p => decide (p.1 = x)) := by
+    conv_lhs => rw [← List.take_append_drop extra.length V']
+    exact find?_append_of_forall_false hpre
+  rw [hfind] at hget
+  exact hget
+
 /-- **PHASE 1 OF THE `ec_pairing` BODY RUN - THE ENCODING PREFIX.** The first seven statements
     (`ret := success`; the `leave` guard skipping at 1; `let scratch`; the four `mcopy`s) run from
     the helper's entry environment to a state whose memory is the four copies and whose VEnv still
@@ -101,7 +167,9 @@ theorem ecPairing_prefix_run (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState
             (copyWithin st.memory (BitVec.ofNat 256 scratch).toNat lhsW.toNat 0x80)
             ((BitVec.ofNat 256 scratch + (0x80 : U256)).toNat) (BitVec.ofNat 256 g2).toNat 0x100)
           ((BitVec.ofNat 256 scratch + (0x180 : U256)).toNat) rhsW.toNat 0x80)
-        ((BitVec.ofNat 256 scratch + (0x200 : U256)).toNat) (BitVec.ofNat 256 neg).toNat 0x100 := by
+        ((BitVec.ofNat 256 scratch + (0x200 : U256)).toNat) (BitVec.ofNat 256 neg).toNat 0x100 ∧
+      V3.map Prod.fst = "scratch" ::
+        (fpEntry (c := c) (g := g) lhsW rhsW).map Prod.fst := by
   -- V1: ret := success
   let V1 : VEnv (Bridge.Dialect c g) := VEnv.setMany (fpEntry (c := c) (g := g) lhsW rhsW) ["ret"] [1]
   have h1 : ExecStmt (Bridge.Dialect c g) funs (fpEntry (c := c) (g := g) lhsW rhsW) st
@@ -246,7 +314,11 @@ theorem ecPairing_prefix_run (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState
   · rfl
   · rfl
   · rfl
-  · dsimp only [st4, st3, st2, st1, fpStep4, fpStep3, fpStep2, fpStep1]
+  · refine ⟨?_, ?_⟩
+    · dsimp only [st4, st3, st2, st1, fpStep4, fpStep3, fpStep2, fpStep1]
+    · dsimp only [V2, V1]
+      rw [List.map_append, venv_setMany_fst]
+      simp [fpEntry, bindZeros]
 
 
 
@@ -368,7 +440,8 @@ theorem ecPairing_tail_normal (funs : FunEnv (Bridge.Dialect c g)) (st : EvmStat
          Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
            [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errProof)])],
          Stmt.assign ["ret"] (Expr.lit (.number 1))] V' st' .normal ∧
-      st' = touchMemory st scratch 32 ∧ VEnv.get V' "ret" = some (1 : U256) := by
+      st' = touchMemory st scratch 32 ∧ VEnv.get V' "ret" = some (1 : U256) ∧
+      V'.map Prod.fst = V.map Prod.fst := by
   let V1 : VEnv (Bridge.Dialect c g) := VEnv.setMany V ["ret"] [1]
   have hrd : EvalExpr (Bridge.Dialect c g) funs V st
       (Expr.builtin Op.returndatasize []) (.vals [(BitVec.ofNat 256 st.returndata.length : U256)] st) :=
@@ -487,9 +560,12 @@ theorem ecPairing_tail_normal (funs : FunEnv (Bridge.Dialect c g)) (st : EvmStat
   have hret3 : VEnv.get V3 "ret" = some (1 : U256) := by
     rw [show V3 = VEnv.set V2 "ret" (1 : U256) by dsimp only [V3]; rfl]
     exact EcPairing.venv_get_set_same hret2
-  refine ⟨V3, touchMemory st scratch 32, ?_, rfl, hret3⟩
-  exact Step.seqCons hs1 (Step.seqCons hg1 (Step.seqCons hs2 (Step.seqCons hg2
-    (Step.seqCons hs3 Step.seqNil))))
+  refine ⟨V3, touchMemory st scratch 32, ?_, rfl, hret3, ?_⟩
+  · exact Step.seqCons hs1 (Step.seqCons hg1 (Step.seqCons hs2 (Step.seqCons hg2
+      (Step.seqCons hs3 Step.seqNil))))
+  · show (VEnv.setMany (VEnv.setMany (VEnv.setMany V ["ret"] [1]) ["ret"] [1])
+        ["ret"] [1]).map Prod.fst = V.map Prod.fst
+    rw [venv_setMany_fst, venv_setMany_fst, venv_setMany_fst]
 
 
 end Midfall.LoweringV2.Blocks.EcPairing
