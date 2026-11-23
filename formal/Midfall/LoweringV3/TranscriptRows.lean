@@ -1598,6 +1598,43 @@ theorem runsAll_readGroupSeq (E : VerifierEnv p G₁ G₂ Gₜ) :
               simpa only [List.append_nil] using
                 (RunsAll.bind E hstep (fun _ => RunsAll.pure E ()))
 
+/-- `readGroupSeq` composes on schedule concatenation. -/
+theorem readGroupSeq_append_run (E : VerifierEnv p G₁ G₂ Gₜ)
+    (a b : List (WireSlot × Nat)) (t : Transcript) :
+    (readGroupSeq E (a ++ b)).run t =
+      (readGroupSeq E a >>= fun _ => readGroupSeq E b).run t := by
+  induction a generalizing t with
+  | nil => simp [readGroupSeq]
+  | cons x a ih =>
+      cases x with
+      | mk s n =>
+          have hih : readGroupSeq E (a ++ b) =
+              (readGroupSeq E a >>= fun _ => readGroupSeq E b) := by
+            funext t
+            exact ih t
+          simp only [List.cons_append, readGroupSeq]
+          rw [hih]
+          simp [bind_assoc]
+
+/-- A list of schedules is read by the `foldlM` exactly as their flattening. -/
+theorem readGroupSeq_flatMap_run (E : VerifierEnv p G₁ G₂ Gₜ)
+    (l : List (List (WireSlot × Nat))) (t : Transcript) :
+    (readGroupSeq E l.flatten).run t =
+      (l.foldlM (fun _ g => readGroupSeq E g) ()).run t := by
+  induction l generalizing t with
+  | nil => simp [readGroupSeq]
+  | cons g gs ih =>
+      have hih : readGroupSeq E gs.flatten =
+          (gs.foldlM (fun _ g => readGroupSeq E g) ()) := by
+        funext t
+        exact ih t
+      have happ : readGroupSeq E (g ++ gs.flatten) =
+          (readGroupSeq E g >>= fun _ => readGroupSeq E gs.flatten) := by
+        funext t
+        exact readGroupSeq_append_run E g gs.flatten t
+      simp only [List.flatten_cons, List.foldlM_cons]
+      rw [happ, hih]
+
 /-- The advice-phase fragment: one homogeneous G1 group. -/
 theorem runsAll_readGroupSeq_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs : List G₁)
     (hlen : Qs.length = n) :
