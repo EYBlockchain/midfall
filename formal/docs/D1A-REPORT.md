@@ -565,10 +565,17 @@ concatenating gives exactly `permZUpstream` - the verifier's
 `head.flatten ++ tail.flatten` order. `upstreamBlock` is the `KZ:159-186`
 reordering.
 
-The correct next unit is therefore: invert a successful
-`assertPermutationQueryOrderIsUpstreamEquivalent` to expose `upstreamQueries`
-and the equality of `constructIntermediateSetsImpl` point sets, then pair the
-verifier list with that upstream list (not with raw `Generator.queries`).
+The upstream-check inversion is now landed as well:
+`assertPermutationQueryOrderIsUpstreamEquivalent_parts` (in `UpstreamSets`)
+exposes, from a successful check with nonempty z positions, the upstream source
+list, its `queryFromPlan` map, both `constructIntermediateSetsImpl` successes,
+and `generatorSets.pointSets = upstreamSets.pointSets`.
+
+The remaining same-order step is to identify the z slice of
+`upstreamSources` with `permZUpstream` (the source list is built by
+`listSetMut` at the consecutive `zPositions`; `upstreamBlock_permZBlock`
+already gives the order equality), then pair the verifier list with that
+upstream list (not with raw `Generator.queries`).
 `KzgQueryMapData`'s `hVlist`/`hGlist` force this: `L.map Prod.fst` and
 `L.map Prod.snd` cannot simultaneously be two different orders. A literal
 same-order theorem against raw `pcsQueries` is false for this deployment.
