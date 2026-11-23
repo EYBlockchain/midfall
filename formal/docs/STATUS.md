@@ -237,8 +237,10 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `56be7d0`: D2 is merged and six generation peels are closed (`env_nG2` now included); the register
-is **108 sorried declarations / 11 ROOT / 35 CERT / 0 REFUTED** (108 rows in `SORRY.md`). A4's
+At `b557c85`: D2 is merged and seven generation peels are closed (`env_nG2` and `prog_noDirect`
+included); the register is **107 sorried declarations / 11 ROOT / 34 CERT / 0 REFUTED** (107 rows
+in `SORRY.md`); D1A's exact `readAlgebra` width sequence and `multiPrepare` phase A/B/C widths are
+merged. A4's
 `runBody_mono` (ST.13), lag statements 0–2, and the `litValue_number_nat` helper are merged; A5's
 8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, bridge modulus arithmetic, and
 six-store frame composition are merged; A9's PCS block-1/block-2/block-3-seed semantics, generator
