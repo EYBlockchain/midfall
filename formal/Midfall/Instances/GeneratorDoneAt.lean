@@ -98,6 +98,39 @@ theorem f1PointRenderCN_doneAt (n : Nat)
   · intro product
     exact Midfall.LoweringV3.totalV3_correct _ product hR
 
+/-- **THE F1-RESOURCED `DoneAt` WITH THE CODEC LAW DISCHARGED.** The render is
+    `f1PointRenderCCN n` (`E.g1 := g1CodecC`, the REF.9/REF.10 codec); `valid` is
+    `f1PointRenderCCN_validV3 n hpay`, and the gate's codec conjunct is
+    `f1PointRenderCCN_codec_lawsV3`. The remaining gate inputs (deployment, entry frame, pairing,
+    decode/snapshot, `LeanAccepts`/`SoundSide`/`CompleteSide`) and `ArtifactEq` are named. -/
+theorem f1PointRenderCCN_doneAt (n : Nat)
+    (hpay : Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkNegSG2BaseSlot
+      = g2foldToEip (g2foldExp n))
+    (product : PairingProduct) (cd : Bytes) (artifact : String)
+    (W : ExecEnv) (Lyt : EVM.Layout) (vkAddr : U256) (st₀ : EvmState)
+    (hdep : Midfall.LoweringV2.DeploymentV2 (f1PointRenderCCN n) W keccak256 vkAddr)
+    (hentry : Midfall.LoweringV3.EntryFrameV3 (f1PointRenderCCN n) W Lyt keccak256 cd st₀)
+    (hpc : Eip2537.Holds (f1PointRenderCCN n).E.g1 ⟨(f1PointRenderCCN n).encG2⟩ product)
+    (hacc : LeanAccepts (f1PointRenderCCN n) keccak256 cd)
+    (hss : SoundSide (f1PointRenderCCN n) keccak256 cd)
+    (hcs : CompleteSide (f1PointRenderCCN n) keccak256 cd)
+    (hdec : ∃ ms instW inst Snap,
+      decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+          (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1 cd = some (ms, instW) ∧
+      Midfall.Lowering.instOfWords? (p := blsR) instW = some inst ∧
+      snapshotOf (f1PointRenderCCN n).E keccak256 (f1PointRenderCCN n).vk inst ms none = .ok Snap)
+    (hart : Midfall.LoweringV2.ArtifactEq (f1PointRenderCCN n).model artifact) :
+    Midfall.LoweringV3.DoneAt (f1PointRenderCCN n) cd artifact := by
+  have hR : Midfall.LoweringV3.ValidV3 (f1PointRenderCCN n) :=
+    Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_validV3 n hpay
+  refine ⟨?_, hR, ?_, ?_, hart⟩
+  · intro p
+    exact Midfall.LoweringV3.lowering_correct _ p hR
+  · exact ⟨product, Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_gateAtV3_of
+      n product cd W Lyt vkAddr st₀ hdep hentry hpc hacc hss hcs hdec⟩
+  · intro p
+    exact Midfall.LoweringV3.totalV3_correct _ p hR
+
 end
 
 end Midfall.Instances

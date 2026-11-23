@@ -269,6 +269,96 @@ theorem f1PointRenderCN_validV3_iff (n : Nat) :
   · intro h
     exact f1PointRenderCN_validV3 n h
 
+/-! ## 2b. THE PARALLEL RENDER WITH THE COMPUTABLE CODEC
+
+  `f1PointRenderCCN n` is `f1PointRenderCN n` with `E.g1 := g1CodecC`; the key, parameters,
+  carrier, plan, model and program are unchanged. `f1PointRenderCCN_codec_lawsV3` is B3's
+  `g1CodecC_lawsV3`. Every `ValidV3` clause is re-established here: the four clauses that do not
+  mention `E` transfer definitionally, and `env`/`payloadScalars`/`supported` are rebuilt from
+  the same F1 measurements. The point half is B3's, transported through `toEip = g1zToEip`. -/
+
+theorem f1PointRenderCCN_generated (n : Nat) :
+    Midfall.LoweringV3.GeneratedBy (f1PointRenderCCN n) :=
+  f1PointRenderCN_generated n
+
+theorem f1PointRenderCCN_inputs (n : Nat) :
+    (f1PointRenderCCN n).inputs.numInstances = (f1PointRenderCCN n).cfg.numInstances ∧
+      (f1PointRenderCCN n).inputs.accEncoding = (f1PointRenderCCN n).cfg.accumulator ∧
+      (f1PointRenderCCN n).inputs.k = (f1PointRenderCCN n).vk.domain.k ∧
+      (f1PointRenderCCN n).inputs.truncatedChallenges =
+        Features.solidity.truncatedChallenges :=
+  f1PointRenderCN_inputs n
+
+theorem f1PointRenderCCN_program (n : Nat) :
+    Midfall.LoweringV3.programOk (f1PointRenderCCN n) :=
+  f1PointRenderCN_program n
+
+theorem f1PointRenderCCN_noWriters (n : Nat) :
+    Midfall.Yul.Bridge.NoWriters ((f1PointRenderCCN n).prog 0 0) :=
+  f1PointRenderCN_noWriters n
+
+/-- `env` at the computable-codec render: every field is the F1 measurement at the same key,
+    domain and plan view; only `E.g1` differs and no `EnvAgrees` field reads it. -/
+theorem f1PointRenderCCN_env (n : Nat) :
+    EnvAgrees (f1PointRenderCCN n).E (f1PointRenderCCN n).vk
+      (f1PointRenderCCN n).pv (f1PointRenderCCN n).params (f1PointRenderCCN n).sG2gen := by
+  have h := f1PointRenderCN_env n
+  refine ⟨h.modulus, h.truncWidth, h.domainN, h.baryWeight, h.omegaInvMul, h.omegaOrder,
+    h.negLagranges, h.nG2, h.sG2, h.vkDigestWord⟩
+
+/-- The nine scalar payload fields at the computable-codec render. -/
+theorem f1PointRenderCCN_payloadScalars (n : Nat) :
+    PayloadScalarHalf (f1PointRenderCCN n) := by
+  have h := f1PointRenderCN_payloadScalars n
+  refine ⟨h.digest, h.numInstances, h.k, h.nInv, h.omega, h.omegaInv, h.omegaInvToL,
+    h.accWords, h.constantsLength⟩
+
+/-- `supported` at the computable-codec render. `vkPoints` is the same `ptReadable` face
+    because `g1CodecC.toEip` is `g1zToEip`; the remaining fields are the F1 measurements. -/
+theorem f1PointRenderCCN_supported (n : Nat) :
+    SupportedV2 (f1PointRenderCCN n) := by
+  have h := f1PointRenderCN_supported n
+  refine ⟨h.advice, h.instShape, h.noRotInst, h.singlePhase, h.hLimbs, ?_, h.layout,
+    h.production, h.wf, h.noAcc, h.embeddedQuotient, h.separateVk⟩
+  intro C hC
+  show Midfall.LoweringV2.ptReadable (g1zToEip C)
+  exact h.vkPoints C hC
+
+theorem f1PointRenderCCN_validV3ExceptPayload (n : Nat) :
+    ValidV3ExceptPayload (f1PointRenderCCN n) :=
+  ⟨f1PointRenderCCN_generated n, f1PointRenderCCN_inputs n, f1PointRenderCCN_program n,
+    f1PointRenderCCN_noWriters n, f1PointRenderCCN_env n, f1PointRenderCCN_payloadScalars n,
+    f1PointRenderCCN_supported n⟩
+
+/-- **`ValidV3` AT THE COMPUTABLE-CODEC F1 RENDER.** The codec conjunct is now PROVED
+    (`f1PointRenderCCN_codec_lawsV3`); the only data input is the same `hpay` as at
+    `f1PointRenderCN`. -/
+theorem f1PointRenderCCN_validV3 (n : Nat)
+    (hpay : Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkNegSG2BaseSlot
+      = g2foldToEip (g2foldExp n)) :
+    Midfall.LoweringV3.ValidV3 (f1PointRenderCCN n) := by
+  rw [validV3_iff_exceptPayload_and_points]
+  exact ⟨f1PointRenderCCN_validV3ExceptPayload n, f1PointRenderCCN_payloadPointHalf n hpay⟩
+
+/-- **THE CODEC CONJUNCT OF `GateAtV3`, PROVED.** The rest of the gate is carried as the named
+    inputs of `GateAtV3`; the codec slot is `f1PointRenderCCN_codec_lawsV3`. -/
+theorem f1PointRenderCCN_gateAtV3_of
+    (n : Nat) (product : PairingProduct) (cd : Bytes)
+    (W : ExecEnv) (Lyt : EVM.Layout) (vkAddr : U256) (st₀ : EvmState)
+    (hdep : DeploymentV2 (f1PointRenderCCN n) W keccak256 vkAddr)
+    (hentry : EntryFrameV3 (f1PointRenderCCN n) W Lyt keccak256 cd st₀)
+    (hpc : Eip2537.Holds (f1PointRenderCCN n).E.g1 ⟨(f1PointRenderCCN n).encG2⟩ product)
+    (hacc : LeanAccepts (f1PointRenderCCN n) keccak256 cd)
+    (hss : SoundSide (f1PointRenderCCN n) keccak256 cd)
+    (hcs : CompleteSide (f1PointRenderCCN n) keccak256 cd)
+    (hdec : ∃ ms instW inst Snap,
+      decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+          (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1 cd = some (ms, instW) ∧
+      Midfall.Lowering.instOfWords? (p := blsR) instW = some inst ∧
+      snapshotOf (f1PointRenderCCN n).E keccak256 (f1PointRenderCCN n).vk inst ms none = .ok Snap) :
+    GateAtV3 (f1PointRenderCCN n) product cd :=
+  ⟨W, Lyt, vkAddr, st₀, hdep, hentry, hpc, f1PointRenderCCN_codec_lawsV3 n, hacc, hss, hcs, hdec⟩
+
 /-! ## 3. THE `Done` / `ArtifactEq` RESIDUAL AT THIS RENDER.
 
   `ValidV3` at `f1PointRenderCN n` is NOT `Done`, for three independent reasons, two of which are
@@ -324,4 +414,7 @@ end Midfall.Instances.ValidV3F1Real
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_validV3
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_validV3_iff
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_codec_not_lawsV3
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_validV3ExceptPayload
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_validV3
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_gateAtV3_of
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_gate_false

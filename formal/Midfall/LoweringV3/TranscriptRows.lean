@@ -2070,6 +2070,69 @@ theorem foldlM_bumpAt_length (site : String) (phase : List Nat) :
       obtain ⟨mid, h1, h2⟩ := except_bind_ok _ _ h
       rw [ih mid res h2, bumpAt_length init p site h1]
 
+/-- `sumNat` after replacing entry `i` by itself plus one: the sum rises by one. -/
+theorem sumNat_take_bump (xs : List Nat) (i : Nat) :
+    i < xs.length →
+      sumNat (xs.take i ++ (xs.getD i 0 + 1) :: xs.drop (i + 1)) = sumNat xs + 1 := by
+  induction xs generalizing i with
+  | nil => intro h; simp at h
+  | cons a as ih =>
+      intro h
+      cases i with
+      | zero => simp [sumNat_cons]; omega
+      | succ k =>
+          have hk : k < as.length := by simpa using h
+          simp only [List.take_succ_cons, List.drop_succ_cons, List.getD_cons_succ,
+            List.cons_append, sumNat_cons, Nat.succ_eq_add_one]
+          rw [ih k hk]
+          omega
+
+/-- `bumpAt` raises the sum by one. -/
+theorem bumpAt_sumNat (xs : List Nat) (i : Nat) (site : String) {ys : List Nat}
+    (h : bumpAt xs i site = .ok ys) : sumNat ys = sumNat xs + 1 := by
+  unfold bumpAt at h
+  split at h
+  · cases h
+    exact sumNat_take_bump xs i (by assumption)
+  · cases h
+
+/-- The phase fold's read-index vector sums to the phase count. -/
+theorem foldlM_bumpAt_sumNat (site : String) (phase : List Nat) :
+    ∀ (init res : List Nat),
+      phase.foldlM (fun xs p => bumpAt xs p site) init = .ok res →
+      sumNat res = sumNat init + phase.length := by
+  induction phase with
+  | nil =>
+      intro init res h
+      have h' : Except.ok init = (Except.ok res : Except Fault (List Nat)) := h
+      cases h'
+      simp
+  | cons p rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨mid, h1, h2⟩ := except_bind_ok _ _ h
+      rw [ih mid res h2, bumpAt_sumNat init p site h1]
+      simp only [List.length_cons]
+      omega
+
+/-- `sumNat` of a list of zeros is zero. -/
+theorem sumNat_replicate_zero (n : Nat) : sumNat (List.replicate n 0) = 0 := by
+  induction n with
+  | zero => rfl
+  | succ k ih => rw [List.replicate_succ, sumNat_cons, ih]
+
+/-- `ProtocolPlan.remapping`'s per-phase counts sum to the phase-vector length. -/
+theorem remapping_nums_sum (numPhase : Nat) (phase : List Nat) {nums idxs : List Nat}
+    (h : ProtocolPlan.remapping numPhase phase = .ok (nums, idxs)) :
+    sumNat nums = phase.length := by
+  unfold ProtocolPlan.remapping at h
+  obtain ⟨nums0, hnums, h⟩ := except_bind_ok _ _ h
+  obtain ⟨offsets, _, h⟩ := except_bind_ok _ _ h
+  obtain ⟨res, _, h⟩ := except_bind_ok _ _ h
+  cases h
+  rw [foldlM_bumpAt_sumNat _ phase _ _ hnums, sumNat_replicate_zero]
+  omega
+
 /-- `ProtocolPlan.remapping`'s read-index vector has length `numPhase`, whatever the phase list. -/
 theorem remapping_nums_length (numPhase : Nat) (phase : List Nat) {nums idxs : List Nat}
     (h : ProtocolPlan.remapping numPhase phase = .ok (nums, idxs)) :
@@ -2275,6 +2338,17 @@ theorem foldlM_lookups_accOne (protocol : ProtocolPlan) :
             CommitmentRead.lookupAccumulator 1 "lookup accumulator" hy).1
       exact ih st1 res h2 hinv' r hr
 
+/-- The second projections of `(range l.length).zip l` are `l` itself. -/
+theorem zip_range_snd (l : List Nat) :
+    ((List.range l.length).zip l).map (fun p => p.2) = l := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+      rw [List.length_cons, List.range_succ_eq_map, List.zip_cons_cons, List.map_cons]
+      rw [List.zip_map_left, List.map_map]
+      simp only [Function.comp_def, Prod.map, id_eq]
+      rw [ih]
+
 /-- The section facts `fromProtocol` gives, in one record so the row's algebra can take them as a
     single hypothesis. -/
 structure TpLayoutFacts (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout) : Prop where
@@ -2282,6 +2356,8 @@ structure TpLayoutFacts (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout)
   adviceByteLen : ∀ s, s ∈ L.advicePhases →
     s.byteLen = s.itemCount * Midfall.Generator.g1Bytes
   adviceLen : L.advicePhases.length = meta_.protocol.numUserAdvices.length
+  adviceSum : sumNat (L.advicePhases.map (fun s => s.itemCount)) =
+    sumNat meta_.protocol.numUserAdvices
   lookupM : L.lookupMultiplicities.itemCount = meta_.protocol.numLookups
   lookupMByte : L.lookupMultiplicities.byteLen =
     meta_.protocol.numLookups * Midfall.Generator.g1Bytes
@@ -2295,6 +2371,10 @@ structure TpLayoutFacts (meta_ : ConstraintSystemMeta) (L : ProofCalldataLayout)
       lk.accumulator.itemBytes = Midfall.Generator.g1Bytes ∧
       lk.accumulator.byteLen = Midfall.Generator.g1Bytes
   lookupsAcc : ∀ lk, lk ∈ L.lookups → lk.accumulator.itemCount = 1
+  lookupSum : sumNat (L.lookups.map (fun lk =>
+    lk.helpers.itemCount + lk.accumulator.itemCount)) =
+    sumNat (((List.range meta_.protocol.lookupChunks.length).zip
+      meta_.protocol.lookupChunks).map (fun p => p.2 + 1))
   trash : L.trash.itemCount = meta_.protocol.numTrashcans
   trashByte : L.trash.byteLen = meta_.protocol.numTrashcans * Midfall.Generator.g1Bytes
   quotient : L.quotientLimbs.itemCount = meta_.protocol.numQuotients
@@ -2343,13 +2423,14 @@ theorem tp_fromProtocol {meta_ : ConstraintSystemMeta} {L : ProofCalldataLayout}
     CommitmentRead.trash meta_.protocol.numTrashcans "trash" hTr
   have hql := takeCommitmentSection_shape meta_.protocol tr.2.1 tr.2.2
     CommitmentRead.quotient meta_.protocol.numQuotients "quotient limb" hQl
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro s hs
     exact (hadv.2.1 s hs).1
   · intro s hs
     exact (hadv.2.1 s hs).2
   · rw [hadvLen]
     simp
+  · simpa [sumNat_nil] using hadv.2.2
   · exact hlm.1
   · exact hlm.2.2
   · exact hpp.1
@@ -2362,6 +2443,7 @@ theorem tp_fromProtocol {meta_ : ConstraintSystemMeta} {L : ProofCalldataLayout}
     rw [hLksAcc lk hlk] at ha2
     exact ⟨hg.1, hg.2, ha.1, by simpa using ha2⟩
   · exact hLksAcc
+  · simpa [sumNat_nil] using hLks.2.2
   · exact htr.1
   · exact htr.2.2
   · exact hql.1

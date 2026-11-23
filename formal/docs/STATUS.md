@@ -1,10 +1,10 @@
 # STATUS - midfall
 
-**As of:** `fe9ba7a7` (2026-11-23). **Quick gate green.** The last FULL gate was at `d0bf226` (KAT
+**As of:** `e8279b1b` (2026-11-23). **Quick gate green.** The last FULL gate was at `d0bf226` (KAT
 1648/119); it is stale after the D-GATE5-8 statement wave and the current lane merges, so the final
 full gate is deferred until the next integration point. Current report: root **11 / sound 5**,
-register **109 rows / 11 ROOT / 31 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
-251 modules; closure **5249 declarations / 620 external leaves / digest `128d7f9cb4eb39ac`**.
+register **102 rows / 10 ROOT / 26 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
+252 modules; closure **5250 declarations / 620 external leaves / digest `209cde2f48115a76`**.
 
 ## 1. Verified - PROGRESS
 
@@ -247,15 +247,16 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `fe9ba7a7` (2026-11-23): register **109 rows / 11 ROOT / 31 CERT**, 0 REFUTED, 1 legacy VACUOUS
-(`end_to_end_acc_complete`); 108 sorried declarations; 251 modules; closure **5249 declarations /
-620 external leaves / digest 128d7f9cb4eb39ac**; quick gate green.
+At `e8279b1b` (2026-11-23): register **102 rows / 10 ROOT / 26 CERT**, 0 REFUTED, 1 legacy VACUOUS
+(`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
+620 external leaves / digest 209cde2f48115a76**; quick gate green.
 
 **D-GATE8 (signed, 2026-11-23)**: `programFits`/`programFitB` carry `staticWorkingSetFits pv`
 (`traceU256Mptr + wordBytes < 2^256`), the full static-region fit. A11 derived `PG_PAIRINGFIT`,
 `pairingLhsMptr_toNat_of_valid` and `pairingRhsMptr_toNat_of_valid` from it;
 `block_live_finalPairing_of_body_fit` discharges the finalPairing fit premises. The closure manifest
-was regenerated (5249 decls, digest `128d7f9cb4eb39ac`) and `Frozen.sha256` re-pinned.
+was regenerated after D-GATE8 and again after D2's generator refactor (5250 decls, digest
+`209cde2f48115a76`) and `Frozen.sha256` re-pinned.
 
 **Merged this wave**:
 - A5: bridge head/full success+reject, stores env/halt frame, canonical/nonzero `BridgeSucc`,
@@ -270,8 +271,13 @@ was regenerated (5249 decls, digest `128d7f9cb4eb39ac`) and `Frozen.sha256` re-p
 - D1A: protocol eval decomposition, `PrepareLogSlots` from the parsed trace, and
   `end_to_end_of_A6_KZG`/`end_to_end_of_tpEvents` with exactly two named Props:
   `ParseTraceSchedule` (A6) and `KzgMultiPrepareWidths` (D-GATE5/KZG).
-- D2: `generateBaseVkHeader_slots` (slots 0-10), reservation/fill `getD` prefix lemmas, header
-  insert get?/frame specs; `payload_header` is next.
+- D2: `generateBaseVkHeader_slots` (slots 0-10), reservation/fill `getD` prefix lemmas, the five
+  payload CERT leaves (`payload_header`/`g1Base`/`g2Base`/`negSG2`/`payload_comms`), and the
+  generator refactor (closure re-pinned at 5250 decls, digest `209cde2f48115a76`).
+- A11: `fp_blockSim` CLOSED (root 11 -> 10), `fpBodyRun_clean`, `fp_slice_det`, `callsOf_functional`.
+- A12: REF.9/REF.10 CLOSED (`g1CodecC_compressedEncoderFirst`, `g1CodecC_lawsV3`; register 102 rows).
+- A9: PCS block-4 m1 set contract and the general-arm `dxLines`/`lbasisLines`/`bp` step contracts,
+  `block_live_pcs`; A4: `LagrangeBlock` vocabulary + statement-4 contract.
 
 ### Six-lane critical path (user cap)
 
