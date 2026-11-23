@@ -31,6 +31,8 @@ import Midfall.LoweringV3.RotationInjectivity
 import Midfall.LoweringV3.LinearizeEntry
 import Midfall.LoweringV3.QueryTail
 import Midfall.LoweringV3.QueryBlockShape
+import Midfall.LoweringV3.PcsOrder
+import Midfall.LoweringV3.UpstreamSets
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -4625,6 +4627,48 @@ open Midfall.Tools.Done in
 #assert_axioms adviceBlock_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms instanceBlock_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms VerifierQuery.new_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Permutation.Evaluated.queries_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms perProofQueries_parts
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms lookupBlock_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms trashBlock_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms perProofQueries_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms collectQueries_perProof_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms ProtocolPlan.fromConstraintSystem_pcsQueries
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.fromConstraintSystem_pcsQueries
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms mapM_append_ok
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms mapM_flatten_ok
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queries_pcsBlocks
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms collectQueries_single_blocks
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms permZBlock_three
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms permZUpstream_three
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms permZBlock_three_beq_upstream
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms flatten_map_ite
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms flatten_map_singleton
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms filter_range_pred_rev
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamBlock_permZBlock
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms assertPermutationQueryOrderIsUpstreamEquivalent_parts
   [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]

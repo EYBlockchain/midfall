@@ -525,3 +525,69 @@ common and lookup. Remaining: the `permutationZ` block point lemma (head
 block lemmas to `perProof.flatten`. The same-order equality against `pcsQueries`
 then follows block by block; `hclass`/`.linear`/`G1_IDENTITY_MPTR` freshness
 remains priority 3.
+
+## pcsQueries exposed; permutationZ order is the same-order blocker
+
+`PcsOrder.pcsBlockList` / `pcsBlocks` transcribe the literal
+`ProtocolPlan.fromConstraintSystem` PCS schedule as eight blocks
+(advice, committed instance, permutationZ, lookup, trash, fixed, permutation
+common, linearization). `fromConstraintSystem_pcsQueries` proves the plan field
+is exactly that list; the final `match plan.validate` is split, not inverted.
+So the old `fromConstraintSystem_pcsQueries_last` residual is closed as a
+special case (the generic `pcsQueries_append_linearization_last` is now
+redundant but harmless).
+
+On the verifier side, `collectQueries_single_blocks` gives the one-proof
+eight-block spine
+`adv.flatten ++ inst.flatten ++ perm.toList ++ lookup ++ trash ++ fixed ++ common ++ [linCom]`,
+matching `pcsBlocks` in block order. `queries_pcsBlocks` splits a successful
+`Generator.queries` into one query list per PCS block, in `pcsQueries` order.
+
+**The remaining same-order obstacle is permutationZ, and it is not a proof
+gap but an order difference.** `Permutation.Evaluated.queries`
+(`Halo2/Exec/Permutation.lean:265-290`) emits the `cur/next` openings for every
+set first, then `.enumerate().rev().skip(1)` last-row openings in DESCENDING
+set order. `pcsPermutationZ` (`Generator/Protocol.lean:733-738`) interleaves
+per set: `[cur, next, last]`, `[cur, next, last]`, ..., `[cur, next]`. The
+deployment has `numPermutationZs = 3` (`Instances/DeployedProfile.lean:87`), so
+the two lists are literally different. The generator already knows this:
+`assertPermutationQueryOrderIsUpstreamEquivalent` (`Generator/Kzg.lean:628-665`)
+rebuilds the sources in upstream order
+(`(filter curOrNext) ++ reverse (filter last)`, KZ:159-186), maps
+`queryFromPlan` over them, and checks that the point sets and commitments agree
+with the generator order.
+
+The order algebra is now PROVED: `permZBlock`/`permZUpstream` pin the two
+three-set lists (`permZBlock_three`, `permZUpstream_three`,
+`permZBlock_three_beq_upstream`), and `upstreamBlock_permZBlock` proves that
+filtering the generator block to `cur/next`, reversing its `last` openings, and
+concatenating gives exactly `permZUpstream` - the verifier's
+`head.flatten ++ tail.flatten` order. `upstreamBlock` is the `KZ:159-186`
+reordering.
+
+The upstream-check inversion is now landed as well:
+`assertPermutationQueryOrderIsUpstreamEquivalent_parts` (in `UpstreamSets`)
+exposes, from a successful check with nonempty z positions, the upstream source
+list, its `queryFromPlan` map, both `constructIntermediateSetsImpl` successes,
+and `generatorSets.pointSets = upstreamSets.pointSets`.
+
+The remaining same-order step is to identify the z slice of
+`upstreamSources` with `permZUpstream` (the source list is built by
+`listSetMut` at the consecutive `zPositions`; `upstreamBlock_permZBlock`
+already gives the order equality), then pair the verifier list with that
+upstream list (not with raw `Generator.queries`).
+`KzgQueryMapData`'s `hVlist`/`hGlist` force this: `L.map Prod.fst` and
+`L.map Prod.snd` cannot simultaneously be two different orders. A literal
+same-order theorem against raw `pcsQueries` is false for this deployment.
+
+## hclass / linearization residual
+
+Not started. `kzgCommitBeq` compares `.onePiece` by `CommitSlot` and `.linear`
+by points/scalars (`Halo2/Exec/Kzg/MultiOpen.lean:46-53`), while generator
+equality is `ecPointBeq` on `EcPoint` pointers
+(`Generator/Kzg.lean:281`). For the linearization pair, verifier-side
+self-equality is true and generator-side self-equality is true, so `hclass`
+holds on the diagonal; the off-diagonal `linearization` vs any one-piece query
+needs `computedQuotientComm`'s pointer to be distinct from every other
+commitment pointer (`G1_IDENTITY_MPTR` freshness). This is a concrete freshness
+obligation on `Data`, not a list-order one.
