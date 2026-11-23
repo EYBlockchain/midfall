@@ -886,6 +886,20 @@ theorem bwdEnv_get_second_mptr (mem : Nat → UInt8) (a s k : Nat) (rw invAll : 
         venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "second_mptr") (by decide)]
       exact ih
 
+
+theorem bwdEnv_get_first_mptr (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g)) (v : U256)
+    (h : VEnv.get V "first_mptr" = some v) (j : Nat) :
+    VEnv.get (bwdEnv mem a s k rw invAll V j) "first_mptr" = some v := by
+  induction j with
+  | zero => exact h
+  | succ j ih =>
+      simp only [bwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "first_mptr") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "first_mptr") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "first_mptr") (by decide)]
+      exact ih
+
 theorem bwdEnv_get_r (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
     (V : VEnv (Bridge.Dialect c g)) (h : VEnv.get V "r" = some rw) (j : Nat) :
     VEnv.get (bwdEnv mem a s k rw invAll V j) "r" = some rw := by
@@ -1094,6 +1108,7 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
       (fun V st =>
         VEnv.get V "mptr" = some (bwdMptr a k 0) ∧
         VEnv.get V "gp_mptr" = some (bwdGp s k 0) ∧
+        VEnv.get V "first_mptr" = some (BitVec.ofNat 256 a) ∧
         VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
         VEnv.get V "all_inv" = some invAll ∧ VEnv.get V "r" = some rw ∧
         (VEnv.get V "ret").isSome ∧
@@ -1109,12 +1124,15 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         (∀ i, i < 2 → loadWord st'.memory (a + 32 * i) = loadWord st.memory (a + 32 * i)) ∧
         (∀ x, (x < a ∨ a + 32 * k ≤ x) → (x < s ∨ s + 32 * k ≤ x) →
           st'.memory x = st.memory x) ∧
-        (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat)) := by
+        (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat) ∧
+        VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+        VEnv.get V' "r" = some rw) := by
   rw [bi_backward_loop_form]
   simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
     GenAst.yexpr]
   intro V st hpre
-  obtain ⟨hmptr, hgpm, hsecond, hinv0, hr, hret, hscratch, hcanon, hinvAll⟩ := hpre
+  obtain ⟨hmptr, hgpm, hfirst, hsecond, hinv0, hr, hret, hscratch, hcanon, hinvAll⟩ := hpre
   have he' : e = a + 32 * k := by omega
   have hsubea : e - a = 32 * k := by omega
   have hk3 : 3 ≤ k := by omega
@@ -1133,7 +1151,10 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         bwdInvVal st.memory a k rw invAll (k - 1 - i)) ∧
       (∀ i, i < 2 → loadWord st'.memory (a + 32 * i) = loadWord st.memory (a + 32 * i)) ∧
       (∀ x, (x < a ∨ a + 32 * k ≤ x) → (x < s ∨ s + 32 * k ≤ x) → st'.memory x = st.memory x) ∧
-      (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat)
+      (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat) ∧
+      VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
+      VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+      VEnv.get V' "r" = some rw
   change Midfall.Yul.WpTac.AllRuns funs V st
     [Stmt.forLoop []
       (Expr.builtin Op.lt [Expr.var "second_mptr", Expr.var "mptr"])
@@ -1216,7 +1237,7 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
           simp [restore, hl]
         rw [hres]
         dsimp only [Q]
-        refine ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        refine ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
         · -- mptr
           clear hs hsk hdisj' hgpm0 hdisj hgpm
           rw [bwdEnv_get_mptr st.memory a s k rw invAll V hmptr0 (k - 2)]
@@ -1252,6 +1273,12 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
           · rw [loadWord_bwdMem_written st.memory a k (bwdInvVal st.memory a k rw invAll)
               (k - 2) i hk1 (by omega) (by omega) hik]
             exact wMulmodAt_toNat_lt hrw0
+        · -- first_mptr
+          rw [bwdEnv_get_first_mptr st.memory a s k rw invAll V (BitVec.ofNat 256 a) hfirst (k - 2)]
+        · -- second_mptr
+          rw [bwdEnv_get_second_mptr st.memory a s k rw invAll V (BitVec.ofNat 256 (a + 32)) hsecond (k - 2)]
+        · -- r
+          rw [bwdEnv_get_r st.memory a s k rw invAll V hr (k - 2)]
       · -- iteration: j < k-2
         intro hguard
         have h0 : b2w ((BitVec.ofNat 256 (a + 32)).ult (bwdMptr a k j)) ≠ (0 : U256) := hguard
@@ -2703,6 +2730,7 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms bwdEnv_get_all_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_second_mptr [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_r [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_get_first_mptr [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_ret [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdMem_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdMem_scratch [propext, Classical.choice, Quot.sound]
