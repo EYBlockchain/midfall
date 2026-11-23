@@ -2490,6 +2490,151 @@ theorem fromConstraintSystem_evals_length {F : Type} (feat : Features) (cs : Con
     · cases h5
   · cases h5
 
+theorem mapM_map_opt {α β γ : Type} (f : α → Option β) (g : β → γ) (l : List α) :
+    l.mapM (fun x => (f x).map g) = (l.mapM f).map (List.map g) := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+      rw [List.mapM_cons, ih, List.mapM_cons]
+      cases h : f a with
+      | none => simp [h]
+      | some b =>
+          cases h2 : as.mapM f with
+          | none => simp [h, h2]
+          | some l0 => simp [h, h2]
+
+theorem except_toOption_map {ε α β : Type} (e : Except ε α) (g : α → β) :
+    (e.map g).toOption = (e.toOption).map g := by
+  cases e <;> rfl
+
+theorem mapM_map_some {α β γ : Type} (f : α → Except Fault β) (g : β → γ) :
+    ∀ (l : List α) (l' : List γ),
+      l.mapM (fun x => ((f x).map g).toOption) = some l' →
+      ∃ l0, l.mapM (fun x => (f x).toOption) = some l0 ∧ l' = l0.map g := by
+  intro l l' h
+  have h' : l.mapM (fun x => ((f x).toOption).map g) = some l' := by
+    simpa only [except_toOption_map] using h
+  rw [mapM_map_opt (fun x => (f x).toOption) g l] at h'
+  cases hm : l.mapM (fun x => (f x).toOption) with
+  | none => rw [hm] at h'; cases h'
+  | some l0 => rw [hm] at h'; simp only [Option.map_some, Option.some.injEq] at h'
+               exact ⟨l0, rfl, h'.symm⟩
+
+theorem mapExceptArray_go_chunkN {F : Type} (deg : Nat) :
+    ∀ (xs : List (LogupBatchedArgument F)) (acc out : Array Nat),
+      mapExceptArray.go (fun x => (x.chunkByDegree deg).map LogupChunkedArgument.numChunks)
+          xs acc = .ok out →
+      ∃ l, xs.mapM (fun x => ((x.chunkByDegree deg).map LogupChunkedArgument.numChunks).toOption)
+          = some l ∧ out.toList = acc.toList ++ l := by
+  intro xs
+  induction xs with
+  | nil =>
+      intro acc out h
+      cases h
+      exact ⟨[], by simp, by simp⟩
+  | cons x rest ih =>
+      intro acc out h
+      simp only [mapExceptArray.go] at h
+      obtain ⟨y, hf, hgo⟩ := AlgebraWidths.except_bind_ok h
+      obtain ⟨l, hmap, hout⟩ := ih (acc.push y) out hgo
+      refine ⟨y :: l, ?_, ?_⟩
+      · rw [List.mapM_cons, hf, hmap]
+        rfl
+      · rw [hout, Array.toList_push]
+        simp [List.append_assoc]
+
+theorem mapExceptArray_chunk {F : Type} (deg : Nat) (xs : Array (LogupBatchedArgument F))
+    {out : Array Nat}
+    (h : mapExceptArray (fun x => (x.chunkByDegree deg).map LogupChunkedArgument.numChunks)
+      xs = .ok out) :
+    ∃ cl, chunkedOf deg xs.toList = some cl ∧
+      out.toList = cl.map LogupChunkedArgument.numChunks := by
+  have hgo := h
+  unfold mapExceptArray at hgo
+  obtain ⟨l, hmap, hout⟩ := mapExceptArray_go_chunkN deg xs.toList #[] out hgo
+  obtain ⟨cl, hcl, hl⟩ := mapM_map_some (fun x => x.chunkByDegree deg)
+    LogupChunkedArgument.numChunks xs.toList l hmap
+  exact ⟨cl, hcl, by rw [hout]; simpa using hl⟩
+
+
+theorem divCeil_zero (k : Nat) : divCeil 0 k = 0 := by
+  unfold divCeil
+  cases k <;> simp
+
+theorem if_list_isEmpty_divCeil {α : Type} (l : List α) (k : Nat) :
+    (if l.isEmpty = true then 0 else divCeil l.length k) = divCeil l.length k := by
+  by_cases h : l.isEmpty = true
+  · rw [if_pos h]
+    have hnil : l = [] := by
+      cases l with
+      | nil => rfl
+      | cons a as => simp at h
+    rw [hnil]
+    simp [divCeil_zero]
+  · rw [if_neg h]
+
+set_option maxHeartbeats 8000000 in
+theorem validate_numSimpleSelectors {plan : ProtocolPlan} {u : Unit}
+    (h : plan.validate = .ok u) : plan.numSimpleSelectors = plan.simpleSelectorCols.length := by
+  by_contra hne
+  have hb : (plan.numSimpleSelectors != plan.simpleSelectorCols.length) = true := by
+    rw [bne_iff_ne]; exact hne
+  unfold ProtocolPlan.validate at h
+  dsimp only at h
+  rw [hb] at h
+  simp only [if_true] at h
+  cases h
+
+
+set_option maxHeartbeats 8000000 in
+theorem readAlgebraEvalCount_parseTrace_eq_numMainEvals {G₁ : Type} (g1 : G1Codec G₁)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (xc : G₁) (inst : Array (Fr p)) {plan : ProtocolPlan}
+    (hplan : ProtocolPlan.fromConstraintSystem Features.solidity vk.cs 1 = .ok plan)
+    {t : Transcript} {tr : VerifierTrace (Fr p) G₁} {t' : Transcript}
+    (h : (parseTrace g1 Features.solidity vk #[#[xc]] #[#[inst.toList.toArray]]).run t
+      = .ok (tr, t')) :
+    readAlgebraEvalCount vk tr.permutations tr.lookups tr.trashcans 1 1
+        #[#[inst.toList.toArray]]
+      = plan.numMainEvals := by
+  rw [readAlgebraEvalCount_parseTrace g1 vk hf xc inst h]
+  change _ = plan.proof.evals.length
+  rw [fromConstraintSystem_evals_length Features.solidity vk.cs 1 hplan]
+  unfold ProtocolPlan.fromConstraintSystem at hplan
+  simp only [Bind.bind] at hplan
+  obtain ⟨csDegree, hdeg, hp1⟩ := AlgebraWidths.except_bind_ok hplan
+  obtain ⟨lookupChunks, hlu, hp2⟩ := AlgebraWidths.except_bind_ok hp1
+  obtain ⟨_x1, _hr1, hp3⟩ := AlgebraWidths.except_bind_ok hp2
+  obtain ⟨_x2, _hr2, hp4⟩ := AlgebraWidths.except_bind_ok hp3
+  obtain ⟨_bl, _hbl, hp5⟩ := AlgebraWidths.except_bind_ok hp4
+  split at hp5
+  · rename_i hfix
+    split at hp5
+    · rename_i hval
+      cases hp5
+      dsimp only
+      have hns : vk.cs.numSimpleSelectors =
+          (List.filter (fun idx => vk.cs.hasSimpleSelectorCol idx)
+            (List.range vk.cs.numFixedColumns)).length :=
+        validate_numSimpleSelectors hval
+      have hdegEq : csDegree = vk.csDegree := by
+        rw [hf.csDegreeMatches] at hdeg
+        exact (Except.ok.inj hdeg).symm
+      obtain ⟨cl, hcl, hchunks⟩ := mapExceptArray_chunk csDegree vk.cs.lookups hlu
+      rw [hdegEq] at hcl
+      rw [hns]
+      rw [hf.permutationCommitmentsMatch]
+      rw [hdegEq]
+      rw [if_list_isEmpty_divCeil (vk.cs.permutation.getColumns.toList) (vk.csDegree - 2)]
+      rw [Array.length_toList]
+      rw [lookupEvalCount_eq vk.csDegree vk.cs.lookups.toList cl hcl]
+      rw [hchunks]
+      rw [map_add_three_map]
+      rw [filter_map_index_length]
+      simp [Array.length_toList, Permutation.numChunksOf, PermutationArgument.getColumns]
+    · cases hp5
+  · cases hp5
+
 end Composition
 
 end Midfall.LoweringV3
