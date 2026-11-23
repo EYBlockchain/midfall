@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `529b9c4a` (2026-11-23). **Full gate GREEN at `b171a8a9`** (`verify.sh: ok (full)`,
+**As of:** `abd70b2a` (2026-11-23). **Full gate GREEN at `b171a8a9`** (`verify.sh: ok (full)`,
 KAT 1648/119, closure 5251/620 digest `da67ab3de31b92e9`). The only later change is A11's
 `fp_blockProgS` closure (a proof term; the closure digest is unchanged). Current report: root **11 / sound 5**,
 register **96 rows / 11 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
@@ -278,8 +278,9 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
   **`fp_blockProgS` CLOSED** — no finalPairing ROOT row remains (ROOT 12 -> 11 after the TP leaves
   enter the cone).
 - A12: REF.9/REF.10 CLOSED (`g1CodecC_compressedEncoderFirst`, `g1CodecC_lawsV3`; register 102 rows).
-- A9: PCS block-4 m1 set contract and the general-arm `dxLines`/`lbasisLines`/`bp` step contracts,
-  `block_live_pcs`.
+- A9: PCS block-4 m1 set contract, `dxLines`/`lbasisLines`/`bpLines`/`bq`/`bqLines`,
+  `denInv`/`eval`/`termLines`/`f_eval` line folds, and the general-arm AST/name/no-shadow bundle
+  (1790 lines); `block_live_pcs`. The set-block/block composition is the remaining PCS unit.
 - A4: `LagrangeBlock` vocabulary + statement-4 contract; per-phase representation and group-4
   denominator-loop proof.
 - A5: `bi_front`, `bi_back_tail`, prelude main, and **`batch_invert_summary` PROVED** (with the
