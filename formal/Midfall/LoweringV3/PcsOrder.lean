@@ -138,6 +138,80 @@ theorem ProtocolPlan.fromConstraintSystem_pcsQueries {F : Type} (feat : Features
     · cases h
   · cases h
 
+/-- The reordering `KZ:159-186` applies to the z-sources: all `cur/next` in
+    ascending set order, then the `last` openings reversed. -/
+def upstreamBlock (z : List PcsQuerySource) : List PcsQuerySource :=
+  (z.filter permZIsCurOrNext) ++ (z.filter permZIsLast).reverse
+
+theorem flatten_map_ite {α β : Type} (l : List α) (p : α → Bool) (f : α → β) :
+    ((l.map fun a => if p a then [f a] else []).flatten) = (l.filter p).map f := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+      by_cases h : p a = true <;> simp [h, ih]
+
+theorem flatten_map_singleton {α β : Type} (l : List α) (f : α → β) :
+    ((l.map fun a => [f a]).flatten) = l.map f := by
+  induction l with
+  | nil => simp
+  | cons a as ih => simp [ih]
+
+theorem filter_range_pred_rev (k : Nat) :
+    ((List.range k).filter (fun set => set + 1 != k)).reverse =
+      (List.range k).reverse.drop 1 := by
+  cases k with
+  | zero => simp
+  | succ n =>
+      rw [List.range_succ, List.filter_append]
+      have hnil : List.filter (fun set => set + 1 != n + 1) [n] = [] := by simp
+      have hrange : List.filter (fun set => set + 1 != n + 1) (List.range n) =
+          List.range n := by
+        rw [List.filter_eq_self]
+        intro a ha
+        have hlt := List.mem_range.mp ha
+        simp
+        omega
+      rw [hnil, hrange, List.append_nil, List.reverse_append]
+      rw [List.reverse_singleton, List.singleton_append]
+      simp
+
+/-- **The permutationZ block reorders exactly to the upstream verifier
+    order.** This is the order half of the KZG pairing for the z block: the
+    generator's per-set `cur,next,last` interleaving, filtered and reversed by
+    `upstreamBlock`, is the verifier's `head.flatten ++ tail.flatten`
+    (`Halo2/Exec/Permutation.lean:276-290`). -/
+theorem upstreamBlock_permZBlock (k : Nat) :
+    upstreamBlock (permZBlock k) = permZUpstream k := by
+  unfold upstreamBlock permZBlock permZUpstream
+  rw [List.filter_flatten, List.filter_flatten]
+  simp only [List.map_map, Function.comp_def]
+  congr 1
+  · apply congrArg List.flatten
+    apply List.map_congr_left
+    intro set _hset
+    have hcur : permZIsCurOrNext (PcsQuerySource.permutationZ set PermutationZEval.cur) = true := rfl
+    have hnext : permZIsCurOrNext (PcsQuerySource.permutationZ set PermutationZEval.next) = true := rfl
+    have hlast : permZIsCurOrNext (PcsQuerySource.permutationZ set PermutationZEval.last) = false := rfl
+    by_cases h : set + 1 != k <;> simp [hcur, hnext, hlast, h]
+  · have hinside :
+        ((List.map (fun set => List.filter permZIsLast
+            ([PcsQuerySource.permutationZ set PermutationZEval.cur,
+              PcsQuerySource.permutationZ set PermutationZEval.next]
+              ++ (if set + 1 != k then
+                    [PcsQuerySource.permutationZ set PermutationZEval.last] else [])))
+          (List.range k)).flatten) =
+        ((List.map (fun set =>
+            if set + 1 != k then
+              [PcsQuerySource.permutationZ set PermutationZEval.last] else [])
+          (List.range k)).flatten) := by
+      congr 1
+      apply List.map_congr_left
+      intro set _hset
+      by_cases h : set + 1 != k <;> simp [permZIsLast, h]
+    rw [hinside, flatten_map_ite, ← List.map_reverse, filter_range_pred_rev]
+    rw [flatten_map_singleton]
+
+
 end Midfall.Generator
 
 namespace Midfall.LoweringV3

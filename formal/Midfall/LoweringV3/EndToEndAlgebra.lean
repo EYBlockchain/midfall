@@ -4659,6 +4659,14 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms permZBlock_three_beq_upstream
   [propext, Classical.choice, Quot.sound]
+#assert_axioms flatten_map_ite
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms flatten_map_singleton
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms filter_range_pred_rev
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamBlock_permZBlock
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
