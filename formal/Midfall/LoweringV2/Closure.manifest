@@ -1,4 +1,4 @@
-# closure_fingerprint: 5249 project declarations, 620 external leaves, digest 128d7f9cb4eb39ac
+# closure_fingerprint: 5250 project declarations, 620 external leaves, digest 209cde2f48115a76
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws inductive 0e89d3fd0bde015d 0000000000000000
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws.mk ctor 8c653d323d8fefae 0000000000000000
 DECL Midfall.Assumptions.CurvePairing Midfall.Assumptions.bls12_381Pairing axiom 3d246dc502557acb 0000000000000000
@@ -2931,11 +2931,12 @@ DECL Midfall.Generator.Vk Midfall.Generator.VkBuildEnv.newVerifierMemoryLayout d
 DECL Midfall.Generator.Vk Midfall.Generator.VkQuotientBuild inductive 28893073c8df664e 0000000000000000
 DECL Midfall.Generator.Vk Midfall.Generator.VkQuotientBuild.mk ctor 9d06bd738e99c9ec 0000000000000000
 DECL Midfall.Generator.Vk Midfall.Generator.memoryLayoutFor def a1c01c7fb41d7f22 158936797738be53
-DECL Midfall.Generator.Vk Midfall.Generator.metaDataForStableStaticLayout def 5e47e3d95e837680 a1d13f5bb38b4b2b
-DECL Midfall.Generator.Vk Midfall.Generator.metaDataForStableStaticLayout.match_1 def 5406725951d0208e 01bab5353b4a7b5a
-DECL Midfall.Generator.Vk Midfall.Generator.metaDataForStableStaticLayout.match_3 def 39d3c6f6965dc86f a49cbfb12df5e966
-DECL Midfall.Generator.Vk Midfall.Generator.metaDataForStableStaticLayout.match_5 def 8651214ae0d05391 e817e3289faab0ea
+DECL Midfall.Generator.Vk Midfall.Generator.metaDataForStableStaticLayout def 5e47e3d95e837680 0ce15e2a3dd163aa
+DECL Midfall.Generator.Vk Midfall.Generator.metaDataForStableStaticLayout.match_1 def 39d3c6f6965dc86f a49cbfb12df5e966
+DECL Midfall.Generator.Vk Midfall.Generator.metaDataForStableStaticLayout.match_3 def 8651214ae0d05391 e817e3289faab0ea
 DECL Midfall.Generator.Vk Midfall.Generator.metaDataForVk def 13be12da02b3592c ba314fa8f3128635
+DECL Midfall.Generator.Vk Midfall.Generator.metaDataReservationStep def cf174cec675127fb 3b7c71d00a1f0a3f
+DECL Midfall.Generator.Vk Midfall.Generator.metaDataReservationStep.match_1 def 5406725951d0208e 01bab5353b4a7b5a
 DECL Midfall.Generator.Vk Midfall.Generator.natMaximum def 05a492d6f3c073c5 c1be33a9f8c3581c
 DECL Midfall.Generator.Vk Midfall.Generator.natMaximum.match_1 def cbcf49e86ec8af4a 97b26741fabc6eef
 DECL Midfall.Generator.Vk Midfall.Generator.staticWorkingMemorySizeForMeta def 7ac2a60ddd9b14ae 9d1ae0180674573d
