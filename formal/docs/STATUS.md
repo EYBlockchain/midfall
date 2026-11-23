@@ -237,20 +237,29 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `79c116b`: A5's generalized staticcall tail lets and D1's `PresWidthSeq` closure framework are merged.
-The affected proof modules and `Midfall.LoweringV3.GeneratorTheorem` were rebuilt directly
-(`3304 jobs`), `check_orphans` is `231`, and the root's `assert_axioms` are the standard four
-(native `[]`). The full quick gate's `PoseidonExhibit` replay was deferred to free the machine for
-the D2 KAT and the row lanes; the full gate still needs a final run.
+At `38a1d92`: the vacuity audit is merged (`formal/docs/VACUITY.md`, `Instances/VacuityWitnesses.lean`),
+D1's `PresWidthSeq` readN/list/array closure framework is merged, and A5's generalized staticcall
+tail-lets are merged. `Midfall.Instances.VacuityWitnesses` and `Midfall.LoweringV3.GeneratorTheorem`
+were rebuilt directly (`2277 jobs`), `check_orphans` is `232`, and the root's `assert_axioms` are the
+standard four (native `[]`). The full quick gate's `PoseidonExhibit` replay is deferred to the final
+integration run; iteration lanes use targeted module builds.
+
+The vacuity report is the non-vacuity ledger: the V3 root is **CONDITIONAL** (no `ValidV3`
+inhabitant), **VACUOUS at F1** (`f1_ValidV3_false`), and the register's `0 REFUTED / 1 VACUOUS` is
+not a non-vacuity certificate. The report's blockers are being worked as separate lanes.
 
 Active lanes:
-- **D2/CERT.0** at `3253c5c`, register `115/11`, KAT gate in flight.
-- **Port audit** F4–F7 pushed; D-GATE6/7 (`SupportedV2.rotationDistinct`, `WellFormed` phase
-  totals, `PortAuditKzg`) staged; frozen hashes/closure pending.
-- **Vacuity audit** (`t/VACUITY`) reviewing the root/`ValidV3`/`EndToEndV3`/`Done`/QVM/CERT
-  hypotheses; the single `SORRY.md` VACUOUS row is the legacy `end_to_end_acc_complete`.
-- **Calldata** (`t/CALLDATA`) proving `calldata_roundtrip`/`calldata_canonical`/`repack`.
-- **A4** `runBody_mono` (ST.13), **A5/A6/A9/A11/D1** row residuals.
+- **A12** `block_live` (TOT.1, root leaf) in `t/A12V3`.
+- **B4** `ValidV3 f1GeneratedRender`/inhabitant in `t/B4V3`; **B3** the five payload point fields in
+  `t/B3V3`.
+- **DG.4** the V3 `Done` gate/record and `not_done_today` in `t/DG4`.
+- **A5/A6/A9/A11** row residuals (lag, tp, pcs, fp), **A4** `runBody_mono` (ST.13).
+- **D1** `parseTrace` widths, **D1A** `readAlgebra`/`multiPrepare` widths in `EndToEndAlgebra.lean`.
+- **D2/CERT.0** at `3253c5c`, register `115/11`, KAT gate in flight; **CERT2** a parallel CERT batch.
+- **Port audit** D-GATE6/7 (`SupportedV2.rotationDistinct`, `WellFormed` phase totals,
+  `PortAuditKzg`); frozen hashes/closure regeneration pending.
+- **Calldata** `calldata_roundtrip`/`calldata_canonical`/`repack`; **QVM** segment/spill/validator
+  with the separate external agent.
 
 The root remains **11 / 5**, register `73/11` on main (`115/11` on D2). No row, bundle,
 `ValidV3`, `ValidW`, or root hypothesis was added.
