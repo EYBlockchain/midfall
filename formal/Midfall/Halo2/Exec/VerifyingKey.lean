@@ -105,7 +105,12 @@ def VerifyingKey.hashInto (vk : VerifyingKey (Fr p) G₁) : TranscriptM Unit :=
   * singlePhase - plan Section 13: multi-phase circuits are excluded, and the
     challenge schedule the transcript implements has no per-phase loop.
   * committedInstancesOn - BASELINE.md records committed-instances as always
-    enabled; the instance-absorb path at verifier.rs:92-101 assumes it. -/
+    enabled; the instance-absorb path at verifier.rs:92-101 assumes it.
+  * advicePhaseTotal / challengePhaseTotal - D-GATE7: the phase vectors are the
+    same length as the column/challenge counts, so the Rust's pre-filled
+    `Commitment::default()` / `F::ZERO` slots are never observed and the port's
+    `scatterIndexed` fault is off-domain. `scatterIndexed_hole_is_a_fault` keeps
+    the off-domain behaviour as a W12 witness. -/
 structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features) : Prop where
   csDegreeMatches : vk.cs.degree = .ok vk.csDegree
   chunkLenPositive : 3 ≤ vk.csDegree
@@ -117,6 +122,17 @@ structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features)
   fixedCommitmentsMatch : vk.fixedCommitments.size = vk.cs.numFixedColumns
   singlePhase : vk.cs.numChallenges = 0
   committedInstancesOn : F.committedInstances = true
+  /-- D-GATE7 (2026-11-22): every advice slot is placeable. Rust `parse_trace`
+      pre-fills `advice_commitments` with `CS::Commitment::default()` and zips
+      `advice_column_phase` against the row (verifier.rs:107-126), so a phase
+      vector shorter than `num_advice_columns` leaves defaults in the transcript;
+      the port's `scatterIndexed` instead faults on such a hole. The statements
+      quantify over this interface, where the hole does not exist.
+      `scatterIndexed_hole_is_a_fault` stays as the off-domain W12 witness. -/
+  advicePhaseTotal : vk.cs.adviceColumnPhase.size = vk.cs.numAdviceColumns
+  /-- D-GATE7: every challenge slot is placeable, for the same reason, over
+      `challenge_phase` / `num_challenges` (verifier.rs:127-143). -/
+  challengePhaseTotal : vk.cs.challengePhase.size = vk.cs.numChallenges
 
 /-! rust: plonk/mod.rs:94-120 (write), :124-150 (read), :151-186
     (read_from_cs), :218-221 (bytes_length), :293-300 (pinned), and
