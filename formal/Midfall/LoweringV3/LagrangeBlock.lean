@@ -1764,14 +1764,14 @@ theorem lag_step21 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
         VEnv.get V "x_n_minus_1_inv" = some (loadWord st.memory (C.D + 32 * (n + m))) ∧
         VEnv.get V "l_last" = some (loadWord st.memory C.D))
       (fun _ st V' st' o => o = .normal ∧
-        ∃ mem0 mem, LagP14 C ret pf inv st0 mem0 mem V' st') := by
+        ∃ mem, LagP14 C ret pf inv st0 mem mem V' st') := by
   intro V st hg V' st' o hrun
   obtain ⟨hLG, hxi, hll⟩ := hg
   obtain ⟨ho, hst, hV⟩ := lag_stmt21_contract (funs := funs) (consts := consts) (k := k) (n := n)
     (m := m) (aD := C.D) hD haD hm32 haDm V st trivial V' st' o hrun
   obtain ⟨hsucc, hpf, hom, hxn, hie, hlb, hlicp, hmpe, hszero, hinv, henv, hhalt, hout⟩ := hLG
   rw [hst]
-  refine ⟨ho, st.memory, st.memory, ?_⟩
+  refine ⟨ho, st.memory, ?_⟩
   split_conj
   · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_0")
       (y := "success") (by decide)]; exact hsucc
@@ -1811,7 +1811,7 @@ theorem lag_group12 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : Lag
     StmtsContractAll (D := Bridge.Dialect c g) funs
       (seg (lagInner consts k n m) 19 3) (LagP13 C ret pf inv st0)
       (fun _ _ V' st' o => o = .normal ∧
-        ∃ mem0 mem, LagP14 C ret pf inv st0 mem0 mem V' st') := by
+        ∃ mem, LagP14 C ret pf inv st0 mem mem V' st') := by
   have hsplit : seg (lagInner consts k n m) 19 3 =
       seg (lagInner consts k n m) 19 1 ++ (seg (lagInner consts k n m) 20 1 ++
         seg (lagInner consts k n m) 21 1) := by
@@ -2137,6 +2137,138 @@ theorem lagP15_of_nested {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
         (cdWord cd (C.aI + 32 * j)) C.rw) n 0 from by
       refine wSum_congr_lt C.rw n (fun j hj => ?_) _ _ rfl
       rw [hin _ (by omega) (by omega)]]
+
+
+
+/-- The six slot-store memories, as functions of the pre-slot memory. -/
+abbrev LagM1 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord mem C.aXN (wPow2 C.rw k C.xw)
+
+abbrev LagM2 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM1 C mem) C.aXN1 (loadWord mem (C.D + 32 * (n + m)))
+
+abbrev LagM3 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM2 C mem) C.aLL (loadWord mem C.D)
+
+abbrev LagM4 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM3 C mem) C.aLB (wSum C.rw (fun i => loadWord mem (C.D + 64 + 32 * i))
+    (m - 2) (loadWord mem (C.D + 32)))
+
+abbrev LagM5 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM4 C mem) C.aL0 (loadWord mem (C.D + 32 * m))
+
+abbrev LagM6 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM5 C mem) C.aIE (wSum C.rw
+    (fun j => wMulmodAt (loadWord mem (C.D + 32 * m + 32 * j))
+      (cdWord cd (C.aI + 32 * j)) C.rw) n 0)
+
+set_option maxHeartbeats 4000000 in
+/-- **GROUP 13 (statements 22-27: the six slot stores).** -/
+theorem lag_group13 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hXN : consts.lookup "X_N_MPTR" = some C.aXN)
+    (hXN1 : consts.lookup "X_N_MINUS_1_INV_MPTR" = some C.aXN1)
+    (hLL : consts.lookup "L_LAST_MPTR" = some C.aLL)
+    (hLB : consts.lookup "L_BLIND_MPTR" = some C.aLB)
+    (hL0 : consts.lookup "L_0_MPTR" = some C.aL0)
+    (hIE : consts.lookup "INSTANCE_EVAL_MPTR" = some C.aIE)
+    (hfitXN : C.aXN + 32 < 2 ^ 256) (hfitXN1 : C.aXN1 + 32 < 2 ^ 256)
+    (hfitLL : C.aLL + 32 < 2 ^ 256) (hfitLB : C.aLB + 32 < 2 ^ 256)
+    (hfitL0 : C.aL0 + 32 < 2 ^ 256) (hfitIE : C.aIE + 32 < 2 ^ 256)
+    (hn : 1 ≤ n)
+    (hslotD : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      q + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ q)
+    (hpair : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      ∀ q' ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+        q + 32 ≤ q' ∨ q' + 32 ≤ q)
+    (ret pf : U256) (inv : Nat → U256) (st0 : EvmState) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 22 6)
+      (fun V st => ∃ mem, LagP14 C ret pf inv st0 mem mem V st)
+      (fun _ _ V' st' o => o = .normal ∧
+        ∃ mem, LagP15 C ret pf inv st0 mem (LagM6 C mem) V' st') := by
+  have hqXN := hslotD C.aXN (by simp [lagSlots])
+  have hqXN1 := hslotD C.aXN1 (by simp [lagSlots])
+  have hqLL := hslotD C.aLL (by simp [lagSlots])
+  have hqLB := hslotD C.aLB (by simp [lagSlots])
+  have hqL0 := hslotD C.aL0 (by simp [lagSlots])
+  have hqIE := hslotD C.aIE (by simp [lagSlots])
+  have t6 : StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 27 1)
+      (fun V st => ∃ mem, LagP14 C ret pf inv st0 mem (LagM5 C mem) V st)
+      (fun _ _ V' st' o => o = .normal ∧
+        ∃ mem, LagP15 C ret pf inv st0 mem (LagM6 C mem) V' st') := by
+    intro V st hpre V' st' o hrun
+    obtain ⟨mem, h14⟩ := hpre
+    obtain ⟨ho, h15⟩ := lag_slot27 C funs hIE hfitIE ret pf inv st0 mem (LagM5 C mem)
+      (LagM6 C mem) rfl hqIE V st h14 V' st' o hrun
+    exact ⟨ho, mem, lagP15_of_nested (hn := hn) (hpair := hpair) (hslotD := hslotD) h15⟩
+  have t5 : StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 26 2)
+      (fun V st => ∃ mem, LagP14 C ret pf inv st0 mem (LagM4 C mem) V st)
+      (fun _ _ V' st' o => o = .normal ∧
+        ∃ mem, LagP15 C ret pf inv st0 mem (LagM6 C mem) V' st') := by
+    rw [show (2 : Nat) = 1 + 1 from rfl, seg_split]
+    refine StmtsContractAll.append_normal (mid := fun V st =>
+      ∃ mem, LagP14 C ret pf inv st0 mem (LagM5 C mem) V st) ?_ (fun _ _ _ => t6)
+    intro V st hpre V' st' o hrun
+    obtain ⟨mem, h14⟩ := hpre
+    obtain ⟨ho, h15⟩ := lag_slot26 C funs hL0 hfitL0 ret pf inv st0 mem (LagM4 C mem)
+      (LagM5 C mem) rfl hqL0 V st h14 V' st' o hrun
+    exact ⟨ho, mem, h15⟩
+  have t4 : StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 25 3)
+      (fun V st => ∃ mem, LagP14 C ret pf inv st0 mem (LagM3 C mem) V st)
+      (fun _ _ V' st' o => o = .normal ∧
+        ∃ mem, LagP15 C ret pf inv st0 mem (LagM6 C mem) V' st') := by
+    rw [show (3 : Nat) = 1 + 2 from rfl, seg_split]
+    refine StmtsContractAll.append_normal (mid := fun V st =>
+      ∃ mem, LagP14 C ret pf inv st0 mem (LagM4 C mem) V st) ?_ (fun _ _ _ => t5)
+    intro V st hpre V' st' o hrun
+    obtain ⟨mem, h14⟩ := hpre
+    obtain ⟨ho, h15⟩ := lag_slot25 C funs hLB hfitLB ret pf inv st0 mem (LagM3 C mem)
+      (LagM4 C mem) rfl hqLB V st h14 V' st' o hrun
+    exact ⟨ho, mem, h15⟩
+  have t3 : StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 24 4)
+      (fun V st => ∃ mem, LagP14 C ret pf inv st0 mem (LagM2 C mem) V st)
+      (fun _ _ V' st' o => o = .normal ∧
+        ∃ mem, LagP15 C ret pf inv st0 mem (LagM6 C mem) V' st') := by
+    rw [show (4 : Nat) = 1 + 3 from rfl, seg_split]
+    refine StmtsContractAll.append_normal (mid := fun V st =>
+      ∃ mem, LagP14 C ret pf inv st0 mem (LagM3 C mem) V st) ?_ (fun _ _ _ => t4)
+    intro V st hpre V' st' o hrun
+    obtain ⟨mem, h14⟩ := hpre
+    obtain ⟨ho, h15⟩ := lag_slot24 C funs hLL hfitLL ret pf inv st0 mem (LagM2 C mem)
+      (LagM3 C mem) rfl hqLL V st h14 V' st' o hrun
+    exact ⟨ho, mem, h15⟩
+  have t2 : StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 23 5)
+      (fun V st => ∃ mem, LagP14 C ret pf inv st0 mem (LagM1 C mem) V st)
+      (fun _ _ V' st' o => o = .normal ∧
+        ∃ mem, LagP15 C ret pf inv st0 mem (LagM6 C mem) V' st') := by
+    rw [show (5 : Nat) = 1 + 4 from rfl, seg_split]
+    refine StmtsContractAll.append_normal (mid := fun V st =>
+      ∃ mem, LagP14 C ret pf inv st0 mem (LagM2 C mem) V st) ?_ (fun _ _ _ => t3)
+    intro V st hpre V' st' o hrun
+    obtain ⟨mem, h14⟩ := hpre
+    obtain ⟨ho, h15⟩ := lag_slot23 C funs hXN1 hfitXN1 ret pf inv st0 mem (LagM1 C mem)
+      (LagM2 C mem) rfl hqXN1 V st h14 V' st' o hrun
+    exact ⟨ho, mem, h15⟩
+  rw [show (6 : Nat) = 1 + 5 from rfl, seg_split]
+  refine StmtsContractAll.append_normal (mid := fun V st =>
+    ∃ mem, LagP14 C ret pf inv st0 mem (LagM1 C mem) V st) ?_ (fun _ _ _ => t2)
+  intro V st hpre V' st' o hrun
+  obtain ⟨mem, h14⟩ := hpre
+  obtain ⟨ho, h15⟩ := lag_slot22 C funs hXN hfitXN ret pf inv st0 mem mem
+    (LagM1 C mem) rfl hqXN V st h14 V' st' o hrun
+  exact ⟨ho, mem, h15⟩
 
 
 end Midfall.LoweringV3.LagrangeBlock
