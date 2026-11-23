@@ -3103,6 +3103,48 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
   [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
 
+theorem rotBounds_zero :
+    ∀ (qs : List (Column × Rotation)), (∀ q ∈ qs, q.2.int = 0) →
+      qs.foldl (init := ((0 : Int), (0 : Int))) (fun st q =>
+        let r := q.2.int
+        if r < st.1 then (r, st.2) else if r > st.2 then (st.1, r) else st) = (0, 0) := by
+  intro qs
+  induction qs with
+  | nil => intro h; rfl
+  | cons q qs ih =>
+      intro h
+      rw [List.foldl_cons]
+      have hq : q.2.int = 0 := h q (by simp)
+      have hqs : ∀ q' ∈ qs, q'.2.int = 0 := fun q' h' => h q' (by simp [h'])
+      have hstate : (let r := q.2.int
+          if r < ((0 : Int), (0 : Int)).1 then (r, ((0:Int),(0:Int)).2)
+          else if r > ((0:Int),(0:Int)).2 then (((0:Int),(0:Int)).1, r)
+          else ((0:Int),(0:Int))) = ((0:Int),(0:Int)) := by
+        rw [hq]; rfl
+      rw [hstate]
+      exact ih hqs
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+/-- **D-GATE15(b) SPENT.** Under `WellFormed.instanceRotZero`, `readAlgebra`'s
+    `rotBounds` fold is `(0, 0)`: `minRot = maxRot = 0` and `i32Abs 0` succeeds. -/
+theorem readAlgebra_rotBounds_zero (vk : VerifyingKey (Fr p) G₁)
+    (hf : vk.WellFormed Features.solidity) :
+    vk.cs.instanceQueries.toList.foldl (init := ((0 : Int), (0 : Int))) (fun st q =>
+      let r := q.2.int
+      if r < st.1 then (r, st.2) else if r > st.2 then (st.1, r) else st) = (0, 0) :=
+  rotBounds_zero _ (fun q hq => hf.instanceRotZero q hq)
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -5144,6 +5186,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_read_fr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_permutationCommon [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashEval [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.rotBounds_zero [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.readAlgebra_rotBounds_zero [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
