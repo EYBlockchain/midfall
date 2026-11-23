@@ -63,6 +63,44 @@ theorem permZUpstream_three :
 theorem permZBlock_three_beq_upstream :
     (permZBlock 3 == permZUpstream 3) = false := rfl
 
+/-- The permutationZ block count: `ceil(columns / (degree - 2))`, with the
+    empty-columns arm at zero (`PM:334-339`). -/
+def pcsNumPermutationZs {F : Type} (cs : ConstraintSystem F) (dg : Nat) : Nat :=
+  if cs.permutation.getColumns.toList.isEmpty then 0
+  else divCeil cs.permutation.getColumns.toList.length (dg - 2)
+
+def pcsAdviceBlock {F : Type} (cs : ConstraintSystem F) : List PcsQuerySource :=
+  (cs.adviceQueries.toList.map fun (column, rotation) =>
+    QueryKey.new column.index rotation.int).map PcsQuerySource.advice
+
+def pcsCommittedInstanceBlock {F : Type} (cs : ConstraintSystem F)
+    (nbCommittedInstances : Nat) : List PcsQuerySource :=
+  ((cs.instanceQueries.toList.map fun (column, rotation) =>
+      QueryKey.new column.index rotation.int).filter
+    fun q => q.column < nbCommittedInstances).map PcsQuerySource.committedInstance
+
+def pcsLookupBlock {F : Type} (cs : ConstraintSystem F) (dg : Nat)
+    (lc : List Nat) : List PcsQuerySource :=
+  (((List.range lc.length).zip lc).map fun (lookup, chunks) =>
+    [PcsQuerySource.lookupMultiplicity lookup]
+      ++ (List.range chunks).map (fun chunk => PcsQuerySource.lookupHelper lookup chunk)
+      ++ [PcsQuerySource.lookupAccumulator lookup 0,
+          PcsQuerySource.lookupAccumulator lookup 1]).flatten
+
+def pcsTrashBlock {F : Type} (cs : ConstraintSystem F) : List PcsQuerySource :=
+  (List.range cs.trashcans.size).map PcsQuerySource.trash
+
+def pcsFixedBlock {F : Type} (cs : ConstraintSystem F) : List PcsQuerySource :=
+  let fixedQueries :=
+    cs.fixedQueries.toList.map fun (column, rotation) =>
+      QueryKey.new column.index rotation.int
+  let simpleSelectorCols :=
+    (List.range cs.numFixedColumns).filter (fun idx => cs.hasSimpleSelectorCol idx)
+  (fixedQueries.filter fun q => !(q.column ∈ simpleSelectorCols)).map PcsQuerySource.fixed
+
+def pcsPermutationCommonBlock {F : Type} (cs : ConstraintSystem F) : List PcsQuerySource :=
+  cs.permutation.getColumns.toList.map PcsQuerySource.permutationCommon
+
 /-- The literal `pcsQueries` construction of
     `ProtocolPlan.fromConstraintSystem` (PM:527-580), with the two computed
     values it depends on made parameters: the degree `dg` (`cs.degree`) and the
@@ -70,39 +108,10 @@ theorem permZBlock_three_beq_upstream :
     Everything else is a pure function of `cs` and `nbCommittedInstances`. -/
 def pcsBlocks {F : Type} (cs : ConstraintSystem F) (nbCommittedInstances dg : Nat)
     (lc : List Nat) : List (List PcsQuerySource) :=
-  let numPermutationZs :=
-    if cs.permutation.getColumns.toList.isEmpty then 0
-    else divCeil cs.permutation.getColumns.toList.length (dg - 2)
-  let adviceQueries :=
-    cs.adviceQueries.toList.map fun (column, rotation) =>
-      QueryKey.new column.index rotation.int
-  let fixedQueries :=
-    cs.fixedQueries.toList.map fun (column, rotation) =>
-      QueryKey.new column.index rotation.int
-  let instanceQueries :=
-    cs.instanceQueries.toList.map fun (column, rotation) =>
-      QueryKey.new column.index rotation.int
-  let simpleSelectorCols :=
-    (List.range cs.numFixedColumns).filter (fun idx => cs.hasSimpleSelectorCol idx)
-  let committedInstanceQueries :=
-    instanceQueries.filter fun q => q.column < nbCommittedInstances
-  let nonSimpleFixedQueryList :=
-    fixedQueries.filter fun q => !(q.column ∈ simpleSelectorCols)
-  let pcsAdvice := adviceQueries.map PcsQuerySource.advice
-  let pcsCommittedInstances := committedInstanceQueries.map PcsQuerySource.committedInstance
-  let pcsPermutationZ := permZBlock numPermutationZs
-  let pcsLookup :=
-    ((List.range lc.length).zip lc).map fun (lookup, chunks) =>
-      [PcsQuerySource.lookupMultiplicity lookup]
-        ++ (List.range chunks).map (fun chunk => PcsQuerySource.lookupHelper lookup chunk)
-        ++ [PcsQuerySource.lookupAccumulator lookup 0,
-            PcsQuerySource.lookupAccumulator lookup 1]
-  let pcsTrash := (List.range cs.trashcans.size).map PcsQuerySource.trash
-  let pcsFixed := nonSimpleFixedQueryList.map PcsQuerySource.fixed
-  let pcsPermutationCommon :=
-    cs.permutation.getColumns.toList.map PcsQuerySource.permutationCommon
-  [pcsAdvice, pcsCommittedInstances, pcsPermutationZ, pcsLookup.flatten,
-    pcsTrash, pcsFixed, pcsPermutationCommon, [PcsQuerySource.linearization]]
+  [pcsAdviceBlock cs, pcsCommittedInstanceBlock cs nbCommittedInstances,
+    permZBlock (pcsNumPermutationZs cs dg), pcsLookupBlock cs dg lc,
+    pcsTrashBlock cs, pcsFixedBlock cs, pcsPermutationCommonBlock cs,
+    [PcsQuerySource.linearization]]
 
 /-- The flat form of `pcsBlocks`: the eight-block spine the KZG lane compares. -/
 def pcsBlockList {F : Type} (cs : ConstraintSystem F) (nbCommittedInstances dg : Nat)
@@ -134,7 +143,9 @@ theorem ProtocolPlan.fromConstraintSystem_pcsQueries {F : Type} (feat : Features
   · split at h
     · cases h
       refine ⟨dg, lc, hdg, ?_⟩
-      simp [pcsBlockList, pcsBlocks, permZBlock, List.append_assoc]
+      simp [pcsBlockList, pcsBlocks, pcsAdviceBlock, pcsCommittedInstanceBlock,
+        pcsLookupBlock, pcsTrashBlock, pcsFixedBlock, pcsPermutationCommonBlock,
+        pcsNumPermutationZs, permZBlock, List.append_assoc]
     · cases h
   · cases h
 
