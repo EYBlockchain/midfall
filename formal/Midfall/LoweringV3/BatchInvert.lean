@@ -535,7 +535,8 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
         VEnv.get V "gp" = some (loadWord st.memory a) ∧ VEnv.get V "r" = some rw ∧
         (VEnv.get V "ret").isSome ∧ (loadWord st.memory a).toNat < rw.toNat)
       (fun _ st V' st' o =>
-        (o = .leave ∧ VEnv.get V' "ret" = some 0) ∨
+        (o = .leave ∧ VEnv.get V' "ret" = some 0 ∧ st'.env = st.env ∧
+          st'.halted = st.halted ∧ MemSameOutside st st' s (e - a - 64)) ∨
         (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
           MemSameOutside st st' s (e - a - 64) ∧
           VEnv.get V' "mptr" = some (BitVec.ofNat 256 (e - 32)) ∧
@@ -559,7 +560,8 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
   have hk2 : 2 ≤ k := by omega
   let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
     fun V' st' o =>
-      (o = .leave ∧ VEnv.get V' "ret" = some 0) ∨
+      (o = .leave ∧ VEnv.get V' "ret" = some 0 ∧ st'.env = st.env ∧
+        st'.halted = st.halted ∧ MemSameOutside st st' s (e - a - 64)) ∨
       (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
         MemSameOutside st st' s (e - a - 64) ∧
         VEnv.get V' "mptr" = some (BitVec.ofNat 256 (e - 32)) ∧
@@ -816,16 +818,19 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
           refine ⟨trivial, ?_⟩
           refine Stop.intro ?_
           unfold Q
-          refine Or.inl ⟨rfl, ?_⟩
-          have hretj := fwdEnv_get_ret st.memory a s rw V j
-          obtain ⟨r0, hr0⟩ := Midfall.LoweringV3.QuotientRows.isSome_elim hret
-          have hreti : VEnv.get (fwdEnv st.memory a s rw V j) "ret" = some r0 := by
-            rw [hretj]; exact hr0
-          have hl := fwdEnv_length st.memory a s rw V j
-          rw [restore_reject_ret (V := V) (Vi := fwdEnv st.memory a s rw V j)
-            (xv := loadWord (writeWords st.memory s (fwdWords st.memory a rw) j)
-              (a + 32 + 32 * j)) (r := litValue (Literal.number 0)) hl]
-          exact venv_get_set_same (D := Bridge.Dialect c g) hreti
+          refine Or.inl ⟨rfl, ?_, rfl, rfl, ?_⟩
+          · have hretj := fwdEnv_get_ret st.memory a s rw V j
+            obtain ⟨r0, hr0⟩ := Midfall.LoweringV3.QuotientRows.isSome_elim hret
+            have hreti : VEnv.get (fwdEnv st.memory a s rw V j) "ret" = some r0 := by
+              rw [hretj]; exact hr0
+            have hl := fwdEnv_length st.memory a s rw V j
+            rw [restore_reject_ret (V := V) (Vi := fwdEnv st.memory a s rw V j)
+              (xv := loadWord (writeWords st.memory s (fwdWords st.memory a rw) j)
+                (a + 32 + 32 * j)) (r := litValue (Literal.number 0)) hl]
+            exact venv_get_set_same (D := Bridge.Dialect c g) hreti
+          · intro x hx
+            show writeWords st.memory s (fwdWords st.memory a rw) j x = st.memory x
+            exact writeWords_outside st.memory s (fwdWords st.memory a rw) (by omega)
   intro V' st' o hrun
   exact hmain V' st' o hrun
 
@@ -1532,7 +1537,8 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
             VEnv.get V "gp" = some (loadWord st.memory a) ∧ VEnv.get V "r" = some rw ∧
             (VEnv.get V "ret").isSome ∧ (loadWord st.memory a).toNat < rw.toNat)
           (fun _ st V' st' o =>
-            (o = .leave ∧ VEnv.get V' "ret" = some 0) ∨
+            (o = .leave ∧ VEnv.get V' "ret" = some 0 ∧ st'.env = st.env ∧
+              st'.halted = st.halted ∧ MemSameOutside st st' s (e - a - 64)) ∨
             (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
               MemSameOutside st st' s (e - a - 64) ∧
               VEnv.get V' "mptr" = some (BitVec.ofNat 256 (e - 32)) ∧
