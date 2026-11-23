@@ -1867,7 +1867,8 @@ theorem bi_bridge_stores (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         VEnv.get V "gp" = some gv ∧
         VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR))
       (fun V0 st V' st' o => o = .normal ∧ V' = V0 ∧
-        st'.memory = mxMem st.memory p gv) := by
+        st'.memory = mxMem st.memory p gv ∧
+        st'.env = st.env ∧ st'.halted = st.halted) := by
   rw [bi_bridge_stores_form]
   intro V st hpre V' st' o hrun
   obtain ⟨hgp_mptr, hg, hr⟩ := hpre
@@ -1989,9 +1990,13 @@ theorem bi_bridge_stores (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
               rw [hgp_mptr] at hxv; injection hxv with hx; subst hx
               rw [ofNat_add_ofNat_toNat p 160 (by omega)] at hst6
               cases hrest6
-              refine ⟨rfl, hV, ?_⟩
-              rw [hst6, hst5, hst4, hst3, hst2, hst1]
-              rfl
+              refine ⟨rfl, hV, ?_, ?_, ?_⟩
+              · rw [hst6, hst5, hst4, hst3, hst2, hst1]
+                rfl
+              · rw [hst6, hst5, hst4, hst3, hst2, hst1]
+                rfl
+              · rw [hst6, hst5, hst4, hst3, hst2, hst1]
+                rfl
             · obtain ⟨-, -, ho, -, -⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 160)
                 (val := GenAst.yvar "r") (v0 := BitVec.ofNat 256 Midfall.Yul.blsR) hvalr hvcharr hner h6
               exact absurd ho hne6
@@ -2187,6 +2192,8 @@ structure BridgeSucc (p a : Nat) (gp' : U256) (st st' : EvmState)
   hret_some : (VEnv.get V' "ret").isSome
   hpf_some : (VEnv.get V' "precompile_failed").isSome
   hmem : st'.memory = mxMem st.memory p gp'
+  henv : st'.env = st.env
+  hhalt : st'.halted = st.halted
 
 theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
     (p a mp : Nat) (gv x_last : U256)
@@ -2217,12 +2224,12 @@ theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c
       V st hpre V1 st1 .normal hhead
     rcases hh with hrej | hs
     · exact absurd hrej.hok (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
-    · obtain ⟨ho, hV', hmem⟩ :=
+    · obtain ⟨ho, hV', hmem, henv, hhalt⟩ :=
         bi_bridge_stores (c := c) (g := g) (consts := consts) funs p
           (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
             (BitVec.ofNat 256 Midfall.Yul.blsR)) hp
           V1 st1 ⟨hs.hgp_mptr, hs.hgp, hs.hr⟩ V' st' o hstores
-      refine Or.inr ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      refine Or.inr ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
       · rw [hV']; exact hs.hgp
       · rw [hV']; exact hs.hgp_mptr
       · rw [hV']; exact hs.hmstart
@@ -2230,6 +2237,8 @@ theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c
       · rw [hV']; exact hs.hret_some
       · rw [hV']; exact hs.hpf_some
       · rw [hmem, hs.hmem]
+      · rw [henv, hs.henv]
+      · rw [hhalt, hs.hhalt]
   · have hh := bi_bridge_head_full (c := c) (g := g) consts funs p a mp gv x_last hmp
       V st hpre V' st' o hhead
     rcases hh with hrej | hs
@@ -2401,7 +2410,7 @@ theorem bi_bridge_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Diale
   · have hh := bi_bridge_head (c := c) (g := g) (consts := consts) funs p a mp gv x_last
       hmp hprime hg0 hg_lt hx0 hxlt V st hpre V1 st1 .normal hhead
     obtain ⟨-, hgp1, hgpm1, hms1, hr1, hret1, hpf1, hmem1⟩ := hh
-    obtain ⟨ho, hV', hmem⟩ :=
+    obtain ⟨ho, hV', hmem, -, -⟩ :=
       bi_bridge_stores (c := c) (g := g) (consts := consts) funs p gp' hp V1 st1
         ⟨hgpm1, hgp1, hr1⟩ V' st' o htail
     refine ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
