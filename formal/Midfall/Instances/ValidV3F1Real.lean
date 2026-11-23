@@ -414,4 +414,7 @@ end Midfall.Instances.ValidV3F1Real
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_validV3
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_validV3_iff
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_codec_not_lawsV3
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_validV3ExceptPayload
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_validV3
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_gateAtV3_of
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_gate_false
