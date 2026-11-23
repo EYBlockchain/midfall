@@ -845,6 +845,96 @@ theorem phaseC_width (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Featu
     exact PresWidthSeq.pure _
   simpa using hmain
 
+/-- The `ok`-projection of a `TranscriptM` bind. -/
+theorem run_bind_ok {α β : Type} {m : TranscriptM α} {f : α → TranscriptM β}
+    {t : Transcript} {b : β} {t' : Transcript}
+    (h : (m >>= f).run t = .ok (b, t')) :
+    ∃ a t1, m.run t = .ok (a, t1) ∧ f a t1 = .ok (b, t') := by
+  have h2 : m.run t >>= (fun p : α × Transcript => (f p.1).run p.2) = .ok (b, t') := h
+  cases hm : m.run t with
+  | error e =>
+      simp only [hm] at h2
+      cases h2
+  | ok p =>
+      obtain ⟨a, t1⟩ := p
+      refine ⟨a, t1, rfl, ?_⟩
+      simp only [hm] at h2
+      change (f a).run t1 = .ok (b, t') at h2
+      exact h2
+
+/-- `a.qEvalSets.size` is the `constructIntermediateSets` point-set count. -/
+theorem phaseA_qEvalSets_size (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (queries : Array (VerifierQuery (Fr p) G₁))
+    (hNoDummies : ¬ (feat.outerFewerPointSets && fewerPointSetsRuntime))
+    (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p)))
+    (hCI : constructIntermediateSets (F := Fr p) (C := G₁)
+      (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries = .ok (cm, pointSets))
+    {t : Transcript} {a : MultiPrepare.PhaseA (Fr p) G₁} {t' : Transcript}
+    (hA : (phaseA (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat fewerPointSetsRuntime queries).run t
+      = .ok (a, t')) :
+    a.qEvalSets.size = pointSets.size := by
+  unfold phaseA at hA
+  dsimp only at hA
+  rw [if_neg hNoDummies] at hA
+  simp only [StateT.run_bind, StateT.run_pure, StateT.run_lift] at hA
+  obtain ⟨p1, hp1, h1⟩ := AlgebraWidths.except_bind_ok hA
+  cases hp1
+  dsimp only at h1
+  obtain ⟨p2, _, h2⟩ := AlgebraWidths.except_bind_ok h1
+  obtain ⟨p3, _, h3⟩ := AlgebraWidths.except_bind_ok h2
+  obtain ⟨p4, hp4, h4⟩ := AlgebraWidths.except_bind_ok h3
+  obtain ⟨p5, hp5, h5⟩ := AlgebraWidths.except_bind_ok h4
+  cases h5
+  obtain ⟨cp, hcp, hp4'⟩ := AlgebraWidths.except_bind_ok hp4
+  cases hp4'
+  obtain ⟨pq, hBQ, hp5'⟩ := AlgebraWidths.except_bind_ok hp5
+  cases hp5'
+  have hcpEq : cp = (cm, pointSets) := by
+    rw [hCI] at hcp
+    cases hcp
+    rfl
+  rw [hcpEq] at hBQ
+  have := PresWidthSeq.buildQ_qEvalSets_size (G₂ := G₂) (Gₜ := Gₜ) feat fc _ cm pointSets pq hBQ
+  simpa using this
+
+/-- **`multiPrepare` width sequence.** With the fewer-point-sets branch off,
+    `multiPrepare` appends `[g1]`, one scalar per q-eval set, then `[g1]`. The
+    q-eval-set count is `pointSets.size` from `constructIntermediateSets`, by
+    `phaseA_qEvalSets_size` + `buildQ_qEvalSets_size`. -/
+theorem multiPrepare_width (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (queries : Array (VerifierQuery (Fr p) G₁))
+    (hNoDummies : ¬ (feat.outerFewerPointSets && fewerPointSetsRuntime))
+    (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p)))
+    (hCI : constructIntermediateSets (F := Fr p) (C := G₁)
+      (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries = .ok (cm, pointSets)) :
+    PresWidthSeq ([(hashableG1 g1).width] ++
+      List.replicate pointSets.size (hashableFr (p := p)).width ++
+      [(hashableG1 g1).width])
+      (multiPrepare (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat fewerPointSetsRuntime queries) := by
+  intro t c t' hrun
+  unfold multiPrepare at hrun
+  obtain ⟨a, ta, hA, h1⟩ := PresWidthSeq.run_bind_ok hrun
+  have hAw : ta.log.toList.map (fun r => r.1) =
+      t.log.toList.map (fun r => r.1) ++ [] :=
+    PresWidthSeq.phaseA_noDummies g1 fc feat fewerPointSetsRuntime queries hNoDummies t ta a hA
+  obtain ⟨b, tb, hB, h2⟩ := PresWidthSeq.run_bind_ok h1
+  have hBw : tb.log.toList.map (fun r => r.1) =
+      ta.log.toList.map (fun r => r.1) ++ ([(hashableG1 g1).width] ++
+        List.replicate a.qEvalSets.size (hashableFr (p := p)).width) :=
+    PresWidthSeq.phaseB_width g1 fc feat a ta tb b hB
+  obtain ⟨c', tc, hC, h3⟩ := PresWidthSeq.run_bind_ok h2
+  have hCw : tc.log.toList.map (fun r => r.1) =
+      tb.log.toList.map (fun r => r.1) ++ [(hashableG1 g1).width] :=
+    PresWidthSeq.phaseC_width g1 fc feat a b tb tc c' hC
+  cases h3
+  have hsize : a.qEvalSets.size = pointSets.size :=
+    PresWidthSeq.phaseA_qEvalSets_size g1 fc feat fewerPointSetsRuntime queries hNoDummies
+      cm pointSets hCI hA
+  rw [hsize] at hBw
+  rw [hCw, hBw, hAw]
+  simp only [List.append_nil]
+  rw [List.append_assoc]
+
 end MultiPrepareWidths
 
 end PresWidthSeq
