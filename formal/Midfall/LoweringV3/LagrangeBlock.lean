@@ -494,7 +494,7 @@ def LagP14 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg const
         (inv i).toNat < C.rw.toNat) ∧
       loadWord mem0 (C.D + 32 * (n + m)) = inv (n + m)) ∧
     st.memory = mem ∧
-    (∀ x, C.D ≤ x → x + 32 ≤ C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
+    (∀ x, C.D ≤ x → x < C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
     st.env = st0.env ∧ st.halted = st0.halted ∧
     MemSameOut st0.memory st C.D (32 * (n + m + 1)) C.s (32 * (n + m + 1) + 0xc0)
       (lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE)
@@ -526,7 +526,7 @@ def LagP15 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg const
         (inv i).toNat < C.rw.toNat) ∧
       loadWord mem0 (C.D + 32 * (n + m)) = inv (n + m)) ∧
     st.memory = mem ∧
-    (∀ x, C.D ≤ x → x + 32 ≤ C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
+    (∀ x, C.D ≤ x → x < C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
     st.env = st0.env ∧ st.halted = st0.halted ∧
     MemSameOut st0.memory st C.D (32 * (n + m + 1)) C.s (32 * (n + m + 1) + 0xc0)
       (lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE)
@@ -1841,6 +1841,17 @@ theorem loadWord_slot_inside {D n m : Nat} {mem : Nat → UInt8} {q : Nat} {v : 
     · exact Or.inl (by omega)
     · exact Or.inr (by omega))
 
+/-- Byte-level counterpart of `loadWord_slot_inside`: a slot store outside the window leaves the
+window's bytes untouched. -/
+theorem storeWord_slot_inside {D n m : Nat} {mem : Nat → UInt8} {q : Nat} {v : U256} {x : Nat}
+    (hq : q + 32 ≤ D ∨ D + 32 * (n + m + 1) ≤ q)
+    (h1 : D ≤ x) (h2 : x < D + 32 * (n + m + 1)) :
+    storeWord mem q v x = mem x :=
+  BatchInvert.storeWord_outside mem q x v (by
+    rcases hq with hq' | hq'
+    · exact Or.inr (by omega)
+    · exact Or.inl (by omega))
+
 /-- `wSum` respects pointwise-equal summands and equal accumulators. -/
 theorem wSum_congr (r : U256) {f f' : Nat → U256} (hf : ∀ i, f i = f' i) :
     ∀ (j : Nat) (acc acc' : U256), acc = acc' → wSum r f j acc = wSum r f' j acc'
@@ -2022,6 +2033,34 @@ theorem lag_slot27 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
       (by rw [hst, hmemEq]) (by rw [hst]; exact henv) (by rw [hst]; exact hhalt)
 
 
+/-- The six slot-store memories, as functions of the pre-slot memory. -/
+abbrev LagM1 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord mem C.aXN (wPow2 C.rw k C.xw)
+
+abbrev LagM2 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM1 C mem) C.aXN1 (loadWord mem (C.D + 32 * (n + m)))
+
+abbrev LagM3 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM2 C mem) C.aLL (loadWord mem C.D)
+
+abbrev LagM4 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM3 C mem) C.aLB (wSum C.rw (fun i => loadWord mem (C.D + 64 + 32 * i))
+    (m - 2) (loadWord mem (C.D + 32)))
+
+abbrev LagM5 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM4 C mem) C.aL0 (loadWord mem (C.D + 32 * m))
+
+abbrev LagM6 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM5 C mem) C.aIE (wSum C.rw
+    (fun j => wMulmodAt (loadWord mem (C.D + 32 * m + 32 * j))
+      (cdWord cd (C.aI + 32 * j)) C.rw) n 0)
+
 /-- Bounded `wSum` congruence: equal summands below the bound give equal sums. -/
 theorem wSum_congr_lt (r : U256) {f f' : Nat → U256} (j : Nat)
     (hf : ∀ i, i < j → f i = f' i) :
@@ -2066,21 +2105,20 @@ theorem lagP15_of_nested {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
   have hdisj : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
       ∀ q' ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
         q' + 32 ≤ q ∨ q + 32 ≤ q' := fun q hq q' hq' => Or.symm (hpair q hq q' hq')
-  have hin : ∀ x, C.D ≤ x → x + 32 ≤ C.D + 32 * (n + m + 1) →
-      loadWord (storeWord (storeWord (storeWord (storeWord (storeWord
-        (storeWord mem0 C.aXN (wPow2 C.rw k C.xw)) C.aXN1 (loadWord mem0 (C.D + 32 * (n + m))))
-        C.aLL (loadWord mem0 C.D)) C.aLB (wSum C.rw
-          (fun i => loadWord mem0 (C.D + 64 + 32 * i)) (m - 2) (loadWord mem0 (C.D + 32))))
-        C.aL0 (loadWord mem0 (C.D + 32 * m))) C.aIE (wSum C.rw
-          (fun j => wMulmodAt (loadWord mem0 (C.D + 32 * m + 32 * j))
-            (cdWord cd (C.aI + 32 * j)) C.rw) n 0)) x = loadWord mem0 x := by
+  have hin : ∀ x, C.D ≤ x → x < C.D + 32 * (n + m + 1) → LagM6 C mem0 x = mem0 x := by
     intro x h1 h2
-    rw [loadWord_slot_inside (D := C.D) (n := n) (m := m) (q := C.aIE) (v := _) (x := x) (hslotD C.aIE (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aL0) (v := _) (x := x) (hslotD C.aL0 (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aLB) (v := _) (x := x) (hslotD C.aLB (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aLL) (v := _) (x := x) (hslotD C.aLL (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aXN1) (v := _) (x := x) (hslotD C.aXN1 (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aXN) (v := _) (x := x) (hslotD C.aXN (by simp [lagSlots])) h1 h2]
+    simp only [LagM6, LagM5, LagM4, LagM3, LagM2, LagM1]
+    rw [storeWord_slot_inside (D := C.D) (n := n) (m := m) (q := C.aIE) (v := _) (x := x)
+      (hslotD C.aIE (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aL0) (v := _) (x := x) (hslotD C.aL0 (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aLB) (v := _) (x := x) (hslotD C.aLB (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aLL) (v := _) (x := x) (hslotD C.aLL (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aXN1) (v := _) (x := x) (hslotD C.aXN1 (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aXN) (v := _) (x := x) (hslotD C.aXN (by simp [lagSlots])) h1 h2]
+  have hinw : ∀ X, C.D ≤ X → X + 32 ≤ C.D + 32 * (n + m + 1) →
+      loadWord (LagM6 C mem0) X = loadWord mem0 X :=
+    fun X h1 h2 => Midfall.Yul.Word.loadWord_congr _ _ _
+      (fun i hi => hin (X + i) (by omega) (by omega))
   refine ⟨hsucc, hpf, hom, ?_, ?_, ?_, ?_, ?_, ?_, hszero, hinv, hmemEq,
     (by intro x h1 h2; exact hout x h1 h2), henv, hhalt, hms⟩
   · rw [loadWord_storeWord_slot (q := C.aIE) (v := _) (x := C.aXN) (hdisj C.aXN (by simp [lagSlots]) C.aIE (by simp [lagSlots]))]
@@ -2094,12 +2132,12 @@ theorem lagP15_of_nested {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
     rw [loadWord_storeWord_slot (q := C.aLB) (v := _) (x := C.aXN1) (hdisj C.aXN1 (by simp [lagSlots]) C.aLB (by simp [lagSlots]))]
     rw [loadWord_storeWord_slot (q := C.aLL) (v := _) (x := C.aXN1) (hdisj C.aXN1 (by simp [lagSlots]) C.aLL (by simp [lagSlots]))]
     rw [loadWord_storeWord_same_at _ C.aXN1 _]
-    rw [hin (C.D + 32 * (n + m)) (by omega) (by omega)]
+    rw [hinw (C.D + 32 * (n + m)) (by omega) (by omega)]
   · rw [loadWord_storeWord_slot (q := C.aIE) (v := _) (x := C.aLL) (hdisj C.aLL (by simp [lagSlots]) C.aIE (by simp [lagSlots]))]
     rw [loadWord_storeWord_slot (q := C.aL0) (v := _) (x := C.aLL) (hdisj C.aLL (by simp [lagSlots]) C.aL0 (by simp [lagSlots]))]
     rw [loadWord_storeWord_slot (q := C.aLB) (v := _) (x := C.aLL) (hdisj C.aLL (by simp [lagSlots]) C.aLB (by simp [lagSlots]))]
     rw [loadWord_storeWord_same_at _ C.aLL _]
-    rw [hin (C.D) (by omega) (by omega)]
+    rw [hinw (C.D) (by omega) (by omega)]
   · rw [loadWord_storeWord_slot (q := C.aIE) (v := _) (x := C.aLB) (hdisj C.aLB (by simp [lagSlots]) C.aIE (by simp [lagSlots]))]
     rw [loadWord_storeWord_slot (q := C.aL0) (v := _) (x := C.aLB) (hdisj C.aLB (by simp [lagSlots]) C.aL0 (by simp [lagSlots]))]
     rw [loadWord_storeWord_same_at _ C.aLB _]
@@ -2119,11 +2157,11 @@ theorem lagP15_of_nested {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
             (cdWord cd (C.aI + 32 * j)) C.rw) n 0)) (C.D + 32)) =
       wSum C.rw (fun i => loadWord mem0 (C.D + 64 + 32 * i)) (m - 2) (loadWord mem0 (C.D + 32)) from by
       refine wSum_congr_lt C.rw (m - 2) (fun i hi => ?_) _ _ ?_
-      · exact hin _ (by omega) (by omega)
-      · exact hin _ (by omega) (by omega)]
+      · exact hinw _ (by omega) (by omega)
+      · exact hinw _ (by omega) (by omega)]
   · rw [loadWord_storeWord_slot (q := C.aIE) (v := _) (x := C.aL0) (hdisj C.aL0 (by simp [lagSlots]) C.aIE (by simp [lagSlots]))]
     rw [loadWord_storeWord_same_at _ C.aL0 _]
-    rw [hin (C.D + 32 * m) (by omega) (by omega)]
+    rw [hinw (C.D + 32 * m) (by omega) (by omega)]
   · rw [loadWord_storeWord_same_at _ C.aIE _]
     rw [show wSum C.rw (fun j => wMulmodAt (loadWord (storeWord (storeWord (storeWord (storeWord (storeWord
         (storeWord mem0 C.aXN (wPow2 C.rw k C.xw)) C.aXN1 (loadWord mem0 (C.D + 32 * (n + m))))
@@ -2136,37 +2174,9 @@ theorem lagP15_of_nested {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
       wSum C.rw (fun j => wMulmodAt (loadWord mem0 (C.D + 32 * m + 32 * j))
         (cdWord cd (C.aI + 32 * j)) C.rw) n 0 from by
       refine wSum_congr_lt C.rw n (fun j hj => ?_) _ _ rfl
-      rw [hin _ (by omega) (by omega)]]
+      rw [hinw _ (by omega) (by omega)]]
 
 
-
-/-- The six slot-store memories, as functions of the pre-slot memory. -/
-abbrev LagM1 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord mem C.aXN (wPow2 C.rw k C.xw)
-
-abbrev LagM2 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM1 C mem) C.aXN1 (loadWord mem (C.D + 32 * (n + m)))
-
-abbrev LagM3 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM2 C mem) C.aLL (loadWord mem C.D)
-
-abbrev LagM4 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM3 C mem) C.aLB (wSum C.rw (fun i => loadWord mem (C.D + 64 + 32 * i))
-    (m - 2) (loadWord mem (C.D + 32)))
-
-abbrev LagM5 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM4 C mem) C.aL0 (loadWord mem (C.D + 32 * m))
-
-abbrev LagM6 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM5 C mem) C.aIE (wSum C.rw
-    (fun j => wMulmodAt (loadWord mem (C.D + 32 * m + 32 * j))
-      (cdWord cd (C.aI + 32 * j)) C.rw) n 0)
 
 set_option maxHeartbeats 4000000 in
 /-- **GROUP 13 (statements 22-27: the six slot stores).** -/
@@ -2426,6 +2436,78 @@ theorem lag_inner_contract {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
     exact List.take_of_length_le (le_of_eq (lagInner_length consts k n m))
   rw [hseg] at h1
   exact h1 V0 st0 h0 V' st' o hrun
+
+
+
+set_option maxHeartbeats 4000000 in
+/-- **`LagInnerPost` FROM THE LAST PHASE.** The `LagRel` witness reads its `L` values at the
+    current memory via `LagP15`'s six slot equations; the `mem0` L-facts transport to `mem`
+    through the inside-window agreement. -/
+theorem lag_inner_post_of_p15 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    {C : LagCfg consts cd k n m} {ret pf : U256} {inv : Nat → U256} {st0 : EvmState}
+    {mem0 mem : Nat → UInt8} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState}
+    (hm : 2 ≤ m) (hn : 1 ≤ n) (h : LagP15 C ret pf inv st0 mem0 mem V' st') :
+    LagInnerPost C V' st0 st' := by
+  obtain ⟨hsucc, hpf, hom, hXN, hXN1, hLL, hLB, hL0, hIE, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := h
+  have htrans : ∀ X, C.D ≤ X → X + 32 ≤ C.D + 32 * (n + m + 1) →
+      loadWord mem X = loadWord mem0 X := by
+    intro X h1 h2
+    exact Midfall.Yul.Word.loadWord_congr _ _ _ (fun i hi => hout (X + i) (by omega) (by omega))
+  refine ⟨ret, pf, hsucc, hpf, henv, hhalt, hms, hszero, ?_⟩
+  intro hret
+  obtain ⟨hreads, hvals, hlast⟩ := hinv hret
+  set L : Nat → U256 := fun i =>
+    wMulmodAt (wMulmodAt (wAddmodAt (wPow2 C.rw k C.xw) (C.rw - 1) C.rw) C.nInv C.rw)
+      (wMulmodAt (inv i) (omegaPows C.rw C.omw C.w0 i) C.rw) C.rw with hLdef
+  have hL : ∀ i, i < n + m → loadWord mem (C.D + 32 * i) = L i := by
+    intro i hi
+    rw [htrans (C.D + 32 * i) (by omega) (by omega)]
+    exact hreads i hi
+  have hLb : wSum C.rw (fun i => loadWord mem (C.D + 64 + 32 * i)) (m - 2)
+        (loadWord mem (C.D + 32)) =
+      wSum C.rw (fun i => L (2 + i)) (m - 2) (L 1) := by
+    refine wSum_congr_lt C.rw (m - 2) (fun i hi => ?_) _ _ ?_
+    · rw [show C.D + 64 + 32 * i = C.D + 32 * (2 + i) from by ring]
+      exact hL (2 + i) (by omega)
+    · rw [show C.D + 32 = C.D + 32 * 1 from by ring]
+      exact hL 1 (by omega)
+  have hIe : wSum C.rw (fun j => wMulmodAt (loadWord mem (C.D + 32 * m + 32 * j))
+        (cdWord cd (C.aI + 32 * j)) C.rw) n 0 =
+      wSum C.rw (fun j => wMulmodAt (L (m + j)) (cdWord cd (C.aI + 32 * j)) C.rw) n 0 := by
+    refine wSum_congr_lt C.rw n (fun j hj => ?_) _ _ rfl
+    rw [show C.D + 32 * m + 32 * j = C.D + 32 * (m + j) from by ring]
+    rw [hL (m + j) (by omega)]
+  refine ⟨{ xn := wPow2 C.rw k C.xw
+            lLast := L 0
+            lBlind := wSum C.rw (fun i => L (2 + i)) (m - 2) (L 1)
+            l0 := L m
+            instEval := wSum C.rw (fun j => wMulmodAt (L (m + j))
+              (cdWord cd (C.aI + 32 * j)) C.rw) n 0 }, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · dsimp only [LagRel]
+    refine ⟨rfl, inv, ?_, ?_, ?_, ?_, ?_⟩
+    · intro i hi
+      exact ⟨by simpa only [lagDen] using (hvals i hi).1, (hvals i hi).2⟩
+    · rfl
+    · rfl
+    · rfl
+    · rfl
+  · rw [hmemEq]; exact hXN
+  · rw [hmemEq]; exact hXN1
+  · rw [hmemEq]
+    show loadWord mem C.aLL = L 0
+    rw [hLL, show C.D = C.D + 32 * 0 from by omega]
+    exact hL 0 (by omega)
+  · rw [hmemEq]
+    show loadWord mem C.aLB = wSum C.rw (fun i => L (2 + i)) (m - 2) (L 1)
+    rw [hLB, hLb]
+  · rw [hmemEq]
+    show loadWord mem C.aL0 = L m
+    rw [hL0, show C.D + 32 * m = C.D + 32 * m from rfl]
+    exact hL m (by omega)
+  · rw [hmemEq]
+    show loadWord mem C.aIE = wSum C.rw (fun j => wMulmodAt (L (m + j))
+      (cdWord cd (C.aI + 32 * j)) C.rw) n 0
+    rw [hIE, hIe]
 
 
 end Midfall.LoweringV3.LagrangeBlock
