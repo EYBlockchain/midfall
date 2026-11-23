@@ -1771,6 +1771,51 @@ theorem bi_head_form (consts : Inline.Consts) :
 
 
 
+theorem bi_prelude_head (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (succ rv0 : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 0 2)
+      (fun V _ => VEnv.get V "success" = some succ ∧ VEnv.get V "ret" = some rv0)
+      (fun Vpre st V' st' o =>
+        (succ ≠ 0 ∧ o = .normal ∧ V' = VEnv.set Vpre "ret" succ ∧ st' = st) ∨
+        (succ = 0 ∧ o = .leave ∧ V' = VEnv.set Vpre "ret" 0 ∧ st' = st)) := by
+  rw [bi_head_form]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hsucc, hrv0⟩ := hpre
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨v, he, hV1⟩ := exec_assign_inv h1
+    obtain ⟨hsv, rfl⟩ := eval_var_inv he
+    rw [hsucc] at hsv
+    injection hsv with hv
+    subst hv
+    subst hV1
+    have hget : VEnv.get (VEnv.set V "ret" succ) "ret" = some succ :=
+      venv_get_set_same (D := Bridge.Dialect c g) hrv0
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
+      ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · cases hrest2
+      by_cases hs : succ = 0
+      · obtain ⟨ho, -, -⟩ := (exec_guard_iszero_var (x := "ret") hget h2).2 hs
+        exact absurd ho (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+      · obtain ⟨ho, hV2, hst2⟩ := (exec_guard_iszero_var (x := "ret") hget h2).1 hs
+        subst hV2
+        subst hst2
+        exact Or.inl ⟨hs, rfl, rfl, rfl⟩
+    · by_cases hs : succ = 0
+      · obtain ⟨ho, hV2, hst2⟩ := (exec_guard_iszero_var (x := "ret") hget h2).2 hs
+        subst hV2
+        subst hst2
+        subst hs
+        rw [ho]
+        exact Or.inr ⟨rfl, rfl, rfl, rfl⟩
+      · obtain ⟨ho, -, -⟩ := (exec_guard_iszero_var (x := "ret") hget h2).1 hs
+        exact absurd ho hne2
+  · cases h1 with
+    | assignVal he hl => exact absurd rfl hne1
+    | assignHalt he => cases he
+
+
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
@@ -1781,6 +1826,7 @@ theorem bi_head_form (consts : Inline.Consts) :
 #assert_axioms eval_iszero_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_iszero_var [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_head_form [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_prelude_head [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
