@@ -27,19 +27,22 @@ the existing KATs (`#eval`/`decide`/`native_decide`) and the W12 witnesses/falsi
 
 ## 0. Summary
 
-**The headline is not refuted, but it is not non-vacuous either.** There is no `ValidV3` witness
-anywhere in the tree. The only named render, F1 (`poseidonRender`), *refutes* `ValidV3` through
-`generated`; the re-sourced `f1GeneratedRender` proves only the `generated` clause and is not
-claimed to be `ValidV3` (D-B4: its payload still has placeholder commitments). Therefore:
+**The headline is now non-vacuous in the generic sense, but still vacuous at F1.** B4's
+`exists_validV3` (`Instances/ValidV3SyntheticInhabitant.lean`) proves `∃ R, ValidV3 R` at a
+synthetic render built from a real `generateAll` run; the two codec fields are chosen from the
+payload words and the payload is normalized. F1 (`poseidonRender`) still *refutes* `ValidV3`
+through `generated`, and the re-sourced `f1GeneratedRender` is now proved **not** `ValidV3`
+(`f1GeneratedRender_notValidV3`); its exact residual is `PayloadPointHalf` (real commitments and
+`sG2gen`). Therefore:
 
 | headline | status | one-line reason |
 |---|---|---|
-| `lowering_correct` (generic) | **CONDITIONAL** | `ValidV3 R` has no inhabitant; no universal refutation either |
+| `lowering_correct` (generic) | **NON-VACUOUS (synthetic) / CONDITIONAL** | `exists_validV3` inhabits the hypothesis at a synthetic render; the F1-real instance still needs `PayloadPointHalf` |
 | `lowering_correct` at F1 | **VACUOUS** | `¬ ValidV3 poseidonRender`, proved (`f1_ValidV3_false`) |
-| `lowering_sound` (generic / F1) | **CONDITIONAL / VACUOUS** | same hypothesis |
-| `EndToEndV3` (generic / F1) | **CONDITIONAL / VACUOUS** | `ValidV3` missing; at F1 `hcodec : G1CodecLawsV3 g1CodecZ` is also false |
+| `lowering_sound` (generic / F1) | **CONDITIONAL / VACUOUS** | same hypothesis; the synthetic `ValidV3` is available |
+| `EndToEndV3` (generic / F1) | **CONDITIONAL / VACUOUS** | synthetic `ValidV3` exists, but `PrepareLogSlots`/`hside` are still missing; at F1 `hcodec : G1CodecLawsV3 g1CodecZ` is false |
 | `lowering_correctW` (C0–C7) | **CONDITIONAL** | no `ValidW`/`EvalContracts` witness; F2 importer absent; `model_quotientMode` still sorry |
-| `generator_correct_V3` (D2) | **CONDITIONAL** | `SupportedInput`/`Generates` have no witness; 42 CERT leaves |
+| `generator_correct_V3` (D2) | **CONDITIONAL** | `SupportedInput`/`Generates` have no witness; 36 CERT leaves |
 | `end_to_end_acc_complete` (V1) | **VACUOUS** | `hc : LoweringCorrect S product` is refuted by `not_LoweringCorrect` |
 
 The root's 11 sorried leaves are `OPEN`, not `VACUOUS`, in the register because the register only
@@ -52,7 +55,7 @@ to that scan. That is the central gap this report records.
 
 | statement | file:line | hypotheses it needs | status | evidence / minimal witness or repair |
 |---|---|---|---|---|
-| `lowering_correct` | `LoweringV3/GeneratorTheorem.lean:70` | `hR : ValidV3 R` | **CONDITIONAL** (F1 **VACUOUS**) | `gap_lowering_correct_witness_unexhibited` (`:100`) names the gap; `lowering_correct_needs_valid` (`Instances/StatementsV3Falsifiers.lean:526`) proves `hR` is load-bearing by dropping it and refuting the result at `bumpInst R`; `f1_ValidV3_false` (new) refutes the only named instance. Witness to land: `ValidV3 f1GeneratedRender` is **not** it; B4/D-B4 says its `payload.fixedComms`/`permutationComms` are still false. Owner: B4 (re-source render) + B3 (real commitments/codec). |
+| `lowering_correct` | `LoweringV3/GeneratorTheorem.lean:70` | `hR : ValidV3 R` | **CONDITIONAL** (F1 **VACUOUS**) | `gap_lowering_correct_witness_unexhibited` (`:100`) names the gap; `lowering_correct_needs_valid` (`Instances/StatementsV3Falsifiers.lean:526`) proves `hR` is load-bearing by dropping it and refuting the result at `bumpInst R`; `f1_ValidV3_false` (new) refutes F1; `exists_validV3` (new) inhabits the hypothesis at a synthetic render, so the generic root is non-vacuous. The F1-real instance still needs `PayloadPointHalf`: `f1GeneratedRender` is now proved not valid (`f1GeneratedRender_notValidV3`), and B3 must re-source the 19/8 commitments and `sG2gen`. Owner: B4 + B3. |
 | `lowering_sound` | `LoweringV3/GeneratorTheorem.lean:78` | `hR : ValidV3 R` | **CONDITIONAL** (F1 **VACUOUS**) | same `hR`; its row cone is `sim_rows`, so the witness is the same missing `ValidV3`. |
 | `LoweringEquivalenceV3` | `LoweringV3/Statements.lean:3863` | `hdep`, `hentry`, `hpc`, `hcodec` hidden under the definition | **CONDITIONAL** | `EndToEndV3`'s four conjuncts are real (see `returns_of_inhabited`); no joint inhabitant of the world/frame/codec set exists. At F1 `hcodec` is false (`f1_codecLawsV3_false`). |
 | `lowering_equivalenceV3_of_rows` | `LoweringV3/Composition.lean:260` | `hR : ValidV3 R`, `SimRowsV3`, `ProgRowsV3` | **CONDITIONAL** | proved glue; the two bundles below are the missing inhabitancy. |
@@ -164,11 +167,12 @@ a second row-shape whose inhabitancy is not covered by `InvFixture`.
 | `SupportedV2 poseidonRender` | `Instances/PoseidonValid.lean:574` | **INHABITED** | theorem, no sorry; 12 fields. |
 | `programOk poseidonRender` | `Instances/PoseidonValid.lean:676` | **INHABITED** | theorem (native-decide axiom). |
 | `NoWriters`, `EnvAgrees`, `inputs` | `Instances/PoseidonValid.lean:600,456,327` | **INHABITED** | theorems. |
-| `PayloadAgrees poseidonRender` | `LoweringV3/Statements.lean:647` (structure); `PoseidonValid.lean:695` | **CONDITIONAL** | 8 of 14 fields proved (`poseidonValid_payload_scalars`); 5 point fields (`g1Base`, `g2Base`, `negSG2`, `fixedComms`, `permutationComms`) are open, not refuted, because `toEip` is noncomputable at the placeholder codec. Owner B3. |
+| `PayloadAgrees poseidonRender` | `LoweringV3/Statements.lean:647` (structure); `PoseidonValid.lean:695` | **FALSE** | 8 of 14 fields proved; `fixedComms`/`permutationComms` are **REFUTED** (`f1_fixedComms_false`, `f1_permutationComms_false`), `g1Base`/`g2Base`/`negSG2` are open/opaque at the placeholder codec. Owner B3. |
 | `GeneratedBy poseidonRender` | `LoweringV3/Statements.lean:3549` | **FALSE** | `f1_generated_obstruction_at_F1` (`Instances/ValidV3InhabitationF1.lean:323`); the generator refuses at `quotient.rs:202`. |
 | `GeneratedBy f1GeneratedRender` | `Instances/ValidV3InhabitationF1.lean:260` | **INHABITED** | `f1GeneratedRender_generated`; re-sourced plan/qblocks/model from a successful `generateAll`. |
 | `ValidV3 poseidonRender` | `LoweringV3/Statements.lean:3587` | **FALSE** | new `f1_ValidV3_false` (`Instances/VacuityWitnesses.lean`), from the `generated` refutation. |
-| `ValidV3 f1GeneratedRender` | — | **UNKNOWN / CONDITIONAL** | only `generated` is proved; `payload`'s point fields and `program` have not been transported. D-B4 explicitly says not to claim it. |
+| `ValidV3 f1GeneratedRender` | `Instances/ValidV3InhabitationF1Completion.lean` | **FALSE** | `f1GeneratedRender_notValidV3`; `f1GeneratedRender_validV3_iff_points` reduces it to `PayloadPointHalf`, whose `fixedComms`/`permutationComms` are refuted and whose `g1Base`/`g2Base`/`negSG2` are open. |
+| `∃ R, ValidV3 R` (synthetic) | `Instances/ValidV3SyntheticInhabitant.lean:413` | **INHABITED** | `exists_validV3`; real `generateAll` run, synthetic codec fields (`g1zToEip 1`, slot-15 image) and normalized payload. Generic non-vacuity only, not F1 `Done`. |
 | `HypothesesInhabitedV3 poseidonRender product` | `LoweringV3/Statements.lean:3968` | **FALSE** | `poseidon_notInhabitedV3` (`Instances/StatementsV3Deploy.lean:532`) via `g1CodecZ_not_headlineLaws`; the non-vacuity gate itself is refuted at F1. |
 | `G1CodecHeadlineLaws g1CodecZ` | `LoweringV3/Statements.lean:72` | **FALSE** | `g1CodecZ_not_headlineLaws` (`StatementsV3Deploy.lean:523`); new `f1_codec_headline_false`. |
 | `G1CodecLawsV3 g1CodecZ` | `LoweringV3/Statements.lean:83` | **FALSE** | new `f1_codecLawsV3_false`, from the headline law. |
@@ -462,7 +466,7 @@ only covers the retired V1 `LoweringCorrect` fields.
 
 | # | blocker | exact missing term / writer | owner |
 |---|---|---|---|
-| 1 | Root has no `ValidV3` inhabitant | `ValidV3 f1GeneratedRender` (or another render); `generated` is proved at that render, but `payload.fixedComms`/`permutationComms` are still false per D-B4; B3 must supply the real commitments and codec | B4 + B3 |
+| 1 | F1-real `ValidV3` is still blocked | `PayloadPointHalf f1GeneratedRender`: re-source the 19/8 commitments and `sG2gen` into `poseidonVkExec`; `exists_validV3` gives generic non-vacuity only, not F1 `Done` | B3 + B4 |
 | 2 | Row pres are not inhabited | one `StageInv R H vkAddr cd k V st` at a real render/checkpoint, built from `Frame`, `Inv`, `LeanRaw`, `Agree`; `f1_deploymentV2`/`f1_entryFrameV3` supply only `DeploymentV2`/`EntryFrameV3` | A2/A7/A12 |
 | 3 | `EndToEndV3` is conditional on a missing refinement | `PrepareLogSlots R` / `readScheduleAgrees_of_validV3`; also `hside`; at F1 `hcodec` is FALSE (`f1_codecLawsV3_false`) | D1 |
 | 4 | KZG partition bridge is false without `x = 0` exclusion | `KzgPartitionBridge` needs `ChallengesGood.xNonzero`/`rotationDistinct`; `kzgPartitionBridge_false_at_x0` is the falsifier | D1/audit |

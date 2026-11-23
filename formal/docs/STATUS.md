@@ -237,27 +237,29 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `009f090`: D2 is merged and five generation peels are closed; the register is **109 sorried
+At `2dc9ee5`: D2 is merged and five generation peels are closed; the register is **109 sorried
 declarations / 11 ROOT / 36 CERT / 0 REFUTED** (109 rows in `SORRY.md`). A4's `runBody_mono` (ST.13)
 is **PROVED**; A5's 8-statement staticcall walk, tail, and prelude vocabulary are merged; A9's PCS
 block-1/block-2/block-3-seed semantics and generator Word bridge are merged; A11's guard helpers,
 trim, normal leaf, call inversion/VK wire, and `FpWire` are merged; A12's `block_live` traceReturn
-and vkLoading cases are merged (2 of 7 blocks). B4's `ValidV3InhabitationF1Completion.lean` is merged
-and proves `f1GeneratedRender_notValidV3` plus the exact reduction
-`ValidV3 R ↔ ValidV3ExceptPayload R ∧ PayloadPointHalf R`; the F1-real route is therefore B3's
-point/codec re-source, with a synthetic `∃ R, ValidV3 R` only for non-vacuity. The D2 KAT is green
+and vkLoading cases are merged (2 of 7 blocks). B4's `ValidV3InhabitationF1Completion.lean` proves
+`f1GeneratedRender_notValidV3` and the exact reduction
+`ValidV3 R ↔ ValidV3ExceptPayload R ∧ PayloadPointHalf R`; B4's
+`ValidV3SyntheticInhabitant.exists_validV3` now proves `∃ R, ValidV3 R` at a synthetic render
+(real `generateAll` run, synthetic codec fields and normalized payload), so the **generic root is
+non-vacuous**; the F1-real instance still needs B3's point/codec re-source. The D2 KAT is green
 (**1648 annotated checks / 120 files**), quick gate and `checks.sh` are green, and the
 `ChallengesGood.xNonzero` statement pin is in place.
 
-The vacuity report remains the non-vacuity ledger: the V3 root is **CONDITIONAL** (no `ValidV3`
-inhabitant), **VACUOUS at F1** (`f1_ValidV3_false`), and `0 REFUTED / 1 VACUOUS` is not a non-vacuity
-certificate. The shortest path therefore runs **`ValidV3` and the root rows together**; the
-`end_to_end` and generator layers follow the same dependencies.
+The vacuity report is the non-vacuity ledger: the generic V3 root is now **NON-VACUOUS (synthetic)**
+via `exists_validV3`, but **VACUOUS at F1** (`f1_ValidV3_false`), and `0 REFUTED / 1 VACUOUS` is not
+a non-vacuity certificate. The shortest path still runs **the F1-real `ValidV3` (B3) and the root
+rows together**; the `end_to_end` and generator layers follow the same dependencies.
 
 ### Six-lane critical path (user cap)
 
 Phase 1 (live now):
-- **B4** `ValidV3`: `f1GeneratedRender` clause transfer + isolated payload point half + synthetic/re-sourced witness.
+- **B4** `Done`/DG.4: synthetic `ValidV3` witness merged; now the V3 `Done` gate/record and `not_done_today`, with the F1-real point half waiting on B3.
 - **B3** payload point fields: real `g1Base`/`g2Base`/`negSG2`, the commitment decoder/`vkF1` re-source, and `sG2gen` bridge.
 - **A5** `batch_invert_summary` / `BatchInvertPost` at `r = ofNat blsR` (unblocks lag).
 - **A11** `ec_pairing` call inversion → G1/G2 wire → `fp_blockSim`/`fp_blockProgS`.
