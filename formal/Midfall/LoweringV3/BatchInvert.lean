@@ -2088,6 +2088,35 @@ theorem exec_guard_false_eq_var_lit {funs : FunEnv (Bridge.Dialect c g)}
 
 
 
+theorem exec_mstore_add_var_normal {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    {x : String} {k : Nat} {val : Expr EVM.Op}
+    (hval : ∀ st1, (∃ vv, EvalExpr (Bridge.Dialect c g) funs V st val (.vals [vv] st1)) → st1 = st)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.builtin EVM.Op.mstore
+        [Expr.builtin EVM.Op.add [Expr.var x, Expr.lit (Literal.number k)], val])) V' st' .normal) :
+    ∃ xv vv, VEnv.get V x = some xv ∧ V' = V ∧
+      st' = { touchMemory st ((xv + BitVec.ofNat 256 k).toNat) 32 with
+        memory := storeWord st.memory ((xv + BitVec.ofNat 256 k).toNat) vv } := by
+  obtain ⟨hV, st1, he, hst⟩ := exec_exprStmt_inv h
+  subst hV hst
+  obtain ⟨argvals, sti, hargs, hbi⟩ := eval_builtin_vals_inv he
+  cases hargs with
+  | argsCons hrest haddr =>
+      cases hrest with
+      | argsCons hnil hvalue =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨xv, hxv, hcv, hstadd⟩ := eval_add_var_lit_inv haddr
+              have hstv := hval _ ⟨_, hvalue⟩
+              subst hstadd
+              subst hstv
+              subst hcv
+              simp only [builtinWithExternal, stepOp] at hbi
+              cases hbi
+              exact ⟨xv, _, hxv, rfl, rfl⟩
+
+
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
@@ -2118,6 +2147,7 @@ theorem exec_guard_false_eq_var_lit {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms exec_guard_ret0_iszero_lt_vars_false [propext, Classical.choice, Quot.sound]
 #assert_axioms b2w_eq_false_of_ne [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_false_eq_var_lit [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_mstore_add_var_normal [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
