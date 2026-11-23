@@ -24,6 +24,8 @@ import Midfall.LoweringV3.Statements
 import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV2.Stages
 import Midfall.LoweringV2.Blocks.TraceReturn
+import Midfall.LoweringV2.Blocks.FinalPairing
+import Midfall.LoweringV3.FpConsts
 import Midfall.LoweringV3.VkClean
 import Midfall.Tools.ConeSorries
 import Midfall.Tools.Done
@@ -1547,6 +1549,52 @@ theorem vk_run_exists (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (
           R.pv.expectedNumAccLimbBits R.pv.proofLayout.proofLen) hbody) Step.seqNil
 
 
+section LoopExists
+variable {D : YulSemantics.Dialect} [DecidableEq D.Value]
+
+/-- **THE EXISTENCE FORM OF THE LOOP RULE (GEN.3's other half), for a `for` statement.** A `for`
+    statement with a countdown invariant HAS a normal run: `ExecLoop.countdown` builds the loop
+    derivation from `done`/`step`, and `Step.forLoop` wraps the init run around it. The all-runs
+    form is `LoopRule.allRuns_for_cons_wp` / `ExecLoopAll.countdown_or_halt`; neither exhibits a
+    run, which is exactly what a `LiveTo` needs. Each per-loop existence leaf of TOT.1 is an
+    instance of this theorem at the loop's own invariant. -/
+theorem forLoop_exists_of_countdown {funs : FunEnv D} {V : VEnv D} {st : D.State}
+    {init : Block D.Op} {cond : Expr D.Op} {post body : Block D.Op}
+    {Inv : Nat → VEnv D → D.State → Prop} {V0 : VEnv D} {st0 : D.State}
+    (hinit : ExecStmts D (hoist D init :: funs) V st init V0 st0 .normal)
+    (done : ∀ V st, Inv 0 V st → ∃ cv st',
+      EvalExpr D (hoist D init :: funs) V st cond (.vals [cv] st') ∧ cv = D.zero ∧ Inv 0 V st')
+    (step : ∀ n V st, Inv (n + 1) V st → ∃ cv stc Vb stb ob Vp stp,
+      EvalExpr D (hoist D init :: funs) V st cond (.vals [cv] stc) ∧ cv ≠ D.zero ∧
+      ExecStmt D (hoist D init :: funs) V stc (.block body) Vb stb ob ∧
+      (ob = .normal ∨ ob = .«continue») ∧
+      ExecStmt D (hoist D init :: funs) Vb stb (.block post) Vp stp .normal ∧ Inv n Vp stp)
+    (n : Nat) (hInv : Inv n V0 st0) :
+    ∃ V' st', ExecStmt D funs V st (Stmt.forLoop init cond post body) V' st' .normal := by
+  obtain ⟨Vl, stl, hloop, -⟩ :=
+    ExecLoop.countdown (D := D) (funs := hoist D init :: funs) done step n V0 st0 hInv
+  exact ⟨restore V Vl, stl, Step.forLoop hinit hloop⟩
+
+/-- The one-statement-list face of `forLoop_exists_of_countdown` (the shape a slice segment has). -/
+theorem forLoop_stmts_exists_of_countdown {funs : FunEnv D} {V : VEnv D} {st : D.State}
+    {init : Block D.Op} {cond : Expr D.Op} {post body : Block D.Op}
+    {Inv : Nat → VEnv D → D.State → Prop} {V0 : VEnv D} {st0 : D.State}
+    (hinit : ExecStmts D (hoist D init :: funs) V st init V0 st0 .normal)
+    (done : ∀ V st, Inv 0 V st → ∃ cv st',
+      EvalExpr D (hoist D init :: funs) V st cond (.vals [cv] st') ∧ cv = D.zero ∧ Inv 0 V st')
+    (step : ∀ n V st, Inv (n + 1) V st → ∃ cv stc Vb stb ob Vp stp,
+      EvalExpr D (hoist D init :: funs) V st cond (.vals [cv] stc) ∧ cv ≠ D.zero ∧
+      ExecStmt D (hoist D init :: funs) V stc (.block body) Vb stb ob ∧
+      (ob = .normal ∨ ob = .«continue») ∧
+      ExecStmt D (hoist D init :: funs) Vb stb (.block post) Vp stp .normal ∧ Inv n Vp stp)
+    (n : Nat) (hInv : Inv n V0 st0) :
+    ∃ V' st', ExecStmts D funs V st [Stmt.forLoop init cond post body] V' st' .normal := by
+  obtain ⟨V', st', h⟩ :=
+    forLoop_exists_of_countdown hinit done step n hInv
+  exact ⟨V', st', Step.seqCons h Step.seqNil⟩
+
+end LoopExists
+
 /-- **THE TOT.1 DECOMPOSITION, NAMED.** A `LiveTo` is exactly an existence statement plus a
     classification of the exhibited run: the existential is `StmtsContract`'s first field, the
     disjunction is its postcondition. This is the shape every block case takes (the plan's "the
@@ -1581,6 +1629,57 @@ theorem block_live_vkLoading_of_exists (R : Render p G₁ G₂ Gₜ) (product : 
     V st hpre V' st' o hrun with hrev | hok
   · exact Or.inr (by rw [hrev.1]; decide)
   · exact Or.inl hok
+
+/-- The finalPairing slice at `ValidV3`, below `block_live` in the import order (`Rows.fp_sliceV3`
+    is above `Totality`). Same proof as that one; the emitter is no-accumulator at `ValidV3`. -/
+theorem fp_slice_at (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.slice Partial.finalPairing =
+      [Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"])
+          [Stmt.exprStmt (Expr.call "fail"
+            [Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED"])],
+        Stmt.assign ["success"] (Expr.call "ec_pairing"
+          [Expr.var "success",
+           Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+           Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"])] := by
+  have hacc : R.pv.hasAccumulator = false := by
+    classical
+    have h : R.cfg.accumulator = none := hR.supported.noAcc
+    have h1 : R.pv = planViewOf R.plan R.model none := by
+      show planViewOf R.plan R.model R.cfg.accumulator = _
+      rw [h]
+    rw [h1, planViewOf, planViewWithAccumulator]
+    rfl
+  show Inline.inlineContractConstants R.consts
+    (Midfall.Lowering.GenAst.emitPartial R.pv Partial.finalPairing) = _
+  rw [Midfall.Lowering.GenAst.emitPartial, Midfall.Lowering.GenAst.emitFinalPairing, hacc]
+  rw [Midfall.LoweringV2.Blocks.FinalPairing.fp_slice_raw]
+  simp only [Midfall.LoweringV2.Blocks.FinalPairing.fpVal,
+    Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none]
+
+/-- The finalPairing slice from a POISONED boundary: the `iszero(success)` guard fires, so a run
+    exists and halts. Half of TOT.1.g; the clean boundary is the other half. -/
+theorem block_live_finalPairing_poison (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hR : ValidV3 R) (H : Hash) (vkAddr : U256) (cd : Bytes) :
+    ∀ V st, Poisoned R H vkAddr cd V st →
+      ∃ V' st' o, ExecStmts (Blocks.TraceReturn.Dhonest product)
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+        (R.slice Partial.finalPairing) V' st' o ∧
+        ((o = .normal ∧ Mid R H vkAddr cd Checkpoint.pairing V' st') ∨ o ≠ .normal) := by
+  intro V st hpois
+  obtain ⟨-, hsucc0⟩ := hpois
+  have hsel := consts_lookup_ERR_PRECOMPILE_FAILED R hR
+  have hfail : lookupFun (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) "fail" =
+      some (Blocks.TraceReturn.failFDecl,
+        R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) :=
+    Blocks.TraceReturn.fail_lookup (c := callsOf product)
+      (g := ExternalGas.ofFun fun _ => 0) R
+  obtain ⟨V', st', hguard⟩ := vk_gate_halts_any (c := callsOf product)
+    (g := ExternalGas.ofFun fun _ => 0) R "ERR_PRECOMPILE_FAILED" 0x84e81692
+    (funs := R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+    (cenv := R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) hsel hfail hsucc0
+  refine ⟨V', st', .halt, ?_, Or.inr (by decide)⟩
+  rw [fp_slice_at R hR]
+  exact Step.seqStop hguard (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide)
 
 /-- **TOT.1.b CLOSED: vkLoading is live.** The existence half is `vk_run_exists`; the classification
     is `block_live_vkLoading_of_exists`'s `vk_clean_walkV3`. Standard three, cone 0. -/
