@@ -179,7 +179,7 @@ theorem end_to_end_forward_of_readSchedule (R : Render p G₁ G₂ Gₜ) (produc
       (Midfall.Lowering.calldataOf (p := p) R.E.g1 ms instL) = some (ms, instL.toArray)
     exact Midfall.Lowering.calldata_roundtrip (p := p) (G₁ := G₁) (le_of_lt hplt)
       R.plan.proofLayout hfacts.lCptr hlen hfacts.lEnd R.E.g1
-      hcodec.toG1CodecLaws ms hshape R.cfg.numInstances instL hnL hinstL
+      hcodec.toG1CodecLaws ms hshape R.cfg.numInstances instL hnL hinstL hfacts.cdBound
   have hinstWords : Midfall.LoweringV2.instOfWords? (p := p) instL.toArray = some inst := by
     simpa [instL, Array.toArray_toList] using instOfWords?_map_frWord (p := p) hplt inst.toList
   have hacc : LeanAccepts R keccak256 cd :=
@@ -508,7 +508,7 @@ theorem end_to_end_backward (R : Render p G₁ G₂ Gₜ) (product : PairingProd
     rw [hcdEq']
     exact Midfall.Lowering.calldata_roundtrip (p := p) (G₁ := G₁) (le_of_lt hplt)
       R.plan.proofLayout hfacts.lCptr hlen hfacts.lEnd R.E.g1
-      hcodec.toG1CodecLaws ms hshape R.cfg.numInstances instL hnL hinstL
+      hcodec.toG1CodecLaws ms hshape R.cfg.numInstances instL hnL hinstL hfacts.cdBound
   have hsel : bytesTake cd 0 4 = some Midfall.Generator.fnSigVerifyProof := by
     rw [hcdEq]
     unfold Midfall.Lowering.encodeCalldataRaw Midfall.Generator.encodeCalldata

@@ -67,7 +67,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Lowering.Stage.leanStage_prefix | Midfall.Lowering.Stage | theorem | OPEN | - | `6a12d9b2e6313461` | V3 SIM.9 - leanStage coherence: the staged chain is a chain, with equal fields (leaf of SoundnessV3 section 1; not used by the glue) |
 | Midfall.Lowering.builder_segments_total | Midfall.Lowering.Qvm | theorem | OPEN | - | `19417891ad4c8eb2` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.calldata_canonical | Midfall.Lowering.Calldata | theorem | OPEN | - | `93ce23c8ec4508b3` | P-SE: semantic equivalence obligations |
-| Midfall.Lowering.calldata_roundtrip | Midfall.Lowering.Calldata | theorem | OPEN | - | `2946ab985d3e04ff` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.decodeAcc_encode_pointPair | Midfall.Lowering.Accumulator | theorem | OPEN | - | `028ec007c2c32bbd` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.decodeAcc_injective | Midfall.Lowering.Accumulator | theorem | OPEN | - | `4b93d0d78ab51374` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.end_to_end_acc_complete | Midfall.Lowering.Obligations | theorem | VACUOUS | - | `5ecfad1c74fec97c` | P-SE: semantic equivalence obligations |
