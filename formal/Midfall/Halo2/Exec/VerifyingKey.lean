@@ -115,7 +115,9 @@ def VerifyingKey.hashInto (vk : VerifyingKey (Fr p) G₁) : TranscriptM Unit :=
     is defined and positive, so `chunkByDegree` succeeds. Neither follows from
     the counts above: `logup.rs:237` divides by a zero input degree and
     `rustChunks` panics on a zero chunk count, both STATIC properties of the
-    key. Stated as a decidable Bool equation so every witness is a computation. -/
+    key. Stated as a decidable Bool equation so every witness is a computation.
+  * fixedSelectorBound - D-GATE14: `num_simple_selectors ≤ num_fixed_columns`,
+    the no-throw precondition of `readFixedEvals` (`verifier.rs:400`). -/
 structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features) : Prop where
   csDegreeMatches : vk.cs.degree = .ok vk.csDegree
   chunkLenPositive : 3 ≤ vk.csDegree
@@ -150,6 +152,14 @@ structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features)
     (match l.nbParallelLookupsPerChunk vk.csDegree with
      | .ok nb => decide (0 < nb)
      | .error _ => false) = true
+  /-- **D-GATE14: the fixed-eval read does not throw.** `readFixedEvals` reads
+      `num_fixed_columns - num_simple_selectors` scalars and throws
+      `Error.transcript unexpectedEof` when `numSimpleSelectors > numFixedColumns`
+      (`verifier.rs:400`). `WellFormed` pins neither count against the other, so the
+      read walk needs the bound explicitly. (The generator's `programOk` and the
+      protocol plan's `validate` each imply it for the deployed renders; this is the
+      interface clause the verifier statements quantify over.) -/
+  fixedSelectorBound : vk.cs.numSimpleSelectors ≤ vk.cs.numFixedColumns
 
 /-! rust: plonk/mod.rs:94-120 (write), :124-150 (read), :151-186
     (read_from_cs), :218-221 (bytes_length), :293-300 (pinned), and
