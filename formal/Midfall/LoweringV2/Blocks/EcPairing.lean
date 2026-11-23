@@ -879,18 +879,28 @@ theorem ecPairingBodyLit_product_runs (product : PairingProduct)
       (ecPairingBodyLit scratch g2 neg gas 0x0f 768 32 errPre errProof)
       (fun V' st' o => Hold (
         (o = .halt ∧ Reverted st') ∨
-        (o = .normal ∧ VEnv.get V' "ret" = some (1 : U256) ∧
+        (o = .normal ∧
+          VEnv.get (restore [("success", (1 : U256)), ("lhs_mptr", lhsW),
+            ("rhs_mptr", rhsW), ("ret", (Bridge.Dialect c g).zero)] V') "ret" =
+            some (1 : U256) ∧
           (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
             st'.memory x = st.memory x) ∧
           product (pairingFrame [(LA, GB), (LB, GN)]) = true))) := by
   obtain ⟨cenv, hc⟩ := hfail
   unfold ecPairingBodyLit
-  refine ecPairingBodyLit_trim (Q := fun V' st' o => Hold (
+  refine ecPairingBodyLit_trim (funs := funs) (st := st)
+    (Q := fun V' st' o => Hold (
       (o = .halt ∧ Reverted st') ∨
-      (o = .normal ∧ VEnv.get V' "ret" = some (1 : U256) ∧
+      (o = .normal ∧
+        VEnv.get (restore [("success", (1 : U256)), ("lhs_mptr", lhsW),
+          ("rhs_mptr", rhsW), ("ret", (Bridge.Dialect c g).zero)] V') "ret" =
+          some (1 : U256) ∧
         (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
           st'.memory x = st.memory x) ∧
         product (pairingFrame [(LA, GB), (LB, GN)]) = true)))
+    (V := [("success", (1 : U256)), ("lhs_mptr", lhsW),
+      ("rhs_mptr", rhsW), ("ret", (Bridge.Dialect c g).zero)])
+    (w := (Bridge.Dialect c g).zero)
     (hsucc := rfl) (hbound := rfl) ?_
   refine allRuns_of_wp_fail 100 ?_
   wp_run
@@ -902,8 +912,7 @@ theorem ecPairingBodyLit_product_runs (product : PairingProduct)
        | exact Or.inl ⟨rfl, by assumption⟩
        | (refine Or.inr ⟨rfl, ⟨?_, ?_⟩⟩
           · rfl
-          · trace_state
-            refine ⟨?_, ?_⟩
+          · refine ⟨?_, ?_⟩
             · intro x hx
               simp +zetaDelta only [YulSemantics.EVM.litValue, BitVec.toNat_ofNat, BitVec.toNat_add]
               have h32 : (32 : Nat) % 2^256 = 32 := by simp
