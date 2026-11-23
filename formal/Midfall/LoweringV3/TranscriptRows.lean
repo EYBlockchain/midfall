@@ -2121,6 +2121,34 @@ theorem foldlM_take_length (protocol : ProtocolPlan) (expected : CommitmentRead)
       rw [ih st1 res h2, hst1, List.length_append, List.length_singleton]
       simp [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm]
 
+/-- The `takeCommitmentSection` fold only appends sections: its result list is the
+    initial list plus a fresh suffix of the fold's length. -/
+theorem foldlM_take_prefix (protocol : ProtocolPlan) (expected : CommitmentRead)
+    (label : String) :
+    ∀ (counts : List Nat) (init res : List ProofSection × Nat × Nat),
+      counts.foldlM
+        (fun st count =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2 expected count label).bind
+            fun x => Except.ok (st.1 ++ [x.1], x.2.1, x.2.2)) init = .ok res →
+      ∃ extra, res.1 = init.1 ++ extra ∧ extra.length = counts.length := by
+  intro counts
+  induction counts with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      exact ⟨[], by simp, rfl⟩
+  | cons c rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst⟩ := except_bind_ok _ _ h1
+      have hst1 : st1.1 = init.1 ++ [x.1] := by cases hst; rfl
+      obtain ⟨extra, hres, hlen⟩ := ih st1 res h2
+      refine ⟨x.1 :: extra, ?_, ?_⟩
+      · simp [hres, hst1, List.append_assoc]
+      · simp [hlen]
+
 /-- The lookup fold appends one row per `(lookup, chunks)` pair. -/
 theorem foldlM_lookups_length (protocol : ProtocolPlan) :
     ∀ (pairs : List (Nat × Nat))
