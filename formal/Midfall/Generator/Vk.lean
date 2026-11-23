@@ -1168,6 +1168,50 @@ def generateBaseVkEncodings (codecs : VkPointCodecs G₁ G₂)
   -- (F-P08-3).
   pure (g1Words, g2Words, negSG2Words)
 
+/-- `unwrapAt` success is its argument's success. PROVED. -/
+theorem unwrapAt_ok {α : Type} {site : String} {e : Except String α} {a : α}
+    (h : unwrapAt site e = .ok a) : e = .ok a := by
+  unfold unwrapAt at h
+  cases e with
+  | error err => simp at h
+  | ok a => simpa using h
+
+/-- One scalar header insert, opaque so the header peel sees a small continuation. -/
+def headerScalarInsert (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (name : String) (value : Word256) : Except Fault VkHeaderBuilder :=
+  unwrapAt site (b.scalar slot name value)
+
+/-- One G1 header insert. -/
+def headerG1Insert (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (names : List String) (values : List Word256) : Except Fault VkHeaderBuilder :=
+  unwrapAt site (b.g1 slot names values)
+
+/-- One G2 header insert. -/
+def headerG2Insert (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (names : List String) (values : List Word256) : Except Fault VkHeaderBuilder :=
+  unwrapAt site (b.g2 slot names values)
+
+theorem headerScalarInsert_length (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (name : String) (value : Word256) (b' : VkHeaderBuilder)
+    (h : headerScalarInsert b site slot name value = .ok b') :
+    b'.words.length = b.words.length := by
+  apply VkHeaderBuilder.insert_length
+  simpa [headerScalarInsert, VkHeaderBuilder.scalar] using unwrapAt_ok h
+
+theorem headerG1Insert_length (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (names : List String) (values : List Word256) (b' : VkHeaderBuilder)
+    (h : headerG1Insert b site slot names values = .ok b') :
+    b'.words.length = b.words.length := by
+  apply VkHeaderBuilder.insert_length
+  simpa [headerG1Insert, VkHeaderBuilder.g1] using unwrapAt_ok h
+
+theorem headerG2Insert_length (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (names : List String) (values : List Word256) (b' : VkHeaderBuilder)
+    (h : headerG2Insert b site slot names values = .ok b') :
+    b'.words.length = b.words.length := by
+  apply VkHeaderBuilder.insert_length
+  simpa [headerG2Insert, VkHeaderBuilder.g2] using unwrapAt_ok h
+
 def generateBaseVkHeader (inputs : VerifierBuildInputs p G₁ G₂)
     (pre : Word256 × Word256 × Word256 × Word256 × Word256)
     (g1Words g2Words negSG2Words : List Word256) :
@@ -1189,37 +1233,37 @@ def generateBaseVkHeader (inputs : VerifierBuildInputs p G₁ G₂)
     | some e => BitVec.ofNat 256 e.numLimbBits
     | none => 0
   let h0 := VkHeaderLayout.builder
-  let h1 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:211"
-    (h0.scalar .vkDigest "vk_digest" vkDigest)
-  let h2 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:212"
-    (h1.scalar .numInstances "num_instances" numInstancesW)
-  let h3 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:213"
-    (h2.scalar .k "k" kW)
-  let h4 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:214"
-    (h3.scalar .nInv "n_inv" nInv)
-  let h5 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:215"
-    (h4.scalar .omega "omega" omega)
-  let h6 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:216"
-    (h5.scalar .omegaInv "omega_inv" omegaInv)
-  let h7 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:217"
-    (h6.scalar .omegaInvToL "omega_inv_to_l" omegaInvToL)
-  let h8 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:218"
-    (h7.scalar .hasAccumulator "has_accumulator" hasAccumulator)
-  let h9 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:219"
-    (h8.scalar .accOffset "acc_offset" accOffset)
-  let h10 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:220"
-    (h9.scalar .numAccLimbs "num_acc_limbs" numAccLimbs)
-  let h11 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:222"
-    (h10.scalar .numAccLimbBits "num_acc_limb_bits" numAccLimbBits)
-  let h12 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:225"
-    (h11.g1 .g1Base ["g1_x_hi", "g1_x_lo", "g1_y_hi", "g1_y_lo"] g1Words)
-  let h13 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:231"
-    (h12.g2 .g2Base ["g2_x_c0_hi", "g2_x_c0_lo", "g2_x_c1_hi", "g2_x_c1_lo",
-      "g2_y_c0_hi", "g2_y_c0_lo", "g2_y_c1_hi", "g2_y_c1_lo"] g2Words)
-  let h14 ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:247"
-    (h13.g2 .negSG2Base ["neg_s_g2_x_c0_hi", "neg_s_g2_x_c0_lo", "neg_s_g2_x_c1_hi",
+  let h1 ← headerScalarInsert h0 "proofs/solidity-verifier/src/lowering/vk.rs:211"
+    .vkDigest "vk_digest" vkDigest
+  let h2 ← headerScalarInsert h1 "proofs/solidity-verifier/src/lowering/vk.rs:212"
+    .numInstances "num_instances" numInstancesW
+  let h3 ← headerScalarInsert h2 "proofs/solidity-verifier/src/lowering/vk.rs:213"
+    .k "k" kW
+  let h4 ← headerScalarInsert h3 "proofs/solidity-verifier/src/lowering/vk.rs:214"
+    .nInv "n_inv" nInv
+  let h5 ← headerScalarInsert h4 "proofs/solidity-verifier/src/lowering/vk.rs:215"
+    .omega "omega" omega
+  let h6 ← headerScalarInsert h5 "proofs/solidity-verifier/src/lowering/vk.rs:216"
+    .omegaInv "omega_inv" omegaInv
+  let h7 ← headerScalarInsert h6 "proofs/solidity-verifier/src/lowering/vk.rs:217"
+    .omegaInvToL "omega_inv_to_l" omegaInvToL
+  let h8 ← headerScalarInsert h7 "proofs/solidity-verifier/src/lowering/vk.rs:218"
+    .hasAccumulator "has_accumulator" hasAccumulator
+  let h9 ← headerScalarInsert h8 "proofs/solidity-verifier/src/lowering/vk.rs:219"
+    .accOffset "acc_offset" accOffset
+  let h10 ← headerScalarInsert h9 "proofs/solidity-verifier/src/lowering/vk.rs:220"
+    .numAccLimbs "num_acc_limbs" numAccLimbs
+  let h11 ← headerScalarInsert h10 "proofs/solidity-verifier/src/lowering/vk.rs:222"
+    .numAccLimbBits "num_acc_limb_bits" numAccLimbBits
+  let h12 ← headerG1Insert h11 "proofs/solidity-verifier/src/lowering/vk.rs:225"
+    .g1Base ["g1_x_hi", "g1_x_lo", "g1_y_hi", "g1_y_lo"] g1Words
+  let h13 ← headerG2Insert h12 "proofs/solidity-verifier/src/lowering/vk.rs:231"
+    .g2Base ["g2_x_c0_hi", "g2_x_c0_lo", "g2_x_c1_hi", "g2_x_c1_lo",
+      "g2_y_c0_hi", "g2_y_c0_lo", "g2_y_c1_hi", "g2_y_c1_lo"] g2Words
+  let h14 ← headerG2Insert h13 "proofs/solidity-verifier/src/lowering/vk.rs:247"
+    .negSG2Base ["neg_s_g2_x_c0_hi", "neg_s_g2_x_c0_lo", "neg_s_g2_x_c1_hi",
       "neg_s_g2_x_c1_lo", "neg_s_g2_y_c0_hi", "neg_s_g2_y_c0_lo", "neg_s_g2_y_c1_hi",
-      "neg_s_g2_y_c1_lo"] negSG2Words)
+      "neg_s_g2_y_c1_lo"] negSG2Words
   let constants ← unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:264" (h14.finish)
   pure constants
 

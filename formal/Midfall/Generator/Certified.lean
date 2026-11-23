@@ -707,6 +707,75 @@ theorem payload_comms (hg : Generates gi o) (hs : SupportedInput gi) :
 
 /-- D-CERT1 extension (D-GATE1's `PayloadAgrees.constantsLength`): the generated payload carries
     the eleven header constants the window reads. -/
+theorem generateBaseVkHeader_length {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    {g1Words g2Words negSG2Words : List Word256}
+    {constants : List (String × Word256)}
+    (h : generateBaseVkHeader inputs pre g1Words g2Words negSG2Words = .ok constants) :
+    constants.length = 31 := by
+  simp only [generateBaseVkHeader] at h
+  obtain ⟨h1, hb1, h⟩ := cert_except_bind_ok h
+  obtain ⟨h2, hb2, h⟩ := cert_except_bind_ok h
+  obtain ⟨h3, hb3, h⟩ := cert_except_bind_ok h
+  obtain ⟨h4, hb4, h⟩ := cert_except_bind_ok h
+  obtain ⟨h5, hb5, h⟩ := cert_except_bind_ok h
+  obtain ⟨h6, hb6, h⟩ := cert_except_bind_ok h
+  obtain ⟨h7, hb7, h⟩ := cert_except_bind_ok h
+  obtain ⟨h8, hb8, h⟩ := cert_except_bind_ok h
+  obtain ⟨h9, hb9, h⟩ := cert_except_bind_ok h
+  obtain ⟨h10, hb10, h⟩ := cert_except_bind_ok h
+  obtain ⟨h11, hb11, h⟩ := cert_except_bind_ok h
+  obtain ⟨h12, hb12, h⟩ := cert_except_bind_ok h
+  obtain ⟨h13, hb13, h⟩ := cert_except_bind_ok h
+  obtain ⟨h14, hb14, h⟩ := cert_except_bind_ok h
+  have hconst : unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:264" h14.finish =
+      .ok constants := h
+  have l1 : h1.words.length = VkHeaderLayout.builder.words.length :=
+    headerScalarInsert_length _ _ _ _ _ _ hb1
+  have l2 : h2.words.length = h1.words.length := headerScalarInsert_length _ _ _ _ _ _ hb2
+  have l3 : h3.words.length = h2.words.length := headerScalarInsert_length _ _ _ _ _ _ hb3
+  have l4 : h4.words.length = h3.words.length := headerScalarInsert_length _ _ _ _ _ _ hb4
+  have l5 : h5.words.length = h4.words.length := headerScalarInsert_length _ _ _ _ _ _ hb5
+  have l6 : h6.words.length = h5.words.length := headerScalarInsert_length _ _ _ _ _ _ hb6
+  have l7 : h7.words.length = h6.words.length := headerScalarInsert_length _ _ _ _ _ _ hb7
+  have l8 : h8.words.length = h7.words.length := headerScalarInsert_length _ _ _ _ _ _ hb8
+  have l9 : h9.words.length = h8.words.length := headerScalarInsert_length _ _ _ _ _ _ hb9
+  have l10 : h10.words.length = h9.words.length := headerScalarInsert_length _ _ _ _ _ _ hb10
+  have l11 : h11.words.length = h10.words.length := headerScalarInsert_length _ _ _ _ _ _ hb11
+  have l12 : h12.words.length = h11.words.length := headerG1Insert_length _ _ _ _ _ _ hb12
+  have l13 : h13.words.length = h12.words.length := headerG2Insert_length _ _ _ _ _ _ hb13
+  have l14 : h14.words.length = h13.words.length := headerG2Insert_length _ _ _ _ _ _ hb14
+  have hlen14 : h14.words.length = 31 := by
+    rw [l14, l13, l12, l11, l10, l9, l8, l7, l6, l5, l4, l3, l2, l1]
+    decide
+  have := VkHeaderBuilder.finish_length h14 constants (unwrapAt_ok hconst)
+  exact this.trans hlen14
+
+theorem generateBaseVkBody_constants_length {codecs : VkPointCodecs G₁ G₂}
+    {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    {payload : Halo2VerifyingKey}
+    (h : generateBaseVkBody codecs inputs pre = .ok payload) :
+    11 ≤ payload.constants.length := by
+  simp only [generateBaseVkBody] at h
+  obtain ⟨_trip, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨constants, hconst, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fixed, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨_perm, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨_u, _, h⟩ := cert_except_bind_ok h
+  have hrec := Except.ok.inj (ε := Fault) (by simpa using h)
+  have hcp : constants = payload.constants := congrArg (fun x => x.constants) hrec
+  have hlen := generateBaseVkHeader_length hconst
+  rw [← hcp]
+  omega
+
+theorem generateBaseVk_constants_length {codecs : VkPointCodecs G₁ G₂}
+    {inputs : VerifierBuildInputs p G₁ G₂} {payload : Halo2VerifyingKey}
+    (h : generateBaseVk codecs inputs = .ok payload) : 11 ≤ payload.constants.length := by
+  simp only [generateBaseVk] at h
+  obtain ⟨pre, _, h⟩ := cert_except_bind_ok h
+  exact generateBaseVkBody_constants_length h
+
 theorem payload_constantsLength (hg : Generates gi o) (hs : SupportedInput gi) :
     11 ≤ (renderOf gi o).pv.vk.constants.length := by
   sorry -- CERT.7
