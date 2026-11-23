@@ -1858,6 +1858,161 @@ theorem ofNat_sub_two_blsR :
 
 
 
+theorem bi_bridge_stores (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (p : Nat) (gv : U256) (hp : p + 192 < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 15 6)
+      (fun V st =>
+        VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p) ∧
+        VEnv.get V "gp" = some gv ∧
+        VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR))
+      (fun V0 st V' st' o => o = .normal ∧ V' = V0 ∧
+        st'.memory = mxMem st.memory p gv) := by
+  rw [bi_bridge_stores_form]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hgp_mptr, hg, hr⟩ := hpre
+  have hval32 : ∀ st0 st1, (∃ vv, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.ylit 32) (.vals [vv] st1)) → st1 = st0 := by
+    intro st0 st1 h
+    obtain ⟨vv, hvv⟩ := h
+    obtain ⟨-, hst⟩ := eval_lit_inv hvv
+    exact hst
+  have hvchar32 : ∀ vv st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.ylit 32) (.vals [vv] st1) → vv = 32 := by
+    intro vv st0 st1 h
+    obtain ⟨hv, -⟩ := eval_lit_inv h
+    exact hv
+  have hne32 : ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.ylit 32) (.halt st1) → False := by
+    intro st0 st1 h
+    exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts h
+  have hvalg : ∀ st0 st1, (∃ vv, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.yvar "gp") (.vals [vv] st1)) → st1 = st0 := by
+    intro st0 st1 h
+    obtain ⟨vv, hvv⟩ := h
+    obtain ⟨-, hst⟩ := eval_var_inv hvv
+    exact hst
+  have hvcharg : ∀ vv st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.yvar "gp") (.vals [vv] st1) → vv = gv := by
+    intro vv st0 st1 h
+    obtain ⟨hget, -⟩ := eval_var_inv h
+    rw [hg] at hget
+    injection hget with hv
+    exact hv.symm
+  have hneg : ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.yvar "gp") (.halt st1) → False := by
+    intro st0 st1 h
+    exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts h
+  have hvalr : ∀ st0 st1, (∃ vv, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.yvar "r") (.vals [vv] st1)) → st1 = st0 := by
+    intro st0 st1 h
+    obtain ⟨vv, hvv⟩ := h
+    obtain ⟨-, hst⟩ := eval_var_inv hvv
+    exact hst
+  have hvcharr : ∀ vv st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.yvar "r") (.vals [vv] st1) → vv = BitVec.ofNat 256 Midfall.Yul.blsR := by
+    intro vv st0 st1 h
+    obtain ⟨hget, -⟩ := eval_var_inv h
+    rw [hr] at hget
+    injection hget with hv
+    exact hv.symm
+  have hner : ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.yvar "r") (.halt st1) → False := by
+    intro st0 st1 h
+    exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts h
+  have hvalsub : ∀ st0 st1, (∃ vv, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.yop EVM.Op.sub [GenAst.yvar "r", GenAst.ylit 2]) (.vals [vv] st1)) → st1 = st0 := by
+    intro st0 st1 h
+    obtain ⟨vv, hvv⟩ := h
+    obtain ⟨-, -, -, hst⟩ := eval_sub_var_lit_inv (y := "r") (k := 2) hvv
+    exact hst
+  have hvcharsub : ∀ vv st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.yop EVM.Op.sub [GenAst.yvar "r", GenAst.ylit 2]) (.vals [vv] st1) →
+      vv = BitVec.ofNat 256 (Midfall.Yul.blsR - 2) := by
+    intro vv st0 st1 h
+    obtain ⟨a, hget, hv, -⟩ := eval_sub_var_lit_inv (y := "r") (k := 2) h
+    rw [hr] at hget
+    injection hget with ha
+    subst ha
+    rw [hv]
+    exact ofNat_sub_two_blsR
+  have hnesub : ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0
+      (GenAst.yop EVM.Op.sub [GenAst.yvar "r", GenAst.ylit 2]) (.halt st1) → False := by
+    intro st0 st1 h
+    exact eval_sub_var_lit_no_halt (y := "r") (k := 2) h
+  -- s15
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨xv, hxv, -, hV1, hst1⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 0)
+      (val := GenAst.ylit 32) (v0 := 32) hval32 hvchar32 hne32 h1
+    rw [hgp_mptr] at hxv; injection hxv with hx; subst hx
+    rw [ofNat_add_ofNat_toNat p 0 (by omega), Nat.add_zero] at hst1
+    rw [hV1] at hrest1
+    -- s16
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
+      ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · obtain ⟨xv, hxv, -, hV2, hst2⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 32)
+        (val := GenAst.ylit 32) (v0 := 32) hval32 hvchar32 hne32 h2
+      rw [hgp_mptr] at hxv; injection hxv with hx; subst hx
+      rw [ofNat_add_ofNat_toNat p 32 (by omega)] at hst2
+      rw [hV2] at hrest2
+      -- s17
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest2 with
+        ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
+      · obtain ⟨xv, hxv, -, hV3, hst3⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 64)
+          (val := GenAst.ylit 32) (v0 := 32) hval32 hvchar32 hne32 h3
+        rw [hgp_mptr] at hxv; injection hxv with hx; subst hx
+        rw [ofNat_add_ofNat_toNat p 64 (by omega)] at hst3
+        rw [hV3] at hrest3
+        -- s18
+        rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest3 with
+          ⟨V4, st4, h4, hrest4⟩ | ⟨h4, hne4⟩
+        · obtain ⟨xv, hxv, -, hV4, hst4⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 96)
+            (val := GenAst.yvar "gp") (v0 := gv) hvalg hvcharg hneg h4
+          rw [hgp_mptr] at hxv; injection hxv with hx; subst hx
+          rw [ofNat_add_ofNat_toNat p 96 (by omega)] at hst4
+          rw [hV4] at hrest4
+          -- s19
+          rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest4 with
+            ⟨V5, st5, h5, hrest5⟩ | ⟨h5, hne5⟩
+          · obtain ⟨xv, hxv, -, hV5, hst5⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 128)
+              (val := GenAst.yop EVM.Op.sub [GenAst.yvar "r", GenAst.ylit 2])
+              (v0 := BitVec.ofNat 256 (Midfall.Yul.blsR - 2)) hvalsub hvcharsub hnesub h5
+            rw [hgp_mptr] at hxv; injection hxv with hx; subst hx
+            rw [ofNat_add_ofNat_toNat p 128 (by omega)] at hst5
+            rw [hV5] at hrest5
+            -- s20
+            rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest5 with
+              ⟨V6, st6, h6, hrest6⟩ | ⟨h6, hne6⟩
+            · obtain ⟨xv, hxv, ho, hV, hst6⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 160)
+                (val := GenAst.yvar "r") (v0 := BitVec.ofNat 256 Midfall.Yul.blsR) hvalr hvcharr hner h6
+              rw [hgp_mptr] at hxv; injection hxv with hx; subst hx
+              rw [ofNat_add_ofNat_toNat p 160 (by omega)] at hst6
+              cases hrest6
+              refine ⟨rfl, hV, ?_⟩
+              rw [hst6, hst5, hst4, hst3, hst2, hst1]
+              rfl
+            · obtain ⟨-, -, ho, -, -⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 160)
+                (val := GenAst.yvar "r") (v0 := BitVec.ofNat 256 Midfall.Yul.blsR) hvalr hvcharr hner h6
+              exact absurd ho hne6
+          · obtain ⟨-, -, ho, -, -⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 128)
+              (val := GenAst.yop EVM.Op.sub [GenAst.yvar "r", GenAst.ylit 2])
+              (v0 := BitVec.ofNat 256 (Midfall.Yul.blsR - 2)) hvalsub hvcharsub hnesub h5
+            exact absurd ho hne5
+        · obtain ⟨-, -, ho, -, -⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 96)
+            (val := GenAst.yvar "gp") (v0 := gv) hvalg hvcharg hneg h4
+          exact absurd ho hne4
+      · obtain ⟨-, -, ho, -, -⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 64)
+          (val := GenAst.ylit 32) (v0 := 32) hval32 hvchar32 hne32 h3
+        exact absurd ho hne3
+    · obtain ⟨-, -, ho, -, -⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 32)
+        (val := GenAst.ylit 32) (v0 := 32) hval32 hvchar32 hne32 h2
+      exact absurd ho hne2
+  · obtain ⟨-, -, ho, -, -⟩ := exec_mstore_add_var_inv_val (x := "gp_mptr") (k := 0)
+      (val := GenAst.ylit 32) (v0 := 32) hval32 hvchar32 hne32 h1
+    exact absurd ho hne1
+
+
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
@@ -1930,6 +2085,7 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms wMulmodAt_zmod_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdProd_zmod_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms ofNat_sub_two_blsR [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_stores [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_args_litvar_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_staticcall_args [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_staticcall_inv [propext, Classical.choice, Quot.sound]
