@@ -63,6 +63,7 @@
 -- no 'native_decide' (D-P17); no 'maxHeartbeats'/'maxRecDepth' raise.
 import Midfall.LoweringV3.QuotientRows
 import Midfall.Yul.VKP
+import Midfall.LoweringV2.Blocks.EcPairing
 import Midfall.LoweringV3.VkWindow
 import Midfall.LoweringV3.MemoryPairs
 import Midfall.Lowering.GenAst
@@ -4236,6 +4237,23 @@ theorem bytesAt_calldatacopy_cdSlice (st : EvmState) (cd : Bytes) (dst src n : N
   congr 1
   rw [show src + (dst - dst) = src from by omega]
 
+/-- **A MEMORY WINDOW SPLITS AT AN ADJACENT OFFSET.** `bytesAt` is a `readBytes`, so a window of
+    `n + m` bytes is the `n`-byte window followed by the `m`-byte window at `a + n`. -/
+theorem bytesAt_append (st : EvmState) (a n m : Nat) :
+    bytesAt st a (n + m) = bytesAt st a n ++ bytesAt st (a + n) m := by
+  unfold bytesAt
+  rw [Midfall.LoweringV2.Blocks.EcPairing.readBytes_append]
+  apply ByteArray.ext
+  simp
+
+/-- **A CALLDATA SLICE SPLITS AT AN ADJACENT OFFSET.** Same split for `cdSlice` (`drop`/`take`). -/
+theorem cdSlice_append (cd : Bytes) (a n m : Nat) :
+    cdSlice cd a (n + m) = cdSlice cd a n ++ cdSlice cd (a + n) m := by
+  unfold cdSlice
+  rw [List.take_add, List.drop_drop]
+  apply ByteArray.ext
+  simp
+
 /-- **THE COORDINATE RANGE CHECK AS A `Nat` FACT.** `common_uncompressed_g1` writes
     its two coordinate checks as `iszero(or(lt(hi, BLS_P_HI), and(eq(hi, BLS_P_HI),
     iszero(gt(lo, BLS_P_MINUS_ONE_LO)))))`; at `BitVec 256` the *passing* check (the
@@ -5051,6 +5069,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.toNat_add_ofNat [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.coordCheck_lift [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_calldatacopy_cdSlice [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_append [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSize_of_envelope [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_length_of_envelope [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_slice [propext, Classical.choice, Quot.sound] native []
