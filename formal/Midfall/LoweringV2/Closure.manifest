@@ -1,4 +1,4 @@
-# closure_fingerprint: 5250 project declarations, 620 external leaves, digest f6b3d29e773cebdb
+# closure_fingerprint: 5251 project declarations, 620 external leaves, digest da67ab3de31b92e9
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws inductive 0e89d3fd0bde015d 0000000000000000
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws.mk ctor 8c653d323d8fefae 0000000000000000
 DECL Midfall.Assumptions.CurvePairing Midfall.Assumptions.bls12_381Pairing axiom 3d246dc502557acb 0000000000000000
@@ -4430,6 +4430,7 @@ DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.PayloadAgrees.mk ctor 50da
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.TotalV3 def fc73bf5b069352a8 221deab89ceb66fd
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.ValidV3 inductive e33b88f4d371e565 0000000000000000
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.ValidV3.mk ctor e9756fe21c4419f8 0000000000000000
+DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.batchInvertScratchFits def 09a2dddc33a94102 5593e320264196c9
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.cAddr def dd0b43dd089e6e9b a0b7de06fcc7cb41
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.callSitesE def b76a3f1cde5772f2 170ca307d6ca64b5
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.callSitesE._f def c1ec662962c67b63 9101b45b7e61c2db
@@ -4500,7 +4501,7 @@ DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.noShadowProg def d16a8fffe
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.payloadWord def a89b2f79f2cc528a 3d3f6c33de1a1304
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.permCommMatchRepaired def c258414350e7f3a8 f05a09816ac2ef3b
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.progConstNames def 65c6cb4c61c6c370 fb499c638423f36b
-DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.programFits def a679217386513ab7 00ba63deb711362b
+DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.programFits def a679217386513ab7 9db8e4a516ad60cd
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.programFits.match_1 def d042e165c6c4cf34 9f6821679adb31ad
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.programOk def e33b88f4d371e565 347993d231e2e2ba
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.programOkB def 24c89ec1b2efbc11 1b976a5adf1c1823
