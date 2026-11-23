@@ -219,6 +219,7 @@ import Midfall.LoweringV3.VkClean
 import Midfall.LoweringV3.GeneratorTheorem
 import Midfall.Generator.Certified
 import Midfall.LoweringV3.EndToEnd
+import Midfall.LoweringV3.EndToEndAlgebra
 import Midfall.Instances.StatementsV3Deploy
 import Midfall.Instances.VacuityWitnesses
 import Midfall.Instances.StatementsV3Falsifiers
