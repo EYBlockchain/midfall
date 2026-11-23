@@ -24,6 +24,7 @@ import Midfall.LoweringV3.Statements
 import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV2.Stages
 import Midfall.LoweringV2.Blocks.TraceReturn
+import Midfall.LoweringV3.VkClean
 import Midfall.Tools.ConeSorries
 import Midfall.Tools.Done
 set_option autoImplicit false
@@ -1016,6 +1017,41 @@ theorem block_live_traceReturn (R : Render p G₁ G₂ Gₜ) (product : PairingP
     exact (by decide : (Outcome.halt : Outcome) ≠ Outcome.normal)
   · obtain ⟨V', st', o, hrun, hne⟩ := tr_poison_exists (R := R) product hR H vkAddr cd hpois
     exact ⟨V', st', o, hrun, Or.inr hne⟩
+
+/-- **THE TOT.1 DECOMPOSITION, NAMED.** A `LiveTo` is exactly an existence statement plus a
+    classification of the exhibited run: the existential is `StmtsContract`'s first field, the
+    disjunction is its postcondition. This is the shape every block case takes (the plan's "the
+    existence form of the loop rule at each loop, and the block's all-runs row to classify the
+    exhibited run"). -/
+theorem liveTo_of_exists {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {b : Block D.Op} {pre mid : VEnv D → D.State → Prop}
+    (hex : ∀ V st, pre V st → ∃ V' st' o, ExecStmts D funs V st b V' st' o)
+    (hcls : ∀ V st, pre V st → ∀ V' st' o, ExecStmts D funs V st b V' st' o →
+      (o = .normal ∧ mid V' st') ∨ o ≠ .normal) :
+    LiveTo funs b pre mid := by
+  intro V st hpre
+  obtain ⟨V', st', o, hrun⟩ := hex V st hpre
+  exact ⟨V', st', o, hrun, hcls V st hpre V' st' o hrun⟩
+
+/-- **THE vkLoading CASE OF `block_live`, REDUCED TO EXISTENCE.** `VkClean.vk_clean_walkV3` is the
+    block's all-runs row at the HONEST dialect and it needs no accepted calldata: every run of the
+    slice from `StageInv .start` is a halted revert or a normal exit at `StageInv .vk`. So the
+    block's `LiveTo` follows from the existence half alone - TOT.1.b's residual obligation is
+    `hex` and nothing else. (The existence proof itself must reproduce the 13-statement walk with
+    the nine guards case-split; it is not in this commit.) -/
+theorem block_live_vkLoading_of_exists (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hR : ValidV3 R) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (hex : ∀ V st, StageInv R H vkAddr cd Checkpoint.start V st →
+      ∃ V' st' o, ExecStmts (Blocks.TraceReturn.Dhonest product)
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+        (R.slice Partial.vkLoading) V' st' o) :
+    BlockLive R .vkLoading H vkAddr product cd := by
+  refine liveTo_of_exists hex ?_
+  intro V st hpre V' st' o hrun
+  rcases VkClean.vk_clean_walkV3 R hR H vkAddr cd (ExternalGas.ofFun fun _ => 0)
+    V st hpre V' st' o hrun with hrev | hok
+  · exact Or.inr (by rw [hrev.1]; decide)
+  · exact Or.inl hok
 
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
