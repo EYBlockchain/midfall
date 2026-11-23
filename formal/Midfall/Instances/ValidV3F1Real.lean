@@ -44,6 +44,7 @@
 -/
 import Midfall.Instances.PayloadPointsF1
 import Midfall.Instances.GeneratorDone
+import Midfall.Instances.NativeReplay
 
 set_option autoImplicit false
 
@@ -83,6 +84,214 @@ theorem f1ResOut_eq : f1ResOut = genFilledOut := rfl
 theorem f1ResRun_eq_ok : f1ResRun = .ok genFilledOut := by
   rw [Except.eq_ok_getOk f1ResRun f1ResRun_isOk]
   exact congrArg Except.ok f1ResOut_eq
+
+/-! ## 1b. The tracked F1 fixture, decoded and checked at the render's own faces
+
+  `poseidonFixtureCalldata` is the tracked `calldata.bin` as a pure term. `f1FixtureDecoded` is
+  `decodeCalldata` at the F1 plan/layout and the computable codec `g1CodecC`; the two Bool checks
+  are the same `prepareMsgs`/`snapshotOf` computations the verifier runs, evaluated once (the
+  `native_decide` facts below) so the universal `SoundSide`/`CompleteSide` clauses never need the
+  message list as an explicit term. They are defined OUTSIDE the `noncomputable section` below:
+  `prepareMsgs` at the global computable pairing instance is executable, and its value is
+  definitionally the same at the section's `pairingF1` (both have `g₁ = g1zGen`,
+  `g₂ = g2foldExp 1`). -/
+
+def f1FixtureDecoded : Option (List (Msg (Fr blsR) G₁z) × Array Word256) :=
+  Midfall.Lowering.decodeCalldata (p := blsR) genFilledOut.plan.proofLayout
+    poseidonConfig.numInstances g1CodecC Midfall.Instances.GeneratorDone.poseidonFixtureCalldata
+
+/-- The fixture decode's `prepareMsgs` is panic-free (the tracked proof is honest). -/
+def f1FixtureSoundCheck : Bool :=
+  match f1FixtureDecoded with
+  | some (ms, instW) =>
+      match Midfall.LoweringV2.instOfWords? (p := blsR) instW with
+      | some inst =>
+          match prepareMsgs (Gₜ := G₁z) Midfall.Instances.NativeReplay.envReal keccak256
+              Features.solidity f1VkResourced inst ms with
+          | .error (.panic msg) => false
+          | _ => true
+      | none => true
+  | none => true
+
+/-- The two `ChallengesGood` fields at the fixture snapshot, as a Bool. -/
+def f1FixtureChallengesGoodB (S : Snapshot blsR G₁z G2fold G₁z) : Bool :=
+  decide (S.alg.x ^ f1VkResourced.domain.n ≠ 1) && decide (S.alg.x ≠ 0)
+
+/-- The fixture snapshot's `ChallengesGood` computation. -/
+def f1FixtureCompleteCheck : Bool :=
+  match f1FixtureDecoded with
+  | some (ms, instW) =>
+      match Midfall.LoweringV2.instOfWords? (p := blsR) instW with
+      | some inst =>
+          match snapshotOf Midfall.Instances.NativeReplay.envReal keccak256 f1VkResourced
+              inst ms none with
+          | .ok S => f1FixtureChallengesGoodB S
+          | .error _ => true
+      | none => true
+  | none => true
+
+theorem f1FixtureSoundCheck_eq : f1FixtureSoundCheck = true := by native_decide
+theorem f1FixtureCompleteCheck_eq : f1FixtureCompleteCheck = true := by native_decide
+
+/-- The fixture snapshot exists at the render's own key/params (the same `snapshotOf` run). -/
+def f1FixtureSnapshotCheck : Bool :=
+  match f1FixtureDecoded with
+  | some (ms, instW) =>
+      match Midfall.LoweringV2.instOfWords? (p := blsR) instW with
+      | some inst =>
+          match snapshotOf Midfall.Instances.NativeReplay.envReal keccak256 f1VkResourced
+              inst ms none with
+          | .ok _ => true
+          | .error _ => false
+      | none => false
+  | none => false
+
+theorem f1FixtureSnapshotCheck_eq : f1FixtureSnapshotCheck = true := by native_decide
+
+theorem f1FixtureChallengesGood_of_b (S : Snapshot blsR G₁z G2fold G₁z)
+    (h : f1FixtureChallengesGoodB S = true) : ChallengesGood f1VkResourced S := by
+  have hh := h
+  simp only [f1FixtureChallengesGoodB, Bool.and_eq_true] at hh
+  exact ⟨of_decide_eq_true hh.1, of_decide_eq_true hh.2⟩
+
+/-! ## 1c. The key mismatch, named on both sides
+
+  `f1VkResourced` IS the production key: its two commitment arrays are the decoded
+  `poseidon/vk.json` commitments and its transcript representation is that file's. The tracked
+  `poseidon-testsrs` proof was produced for the test-SRS key `NativeReplay.vkF1`, whose three
+  fields differ (`f1FixtureVk_differs`). This is why the fixture can discharge the
+  decode/sound/complete clauses at the render but not `LeanAccepts`: the latter runs `verifyMsgs`
+  at the render's key. The final theorem below makes the failure a COMPUTATION at the test-SRS
+  parameter point, not an absence of proof: even when the render's parameters are the bundle's own
+  trapdoor, the tracked proof still fails at the production key. -/
+
+/-- The production `vk.json` fixed commitments, decoded into the carrier by the computable codec.
+    This is the list `f1VkResourced` carries. -/
+def f1ProductionFixedCommitments : List G₁z :=
+  Midfall.Instances.PoseidonFixture.poseidonVkData.fixedCommitmentHex.toList.map
+    (fun b => (g1CodecC.ofCompressed? b).getD 1)
+
+/-- The production `vk.json` permutation commitments, decoded. -/
+def f1ProductionPermutationCommitments : List G₁z :=
+  Midfall.Instances.PoseidonFixture.poseidonVkData.permutationCommitmentHex.toList.map
+    (fun b => (g1CodecC.ofCompressed? b).getD 1)
+
+/-- **THE RENDER'S FIXED COMMITMENTS ARE THE PRODUCTION KEY'S.** AXIOM:
+    f1VkResourced_fixed_eq_production._native.native_decide.ax_1_1. -/
+theorem f1VkResourced_fixed_eq_production :
+    f1VkResourced.fixedCommitments.toList = f1ProductionFixedCommitments := by
+  native_decide
+
+/-- **THE RENDER'S PERMUTATION COMMITMENTS ARE THE PRODUCTION KEY'S.** AXIOM:
+    f1VkResourced_perm_eq_production._native.native_decide.ax_1_1. -/
+theorem f1VkResourced_perm_eq_production :
+    f1VkResourced.permutation.commitments.toList = f1ProductionPermutationCommitments := by
+  native_decide
+
+/-- The render's transcript representation is the production `vk.json` field. -/
+theorem f1VkResourced_transcript_eq_production :
+    f1VkResourced.transcriptRepr =
+      (bytesToNatBE Midfall.Instances.PoseidonFixture.poseidonVkData.transcriptReprBytes :
+        Fr blsR) := rfl
+
+/-- The render's CS degree is the production `vk.json` field (and the test-SRS key's too: this is
+    the one key field the two bundles share). -/
+theorem f1VkResourced_csDegree_eq_production :
+    f1VkResourced.csDegree =
+      Midfall.Instances.PoseidonFixture.poseidonVkData.csDegree := rfl
+
+/-- **THE ONE KEY FIELD THE FIXTURE AND THE RENDER SHARE.** `csDegree` is 5 in both bundles; the
+    mismatch in `f1FixtureVk_differs` is therefore exactly the commitment arrays and the
+    transcript representation, not a degree difference. -/
+theorem f1FixtureVk_csDegree_agrees :
+    (Midfall.Instances.NativeReplay.vkF1.getD f1VkResourced).csDegree =
+      f1VkResourced.csDegree := by
+  native_decide
+
+/-- `f1ParamsResourced` with the `noncomputable` marker peeled off. The body only uses group
+    inversion and the exponent fold, so it is executable; the equality is `rfl`. -/
+def f1ParamsC (n : Nat) : ParamsVerifierKZG G₁z G2fold :=
+  { sG2 := (g2foldExp n)⁻¹
+    nG2Prepared := (g2foldExp 1)⁻¹
+    sG2Prepared := (g2foldExp n)⁻¹ }
+
+theorem f1ParamsResourced_eq_C : f1ParamsResourced = f1ParamsC := rfl
+
+/-- The tracked test-SRS verifier parameters, named from the bundle's exported trapdoor:
+    `sG2 = sTest·H2` and `nG2Prepared = -H2`. -/
+def f1TestSrsParams : ParamsVerifierKZG G₁z G2fold :=
+  ParamsVerifierKZG.ofParams (g2foldExp 1) (Multiplicative.ofAdd (sTest : ZMod blsR))
+
+/-- **`n = r - sTest` IS THE TEST-SRS PARAMETER POINT.** The render's computable parameters at
+    that exponent are the bundle's own trapdoor. AXIOM:
+    f1ParamsC_testExponent_eq._native.native_decide.ax_1_1 (three fields). -/
+theorem f1ParamsC_testExponent_eq :
+    f1ParamsC (blsR - sTest) = f1TestSrsParams := by
+  have h1 : (f1ParamsC (blsR - sTest)).sG2 = f1TestSrsParams.sG2 := by native_decide
+  have h2 : (f1ParamsC (blsR - sTest)).nG2Prepared = f1TestSrsParams.nG2Prepared := by
+    native_decide
+  have h3 : (f1ParamsC (blsR - sTest)).sG2Prepared = f1TestSrsParams.sG2Prepared := by
+    native_decide
+  exact ParamsVerifierKZG.mk.injEq _ _ _ _ _ _ |>.mpr ⟨h1, h2, h3⟩
+
+/-- `verifyMsgs` at the render's key, the tracked decode, and the test-SRS parameter point
+    (`n = r - sTest`, so `sG2Prepared` is the bundle's own `s·H2`): the run is a closed
+    computation, and it is NOT `.ok ()`. -/
+def f1FixtureVerifyAtTestExponentCheck : Bool :=
+  match f1FixtureDecoded with
+  | some (ms, instW) =>
+      match Midfall.LoweringV2.instOfWords? (p := blsR) instW with
+      | some inst =>
+          match verifyMsgs (Gₜ := G₁z) Midfall.Instances.NativeReplay.envReal keccak256
+              Features.solidity (f1ParamsC (blsR - sTest)) f1VkResourced inst ms with
+          | .ok () => true
+          | _ => false
+      | none => false
+  | none => false
+
+/-- **THE FIXTURE'S `verifyMsgs` IS FALSE AT THE RENDER'S KEY.** AXIOM:
+    f1FixtureVerifyAtTestExponentCheck_eq_false._native.native_decide.ax_1_1. -/
+theorem f1FixtureVerifyAtTestExponentCheck_eq_false :
+    f1FixtureVerifyAtTestExponentCheck = false := by native_decide
+
+/-- **THE TRACKED FIXTURE IS NOT ACCEPTED AT THE RENDER'S KEY.** At the test-SRS parameter point
+    (`n = r - sTest`, `f1ParamsC_testExponent_eq`) the render's parameters ARE the bundle's own
+    trapdoor, and the proof still fails: `f1VkResourced` carries the production commitments, while
+    the proof was produced for `NativeReplay.vkF1`. This is the exact data mismatch behind
+    `LeanAccepts`; it is not a missing proof step, and it does not weaken any statement. -/
+theorem f1PointRenderCCN_not_leanAccepts_testExponent :
+    ¬ LeanAccepts (f1PointRenderCCN (blsR - sTest)) keccak256
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata := by
+  rintro ⟨ms, instW, inst, hdec, hinst, hver⟩
+  have hdec' : f1FixtureDecoded = some (ms, instW) := by
+    rw [← show Midfall.Lowering.decodeCalldata (p := blsR)
+        (f1PointRenderCCN (blsR - sTest)).plan.proofLayout
+        (f1PointRenderCCN (blsR - sTest)).cfg.numInstances
+        (f1PointRenderCCN (blsR - sTest)).E.g1
+        Midfall.Instances.GeneratorDone.poseidonFixtureCalldata = f1FixtureDecoded from rfl]
+    exact hdec
+  cases hd : f1FixtureDecoded with
+  | none => rw [hd] at hdec'; cases hdec'
+  | some p =>
+      obtain ⟨ms0, instW0⟩ := p
+      have hpair : (ms0, instW0) = (ms, instW) :=
+        Option.some.inj (by rw [hd] at hdec'; exact hdec')
+      obtain ⟨hms, hinstW⟩ := Prod.mk.inj hpair
+      subst hms hinstW
+      cases hi : Midfall.LoweringV2.instOfWords? (p := blsR) instW0 with
+      | none => rw [hi] at hinst; cases hinst
+      | some inst0 =>
+          have hinst0 : inst0 = inst :=
+            Option.some.inj (by rw [hi] at hinst; exact hinst)
+          subst hinst0
+          have hver' : verifyMsgs (Gₜ := G₁z) Midfall.Instances.NativeReplay.envReal
+              keccak256 Features.solidity (f1ParamsC (blsR - sTest)) f1VkResourced inst0 ms0 =
+              .ok () := hver
+          have hcheck := f1FixtureVerifyAtTestExponentCheck_eq_false
+          unfold f1FixtureVerifyAtTestExponentCheck at hcheck
+          simp only [hd, hi] at hcheck
+          rw [hver'] at hcheck
+          exact Bool.noConfusion hcheck
 
 /-! ## 2. The clauses at `f1PointRenderCN n` -/
 
@@ -361,6 +570,239 @@ theorem f1PointRenderCCN_gateAtV3_of
     GateAtV3 (f1PointRenderCCN n) product cd :=
   ⟨W, Lyt, vkAddr, st₀, hdep, hentry, hpc, f1PointRenderCCN_codec_lawsV3 n, hacc, hss, hcs, hdec⟩
 
+/-! ## 2c. The tracked fixture at `f1PointRenderCCN n`
+
+  The decode succeeds at the F1 plan and the computable codec; the `prepareMsgs`/`snapshotOf`
+  checks are the fixture's own. `LeanAccepts` itself is NOT available: the tracked proof is for
+  `NativeReplay.vkF1` (the test-SRS key), while the render's key is `f1VkResourced` (the payload's
+  production commitments). `f1FixtureVk_differs` records the exact differing fields, and
+  `f1PointRenderCCN_not_leanAccepts_testExponent` makes the failure a computation at the test-SRS
+  parameter point: even with the bundle's own trapdoor, `verifyMsgs` at the render's key is not
+  `.ok ()`. -/
+
+/-- **THE TRACKED CALLDATA DECODES AT THE F1 RENDER.** The two non-verification conjuncts of
+    `LeanAccepts` hold with explicit witnesses (the decoded message list and the parsed instance
+    column). The final `verifyMsgs` conjunct is the one the key mismatch blocks. -/
+theorem f1PointRenderCCN_decodes_fixture (n : Nat) :
+    ∃ ms instW inst,
+      Midfall.Lowering.decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+          (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1
+          Midfall.Instances.GeneratorDone.poseidonFixtureCalldata = some (ms, instW) ∧
+      Midfall.LoweringV2.instOfWords? (p := blsR) instW = some inst := by
+  have hcheck : (match f1FixtureDecoded with
+      | some p => (Midfall.LoweringV2.instOfWords? (p := blsR) p.2).isSome
+      | none => false) = true := by native_decide
+  rw [← show Midfall.Lowering.decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+      (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata = f1FixtureDecoded from rfl] at hcheck
+  cases h : Midfall.Lowering.decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+      (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata with
+  | none => simp [h] at hcheck
+  | some p =>
+      obtain ⟨ms, instW⟩ := p
+      cases hi : Midfall.LoweringV2.instOfWords? (p := blsR) instW with
+      | none => simp [h, hi] at hcheck
+      | some inst => exact ⟨ms, instW, inst, rfl, hi⟩
+
+/-- **`SoundSide` AT THE F1 RENDER, FROM THE FIXTURE.** The tracked decode's `prepareMsgs` does
+    not panic; the universal follows because the decode is deterministic. -/
+theorem f1PointRenderCCN_soundSide (n : Nat) :
+    SoundSide (f1PointRenderCCN n) keccak256
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata := by
+  intro ms instW inst hdec hinst
+  have hcheck := f1FixtureSoundCheck_eq
+  unfold f1FixtureSoundCheck at hcheck
+  rw [← show Midfall.Lowering.decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+      (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata = f1FixtureDecoded from rfl,
+    hdec] at hcheck
+  dsimp only at hcheck
+  cases hi : Midfall.LoweringV2.instOfWords? (p := blsR) instW with
+  | none => rw [hi] at hinst; cases hinst
+  | some inst' =>
+      have hinst' : inst' = inst := Option.some.inj (by rw [hi] at hinst; exact hinst)
+      subst inst'
+      simp only [hi] at hcheck
+      change prepareMsgs (Gₜ := G₁z) Midfall.Instances.NativeReplay.envReal keccak256
+        Features.solidity f1VkResourced inst ms ≠
+        .error (Fault.panic "proofs/src/plonk/logup.rs:460")
+      cases h : prepareMsgs (Gₜ := G₁z) Midfall.Instances.NativeReplay.envReal keccak256
+          Features.solidity f1VkResourced inst ms with
+      | ok u => simp
+      | error e =>
+          cases e with
+          | error e => simp
+          | panic msg => simp [h] at hcheck
+
+/-- **`CompleteSide` AT THE F1 RENDER, FROM THE FIXTURE.** The fixture snapshot's two
+    `ChallengesGood` fields hold; the universal follows by determinism of `snapshotOf`. -/
+theorem f1PointRenderCCN_completeSide (n : Nat) :
+    CompleteSide (f1PointRenderCCN n) keccak256
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata := by
+  intro ms instW inst Snap hdec hinst hsnap
+  have hcheck := f1FixtureCompleteCheck_eq
+  unfold f1FixtureCompleteCheck at hcheck
+  rw [← show Midfall.Lowering.decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+      (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata = f1FixtureDecoded from rfl,
+    hdec] at hcheck
+  dsimp only at hcheck
+  cases hi : Midfall.LoweringV2.instOfWords? (p := blsR) instW with
+  | none => rw [hi] at hinst; cases hinst
+  | some inst' =>
+      have hinst' : inst' = inst := Option.some.inj (by rw [hi] at hinst; exact hinst)
+      subst inst'
+      simp only [hi] at hcheck
+      have hsnap' : snapshotOf Midfall.Instances.NativeReplay.envReal keccak256 f1VkResourced
+          inst ms none = Except.ok Snap := hsnap
+      cases hs : snapshotOf Midfall.Instances.NativeReplay.envReal keccak256 f1VkResourced
+          inst ms none with
+      | error e => rw [hs] at hsnap'; cases hsnap'
+      | ok S =>
+          have hS : S = Snap := by
+            rw [hs] at hsnap'
+            exact Except.ok.inj hsnap'
+          subst hS
+          simp only [hs] at hcheck
+          change ChallengesGood f1VkResourced S
+          exact f1FixtureChallengesGood_of_b S hcheck
+
+/-- **THE FIXTURE'S KEY IS NOT THE RENDER'S KEY.** The tracked proof is for
+    `NativeReplay.vkF1`; `f1VkResourced` differs in the fixed commitments, the permutation
+    commitments and the transcript representation. This is exactly where `LeanAccepts` stops. -/
+theorem f1FixtureVkF1_isSome : Midfall.Instances.NativeReplay.vkF1.isSome = true := by
+  native_decide
+
+theorem f1FixtureVk_differs :
+    f1VkResourced.fixedCommitments ≠
+        (Midfall.Instances.NativeReplay.vkF1.getD f1VkResourced).fixedCommitments ∧
+      f1VkResourced.permutation.commitments ≠
+        (Midfall.Instances.NativeReplay.vkF1.getD f1VkResourced).permutation.commitments ∧
+      f1VkResourced.transcriptRepr ≠
+        (Midfall.Instances.NativeReplay.vkF1.getD f1VkResourced).transcriptRepr := by
+  native_decide
+
+/-- The F1 render's VK runtime bytes are the tracked `poseidonPlanV2` bytes (4,577 of them);
+    this is the field `DeploymentV2.vkCode` reads. -/
+theorem f1PointRenderCCN_vkRuntimeBytes (n : Nat) :
+    (f1PointRenderCCN n).plan.vk.runtimeBytes = poseidonPlanV2.vk.runtimeBytes := by
+  show genFilledOut.plan.vk.runtimeBytes = poseidonPlanV2.vk.runtimeBytes
+  native_decide
+
+/-- The F1 render's `TRANSCRIPT_MPTR` constant is the same `0x1000`; this is the field
+    `EntryFrameV3.fmp` reads. -/
+theorem f1PointRenderCCN_transcriptMptr (n : Nat) :
+    (f1PointRenderCCN n).consts.lookup "TRANSCRIPT_MPTR" = some 4096 := by
+  show (constTableOf genFilledOut.model).lookup "TRANSCRIPT_MPTR" = some 4096
+  native_decide
+
+/-- **`DeploymentV2` AT THE F1 RENDER.** The world is `VacuityWitnesses.f1W`; the VK runtime bytes
+    at the render's plan are the same 4,577 bytes as `poseidonPlanV2` (computed), so the `vkCode`
+    field transfers and the other fields are the world's. -/
+theorem f1PointRenderCCN_deploymentV2 (n : Nat) :
+    Midfall.LoweringV2.DeploymentV2 (f1PointRenderCCN n)
+      Midfall.Instances.VacuityWitnesses.f1W keccak256
+      Midfall.Instances.VacuityWitnesses.f1VkAddr := by
+  have hrt := f1PointRenderCCN_vkRuntimeBytes n
+  refine ⟨rfl, ?_, ?_, rfl, ?_, ?_⟩
+  · refine ⟨?_, rfl⟩
+    intro a
+    simp only [Midfall.Instances.VacuityWitnesses.f1W, YulSemantics.EVM.projectedCodeHash]
+    by_cases h : a = Midfall.Instances.VacuityWitnesses.f1VkAddr
+    · subst h
+      by_cases hc : Midfall.Instances.VacuityWitnesses.f1VkRuntime.length = 0 <;> simp [hc]
+    · simp [h]
+  · show Midfall.Instances.VacuityWitnesses.f1W.extCodeOf
+        Midfall.Instances.VacuityWitnesses.f1VkAddr =
+      (f1PointRenderCCN n).plan.vk.runtimeBytes.data.toList
+    rw [hrt]
+    simp [Midfall.Instances.VacuityWitnesses.f1W,
+      Midfall.Instances.VacuityWitnesses.f1VkRuntime]
+  · rw [hrt]; decide
+  · decide
+
+/-- **`EntryFrameV3` AT THE F1 RENDER** at the bare `verifyProof` selector, the same frame
+    `VacuityWitnesses.f1_entryFrameV3` occupies at `poseidonRender`. -/
+theorem f1PointRenderCCN_entryFrameV3 (n : Nat) :
+    ∃ st, Midfall.LoweringV3.EntryFrameV3 (f1PointRenderCCN n)
+      Midfall.Instances.VacuityWitnesses.f1W Midfall.Instances.VacuityWitnesses.f1Lyt
+      keccak256 fnSigVerifyProof st := by
+  apply Midfall.LoweringV3.entryFrame_inhabitedV3
+  · rfl
+  · rfl
+  · exact ⟨4096, f1PointRenderCCN_transcriptMptr n, by decide⟩
+  · decide
+
+/-- **`EntryFrameV3` AT THE F1 RENDER AT THE TRACKED CALLDATA** - the frame the gate's `cd`
+    actually uses. -/
+theorem f1PointRenderCCN_entryFrameV3_fixture (n : Nat) :
+    ∃ st, Midfall.LoweringV3.EntryFrameV3 (f1PointRenderCCN n)
+      Midfall.Instances.VacuityWitnesses.f1W Midfall.Instances.VacuityWitnesses.f1Lyt
+      keccak256 Midfall.Instances.GeneratorDone.poseidonFixtureCalldata st := by
+  apply Midfall.LoweringV3.entryFrame_inhabitedV3
+  · exact Midfall.Instances.GeneratorDone.poseidonFixtureCalldata_selector
+  · rfl
+  · exact ⟨4096, f1PointRenderCCN_transcriptMptr n, by decide⟩
+  · have h := Midfall.Instances.GeneratorDone.poseidonFixtureCalldata_size
+    omega
+
+/-- **THE TRACKED CALLDATA DECODES AND SNAPSHOTS AT THE F1 RENDER.** This is the
+    `decodeCalldata`/`instOfWords?`/`snapshotOf` part of `GateAtV3`'s final conjunct, with
+    explicit witnesses. Only `LeanAccepts` (the `verifyMsgs` check) is not available. -/
+theorem f1PointRenderCCN_decodes_snapshot (n : Nat) :
+    ∃ (ms : List (Msg (Fr blsR) G₁z)) (instW : Array Word256)
+      (inst : Array (Fr blsR)) (Snap : Snapshot blsR G₁z G2fold G₁z),
+      Midfall.Lowering.decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+          (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1
+          Midfall.Instances.GeneratorDone.poseidonFixtureCalldata = some (ms, instW) ∧
+      Midfall.LoweringV2.instOfWords? (p := blsR) instW = some inst ∧
+      snapshotOf (f1PointRenderCCN n).E keccak256 (f1PointRenderCCN n).vk inst ms none =
+        Except.ok Snap := by
+  have hcheck := f1FixtureSnapshotCheck_eq
+  unfold f1FixtureSnapshotCheck at hcheck
+  rw [← show Midfall.Lowering.decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+      (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata = f1FixtureDecoded from rfl] at hcheck
+  cases h : Midfall.Lowering.decodeCalldata (p := blsR) (f1PointRenderCCN n).plan.proofLayout
+      (f1PointRenderCCN n).cfg.numInstances (f1PointRenderCCN n).E.g1
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata with
+  | none => simp [h] at hcheck
+  | some p =>
+      obtain ⟨ms, instW⟩ := p
+      cases hi : Midfall.LoweringV2.instOfWords? (p := blsR) instW with
+      | none => simp [h, hi] at hcheck
+      | some inst =>
+          simp only [h, hi] at hcheck
+          cases hs : snapshotOf Midfall.Instances.NativeReplay.envReal keccak256 f1VkResourced
+              inst ms none with
+          | error e => simp [hs] at hcheck
+          | ok S => exact ⟨ms, instW, inst, S, rfl, hi, hs⟩
+
+/-- **THE GATE AT THE F1 RENDER FROM THE TRACKED FIXTURE, WITH THE TWO REMAINING INPUTS.**
+    `DeploymentV2`, `EntryFrameV3`, the codec law, `SoundSide` and `CompleteSide` are proved;
+    the final conjunct's decode/snapshot half is `f1PointRenderCCN_decodes_snapshot`. What is
+    left is `Eip2537.Holds` and `LeanAccepts` - and the latter cannot be supplied by this
+    fixture because its key is `NativeReplay.vkF1`, not `f1VkResourced` (`f1FixtureVk_differs`);
+    at the test-SRS exponent the tracked calldata is in fact REJECTED at the render's key
+    (`f1PointRenderCCN_not_leanAccepts_testExponent`). -/
+theorem f1PointRenderCCN_gateAtV3_of_fixture
+    (n : Nat) (product : PairingProduct)
+    (hpc : Eip2537.Holds (f1PointRenderCCN n).E.g1 ⟨(f1PointRenderCCN n).encG2⟩ product)
+    (hacc : LeanAccepts (f1PointRenderCCN n) keccak256
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata) :
+    GateAtV3 (f1PointRenderCCN n) product
+      Midfall.Instances.GeneratorDone.poseidonFixtureCalldata := by
+  obtain ⟨st₀, hentry⟩ := f1PointRenderCCN_entryFrameV3_fixture n
+  obtain ⟨ms, instW, inst, Snap, hdec, hinst, hsnap⟩ := f1PointRenderCCN_decodes_snapshot n
+  exact f1PointRenderCCN_gateAtV3_of n product
+    Midfall.Instances.GeneratorDone.poseidonFixtureCalldata
+    Midfall.Instances.VacuityWitnesses.f1W Midfall.Instances.VacuityWitnesses.f1Lyt
+    Midfall.Instances.VacuityWitnesses.f1VkAddr st₀
+    (f1PointRenderCCN_deploymentV2 n) hentry hpc hacc
+    (f1PointRenderCCN_soundSide n) (f1PointRenderCCN_completeSide n)
+    ⟨ms, instW, inst, Snap, hdec, hinst, hsnap⟩
+
 /-! ## 3. THE `Done` / `ArtifactEq` RESIDUAL AT THIS RENDER.
 
   `ValidV3` at `f1PointRenderCN n` is NOT `Done`, for three independent reasons, two of which are
@@ -418,5 +860,22 @@ end Midfall.Instances.ValidV3F1Real
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_codec_not_lawsV3
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_validV3ExceptPayload
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_validV3
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_decodes_snapshot
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_gateAtV3_of_fixture
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_decodes_fixture
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_soundSide
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_completeSide
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_deploymentV2
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_entryFrameV3
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_entryFrameV3_fixture
+#print axioms Midfall.Instances.ValidV3F1Real.f1VkResourced_fixed_eq_production
+#print axioms Midfall.Instances.ValidV3F1Real.f1VkResourced_perm_eq_production
+#print axioms Midfall.Instances.ValidV3F1Real.f1VkResourced_transcript_eq_production
+#print axioms Midfall.Instances.ValidV3F1Real.f1VkResourced_csDegree_eq_production
+#print axioms Midfall.Instances.ValidV3F1Real.f1FixtureVk_csDegree_agrees
+#print axioms Midfall.Instances.ValidV3F1Real.f1ParamsC_testExponent_eq
+#print axioms Midfall.Instances.ValidV3F1Real.f1FixtureVerifyAtTestExponentCheck_eq_false
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_not_leanAccepts_testExponent
+#print axioms Midfall.Instances.ValidV3F1Real.f1FixtureVk_differs
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCCN_gateAtV3_of
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_gate_false
