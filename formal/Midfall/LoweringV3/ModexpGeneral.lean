@@ -1199,6 +1199,60 @@ theorem walk_failure_build (mem : Nat → UInt8) (p a : Nat) (x : U256) (hp : p 
 
 
 
+theorem head_ret {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
+    (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
+    (hrv0 : ∃ rv, VEnv.get V "ret" = some rv) :
+    VEnv.get V1 "ret" = some (1 : U256) := by
+  obtain ⟨rv, hrv⟩ := hrv0
+  rw [hV1, hflag]
+  exact Midfall.LoweringV3.PcsRows.venv_get_set_same (D := Bridge.Dialect c g) hrv
+
+theorem head_gp_mptr {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
+    {p : Nat} (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
+    (h : VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p)) :
+    VEnv.get V1 "gp_mptr" = some (BitVec.ofNat 256 p) := by
+  rw [hV1, hflag]
+  exact (Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
+    (x := "ret") (y := "gp_mptr") (by decide)).trans h
+
+theorem head_mptr_start {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
+    {a : Nat} (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
+    (h : VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a)) :
+    VEnv.get V1 "mptr_start" = some (BitVec.ofNat 256 a) := by
+  rw [hV1, hflag]
+  exact (Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
+    (x := "ret") (y := "mptr_start") (by decide)).trans h
+
+theorem head_r {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
+    (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
+    (h : VEnv.get V "r" = some (BitVec.ofNat 256 blsR)) :
+    VEnv.get V1 "r" = some (BitVec.ofNat 256 blsR) := by
+  rw [hV1, hflag]
+  exact (Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
+    (x := "ret") (y := "r") (by decide)).trans h
+
+theorem head_gp {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
+    {x : U256} (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
+    (h : VEnv.get V "gp" = some x) :
+    VEnv.get V1 "gp" = some x := by
+  rw [hV1, hflag]
+  exact (Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
+    (x := "ret") (y := "gp") (by decide)).trans h
+
+theorem head_pf_some {V V1 : VEnv (Bridge.Dialect c g)} {resp : CallResponse}
+    (hV1 : V1 = VEnv.set V "ret" resp.flag) (hflag : resp.flag = 1)
+    (h : (VEnv.get V "precompile_failed").isSome = true) :
+    (VEnv.get V1 "precompile_failed").isSome = true := by
+  obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp h
+  have hv1 : VEnv.get V1 "precompile_failed" = some v := by
+    rw [hV1, hflag]
+    exact (Midfall.LoweringV3.PcsRows.venv_get_set_ne (D := Bridge.Dialect c g)
+      (x := "ret") (y := "precompile_failed") (by decide)).trans hv
+  rw [hv1]; rfl
+
+
+
+
 /-- The inverse's value fits in a word. -/
 theorem zmod_inv_val_lt (x : U256) : ((x.toNat : ZMod blsR)⁻¹).val < 2 ^ 256 := by
   have hR : blsR < 2 ^ 256 := by decide
@@ -1481,6 +1535,12 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms rest_failure_run [propext, Classical.choice, Quot.sound]
 #assert_axioms walk_success_build [propext, Classical.choice, Quot.sound]
 #assert_axioms walk_failure_build [propext, Classical.choice, Quot.sound]
+#assert_axioms head_ret [propext, Classical.choice, Quot.sound]
+#assert_axioms head_gp_mptr [propext, Classical.choice, Quot.sound]
+#assert_axioms head_mptr_start [propext, Classical.choice, Quot.sound]
+#assert_axioms head_r [propext, Classical.choice, Quot.sound]
+#assert_axioms head_gp [propext, Classical.choice, Quot.sound]
+#assert_axioms head_pf_some [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_args_litvar_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_staticcall_args [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_staticcall_inv [propext, Classical.choice, Quot.sound]
