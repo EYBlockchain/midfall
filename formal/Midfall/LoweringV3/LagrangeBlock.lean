@@ -362,6 +362,7 @@ def LagP10 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg const
     (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop :=
       VEnv.get V "success" = some ret ∧
     VEnv.get V "lagrange_precompile_failed" = some pf ∧
+    VEnv.get V "r" = some C.rw ∧
     VEnv.get V "x_n" = some (wPow2 C.rw k C.xw) ∧
     VEnv.get V "omega" = some C.omw ∧
     VEnv.get V "mptr_end" = some (BitVec.ofNat 256 (C.D + 32 * (n + m))) ∧
@@ -1296,6 +1297,8 @@ theorem lag_group8 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
   · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr")
       (y := "lagrange_precompile_failed") (by decide)]
     exact hpf
+  · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "r") (by decide)]
+    exact hrw
   · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "x_n") (by decide)]
     exact hxn
   · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "omega") (by decide)]
@@ -1329,5 +1332,112 @@ theorem lag_group8 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
       · exact Or.inr (by omega)
     rw [houtside a ha']
     exact hout a ha hb hs
+
+/-- **GROUP 9a (statement 14: `l_blind := mload(D+32)`).** -/
+theorem lag_step14 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D) (haD : C.D < 2 ^ 256)
+    (haD32 : C.D + 32 < 2 ^ 256) (ret pf : U256) (inv : Nat → U256) (st0 : EvmState) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 14 1) (LagP10 C ret pf inv st0)
+      (fun _ _ V' st' o => o = .normal ∧ (LagP10 C ret pf inv st0 V' st' ∧
+        VEnv.get V' "l_blind" = some (loadWord st'.memory (C.D + 32)))) := by
+  intro V st hg V' st' o hrun
+  obtain ⟨ho, hst, hV⟩ := lag_stmt14_contract (funs := funs) (consts := consts) (k := k) (n := n)
+    (m := m) (aD := C.D) hD haD haD32 V st trivial V' st' o hrun
+  obtain ⟨hsucc, hpf, hrw, hxn, hom, hmpe, hlic, hszero, hinv, henv, hhalt, hout⟩ := hg
+  rw [hst]
+  refine ⟨ho, ?_⟩
+  split_conj
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_blind")
+      (y := "success") (by decide)]; exact hsucc
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_blind")
+      (y := "lagrange_precompile_failed") (by decide)]; exact hpf
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_blind")
+      (y := "r") (by decide)]; exact hrw
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_blind")
+      (y := "x_n") (by decide)]; exact hxn
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_blind")
+      (y := "omega") (by decide)]; exact hom
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_blind")
+      (y := "mptr_end") (by decide)]; exact hmpe
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_blind")
+      (y := "l_i_common") (by decide)]; exact hlic
+  · exact hszero
+  · exact hinv
+  · exact henv
+  · exact hhalt
+  · exact hout
+  · rw [hV]; exact venv_get_cons_self V "l_blind" _
+
+/-- **GROUP 9b (statement 15: `l_i_cptr := D + 64`).** -/
+theorem lag_step15 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D) (ret pf : U256)
+    (inv : Nat → U256) (st0 : EvmState) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 15 1)
+      (fun V st => LagP10 C ret pf inv st0 V st ∧
+        VEnv.get V "l_blind" = some (loadWord st.memory (C.D + 32)))
+      (fun _ _ V' st' o => o = .normal ∧ LagP11 C ret pf inv st0 V' st') := by
+  intro V st hg V' st' o hrun
+  obtain ⟨hLG, hlb⟩ := hg
+  obtain ⟨ho, hst, hV⟩ := lag_stmt15_contract (funs := funs) (consts := consts) (k := k) (n := n)
+    (m := m) (aD := C.D) hD V st trivial V' st' o hrun
+  obtain ⟨hsucc, hpf, hrw, hxn, hom, hmpe, hlic, hszero, hinv, henv, hhalt, hout⟩ := hLG
+  have hadd : (BitVec.ofNat 256 C.D + BitVec.ofNat 256 64 : U256) =
+      BitVec.ofNat 256 (C.D + 64) := by
+    rw [← BitVec.ofNat_add]
+  rw [hst]
+  refine ⟨ho, ?_⟩
+  split_conj
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr")
+      (y := "success") (by decide)]; exact hsucc
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr")
+      (y := "lagrange_precompile_failed") (by decide)]; exact hpf
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr")
+      (y := "r") (by decide)]; exact hrw
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr")
+      (y := "omega") (by decide)]; exact hom
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr")
+      (y := "x_n") (by decide)]; exact hxn
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr")
+      (y := "l_i_common") (by decide)]; exact hlic
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr")
+      (y := "l_blind") (by decide)]; exact hlb
+  · rw [hV, hadd]
+    exact venv_get_cons_self V "l_i_cptr" _
+  · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_i_cptr")
+      (y := "mptr_end") (by decide)]; exact hmpe
+  · exact hszero
+  · exact hinv
+  · exact henv
+  · exact hhalt
+  · exact hout
+
+/-- **GROUP 9 (statements 14-15).** -/
+theorem lag_group9 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D) (haD : C.D < 2 ^ 256)
+    (haD32 : C.D + 32 < 2 ^ 256) (ret pf : U256) (inv : Nat → U256) (st0 : EvmState) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 14 2) (LagP10 C ret pf inv st0)
+      (fun _ _ V' st' o => o = .normal ∧ LagP11 C ret pf inv st0 V' st') := by
+  rw [show (2 : Nat) = 1 + 1 from rfl, seg_split]
+  have h14 : StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 14 1) (LagP10 C ret pf inv st0)
+      (fun _ _ V' st' o => o = .normal ∧ (LagP10 C ret pf inv st0 V' st' ∧
+        VEnv.get V' "l_blind" = some (loadWord st'.memory (C.D + 32)))) :=
+    lag_step14 (consts := consts) (k := k) (n := n) (m := m) C funs hD haD haD32 ret pf inv st0
+  have h15 : StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 15 1)
+      (fun V st => LagP10 C ret pf inv st0 V st ∧
+        VEnv.get V "l_blind" = some (loadWord st.memory (C.D + 32)))
+      (fun _ _ V' st' o => o = .normal ∧ LagP11 C ret pf inv st0 V' st') :=
+    lag_step15 (consts := consts) (k := k) (n := n) (m := m) C funs hD ret pf inv st0
+  exact StmtsContractAll.append_normal
+    (mid := fun V st => LagP10 C ret pf inv st0 V st ∧
+      VEnv.get V "l_blind" = some (loadWord st.memory (C.D + 32))) h14
+    (fun _ _ _ => h15)
 
 end Midfall.LoweringV3.LagrangeBlock
