@@ -1445,6 +1445,247 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
 
   NOTHING IN THIS FILE IS WIRED INTO A ROW. No root, register, SORRY.md or cone moves. -/
 
+open Midfall.LoweringV2.Blocks.VkLoading
+
+theorem eval_mulmod_mload_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y z : String} {v : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod [Expr.var x, Expr.builtin Op.mload [Expr.var y], Expr.var z])
+      (.vals [v] st')) :
+    ∃ xv yv zv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧ VEnv.get V z = some zv ∧
+      v = wMulmodAt xv (loadWord st.memory yv.toNat) zv ∧ st' = touchMemory st yv.toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hx with
+      | var hxv =>
+          cases hrest with
+          | argsCons hrest2 hmload =>
+              obtain ⟨yv, hyv, hv, hst⟩ := eval_mload_var_inv hmload
+              subst hst
+              cases hrest2 with
+              | argsCons hnil hz =>
+                  cases hnil with
+                  | argsNil =>
+                      cases hz with
+                      | var hzv =>
+                          simp only [builtinWithExternal, stepOp, ter, hv] at hbi
+                          cases hbi
+                          exact ⟨_, _, _, hxv, hyv, hzv, rfl, rfl⟩
+
+theorem eval_mulmod_mload_var_no_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y z : String}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod [Expr.var x, Expr.builtin Op.mload [Expr.var y], Expr.var z])
+      (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hx =>
+          cases hrest with
+          | argsCons hrest2 hmload =>
+              cases hrest2 with
+              | argsCons hnil hz =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact eval_args_halt_false (es := [Expr.var x, Expr.builtin Op.mload [Expr.var y],
+        Expr.var z]) (by
+        intro e he st0 st1 hh
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact vkVar_ne_halts hh
+        · exact eval_mload_var_halt_false hh
+        · exact vkVar_ne_halts hh) hargs
+
+theorem exec_let_mulmod_mload_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome} {x y z : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.builtin Op.mulmod
+        [Expr.var y, Expr.builtin Op.mload [Expr.var z], Expr.var "r"]))) V' st' o) :
+    ∃ yv zv rv, VEnv.get V y = some yv ∧ VEnv.get V z = some zv ∧
+      VEnv.get V "r" = some rv ∧ o = .normal ∧
+      V' = (x, wMulmodAt yv (loadWord st.memory zv.toNat) rv) :: V ∧
+      st' = touchMemory st zv.toNat 32 := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨yv, zv, rv, hyv, hzv, hrv, hv, hst⟩ := eval_mulmod_mload_var_inv he
+      subst hst
+      subst hv
+      exact ⟨yv, zv, rv, hyv, hzv, hrv, rfl, rfl, rfl⟩
+  | letHalt he => exact (eval_mulmod_mload_var_no_halt he).elim
+
+theorem exec_mstore_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome} {x y : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var x, Expr.var y])) V' st' o) :
+    ∃ xv yv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧ o = .normal ∧
+      V' = V ∧ st' = { touchMemory st xv.toNat 32 with
+        memory := storeWord st.memory xv.toNat yv } := by
+  cases h with
+  | exprStmt he =>
+      obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv he
+      cases hargs with
+      | argsCons hrest hx =>
+          cases hx with
+          | var hxv =>
+              cases hrest with
+              | argsCons hnil hy =>
+                  cases hnil with
+                  | argsNil =>
+                      cases hy with
+                      | var hyv =>
+                          simp only [builtinWithExternal, stepOp] at hbi
+                          cases hbi
+                          exact ⟨_, _, hxv, hyv, rfl, rfl, rfl⟩
+  | exprStmtHalt he =>
+      cases he with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hrest hx =>
+              cases hrest with
+              | argsCons hnil hy =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp] at hbi
+                      cases hbi
+      | builtinArgsHalt hargs =>
+          exact (eval_args_halt_false (es := [Expr.var x, Expr.var y]) (by
+            intro e he st0 st1 hh
+            simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+            rcases he with rfl | rfl
+            · exact vkVar_ne_halts hh
+            · exact vkVar_ne_halts hh) hargs).elim
+
+theorem bi_tail_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 30 4 =
+      [ GenAst.ylet "inv_first" (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar "all_inv", GenAst.yop EVM.Op.mload [GenAst.yvar "second_mptr"],
+            GenAst.yvar "r"]),
+        GenAst.ylet "inv_second" (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar "all_inv", GenAst.yop EVM.Op.mload [GenAst.yvar "first_mptr"],
+            GenAst.yvar "r"]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.yvar "first_mptr", GenAst.yvar "inv_first"]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.yvar "second_mptr", GenAst.yvar "inv_second"]) ] := by
+  kernel_rfl
+
+
+
+open Midfall.Yul.Word
+
+theorem bi_tail_contract (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (rw : U256) (a : Nat) (w0 w1 invAll : U256) (ha : a + 32 < 2 ^ 256) (hr : rw ≠ 0)
+    (hinv : wMulmodAt invAll (wMulmodAt w0 w1 rw) rw = 1) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 30 4)
+      (fun V st =>
+        VEnv.get V "all_inv" = some invAll ∧
+        VEnv.get V "first_mptr" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+        VEnv.get V "r" = some rw ∧
+        loadWord st.memory a = w0 ∧ loadWord st.memory (a + 32) = w1)
+      (fun _ st V' st' o => o = .normal ∧
+        VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+        VEnv.get V' "r" = some rw ∧
+        loadWord st'.memory a = wMulmodAt invAll w1 rw ∧
+        loadWord st'.memory (a + 32) = wMulmodAt invAll w0 rw ∧
+        wMulmodAt (wMulmodAt invAll w1 rw) w0 rw = 1 ∧
+        wMulmodAt (wMulmodAt invAll w0 rw) w1 rw = 1) := by
+  rw [bi_tail_form]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hinvAll, hfirst, hsecond, hrget, hw0, hw1⟩ := hpre
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨av, pv, rv, hav, hpv, hrv, -, hV1, hst1⟩ :=
+      exec_let_mulmod_mload_inv (x := "inv_first") (y := "all_inv") (z := "second_mptr") h1
+    rw [hinvAll] at hav; injection hav with hav'
+    rw [hsecond] at hpv; injection hpv with hpv'
+    rw [hrget] at hrv; injection hrv with hrv'
+    subst hav' hpv' hrv' hV1 hst1
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
+      ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · obtain ⟨av2, pv2, rv2, hav2, hpv2, hrv2, -, hV2, hst2⟩ :=
+        exec_let_mulmod_mload_inv (x := "inv_second") (y := "all_inv") (z := "first_mptr") h2
+      rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "all_inv") (by decide)] at hav2
+      rw [hinvAll] at hav2; injection hav2 with hav2'
+      rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "first_mptr") (by decide)] at hpv2
+      rw [hfirst] at hpv2; injection hpv2 with hpv2'
+      rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "r") (by decide)] at hrv2
+      rw [hrget] at hrv2; injection hrv2 with hrv2'
+      subst hav2' hpv2' hrv2' hV2 hst2
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest2 with
+        ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
+      · obtain ⟨xv, yv, hxv, hyv, -, hV3, hst3⟩ := exec_mstore_var_inv (x := "first_mptr") (y := "inv_first") h3
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_second") (y := "first_mptr") (by decide),
+          venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "first_mptr") (by decide)] at hxv
+        rw [hfirst] at hxv; injection hxv with hxv'
+        simp [VEnv.get, List.find?] at hyv
+        subst hxv' hyv hV3 hst3
+        rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest3 with
+          ⟨V4, st4, h4, hrest4⟩ | ⟨h4, hne4⟩
+        · obtain ⟨xv2, yv2, hxv2, hyv2, -, hV4, hst4⟩ := exec_mstore_var_inv (x := "second_mptr") (y := "inv_second") h4
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_second") (y := "second_mptr") (by decide),
+            venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "second_mptr") (by decide)] at hxv2
+          rw [hsecond] at hxv2; injection hxv2 with hxv2'
+          simp [VEnv.get, List.find?] at hyv2
+          subst hxv2' hyv2 hV4 hst4
+          cases hrest4
+          have htoNat_a : (BitVec.ofNat 256 a).toNat = a := by
+            rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
+          have htoNat_a32 : (BitVec.ofNat 256 (a + 32)).toNat = a + 32 := by
+            rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt ha]
+          refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+          · -- first_mptr
+            rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_second") (y := "first_mptr") (by decide),
+              venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "first_mptr") (by decide)]
+            exact hfirst
+          · -- second_mptr
+            rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_second") (y := "second_mptr") (by decide),
+              venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "second_mptr") (by decide)]
+            exact hsecond
+          · -- r
+            rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_second") (y := "r") (by decide),
+              venv_get_cons_ne (D := Bridge.Dialect c g) (x := "inv_first") (y := "r") (by decide)]
+            exact hrget
+          · -- loadWord a
+            rw [show (115792089237316195423570985008687907853269984665640564039457584007913129639936 : Nat) = 2 ^ 256 from by norm_num]
+            simp only [htoNat_a, htoNat_a32, Nat.mod_eq_of_lt ha, Nat.mod_eq_of_lt (by omega : a < 2 ^ 256), touchMemory, hw0, hw1]
+            rw [loadWord_storeWord_disjoint _ (a + 32) a _ (by omega)]
+            rw [loadWord_storeWord_same]
+          · -- loadWord a+32
+            rw [show (115792089237316195423570985008687907853269984665640564039457584007913129639936 : Nat) = 2 ^ 256 from by norm_num]
+            simp only [htoNat_a, htoNat_a32, Nat.mod_eq_of_lt ha, Nat.mod_eq_of_lt (by omega : a < 2 ^ 256), touchMemory, hw0, hw1]
+            rw [loadWord_storeWord_same]
+          · -- first inverse
+            rw [wMulmodAt_assoc hr]
+            rw [show wMulmodAt w1 w0 rw = wMulmodAt w0 w1 rw from
+              wMulmodAt_comm (r := rw) (a := w1) (b := w0) hr]
+            exact hinv
+          · -- second inverse
+            rw [wMulmodAt_assoc hr]
+            exact hinv
+        · obtain ⟨-, -, -, -, ho4, -, -⟩ := exec_mstore_var_inv (x := "second_mptr") (y := "inv_second") h4
+          exact absurd ho4 hne4
+      · obtain ⟨-, -, -, -, ho3, -, -⟩ := exec_mstore_var_inv (x := "first_mptr") (y := "inv_first") h3
+        exact absurd ho3 hne3
+    · obtain ⟨-, -, -, -, -, -, ho2, -, -⟩ :=
+        exec_let_mulmod_mload_inv (x := "inv_second") (y := "all_inv") (z := "first_mptr") h2
+      exact absurd ho2 hne2
+  · obtain ⟨-, -, -, -, -, -, ho1, -, -⟩ :=
+      exec_let_mulmod_mload_inv (x := "inv_first") (y := "all_inv") (z := "second_mptr") h1
+    exact absurd ho1 hne1
+
+
+#assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_mstore_var_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_tail_form [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_tail_contract [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
