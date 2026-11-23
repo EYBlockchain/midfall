@@ -52,7 +52,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Generator.Certified.prog_closed | Midfall.Generator.Certified | theorem | OPEN | - | `4d4e1b3f8d88ecd5` | V3 CERT.5 - from constsDeclared/constTable plus the inlineContractConstants free-name lemma |
 | Midfall.Generator.Certified.prog_codegenStruct | Midfall.Generator.Certified | theorem | OPEN | - | `d29d03ed48643742` | V3 CERT.2 - route A: the emitted tree is the generator text (today false until WP-G1 is certified) |
 | Midfall.Generator.Certified.prog_constLinesLiteral | Midfall.Generator.Certified | theorem | OPEN | - | `f714a0aaa04763f0` | V3 CERT.6 - every Constants.sol line has a literal RHS; disappears when CERT.3 prints the table |
-| Midfall.Generator.Certified.prog_constNodup | Midfall.Generator.Certified | theorem | OPEN | - | `dc83e6ecd4fb9c4f` | V3 CERT.6 - the expectedConsts names are literals in two optional arms |
 | Midfall.Generator.Certified.prog_constTable | Midfall.Generator.Certified | theorem | OPEN | - | `4287b2db65b94696` | V3 CERT.6 with CERT.3 - constTableOf is expectedConsts once Constants.sol is printed from the table |
 | Midfall.Generator.Certified.prog_constsDeclared | Midfall.Generator.Certified | theorem | OPEN | - | `79e6f660fe752b8d` | V3 CERT.5 - free-name lemma per emitter against the fixed constant name list |
 | Midfall.Generator.Certified.prog_g1IdentityFloor | Midfall.Generator.Certified | theorem | OPEN | - | `5c78e657386a2555` | V3 CERT.6 (D4, D-CERT1) - PG-G1ID: the g1_identity window lies above 0x80 |
