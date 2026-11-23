@@ -3144,6 +3144,213 @@ theorem b3_exec_persist {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.D
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_exec_persist
   [propext, Classical.choice, Quot.sound] native []
 
+/-! ### Block 3: the fold's mulmod/addmod value lemmas -/
+
+/-- The value a named variable evaluates to is the one registered in the environment. -/
+theorem b1_eval_var_val_eq {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : Ident} {av bv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.var x) (.vals [av] st'))
+    (hget : VEnv.get V x = some bv) : av = bv := by
+  obtain ⟨hget', _⟩ := b1_eval_var_inv h
+  exact Option.some.inj (hget'.symm.trans hget)
+
+/-- `mulmod`'s value: a successful `stepOp` run returns `wMulmodAt` and does not move the state. -/
+theorem stepOp_mulmod_ok {a b n : U256} {st : EvmState} {cv : U256} {st' : EvmState}
+    (h : stepOp EVM.Op.mulmod [a, b, n] st = some (.ok [cv] st')) :
+    cv = wMulmodAt a b n ∧ st' = st := by
+  simp only [stepOp, ter] at h
+  injection h with h1
+  injection h1 with hlist hstate
+  injection hlist with hval
+  refine ⟨?_, hstate.symm⟩
+  rw [← hval]
+  simp [wMulmodAt]
+
+/-- `addmod`'s value function (local copy of `LagrangeRows.wAddmodAt`; this file deliberately
+    does not import the quotient cone). -/
+def wAddmodAt (a b n : U256) : U256 :=
+  if n = 0 then 0 else BitVec.ofNat 256 ((a.toNat + b.toNat) % n.toNat)
+
+/-- `addmod`'s value: a successful `stepOp` run returns `wAddmodAt` and does not move the state. -/
+theorem stepOp_addmod_ok {a b n : U256} {st : EvmState} {cv : U256} {st' : EvmState}
+    (h : stepOp EVM.Op.addmod [a, b, n] st = some (.ok [cv] st')) :
+    cv = wAddmodAt a b n ∧ st' = st := by
+  simp only [stepOp, ter] at h
+  injection h with h1
+  injection h1 with hlist hstate
+  injection hlist with hval
+  refine ⟨?_, hstate.symm⟩
+  rw [← hval]
+  simp [wAddmodAt]
+
+/-- A `touchMemory` state has the same word read as the original (memory and calldata unchanged). -/
+theorem b3word_touchMemory (st : EvmState) (off size : Nat)
+    (V : VEnv (Bridge.Dialect c g)) (w : Midfall.Generator.Word) :
+    b3word (touchMemory st off size) V w = b3word st V w := by
+  cases hl : w.ptr.loc <;>
+    simp [b3word, hl, Midfall.Yul.Word.touchMemory_memory,
+      Midfall.Yul.Word.touchMemory_env]
+
+set_option maxHeartbeats 800000 in
+theorem b3_eval_fold_mulmod_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} (i : Nat) (ev : Midfall.Generator.Word)
+    {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAstPcs.wordExpr ev, GenAstPcs.x1Pow i, GenAst.yvar "r"]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hw =>
+          cases hrest with
+          | argsCons hrest2 hx =>
+              cases hrest2 with
+              | argsCons hnil hr =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact b1_eval_args_halt_false (fun e he st0 st1 hh => by
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact b3_eval_wordExpr_halt hh
+        · exact b3_eval_x1Pow_halt i hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) hargs
+
+set_option maxHeartbeats 800000 in
+theorem b3_eval_fold_addmod_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} (i : Nat) (ev : Midfall.Generator.Word)
+    (k : Nat) {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.addmod
+        [GenAst.yvar ("q_eval_set_" ++ toString k),
+         GenAst.yop EVM.Op.mulmod
+           [GenAstPcs.wordExpr ev, GenAstPcs.x1Pow i, GenAst.yvar "r"],
+         GenAst.yvar "r"]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hq =>
+          cases hrest with
+          | argsCons hrest2 hmul =>
+              cases hrest2 with
+              | argsCons hnil hr =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact b1_eval_args_halt_false (fun e he st0 st1 hh => by
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+        · exact b3_eval_fold_mulmod_halt i ev hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) hargs
+
+set_option maxHeartbeats 1200000 in
+/-- The mulmod operand of the block-3 fold, with the values named by metavariables. -/
+theorem b3_eval_fold_mulmod {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} (i : Nat) (ev : Midfall.Generator.Word)
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.mulmod
+        [GenAstPcs.wordExpr ev, GenAstPcs.x1Pow i, GenAst.yvar "r"]) (.vals [cv] st')) :
+    ∃ wv xv rv pv, b3word st V ev = some wv ∧
+      VEnv.get V "X1_POWERS_MPTR" = some pv ∧
+      xv = loadWord st.memory (pv + BitVec.ofNat 256 (i * 32)).toNat ∧
+      VEnv.get V "r" = some rv ∧ cv = wMulmodAt wv xv rv ∧
+      st'.memory = st.memory := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hw =>
+      cases hrest with
+      | argsCons hrest2 hx =>
+          cases hrest2 with
+          | argsCons hnil hr =>
+              cases hnil with
+              | argsNil =>
+                  -- evaluation is right-to-left: r (at st), then x1Pow (at st), then wordExpr
+                  obtain ⟨hrv, hstr⟩ := b1_eval_var_inv hr
+                  rw [hstr] at hx
+                  obtain ⟨pv, hpv, hxv, hsth⟩ :=
+                    b3_eval_x1Pow (c := c) (g := g) i hx
+                  obtain ⟨hwv, hwm, _, _⟩ := b3_eval_wordExpr (c := c) (g := g) (w := ev) hw
+                  -- the word is read after the x1Pow touch, whose memory contents are unchanged
+                  rw [hsth, b3word_touchMemory] at hwv
+                  simp only [builtinWithExternal, stepOp, ter] at hbi
+                  cases hbi
+                  refine ⟨_, _, _, pv, hwv, hpv, hxv, hrv, rfl, ?_⟩
+                  rw [hwm, hsth, Midfall.Yul.Word.touchMemory_memory]
+
+set_option maxHeartbeats 1200000 in
+/-- The fold statement: `q_eval_set_k := addmod(q_eval_set_k, mulmod(wordExpr ev, x1Pow i, r), r)`. -/
+theorem b3_exec_fold_set {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (k i : Nat) (ev : Midfall.Generator.Word)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.yset ("q_eval_set_" ++ toString k)
+        (GenAst.yop EVM.Op.addmod
+          [GenAst.yvar ("q_eval_set_" ++ toString k),
+           GenAst.yop EVM.Op.mulmod
+             [GenAstPcs.wordExpr ev, GenAstPcs.x1Pow i, GenAst.yvar "r"],
+           GenAst.yvar "r"])) V' st' o) :
+    o = .normal ∧ ∃ cur wv xv rv pv,
+      VEnv.get V ("q_eval_set_" ++ toString k) = some cur ∧
+      b3word st V ev = some wv ∧
+      VEnv.get V "X1_POWERS_MPTR" = some pv ∧
+      xv = loadWord st.memory (pv + BitVec.ofNat 256 (i * 32)).toNat ∧
+      VEnv.get V "r" = some rv ∧
+      V' = VEnv.set V ("q_eval_set_" ++ toString k) (wAddmodAt cur (wMulmodAt wv xv rv) rv) ∧
+      st'.memory = st.memory := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv he
+      cases hargs with
+      | argsCons hrest hq =>
+          cases hrest with
+          | argsCons hrest2 hmul =>
+              cases hrest2 with
+              | argsCons hnil hr =>
+                  cases hnil with
+                  | argsNil =>
+                      -- evaluation is right-to-left: r, then mulmod, then q
+                      obtain ⟨rv, hrv, hstr⟩ := b1_eval_var_vals hr
+                      rw [hstr] at hmul
+                      obtain ⟨wv, xv, rv', pv, hwv, hpv, hxv, hrv', hmulval, hmulmem⟩ :=
+                        b3_eval_fold_mulmod (c := c) (g := g) i ev hmul
+                      have hrr : rv' = rv := Option.some.inj (hrv'.symm.trans hrv)
+                      subst rv'
+                      obtain ⟨cur, hcur, hstrq⟩ := b1_eval_var_vals hq
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+                      have hqval : _ = cur := b1_eval_var_val_eq hq hcur
+                      have hrval : _ = rv := b1_eval_var_val_eq hr hrv
+                      refine ⟨rfl, cur, wv, xv, rv, pv, hcur, hwv, hpv, hxv, hrv, ?_, ?_⟩
+                      · rw [hqval, hmulval, hrval]
+                        simp [VEnv.setMany, wAddmodAt]
+                      · rw [hstrq, hmulmem]
+  | assignHalt he =>
+      exact (b3_eval_fold_addmod_halt i ev k he).elim
+
+#assert_axioms Midfall.LoweringV3.PcsRows.b1_eval_var_val_eq
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.stepOp_mulmod_ok
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.stepOp_addmod_ok
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3word_touchMemory
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_fold_mulmod_halt
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_fold_addmod_halt
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_fold_mulmod
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_exec_fold_set
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow_halt
