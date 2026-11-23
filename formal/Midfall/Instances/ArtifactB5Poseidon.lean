@@ -26,6 +26,11 @@
   next to it are the two true fields and the exact one-line residual. The residual is
   the BUILD_ID INPUT, exactly as D-B5 says; it is not a Yul or port difference.
 
+  D-GATE17: the POSITIVE artifact gate is the variant `ArtifactEqV3`
+  (`artifactEqV3_poseidon` below), i.e. the same three clauses with `poseidonArtifactBuildId`
+  supplied. That variant is what `Done`/`DoneAt` now carry as their artifact field; the raw
+  `ArtifactEq` remains in the tree and remains refuted at this dump.
+
   `native_decide` is the sanctioned computation channel here (`Midfall/Instances/`,
   D-P17). The axiom list at the foot names every generated decision constant.
 -/
@@ -39,7 +44,7 @@ namespace Midfall.Instances.ArtifactB5
 
 open Midfall Midfall.Generator Midfall.LoweringV2
 open Midfall.Instances Midfall.Instances.PoseidonInputs Midfall.Instances.PoseidonV2
-open Midfall.Instances.PoseidonValid
+open Midfall.Instances.PoseidonValid Midfall.Instances.GeneratorDone
 
 /-! ## The measurement surface -/
 
@@ -120,8 +125,7 @@ theorem not_artifactEq_poseidon :
     it is the render model with the one build fact the artifact carries, which is exactly the
     input D-B5 names. Kept as a separate model so nothing here reads as a weakened `ArtifactEq`. -/
 def poseidonModelArtifactBuildId : Model :=
-  { poseidonModelVal with
-    buildId := 0xf352d2670376fa01229e35428d69c1d623c4b3edf42f15a78622888a9b4285fd }
+  { poseidonModelVal with buildId := poseidonArtifactBuildId }
 
 /-- **THE POSITIVE B5 GATE AT THE NAMED INPUT.** With the artifact's BUILD_ID supplied, all three
     `ArtifactEq` clauses hold: the whole text is the artifact, and `main`/`guard` occur once.
@@ -129,6 +133,17 @@ def poseidonModelArtifactBuildId : Model :=
 theorem artifactEq_poseidon_with_artifactBuildId :
     ArtifactEq poseidonModelArtifactBuildId poseidonVerifierDump := by
   refine ⟨?_, ?_, ?_⟩ <;> native_decide
+
+/-- **THE D-B5 VARIANT AT `poseidonRender.model`.** The same three clauses as `ArtifactEq`,
+    with `poseidonArtifactBuildId` supplied as the BUILD_ID input. Built from the positive raw
+    gate above (the two models are the same record with the same `buildId`). -/
+theorem artifactEqV3_poseidon :
+    Midfall.LoweringV2.ArtifactEqV3 poseidonRender.model poseidonVerifierDump
+      poseidonArtifactBuildId := by
+  refine ⟨?_, ?_, ?_⟩
+  · exact artifactEq_poseidon_with_artifactBuildId.whole
+  · exact artifactEq_poseidon_with_artifactBuildId.main
+  · exact artifactEq_poseidon_with_artifactBuildId.guard
 
 /-! ## The VK artifact: D-B5's exact half -/
 
@@ -154,5 +169,6 @@ end Midfall.Instances.ArtifactB5
 #print axioms Midfall.Instances.ArtifactB5.poseidon_sizes
 #print axioms Midfall.Instances.ArtifactB5.not_artifactEq_poseidon
 #print axioms Midfall.Instances.ArtifactB5.artifactEq_poseidon_with_artifactBuildId
+#print axioms Midfall.Instances.ArtifactB5.artifactEqV3_poseidon
 #print axioms Midfall.Instances.ArtifactB5.poseidonVk_exact
 #print axioms Midfall.Instances.ArtifactB5.poseidonVk_sizes

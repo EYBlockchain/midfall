@@ -22,6 +22,9 @@
     (`ValidV3InhabitationF1.f1FilledPayload_differsOnlyInReservation`), so the tracked
     `Halo2VerifyingKey.sol` is the F1 key artifact as well.
 
+  D-GATE17: `artifactEqV3_f1` is the positive artifact gate at the F1 model, with
+  `poseidonArtifactBuildId` supplied; it is the field type `DoneAt` now carries.
+
   `native_decide` is confined to `Midfall/Instances/` (D-P17); the axiom list at the foot
   names each generated decision constant.
 -/
@@ -37,7 +40,7 @@ namespace Midfall.Instances.ArtifactB5
 open Midfall Midfall.Generator Midfall.LoweringV2
 open Midfall.Instances Midfall.Instances.PoseidonInputs Midfall.Instances.PoseidonV2
 open Midfall.Instances.PoseidonValid Midfall.Instances.ValidV3InhabitationF1
-open Midfall.Instances.PayloadPointsF1
+open Midfall.Instances.PayloadPointsF1 Midfall.Instances.GeneratorDone
 
 /-- The whole-file render from the F1 generator model. -/
 def f1Text : String :=
@@ -103,8 +106,7 @@ theorem f1Vk_exact (n : Nat) :
 
 /-- The F1 generator model with the artifact's `BUILD_ID` input supplied. -/
 def f1ModelArtifactBuildId : Model :=
-  { genFilledOut.model with
-    buildId := 0xf352d2670376fa01229e35428d69c1d623c4b3edf42f15a78622888a9b4285fd }
+  { genFilledOut.model with buildId := poseidonArtifactBuildId }
 
 /-- **THE POSITIVE B5 GATE AT THE F1 MODEL AND THE NAMED INPUT.** All three `ArtifactEq` clauses
     hold: the F1 model's render is the artifact once the BUILD_ID input is supplied, and
@@ -113,6 +115,16 @@ def f1ModelArtifactBuildId : Model :=
 theorem artifactEq_f1_with_artifactBuildId :
     ArtifactEq f1ModelArtifactBuildId poseidonVerifierDump := by
   refine ⟨?_, ?_, ?_⟩ <;> native_decide
+
+/-- **THE D-B5 VARIANT AT `(f1PointRenderCCN n).model`.** Same three clauses, BUILD_ID supplied;
+    the F1 model is `genFilledOut.model`, so the positive raw gate transfers by definition. -/
+theorem artifactEqV3_f1 (n : Nat) :
+    Midfall.LoweringV2.ArtifactEqV3 (f1PointRenderCCN n).model poseidonVerifierDump
+      poseidonArtifactBuildId := by
+  refine ⟨?_, ?_, ?_⟩
+  · exact artifactEq_f1_with_artifactBuildId.whole
+  · exact artifactEq_f1_with_artifactBuildId.main
+  · exact artifactEq_f1_with_artifactBuildId.guard
 
 end Midfall.Instances.ArtifactB5
 
@@ -127,4 +139,5 @@ end Midfall.Instances.ArtifactB5
 #print axioms Midfall.Instances.ArtifactB5.f1_sizes
 #print axioms Midfall.Instances.ArtifactB5.not_artifactEq_f1
 #print axioms Midfall.Instances.ArtifactB5.artifactEq_f1_with_artifactBuildId
+#print axioms Midfall.Instances.ArtifactB5.artifactEqV3_f1
 #print axioms Midfall.Instances.ArtifactB5.f1Vk_exact
