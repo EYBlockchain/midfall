@@ -4574,6 +4574,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms linearize_back?_point
   [propext, Classical.choice, Quot.sound]
+#assert_axioms rotateOmega_zero
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms linearize_back?_point_rotateOmega
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms multiPrepare_width_empty [propext, Classical.choice, Quot.sound]
 #assert_axioms multiPrepare_width_at [propext, Classical.choice, Quot.sound]
 #assert_axioms MultiPrepareBlockWidth.eq_zero_of_empty_run

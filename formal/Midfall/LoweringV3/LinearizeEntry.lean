@@ -8,6 +8,7 @@
 -- order/point half of the `linearize` ↔ `Generator.Query` correspondence; the
 -- remaining half is the `.linear` points-vs-`computedQuotientComm` identity.
 import Midfall.Halo2.Exec.Verifier
+import Midfall.LoweringV3.LagrangeAlg
 import Midfall.LoweringV3.KzgQueryMap
 
 set_option autoImplicit false
@@ -142,6 +143,12 @@ theorem computeLinearizationCommitment_commitment
       VerifierQuery.newLinear_commitment x (CommitmentLabel.custom "linearization_poly")
         pts.toArray scals.toArray labs.toArray ev linCom hfinal⟩
 
+theorem rotateOmega_zero {F : Type} [Field F] [DecidableEq F]
+    (d : EvaluationDomain F) (x : F) :
+    d.rotateOmega x (Rotation.value 0) = x := by
+  rw [Midfall.Halo2.rotateOmega_value]
+  simp [Midfall.Halo2.powVartime]
+
 theorem linearize_back?_point (delta : Fr p) (vk : VerifyingKey (Fr p) G₁)
     (adviceCommitments : Array (Array G₁)) (committedInstances : Array (Array G₁))
     (y beta gamma theta trashChallenge : Fr p) (challenges : Array (Fr p))
@@ -162,5 +169,17 @@ theorem linearize_back?_point (delta : Fr p) (vk : VerifyingKey (Fr p) G₁)
   change some linCom.point = some alg.x
   rw [computeLinearizationCommitment_point expressions vk alg.x y alg.xn
     alg.splittingFactor alg.quotientLimbComs linCom _hlin]
+
+theorem linearize_back?_point_rotateOmega (delta : Fr p) (vk : VerifyingKey (Fr p) G₁)
+    (adviceCommitments : Array (Array G₁)) (committedInstances : Array (Array G₁))
+    (y beta gamma theta trashChallenge : Fr p) (challenges : Array (Fr p))
+    (alg : Verifier.AlgebraRead (Fr p) G₁)
+    (queries : Array (VerifierQuery (Fr p) G₁))
+    (h : Verifier.linearize (p := p) delta vk adviceCommitments committedInstances
+      y beta gamma theta trashChallenge challenges alg = .ok queries) :
+    queries.back?.map (fun q => q.point) =
+      some (vk.domain.rotateOmega alg.x (Rotation.value 0)) := by
+  rw [linearize_back?_point delta vk adviceCommitments committedInstances y beta gamma theta
+    trashChallenge challenges alg queries h, rotateOmega_zero]
 
 end Midfall.LoweringV3
