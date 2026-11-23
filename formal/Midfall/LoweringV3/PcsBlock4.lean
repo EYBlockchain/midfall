@@ -1732,6 +1732,52 @@ theorem pcsBq_contract {g : ExternalGas} (product : PairingProduct)
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBq_contract
   [propext, Classical.choice, Quot.sound] native []
 
+/-- The field modulus word is nonzero. -/
+theorem pcsR_ne_zero : (BitVec.ofNat 256 Midfall.Yul.blsR : U256) ≠ 0 := by
+  intro h
+  have := congrArg BitVec.toNat h
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide : Midfall.Yul.blsR < 2 ^ 256)] at this
+  exact (Nat.pos_iff_ne_zero.mp (by decide : 0 < Midfall.Yul.blsR)) this
+
+/-- `SIInv x` is a field inverse of `x`. -/
+theorem pcsSIInv_mul (x : U256) (hx0 : x.toNat ≠ 0)
+    (hx : x.toNat < Midfall.Yul.blsR) :
+    wMulmodAt (SIInv x) x (BitVec.ofNat 256 Midfall.Yul.blsR) = 1 :=
+  Midfall.LoweringV3.ModexpGeneral.wMulmodAt_zmod_inv x hx0 hx
+
+/-- `wMulmodAt` is associative. -/
+theorem pcs_wMulmodAt_assoc {a b cc : U256} :
+    wMulmodAt (wMulmodAt a b (BitVec.ofNat 256 Midfall.Yul.blsR)) cc
+        (BitVec.ofNat 256 Midfall.Yul.blsR) =
+      wMulmodAt a (wMulmodAt b cc (BitVec.ofNat 256 Midfall.Yul.blsR))
+        (BitVec.ofNat 256 Midfall.Yul.blsR) :=
+  Midfall.LoweringV3.BatchInvert.wMulmodAt_assoc pcsR_ne_zero
+
+/-- `wMulmodAt` is commutative. -/
+theorem pcs_wMulmodAt_comm {a b : U256} :
+    wMulmodAt a b (BitVec.ofNat 256 Midfall.Yul.blsR) =
+      wMulmodAt b a (BitVec.ofNat 256 Midfall.Yul.blsR) :=
+  Midfall.LoweringV3.BatchInvert.wMulmodAt_comm pcsR_ne_zero
+
+/-- A field product stays below the modulus. -/
+theorem pcs_wMulmodAt_toNat_lt {a b : U256} :
+    (wMulmodAt a b (BitVec.ofNat 256 Midfall.Yul.blsR)).toNat < Midfall.Yul.blsR := by
+  have h := Midfall.LoweringV3.BatchInvert.wMulmodAt_toNat_lt
+    (r := (BitVec.ofNat 256 Midfall.Yul.blsR : U256)) pcsR_ne_zero (a := a) (b := b)
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide : Midfall.Yul.blsR < 2 ^ 256)] at h
+  exact h
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsR_ne_zero
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsSIInv_mul
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_assoc
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_comm
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_toNat_lt
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
