@@ -4499,6 +4499,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgQueryMapData.ofList
   [propext, Classical.choice, Quot.sound]
+#assert_axioms pairQueries_fst
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms pairQueries_snd
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgQueryMapData.ofRotations
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Data.new_dummyEvalWords
