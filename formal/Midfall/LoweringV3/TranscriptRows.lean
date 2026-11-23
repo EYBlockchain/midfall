@@ -2727,6 +2727,59 @@ theorem mem_zip_of_mem {α : Type} (cols : List Nat) (reads : List α)
   rw [List.mem_iff_getElem?]
   exact ⟨k, by rw [List.getElem?_zip_eq_some]; exact ⟨hk, ha⟩⟩
 
+
+
+/-! ## 3d. `readAlgebra`'S READ FRAGMENTS
+
+    SIM.10 obligation 2, first pieces. `readFixedEvals`'s no-throw guard is D-GATE14's field;
+    the read itself is a homogeneous fr group. -/
+
+theorem runsAll_tmReadN_fr (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (qs : List (Fr p))
+    (hlen : qs.length = n) :
+    RunsAll E (tmReadN (hashableFr (p := p)) n)
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  rw [← ByteArray.append_assoc] at hbuf
+  obtain ⟨arr, t', hrun, hpos', hbuf'⟩ :=
+    tmReadN_fr_wire E n t pref qs rest hlen hbuf hpos hp
+  refine ⟨arr, t', hrun, hbuf', ?_⟩
+  simpa only [List.map_map, Function.comp_def] using hpos'
+
+theorem runsAllP_tmReadN_fr (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (qs : List (Fr p))
+    (hlen : qs.length = n) :
+    RunsAllP E (tmReadN (hashableFr (p := p)) n)
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) (fun arr => arr.size = n) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨arr, t', hrun, hbuf', hpos'⟩ :=
+    runsAll_tmReadN_fr E n qs hlen t pref rest hbuf hpos hp henc hwidth
+  exact ⟨arr, t', hrun, hbuf', hpos', tmReadN_size (hashableFr (p := p)) n hrun⟩
+
+theorem readFixedEvals_guard (cs : ConstraintSystem (Fr p))
+    (h : cs.numSimpleSelectors ≤ cs.numFixedColumns) :
+    (if cs.numSimpleSelectors > cs.numFixedColumns then
+        (throw (Fault.error (Error.transcript IoErrorKind.unexpectedEof)) : TranscriptM Unit)
+      else pure ()) = pure () := by
+  rw [if_neg (by omega)]
+
+def readFixedEvalsRead (cs : ConstraintSystem (Fr p)) : TranscriptM (Array (Fr p)) :=
+  tmReadN (hashableFr (p := p)) (cs.numFixedColumns - cs.numSimpleSelectors)
+
+theorem runsAllP_readFixedEvalsRead (E : VerifierEnv p G₁ G₂ Gₜ)
+    (cs : ConstraintSystem (Fr p)) (qs : List (Fr p))
+    (hlen : qs.length = cs.numFixedColumns - cs.numSimpleSelectors) :
+    RunsAllP E (readFixedEvalsRead (p := p) cs)
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+      (fun arr => arr.size = cs.numFixedColumns - cs.numSimpleSelectors) :=
+  runsAllP_tmReadN_fr E _ qs hlen
+
+theorem i32Abs_ok_of_ne_min (x : Int) (h : x ≠ -2147483648) (site : String) :
+    ∃ y, Midfall.Halo2.Verifier.i32Abs x site = .ok y := by
+  unfold Midfall.Halo2.Verifier.i32Abs
+  rw [if_neg h]
+  by_cases hx : x < 0
+  · rw [if_pos hx]; exact ⟨_, rfl⟩
+  · rw [if_neg hx]; exact ⟨_, rfl⟩
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -4616,6 +4669,11 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tmReadN_size [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.scatterIndexed_ok_of_cover [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.mem_zip_of_mem [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_tmReadN_fr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_tmReadN_fr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.readFixedEvals_guard [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_readFixedEvalsRead [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.i32Abs_ok_of_ne_min [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
