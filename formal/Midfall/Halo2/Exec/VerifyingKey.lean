@@ -110,7 +110,12 @@ def VerifyingKey.hashInto (vk : VerifyingKey (Fr p) G₁) : TranscriptM Unit :=
     same length as the column/challenge counts, so the Rust's pre-filled
     `Commitment::default()` / `F::ZERO` slots are never observed and the port's
     `scatterIndexed` fault is off-domain. `scatterIndexed_hole_is_a_fault` keeps
-    the off-domain behaviour as a W12 witness. -/
+    the off-domain behaviour as a W12 witness.
+  * lookupChunkable - D-GATE12: every lookup's `nb_parallel_lookups_per_chunk`
+    is defined and positive, so `chunkByDegree` succeeds. Neither follows from
+    the counts above: `logup.rs:237` divides by a zero input degree and
+    `rustChunks` panics on a zero chunk count, both STATIC properties of the
+    key. Stated as a decidable Bool equation so every witness is a computation. -/
 structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features) : Prop where
   csDegreeMatches : vk.cs.degree = .ok vk.csDegree
   chunkLenPositive : 3 ≤ vk.csDegree
@@ -133,6 +138,18 @@ structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features)
   /-- D-GATE7: every challenge slot is placeable, for the same reason, over
       `challenge_phase` / `num_challenges` (verifier.rs:127-143). -/
   challengePhaseTotal : vk.cs.challengePhase.size = vk.cs.numChallenges
+  /-- **D-GATE12: every lookup chunks.** The verifier's read walk runs
+      `LogupBatchedArgument.chunkByDegree` on every lookup
+      (`verifier.rs:155-162` and `:188-189`). That function is not total: it
+      panics at `logup.rs:237` when the lookup's input degree is zero (a
+      division by zero) and `rustChunks` panics at `logup.rs:329` when the
+      parallel-lookups count is zero. Both are STATIC facts about the key, and
+      neither follows from the fields above. Stated as a decidable Bool
+      equation (success AND positivity) so every witness is a computation. -/
+  lookupChunkable : ∀ l ∈ vk.cs.lookups.toList,
+    (match l.nbParallelLookupsPerChunk vk.csDegree with
+     | .ok nb => decide (0 < nb)
+     | .error _ => false) = true
 
 /-! rust: plonk/mod.rs:94-120 (write), :124-150 (read), :151-186
     (read_from_cs), :218-221 (bytes_length), :293-300 (pinned), and
