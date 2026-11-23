@@ -272,6 +272,41 @@ noncomputable def f1PointRenderC (vk : VerifyingKey (Fr blsR) G₁z)
     qblocks := genFilledOut.qblocks
     model := genFilledOut.model }
 
+/-- The same environment with the REAL computable G1 codec. Only `g1` changes: `field`, `delta`
+    and `fewerPointSetsRuntime` are `f1EnvC`'s. -/
+noncomputable def f1EnvCC : VerifierEnv blsR G₁z G2fold G₁z :=
+  { g1 := g1CodecC, field := poseidonFc, delta := poseidonDelta,
+    fewerPointSetsRuntime := false }
+
+/-- **THE F1 RENDER WITH THE COMPUTABLE CODEC.** Same key/parameters/carrier as
+    `f1PointRenderC`; the G1 codec is `g1CodecC`, whose compressed encoder-first law is now
+    proved (`g1CodecC_lawsV3`). -/
+noncomputable def f1PointRenderCC (vk : VerifyingKey (Fr blsR) G₁z)
+    (params : ParamsVerifierKZG G₁z G2fold) (sG2 : G2fold) :
+    Render blsR G₁z G2fold G₁z :=
+  { E := f1EnvCC
+    params := params
+    vk := vk
+    sG2gen := sG2
+    encG2 := g2foldToEip
+    cfg := poseidonConfig
+    inputs := poseidonInputs
+    flags := poseidonFlags
+    plan := genFilledOut.plan
+    qblocks := genFilledOut.qblocks
+    model := genFilledOut.model }
+
+/-- The point-sourced render at the computable codec. -/
+abbrev f1PointRenderCCN (n : Nat) :
+    Render blsR G₁z G2fold G₁z :=
+  f1PointRenderCC f1VkResourced (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+
+/-- **THE CODEC LAW AT THE NEW RENDER.** `f1PointRenderCCN n`'s G1 codec is `g1CodecC`
+    definitionally, and `g1CodecC_lawsV3` is B3's proved `G1CodecLawsV3`. -/
+theorem f1PointRenderCCN_codec_lawsV3 (n : Nat) :
+    Midfall.LoweringV3.G1CodecLawsV3 (f1PointRenderCCN n).E.g1 :=
+  g1CodecC_lawsV3
+
 /-- The derived plan view is F1's, because `pv` reads `plan`, `model` and `cfg` and never `vk`. -/
 theorem f1PointRenderC_pv (vk : VerifyingKey (Fr blsR) G₁z)
     (params : ParamsVerifierKZG G₁z G2fold) (sG2 : G2fold) :
@@ -319,6 +354,48 @@ theorem f1PointRenderC_permutationComms (params : ParamsVerifierKZG G₁z G2fold
     = f1VkResourced.permutation.commitments.toList.map g1zToEip
   exact f1VkResourced_perm_reencodes
 
+/-- **`PayloadPointHalf.g1Base` AT THE COMPUTABLE CODEC, UNCONDITIONALLY.** `g1CodecC.toEip`
+    is `g1zToEip`, so the byte fact is §1's. -/
+theorem f1PointRenderCC_g1Base (vk : VerifyingKey (Fr blsR) G₁z)
+    (params : ParamsVerifierKZG G₁z G2fold) (sG2 : G2fold) :
+    Midfall.Lowering.vkG1Words (f1PointRenderCC vk params sG2).pv
+        Midfall.Lowering.vkG1BaseSlot
+      = (f1PointRenderCC vk params sG2).E.g1.toEip pairingF1.g₁ := by
+  show Midfall.Lowering.vkG1Words f1Pv Midfall.Lowering.vkG1BaseSlot = g1zToEip g1zGen
+  exact payloadG1Base_bytes
+
+/-- **`PayloadPointHalf.g2Base` AT THE COMPUTABLE CODEC, UNCONDITIONALLY.** -/
+theorem f1PointRenderCC_g2Base (vk : VerifyingKey (Fr blsR) G₁z)
+    (params : ParamsVerifierKZG G₁z G2fold) (sG2 : G2fold) :
+    Midfall.Lowering.vkG2Words (f1PointRenderCC vk params sG2).pv
+        Midfall.Lowering.vkG2BaseSlot
+      = (f1PointRenderCC vk params sG2).encG2 pairingF1.g₂ := by
+  show Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkG2BaseSlot
+    = g2foldToEip (g2foldExp 1)
+  exact payloadG2Base_bytes
+
+/-- **`PayloadPointHalf.fixedComms` AT THE COMPUTABLE CODEC, UNCONDITIONALLY.** -/
+theorem f1PointRenderCC_fixedComms (params : ParamsVerifierKZG G₁z G2fold)
+    (sG2 : G2fold) :
+    (f1PointRenderCC f1VkResourced params sG2).pv.vk.fixedComms.map
+        Midfall.LoweringV3.g1WordsBytes
+      = (f1PointRenderCC f1VkResourced params sG2).vk.fixedCommitments.toList.map
+          (f1PointRenderCC f1VkResourced params sG2).E.g1.toEip := by
+  show f1Pv.vk.fixedComms.map Midfall.LoweringV3.g1WordsBytes
+    = f1VkResourced.fixedCommitments.toList.map g1zToEip
+  exact f1VkResourced_fixed_reencodes
+
+/-- **`PayloadPointHalf.permutationComms` AT THE COMPUTABLE CODEC, UNCONDITIONALLY.** -/
+theorem f1PointRenderCC_permutationComms (params : ParamsVerifierKZG G₁z G2fold)
+    (sG2 : G2fold) :
+    (f1PointRenderCC f1VkResourced params sG2).pv.vk.permutationComms.map
+        Midfall.LoweringV3.g1WordsBytes
+      = (f1PointRenderCC f1VkResourced params sG2).vk.permutation.commitments.toList.map
+          (f1PointRenderCC f1VkResourced params sG2).E.g1.toEip := by
+  show f1Pv.vk.permutationComms.map Midfall.LoweringV3.g1WordsBytes
+    = f1VkResourced.permutation.commitments.toList.map g1zToEip
+  exact f1VkResourced_perm_reencodes
+
 /-- **THE POINT-SOURCED RENDER.** The key is the re-sourced one, the parameters carry the
     payload's `s·H2`, and `sG2gen` is its inverse - the payload's neg-S-G2 point. -/
 abbrev f1PointRenderCN (n : Nat) :
@@ -359,6 +436,29 @@ theorem f1PointRenderCN_payloadPointHalf (n : Nat)
   negSG2 := f1PointRenderCN_negSG2 n hpay
   fixedComms := f1PointRenderC_fixedComms (f1ParamsResourced n) ((g2foldExp n)⁻¹)
   permutationComms := f1PointRenderC_permutationComms (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+
+/-- The `negSG2`/`sG2gen` bridge at the computable codec: `encG2` and `sG2gen` are unchanged,
+    so the payload exponent identifies the same point. -/
+theorem f1PointRenderCCN_negSG2 (n : Nat)
+    (hpay : Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkNegSG2BaseSlot
+      = g2foldToEip (g2foldExp n)) :
+    Midfall.Lowering.vkG2Words (f1PointRenderCCN n).pv Midfall.Lowering.vkNegSG2BaseSlot
+      = (f1PointRenderCCN n).encG2 (f1PointRenderCCN n).sG2gen⁻¹ := by
+  show Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkNegSG2BaseSlot
+    = g2foldToEip (((g2foldExp n)⁻¹)⁻¹)
+  rw [inv_inv]
+  exact hpay
+
+/-- **THE WHOLE POINT HALF AT THE COMPUTABLE-CODEC RENDER.** -/
+theorem f1PointRenderCCN_payloadPointHalf (n : Nat)
+    (hpay : Midfall.Lowering.vkG2Words f1Pv Midfall.Lowering.vkNegSG2BaseSlot
+      = g2foldToEip (g2foldExp n)) :
+    PayloadPointHalf (f1PointRenderCCN n) where
+  g1Base := f1PointRenderCC_g1Base f1VkResourced (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+  g2Base := f1PointRenderCC_g2Base f1VkResourced (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+  negSG2 := f1PointRenderCCN_negSG2 n hpay
+  fixedComms := f1PointRenderCC_fixedComms (f1ParamsResourced n) ((g2foldExp n)⁻¹)
+  permutationComms := f1PointRenderCC_permutationComms (f1ParamsResourced n) ((g2foldExp n)⁻¹)
 
 /-- **THE EXACT RESIDUAL OF THE POINT HALF AT THE RE-SOURCED RENDER.** Every field except
     `negSG2` is unconditional; the whole point half is EQUIVALENT to the payload having the
