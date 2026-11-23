@@ -675,6 +675,40 @@ def VkHeaderBuilder.insert (self : VkHeaderBuilder) (slot : VkHeaderSlot)
       (List.zip (List.range values.length) values).foldlM
         (VkHeaderBuilder.step start spec.name) self
 
+/-- `insert` preserves the number of header words. PROVED. -/
+theorem VkHeaderBuilder.insert_length (self : VkHeaderBuilder) (slot : VkHeaderSlot)
+    (expectedWidth : Nat) (values : List (String × Word256)) (b' : VkHeaderBuilder)
+    (h : self.insert slot expectedWidth values = .ok b') :
+    b'.words.length = self.words.length := by
+  by_cases hw : ((VkHeaderLayout.field slot).widthWords != expectedWidth)
+  · simp only [VkHeaderBuilder.insert, hw] at h
+    cases h
+  · by_cases hv : (values.length != (VkHeaderLayout.field slot).widthWords)
+    · simp only [VkHeaderBuilder.insert, hw, hv] at h
+      cases h
+    · by_cases hf : (VkHeaderSlot.word slot + (VkHeaderLayout.field slot).widthWords >
+          self.words.length)
+      · simp only [VkHeaderBuilder.insert, hw, hv, hf] at h
+        cases h
+      · simp only [VkHeaderBuilder.insert, hw, hv, hf] at h
+        have hlen : values.length = (VkHeaderLayout.field slot).widthWords := by
+          have hfalse : (values.length != (VkHeaderLayout.field slot).widthWords) = false := by
+            cases hh : (values.length != (VkHeaderLayout.field slot).widthWords) <;>
+              simp_all
+          exact bne_eq_false_iff_eq.mp hfalse
+        have hfit : VkHeaderSlot.word slot + (VkHeaderLayout.field slot).widthWords ≤
+            self.words.length := by omega
+        refine VkHeaderBuilder.foldlM_step_length
+          ((List.range values.length).zip values) self (VkHeaderSlot.word slot)
+          (VkHeaderLayout.field slot).name b' h ?_
+        intro p hp
+        obtain ⟨a, b⟩ := p
+        have hmem := List.of_mem_zip hp
+        have ha : a < values.length := List.mem_range.mp hmem.1
+        have : VkHeaderSlot.word slot + a <
+            VkHeaderSlot.word slot + (VkHeaderLayout.field slot).widthWords := by omega
+        omega
+
 /-- rust: LM:623-631 (VkHeaderBuilder::scalar) @formal-baseline. -/
 def VkHeaderBuilder.scalar (self : VkHeaderBuilder) (slot : VkHeaderSlot)
     (name : String) (value : Word256) : Except String VkHeaderBuilder :=
