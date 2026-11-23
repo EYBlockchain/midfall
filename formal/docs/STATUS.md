@@ -316,6 +316,15 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
 - D-GATE10: the old `KzgMultiPrepareWidths` (`∀ queries`) is false for positive `numPointSets`;
   the consumer is repaired to the per-query obligation at `linearize`'s query vector.
 
+### `block_live` assembly architecture (critical)
+
+The closed case proofs (`FpFit.block_live_finalPairing`, `PcsBlock4.pcsBlock_contract`,
+`LagrangeBlock.lagBlock_contract`, `TranscriptRows.tp_blockProgS`, `QuotientRows.q_blockProgS`) live
+ABOVE `Totality`. `block_live`/`totalV3_correct` therefore cannot be closed in `Totality`; they move
+to a new `Midfall.LoweringV3.BlockLive` module that imports `Totality` + the case modules and sits
+below `Composition` (which will import it for `totalV3_correct`). The current `Totality` versions
+stay as the per-case lemmas only.
+
 ### Six-lane critical path (user cap)
 
 Nine-lane wave (2026-11-23): A9b PCS `pcsGenBody`/set-block/block; A4 lag group 13 + inner contract;
