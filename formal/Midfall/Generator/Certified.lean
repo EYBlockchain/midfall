@@ -3273,6 +3273,58 @@ theorem proofLen_lt_of_fromProtocol {meta_ m0 : ConstraintSystemMeta} {L : Proof
   rw [hRep]
   nlinarith [hCCount, hEval, hPoint, Nat.zero_le L.commitmentG1Count]
 
+/-- The stop-flag fold used by `TranscriptBufferLayout.fromProofLayout`. -/
+def preSqueezeStep (phase : List Nat) (st : Nat × Bool) (pair : Nat × ProofSection) : Nat × Bool :=
+  let (p, sect) := pair
+  if st.2 then st else (st.1 + sect.itemCount, (phase[p]?.getD 0) > 0)
+
+/-- Prefix sums of advice sections never exceed the total advice item count. -/
+theorem preSqueezeFold_le (l : List (Nat × ProofSection)) (phase : List Nat) (acc : Nat)
+    (stop : Bool) :
+    (l.foldl (preSqueezeStep phase) (acc, stop)).1
+      ≤ acc + sumNat (l.map (fun p => p.2.itemCount)) := by
+  induction l generalizing acc stop with
+  | nil => simp [preSqueezeStep]
+  | cons a as ih =>
+      simp only [List.foldl_cons, List.map_cons, sumNat_cons]
+      by_cases hstop : stop
+      · simp [preSqueezeStep, hstop]
+        have h := ih acc true
+        omega
+      · simp [preSqueezeStep, hstop]
+        have h := ih (acc + a.2.itemCount) (0 < phase[a.1]?.getD 0)
+        omega
+
+/-- The `preSqueezeAdvices` component of `fromProofLayout` is at most the advice item sum. -/
+theorem preSqueeze_le_adviceSum (proof : ProofCalldataLayout) (phase : List Nat) :
+    (((List.range proof.advicePhases.length).zip proof.advicePhases).foldl
+      (fun st pair =>
+        let (p, sect) := pair
+        if st.snd then st else (st.fst + sect.itemCount, (phase.getD p 0) > 0))
+      (0, false)).1
+      ≤ sumNat (proof.advicePhases.map (fun s => s.itemCount)) := by
+  have h := preSqueezeFold_le
+    ((List.range proof.advicePhases.length).zip proof.advicePhases) phase 0 false
+  have hz : ((List.range proof.advicePhases.length).zip proof.advicePhases).map
+      (fun p => p.2) = proof.advicePhases := by
+    induction proof.advicePhases with
+    | nil => simp
+    | cons a as ih =>
+        rw [List.length_cons, List.range_succ_eq_map, List.zip_cons_cons, List.map_cons]
+        rw [List.zip_map_left, List.map_map]
+        simp only [Function.comp_def, Prod.map, id_eq]
+        rw [ih]
+  have hmap : (((List.range proof.advicePhases.length).zip proof.advicePhases).map
+      (fun p => p.2.itemCount)) =
+      proof.advicePhases.map (fun s => s.itemCount) := by
+    change List.map ((fun s => s.itemCount) ∘ Prod.snd)
+      ((List.range proof.advicePhases.length).zip proof.advicePhases) = _
+    rw [← List.map_map, hz]
+  change (List.foldl (preSqueezeStep phase) (0, false)
+    ((List.range proof.advicePhases.length).zip proof.advicePhases)).1 ≤
+    sumNat (proof.advicePhases.map (fun s => s.itemCount))
+  simpa [hmap] using h
+
 /-- `fromProtocol`'s `fCom` section is one G1 item. -/
 theorem fromProtocol_fCom_itemCount {protocol : ProtocolPlan} {cptr numEvals numPointSets : Nat}
     {L : ProofCalldataLayout}
