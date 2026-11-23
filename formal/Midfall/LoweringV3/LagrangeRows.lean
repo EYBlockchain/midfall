@@ -3793,3 +3793,91 @@ theorem lag_stmt2_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline
   | seqStop h1 hne => cases h1 with
       | letVal _ _ => simp at hne
       | letHalt he => cases he
+
+theorem eval_mload_site {consts : Inline.Consts} {xName : String} {a : Nat}
+    (hx : consts.lookup xName = some a) (ha : a < 2 ^ 256)
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState} :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.expr (Expr.builtin Op.mload [Blocks.VkLoading.vkSite xName consts]))
+      (Res.eres (EResult.vals [loadWord st.memory a] (touchMemory st a 32))) := by
+  have hv : Blocks.VkLoading.vkSite xName consts = Expr.lit (.number a) := by
+    simp [Blocks.VkLoading.vkSite, hx]
+  rw [hv]
+  refine Step.builtinOk (argvals := [BitVec.ofNat 256 a]) (st1 := st) ?_ ?_
+  · exact Step.argsCons Step.argsNil Step.lit
+  · have hp : (BitVec.ofNat 256 a).toNat = a := by
+      rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt ha]
+    change builtinWithExternal c ExternalCreates.none g Op.mload
+      [BitVec.ofNat 256 a] st
+      (BuiltinResult.ok [loadWord st.memory a] (touchMemory st a 32))
+    unfold builtinWithExternal
+    simp only [hp, stepOp]
+
+theorem eval_add_var_lit_step {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x : String} {n : Nat} {pv : U256}
+    (hp : VEnv.get V x = some pv) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.expr (Expr.builtin Op.add [Expr.var x, Expr.lit (.number n)]))
+      (Res.eres (EResult.vals [pv + BitVec.ofNat 256 n] st)) := by
+  refine Step.builtinOk (argvals := [pv, BitVec.ofNat 256 n]) (st1 := st) ?_ ?_
+  · exact Step.argsCons (Step.argsCons Step.argsNil Step.lit) (Step.var hp)
+  · change builtinWithExternal c ExternalCreates.none g Op.add
+      [pv, BitVec.ofNat 256 n] st
+      (BuiltinResult.ok [pv + BitVec.ofNat 256 n] st)
+    unfold builtinWithExternal
+    simp only [stepOp, bin]
+
+theorem eval_mload_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {a : Nat} {v : U256} {st' : EvmState}
+    (ha : a < 2 ^ 256)
+    (h : Step (Bridge.Dialect c g) funs V st
+      (Code.expr (Expr.builtin Op.mload [Expr.lit (.number a)]))
+      (Res.eres (EResult.vals [v] st'))) :
+    v = loadWord st.memory a ∧ st' = touchMemory st a 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil hhead =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨hv, hst⟩ := eval_lit_inv hhead
+          subst hv; subst hst
+          have hp : (BitVec.ofNat 256 a).toNat = a := by
+            rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt ha]
+          simp only [Bridge.Dialect, builtinWithExternal, hp, stepOp] at hbi
+          injection hbi with hres
+          injection hres with hvals hstate
+          injection hvals with hv'
+          exact ⟨hv'.symm, hstate.symm⟩
+
+theorem exec_let_mload_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x : String} {a : Nat} (ha : a < 2 ^ 256)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.builtin Op.mload [Expr.lit (.number a)]))) V' st' o) :
+    ∃ v, v = loadWord st.memory a ∧ o = .normal ∧ V' = (x, v) :: V ∧
+      st' = touchMemory st a 32 := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨hv, hst⟩ := eval_mload_lit_inv (c := c) (g := g) (funs := funs)
+        (V := V) (st := st) ha he
+      exact ⟨v, hv, rfl, rfl, hst⟩
+  | letHalt he =>
+      have hp : (BitVec.ofNat 256 a).toNat = a := by
+        rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt ha]
+      cases he with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hnil hhead =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨_, hst⟩ := eval_lit_inv hhead
+                  subst hst
+                  simp [Bridge.Dialect, builtinWithExternal, stepOp, hp] at hbi
+      | builtinArgsHalt hargs =>
+          exact (eval_args_halt_false (by
+            intro e he st0 st1 hh
+            simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+            rcases he with rfl
+            exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) hargs).elim
+
