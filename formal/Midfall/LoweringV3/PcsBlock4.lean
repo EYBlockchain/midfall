@@ -991,7 +991,8 @@ theorem pcsSetBlock1_contract {g : ExternalGas} (product : PairingProduct)
       exact absurd (b1_exec_ylet_sub_from_vars h1).1 hne1
 
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
-  [propext, Classical.choice, Quot.sound] native []#assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
   [propext, Classical.choice, Quot.sound] native []
 
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mload_add_var_lit_halt
