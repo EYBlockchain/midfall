@@ -726,13 +726,431 @@ theorem fp_slice_det (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
   ExecStmts.det (dialect_deterministic (callsOf_functional product)
     (ofFun_functional (fun _ => 0))) h₁ h₂
 
-/-- **LEAF (ROW.FP, WP A11): the finalPairing progress row.** Evidence `GeneratorRows.lean:1083`. -/
+/-! ### 5b. The `finalPairing` progress row's two byte-level ingredients
+
+Two facts the honest call site needs, both proved here rather than assumed:
+
+* `pairingValidInput (fpWireFrame R st) = true` - the wire frame the helper assembles is a
+  well-formed PAIRING_CHECK input. This is NOT a consequence of `Eip2537.Holds` alone (`G2Enc`
+  carries only an encoder, so an encoding could in principle be longer than 0x100 bytes); it
+  uses the two `.pcs` G1 pins (which are `bytesAt ... 128`, hence exactly 0x80 bytes), the
+  `PayloadAgrees.g2Base`/`negSG2` slots (exactly eight words, hence 0x100 bytes) and
+  `g1Valid`/`g2Valid` for the four decoded points.
+* `ecPairing_call_of_clean_normal` - the `Step.callOk` half of `Totality.ecPairing_call_of_body`
+  with the body outcome KNOWN to be `.normal`, so the disjunction disappears and the call
+  evaluates to the word 1 outright. -/
+
+/-- Reading a buffer at 0 for its own length is the identity. -/
+theorem bytesTake_self {b : Bytes} {n : Nat} (hn : b.size = n) : bytesTake b 0 n = some b := by
+  subst hn
+  unfold bytesTake
+  rw [ite_eq_left (by omega)]
+  congr 1
+  apply ByteArray.ext
+  rw [show 0 + b.size = b.size by omega, Array.extract_eq_self_of_le (by simp)]
+
+/-- `bytesAt` returns exactly the requested number of bytes (memory is zero beyond the image). -/
+theorem bytesAt_size (st : EvmState) (a n : Nat) : (bytesAt st a n).size = n := by
+  unfold bytesAt readBytes
+  simp only [ByteArray.size, Array.size, List.length_map, List.length_range]
+
+/-- **THE TWO-PAIR FRAME DECODES.** With canonical widths 0x80/0x100 the pairing parser walks the
+    left-nested frame in exactly two steps and recovers the four points the codecs put in. -/
+theorem pairingPairs?_pairingFrame_two {LA GB LB GN : Bytes}
+    {p1 p2 : Nat × Nat} {q1 q2 : (Nat × Nat) × (Nat × Nat)}
+    (w1 : LA.size = 128) (w2 : GB.size = 256) (w3 : LB.size = 128) (w4 : GN.size = 256)
+    (h1 : g1Of? LA = some p1) (h2 : g2Of? GB = some q1)
+    (h3 : g1Of? LB = some p2) (h4 : g2Of? GN = some q2) :
+    pairingPairs? (pairingFrame [(LA, GB), (LB, GN)]) = some [(p1, q1), (p2, q2)] := by
+  have hsize : (pairingFrame [(LA, GB), (LB, GN)]).size = 768 := by
+    rw [Midfall.LoweringV2.Blocks.EcPairing.pairingFrame_two]
+    unfold bytesAppend
+    simp only [ByteArray.size, Array.size] at w1 w2 w3 w4 ⊢
+    simp only [Array.toList_append, List.length_append]
+    omega
+  unfold pairingPairs?
+  simp only [hsize]
+  have hc : (768 == 0 || 768 % Yul.pairingPairBytes != 0) = false := by
+    norm_num [Yul.pairingPairBytes, Yul.g1Bytes, Yul.g2Bytes]
+  rw [hc]
+  simp only [Bool.false_eq_true, ite_false]
+  rw [show 768 / Yul.pairingPairBytes = 2 by
+    norm_num [Yul.pairingPairBytes, Yul.g1Bytes, Yul.g2Bytes]]
+  have hframe : pairingFrame [(LA, GB), (LB, GN)] = LA ++ (GB ++ (LB ++ GN)) := by
+    rw [Midfall.LoweringV2.Blocks.EcPairing.pairingFrame_two]
+    simp only [bytesAppend_eq_append]
+    apply ByteArray.ext
+    simp
+  rw [hframe]
+  have hg1 : Yul.g1Bytes = 128 := by norm_num [Yul.g1Bytes]
+  have hg2 : Yul.g2Bytes = 256 := by norm_num [Yul.g2Bytes]
+  have hp : Yul.pairingPairBytes = 384 := by
+    norm_num [Yul.pairingPairBytes, Yul.g1Bytes, Yul.g2Bytes]
+  have hsN : (LB ++ GN).size = 384 := by rw [ByteArray.size_append, w3, w4]
+  have hsGN : (GB ++ (LB ++ GN)).size = 640 := by
+    rw [ByteArray.size_append, hsN, w2]
+  have t1 : bytesTake (LA ++ (GB ++ (LB ++ GN))) 0 128 = some LA := by
+    rw [bytesTake_append_left LA (GB ++ (LB ++ GN)) 0 128 (by omega)]
+    exact bytesTake_self w1
+  have t2 : bytesTake (LA ++ (GB ++ (LB ++ GN))) (0 + 128) 256 = some GB := by
+    rw [show (0 + 128 : Nat) = LA.size + 0 by omega]
+    rw [bytesTake_append_right LA (GB ++ (LB ++ GN)) 0 256 (by omega)]
+    rw [bytesTake_append_left GB (LB ++ GN) 0 256 (by omega)]
+    exact bytesTake_self w2
+  rw [show (2 : Nat) = Nat.succ 1 from rfl, Midfall.Yul.pairingPairs?.go.eq_2]
+  simp only [hg1, hg2, t1, t2, h1, h2]
+  rw [show (0 + Yul.pairingPairBytes) = LA.size + GB.size by rw [hp, w1, w2]]
+  have t3 : bytesTake (LA ++ (GB ++ (LB ++ GN))) (LA.size + GB.size) 128 = some LB := by
+    rw [bytesTake_append_right LA (GB ++ (LB ++ GN)) GB.size 128 (by omega)]
+    rw [show GB.size = GB.size + 0 by omega]
+    rw [bytesTake_append_right GB (LB ++ GN) 0 128 (by omega)]
+    rw [bytesTake_append_left LB GN 0 128 (by omega)]
+    exact bytesTake_self w3
+  have t4 : bytesTake (LA ++ (GB ++ (LB ++ GN))) (LA.size + GB.size + 128) 256 = some GN := by
+    rw [show LA.size + GB.size + 128 = LA.size + (GB.size + 128) by omega]
+    rw [bytesTake_append_right LA (GB ++ (LB ++ GN)) (GB.size + 128) 256 (by omega)]
+    rw [bytesTake_append_right GB (LB ++ GN) 128 256 (by omega)]
+    rw [show (128 : Nat) = LB.size + 0 by omega]
+    rw [bytesTake_append_right LB GN 0 256 (by omega)]
+    exact bytesTake_self w4
+  rw [Midfall.Yul.pairingPairs?.go.eq_2]
+  simp only [hg1, hg2, t3, t4, h3, h4]
+  rw [show (LA.size + GB.size + Yul.pairingPairBytes) = 768 by rw [hp, w1, w2]]
+  rw [Midfall.Yul.pairingPairs?.go.eq_1]
+  rfl
+
+/-- **THE TWO-PAIR FRAME IS A VALID PAIRING INPUT** given the four decodes and canonical widths. -/
+theorem pairingValidInput_pairingFrame_two {LA GB LB GN : Bytes}
+    (w1 : LA.size = 128) (w2 : GB.size = 256) (w3 : LB.size = 128) (w4 : GN.size = 256)
+    (h1 : ∃ pt, g1Of? LA = some pt ∧ g1PointMsmValid pt = true)
+    (h2 : ∃ pt, g2Of? GB = some pt ∧ g2PointValid pt = true)
+    (h3 : ∃ pt, g1Of? LB = some pt ∧ g1PointMsmValid pt = true)
+    (h4 : ∃ pt, g2Of? GN = some pt ∧ g2PointValid pt = true) :
+    pairingValidInput (pairingFrame [(LA, GB), (LB, GN)]) = true := by
+  obtain ⟨p1, hp1, hv1⟩ := h1
+  obtain ⟨q1, hq1, hqv1⟩ := h2
+  obtain ⟨p2, hp2, hv2⟩ := h3
+  obtain ⟨q2, hq2, hqv2⟩ := h4
+  unfold pairingValidInput
+  rw [pairingPairs?_pairingFrame_two w1 w2 w3 w4 hp1 hq1 hp2 hq2]
+  simp [hv1, hqv1, hv2, hqv2]
+
+/-- **THE WIRE FRAME IS VALID AT THE CLEAN CALL SITE.** The G1 halves are the `.pcs` pins (hence
+    `bytesAt ... 128`, exactly 0x80 bytes) and the G2 halves are the VK header slots, whose
+    `PayloadAgrees` identifications give exactly 0x100 bytes (`vkHeaderBytes_size` plus the two
+    `constants_length` floors). `g1Valid`/`g2Valid` supply the decodes and subgroup checks. No
+    hypothesis beyond `ValidV3` and the pairing-product statement. -/
+theorem pairingValidInput_fpWireFrame (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (product : PairingProduct)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (S : Snapshot p G₁ G₂ Gₜ)
+    (st : EvmState)
+    (hRpin : bytesAt st (ptrAddr R.pv.memory.pairingRhsMptr) 128 =
+      R.E.g1.toEip S.c.dual.right.eval)
+    (hLpin : bytesAt st (ptrAddr R.pv.memory.pairingLhsMptr) 128 =
+      R.E.g1.toEip S.c.dual.left.eval) :
+    pairingValidInput (fpWireFrame R st) = true := by
+  have hslots : vkG2Words R.pv vkG2BaseSlot = R.encG2 (R.params.nG2Prepared)⁻¹ ∧
+      vkG2Words R.pv vkNegSG2BaseSlot = R.encG2 (R.params.sG2Prepared)⁻¹ := by
+    refine ⟨?_, ?_⟩
+    · rw [hR.env.nG2, inv_inv]
+      exact hR.payload.g2Base
+    · rw [hR.env.sG2]
+      exact hR.payload.negSG2
+  have hGBsize : (vkG2Words R.pv vkG2BaseSlot).size = 256 := by
+    show (vkHeaderBytes R.pv vkG2BaseSlot 8).size = 256
+    rw [vkHeaderBytes_size]
+    have h := g2Base_constants_length R hR product hpc
+    have hmin : min 8 (R.pv.vk.constants.length - vkG2BaseSlot) = 8 := by omega
+    rw [hmin]
+  have hGNsize : (vkG2Words R.pv vkNegSG2BaseSlot).size = 256 := by
+    show (vkHeaderBytes R.pv vkNegSG2BaseSlot 8).size = 256
+    rw [vkHeaderBytes_size]
+    have h := negSG2_constants_length R hR product hpc
+    have hmin : min 8 (R.pv.vk.constants.length - vkNegSG2BaseSlot) = 8 := by omega
+    rw [hmin]
+  obtain ⟨ptR, hptR, hvR⟩ := hpc.g1Valid S.c.dual.right.eval
+  obtain ⟨ptL, hptL, hvL⟩ := hpc.g1Valid S.c.dual.left.eval
+  obtain ⟨ptB, hptB, hvB⟩ := hpc.g2Valid (R.params.nG2Prepared)⁻¹
+  obtain ⟨ptN, hptN, hvN⟩ := hpc.g2Valid (R.params.sG2Prepared)⁻¹
+  unfold fpWireFrame
+  exact pairingValidInput_pairingFrame_two
+    (bytesAt_size st _ 128) hGBsize (bytesAt_size st _ 128) hGNsize
+    ⟨ptR, by rw [hRpin]; exact hptR, hvR⟩
+    ⟨ptB, by rw [hslots.1]; exact hptB, hvB⟩
+    ⟨ptL, by rw [hLpin]; exact hptL, hvL⟩
+    ⟨ptN, by rw [hslots.2]; exact hptN, hvN⟩
+
+/-- **THE `ec_pairing` CALL FROM A CLEAN NORMAL BODY RUN.** The `Step.callOk` half of
+    `Totality.ecPairing_call_of_body` with the body's outcome KNOWN (`.normal`), so the disjunction
+    `vals / halt` collapses and the call evaluates to the word 1. The two literal `fpVal` heads are
+    the render's `PAIRING_*_MPTR` constants, and the body's entry environment is the swapped
+    `(lhs_mptr := RHS, rhs_mptr := LHS)` binder pair the slice's call produces. -/
+theorem ecPairing_call_of_clean_normal
+    (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    {V : VEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))}
+    {st : EvmState}
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    {Vend : VEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))}
+    {stend : EvmState}
+    (hstep : Step (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (["success", "lhs_mptr", "rhs_mptr"].zip
+          [(1 : U256), BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr),
+           BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)] ++
+          bindZeros (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0)) ["ret"]) st
+        (.stmt (.block (Midfall.LoweringV2.Blocks.EcPairing.ecPairingBodyLit
+          (GenAst.pairingScratchOf R.pv)
+          (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base))
+          (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base))
+          R.model.templateConstants.gas.pairingTwoPair 0x0f 768 32 0x84e81692 0xc3b0d8cd)))
+        (.sres Vend stend .normal))
+    (hret : VEnv.get Vend "ret" = some (1 : U256)) :
+    EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (Expr.call "ec_pairing"
+        [Expr.var "success", Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+         Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"]) (.vals [1] stend) := by
+  have hdecl := Midfall.LoweringV3.ecPairingDecl_eq_lit R hR
+    (callsOf product) (ExternalGas.ofFun fun _ => 0)
+  have hlook : lookupFun (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) "ec_pairing" =
+      some (Midfall.LoweringV2.Blocks.EcPairing.ecPairingDecl R
+        (callsOf product) (ExternalGas.ofFun fun _ => 0),
+        R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) :=
+    Midfall.LoweringV2.Blocks.EcPairing.ecPairing_lookup R
+  have hsuccE : EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (Expr.var "success") (.vals [(1 : U256)] st) :=
+    Step.var hsucc
+  have hRhs : Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR" =
+      Expr.lit (.number (cAddr R.pv.memory.pairingRhsMptr)) := by
+    unfold Midfall.LoweringV2.Blocks.FinalPairing.fpVal
+    rw [consts_lookup_PAIRING_RHS_MPTR R hR]
+  have hLhs : Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR" =
+      Expr.lit (.number (cAddr R.pv.memory.pairingLhsMptr)) := by
+    unfold Midfall.LoweringV2.Blocks.FinalPairing.fpVal
+    rw [consts_lookup_PAIRING_LHS_MPTR R hR]
+  have hRhsE : EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR")
+      (.vals [BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr)] st) := by
+    rw [hRhs]; exact Step.lit
+  have hLhsE : EvalExpr (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR")
+      (.vals [BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)] st) := by
+    rw [hLhs]; exact Step.lit
+  have hargs : Step (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+      (.args [Expr.var "success", Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+        Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"])
+      (.eres (.vals [1, BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr),
+        BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)] st)) :=
+    Step.argsCons
+      (Step.argsCons (Step.argsCons Step.argsNil hLhsE) hRhsE) hsuccE
+  have hparams : (Midfall.LoweringV2.Blocks.EcPairing.ecPairingDecl R
+      (callsOf product) (ExternalGas.ofFun fun _ => 0)).params =
+      ["success", "lhs_mptr", "rhs_mptr"] := by
+    rw [hdecl]
+  have hrets : (Midfall.LoweringV2.Blocks.EcPairing.ecPairingDecl R
+      (callsOf product) (ExternalGas.ofFun fun _ => 0)).rets = ["ret"] := by
+    rw [hdecl]
+  have hstep' : Step (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (["success", "lhs_mptr", "rhs_mptr"].zip [1, BitVec.ofNat 256
+        (cAddr R.pv.memory.pairingRhsMptr),
+        BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)] ++
+        bindZeros (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0)) ["ret"]) st
+      (.stmt (.block (Midfall.LoweringV2.Blocks.EcPairing.ecPairingBodyLit
+        (GenAst.pairingScratchOf R.pv)
+        (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base))
+        (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base))
+        R.model.templateConstants.gas.pairingTwoPair 0x0f 768 32 0x84e81692 0xc3b0d8cd)))
+      (.sres Vend stend .normal) := by
+    simpa only [hdecl] using hstep
+  have hlen : ([1, BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr),
+      BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)] : List U256).length =
+      (Midfall.LoweringV2.Blocks.EcPairing.ecPairingDecl R
+        (callsOf product) (ExternalGas.ofFun fun _ => 0)).params.length := by
+    rw [hparams]; rfl
+  have hcall := Step.callOk (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (funs := R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (Vend := Vend) (st2 := stend) (o := .normal) hargs hlook hlen
+      (by simpa only [hdecl] using hstep') (Or.inl rfl)
+  simpa only [hdecl, List.map_cons, List.map_nil, hrets, hret, Option.getD_some] using hcall
+
+set_option maxHeartbeats 800000 in
+/-- **THE PAIRING CHECK FROM LEAN ACCEPTANCE.** `LeanAccepts` gives a decoding and an accepting
+    `verifyMsgs`; `verifyMsgs` is `prepareMsgs` followed by the `DualMSM.check` gate, and
+    `snapshotOf_prepareMsgs_ok` identifies that `prepareMsgs` answer with the snapshot's own
+    `dual`. The two decodings agree by `fp_decoded_unique`, so the check is the one the boundary's
+    snapshot carries. -/
+theorem pairingCheck_of_accepts {R : Render p G₁ G₂ Gₜ} {H : Hash} {cd : Bytes}
+    (hacc : LeanAccepts R H cd) {S : Snapshot p G₁ G₂ Gₜ}
+    {ms : List (Msg (Fr p) G₁)} {instW : Array Word256} {inst : Array (Fr p)}
+    (hdec : Decoded R cd ms instW inst)
+    (hsnap : snapshotOf R.E H R.vk inst ms none = .ok S) :
+    DualMSM.check S.c.dual R.params = true := by
+  obtain ⟨ms', instW', inst', hdec'', hinst', hverify⟩ := hacc
+  have hdec' : Decoded R cd ms' instW' inst' := ⟨hdec'', hinst'⟩
+  obtain ⟨e1, e2, e3⟩ := fp_decoded_unique hdec' hdec
+  subst ms'
+  subst instW'
+  subst inst'
+  have hprep := snapshotOf_prepareMsgs_ok (Gₜ := Gₜ) R.E H R.vk inst ms none S hsnap
+  unfold verifyMsgs at hverify
+  rw [hprep] at hverify
+  simp only [bind, Except.bind] at hverify
+  by_cases hc : DualMSM.check S.c.dual R.params = true
+  · exact hc
+  · rw [if_neg hc] at hverify
+    cases hverify
+
+set_option maxHeartbeats 1600000 in
+/-- **LEAF (ROW.FP, WP A11): the finalPairing progress row, PROVED.** Evidence
+    `GeneratorRows.lean:1083`. The clean `.pcs` boundary decodes (`Agree`), and the decoded snapshot's
+    `DualMSM.check` is read off `LeanAccepts` (`pairingCheck_of_accepts`) and turned into the wire
+    answer by `fp_pairing_algebra`; the two `.pcs` G1 pins plus the `PayloadAgrees` G2 slots and
+    `fpActualFrame_eq_fpWireFrame` then make the helper's frame valid and true, so
+    `fpBodyRun_clean` supplies a NORMAL body run and `ecPairing_call_of_clean_normal` the `.vals [1]`
+    call. The slice's two statements are `fp_slice_at`'s guard and assignment; the guard skips at
+    `success = 1`, the assignment restores the invariant across the 768-byte scratch write
+    (`Inv_pcs_of_mem_outside`) and `stageInv_pairing_of_pcs` puts the boundary at `.pairing`.
+    Every OTHER honest run is collapsed to that witness by `fp_slice_det`, so the all-runs half is
+    `o = .normal ∧ StageInv .pairing` with no extra case split. -/
 theorem fp_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash) (vkAddr : U256) (cd : Bytes)
     (hacc : LeanAccepts R H cd) (hcomp : CompleteSide R H cd) :
     BlockProgS R Partial.finalPairing H vkAddr product cd := by
-  sorry
+  have hex : ∀ V st,
+      StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+        R H vkAddr cd Checkpoint.pcs V st →
+      ∃ V' st' o,
+        ExecStmts (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+          (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+          (R.slice Partial.finalPairing) V' st' o ∧
+        o = .normal ∧
+          StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+            R H vkAddr cd Checkpoint.pairing V' st' := by
+    intro V st hpre
+    obtain ⟨hframe, hsucc, -, hraw, -, hagree⟩ := hpre
+    obtain ⟨ms, instW, inst, hdec⟩ := hraw
+    obtain ⟨S, hstage, hinv⟩ := hagree ms instW inst hdec
+    have hsnap : snapshotOf R.E H R.vk inst ms none = .ok S := by
+      simpa only [leanStage] using hstage
+    have hRpin : bytesAt st (ptrAddr R.pv.memory.pairingRhsMptr) 128 =
+        R.E.g1.toEip S.c.dual.right.eval :=
+      (inv_pcs_pairing_pins (calls := callsOf product)
+        (gas := ExternalGas.ofFun fun _ => 0) (E := R.E) (params := R.params)
+        (PV := R.pv) (S := S) hinv).1
+    have hLpin : bytesAt st (ptrAddr R.pv.memory.pairingLhsMptr) 128 =
+        R.E.g1.toEip S.c.dual.left.eval :=
+      (inv_pcs_pairing_pins (calls := callsOf product)
+        (gas := ExternalGas.ofFun fun _ => 0) (E := R.E) (params := R.params)
+        (PV := R.pv) (S := S) hinv).2
+    have hpayload : bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes :=
+      inv_pcs_vk_payload (calls := callsOf product)
+        (gas := ExternalGas.ofFun fun _ => 0) (E := R.E) (params := R.params)
+        (PV := R.pv) (S := S) hinv
+    obtain ⟨meta_, vkMptr, config, vkBase, hlayout, hvk, -⟩ :=
+      plan_size_of_generated hR.generated
+    have hptr : ∃ n : ℕ, ptrValue R.pv.memory.vkMptr = Value.integer ↑n := by
+      refine ⟨vkBase, ?_⟩
+      rw [hlayout, MemoryPairs.new_vkMptr, hvk]
+      rfl
+    have hfitR := pairingRhsMptr_toNat_of_valid R hR
+    have hfitL := pairingLhsMptr_toNat_of_valid R hR
+    have hfits := fpBodyEnvFits_of_valid R hR
+    have hcheck : DualMSM.check S.c.dual R.params = true :=
+      pairingCheck_of_accepts hacc hdec hsnap
+    have hslots : vkG2Words R.pv vkG2BaseSlot = R.encG2 (R.params.nG2Prepared)⁻¹ ∧
+        vkG2Words R.pv vkNegSG2BaseSlot = R.encG2 (R.params.sG2Prepared)⁻¹ := by
+      refine ⟨?_, ?_⟩
+      · rw [hR.env.nG2, inv_inv]
+        exact hR.payload.g2Base
+      · rw [hR.env.sG2]
+        exact hR.payload.negSG2
+    have hframeWire : fpActualFrame R st
+        (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr))
+        (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)) = fpWireFrame R st :=
+      fpActualFrame_eq_fpWireFrame R hR product hpc S st hpayload hptr hRpin hLpin hfitR hfitL
+    have hvalidWire : pairingValidInput (fpWireFrame R st) = true :=
+      pairingValidInput_fpWireFrame R hR product hpc S st hRpin hLpin
+    have hvalid : pairingValidInput (fpActualFrame R st
+        (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr))
+        (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr))) = true := by
+      rw [hframeWire]
+      exact hvalidWire
+    have hprodFrame : product (Midfall.LoweringV2.Blocks.FinalPairing.fpFrame R S) = true :=
+      (Midfall.LoweringV2.Blocks.FinalPairing.fp_pairing_algebra R product hpc S).mpr hcheck
+    have hframeEq : Midfall.LoweringV2.Blocks.FinalPairing.fpFrame R S = fpWireFrame R st := by
+      unfold Midfall.LoweringV2.Blocks.FinalPairing.fpFrame fpWireFrame
+      rw [hRpin, hLpin, hslots.1, hslots.2]
+    have hprodWire : product (fpWireFrame R st) = true := hframeEq ▸ hprodFrame
+    have hprodActual : product (fpActualFrame R st
+        (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr))
+        (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr))) = true := by
+      rw [hframeWire]
+      exact hprodWire
+    obtain ⟨Vend, stend, hstep, hret, hmem, henv, hhalt, hprod'⟩ :=
+      fpBodyRun_clean R product st
+        (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr))
+        (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)) hfits hvalid hprodActual
+    have hev := ecPairing_call_of_clean_normal R product hR hsucc hstep hret
+    have hguard : ExecStmt (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+        (Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"])
+          [Stmt.exprStmt (Expr.call "fail"
+            [Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED"])])
+        V st .normal :=
+      vk_gate_skip_any R "ERR_PRECOMPILE_FAILED" hsucc (by decide)
+    have hsucc' : VEnv.get (VEnv.setMany V ["success"] [1]) "success" = some (1 : U256) := by
+      show VEnv.get (VEnv.set V "success" (1 : U256)) "success" = some 1
+      exact Midfall.LoweringV2.Blocks.EcPairing.venv_get_set_same hsucc
+    have hagree' : Agree (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+        R H cd Checkpoint.pcs (VEnv.setMany V ["success"] [1]) stend := by
+      intro ms' instW' inst' hdec'
+      obtain ⟨S', hstage', hinv'⟩ := hagree ms' instW' inst' hdec'
+      refine ⟨S', hstage', ?_⟩
+      rw [show VEnv.setMany V ["success"] [1] = VEnv.set V "success" (1 : U256) from rfl]
+      exact Inv_pcs_of_mem_outside R hR hinv' hmem henv hhalt 1
+    have hdual : ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+        Decoded R cd ms instW inst →
+        ∀ S, leanStage R H inst ms Checkpoint.pcs = .ok S →
+          DualMSM.check S.c.dual R.params = true := by
+      intro ms' instW' inst' hdec' S' hstage'
+      obtain ⟨e1, e2, e3⟩ := fp_decoded_unique hdec' hdec
+      subst ms'
+      subst instW'
+      subst inst'
+      have hSS : S' = S := by
+        rw [hstage] at hstage'
+        exact (Except.ok.inj hstage').symm
+      subst hSS
+      exact hcheck
+    have hframe' : Frame R H vkAddr cd (VEnv.setMany V ["success"] [1]) stend := by
+      rw [show VEnv.setMany V ["success"] [1] = VEnv.set V "success" (1 : U256) from rfl]
+      exact Frame_env_congr (Frame_set_success hframe 1) henv
+    have hstagePair : StageInv (c := callsOf product) (g := ExternalGas.ofFun fun _ => 0)
+        R H vkAddr cd Checkpoint.pairing (VEnv.setMany V ["success"] [1]) stend :=
+      stageInv_pairing_of_pcs R ⟨hframe', hsucc', trivial, ⟨ms, instW, inst, hdec⟩, trivial, hagree'⟩ hsucc' hdual
+    refine ⟨VEnv.setMany V ["success"] [1], stend, .normal, ?_, rfl, hstagePair⟩
+    rw [fp_slice_at R hR]
+    exact Step.seqCons hguard (Step.seqCons (Step.assignVal hev (by rfl)) Step.seqNil)
+  refine ⟨?_, ?_⟩
+  · intro V st hpre
+    obtain ⟨V', st', o, hrun, how, hpost⟩ := hex V st hpre
+    exact ⟨V', st', o, hrun, how, hpost⟩
+  · intro V st hpre V' st' o hrun
+    obtain ⟨Vw, stw, ow, hrunw, how, hpostw⟩ := hex V st hpre
+    obtain ⟨e1, e2, e3⟩ := fp_slice_det R product hrun hrunw
+    subst V'
+    subst st'
+    subst o
+    exact ⟨how, hpostw⟩
+
+#assert_axioms Midfall.LoweringV3.fp_blockProgS
+  [propext, Classical.choice, Quot.sound] native []
 
 /-- **THE MISSING `fpG2Slots` PREMISE, DERIVED FROM `ValidV3`.** FP.0 carried the two VK-header G2
     clauses as an explicit premise because V2's `Valid` has no `VkSlotsAgree`; V3's `PayloadAgrees`
