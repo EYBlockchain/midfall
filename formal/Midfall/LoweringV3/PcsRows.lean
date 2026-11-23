@@ -3906,6 +3906,428 @@ theorem b3_eval_mulmod_expr_vars_halt {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_mulmod_expr_vars_halt
   [propext, Classical.choice, Quot.sound] native []
 
+/-! ### Block 3: the rolled body (one iteration's nRot folds) -/
+
+/-- The cursor expression the rolled body reads: `eval_p` at k = 0, `eval_p + 32k` after. -/
+def rolledSrc (k : Nat) : Expr EVM.Op :=
+  if k == 0 then GenAst.yvar "eval_p"
+  else GenAst.yop EVM.Op.add
+    [GenAst.yvar "eval_p", GenAst.ylit (k * Midfall.Generator.wordBytes)]
+
+theorem rolledSrc_zero : rolledSrc 0 = GenAst.yvar "eval_p" := by
+  simp [rolledSrc]
+
+theorem rolledSrc_pos {k : Nat} (hk : k ≠ 0) :
+    rolledSrc k = GenAst.yop EVM.Op.add
+      [GenAst.yvar "eval_p", GenAst.ylit (k * Midfall.Generator.wordBytes)] := by
+  simp [rolledSrc, hk]
+
+/-- One statement of the rolled body:
+    `q_eval_set_k := addmod(q_eval_set_k, mulmod(mload(mload(srcEval)), pow, r), r)`. -/
+def b3RolledFoldStmt (k : Nat) : Stmt EVM.Op :=
+  GenAst.yset ("q_eval_set_" ++ toString k)
+    (GenAst.yop EVM.Op.addmod
+      [GenAst.yvar ("q_eval_set_" ++ toString k),
+       GenAst.yop EVM.Op.mulmod
+         [GenAst.yop EVM.Op.mload [GenAst.yop EVM.Op.mload [rolledSrc k]],
+          GenAst.yvar "pow", GenAst.yvar "r"],
+       GenAst.yvar "r"])
+
+theorem b3_eval_rolledSrc_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} (k : Nat) {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (rolledSrc k) (.halt st')) : False := by
+  by_cases hk : k = 0
+  · rw [show rolledSrc k = GenAst.yvar "eval_p" by simpa [hk] using rolledSrc_zero] at h
+    exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts h
+  · rw [rolledSrc_pos hk] at h
+    exact b1_eval_add_var_lit_halt h
+
+set_option maxHeartbeats 1200000 in
+theorem b3_eval_rolled_addmod_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} (k : Nat) {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.addmod
+        [GenAst.yvar ("q_eval_set_" ++ toString k),
+         GenAst.yop EVM.Op.mulmod
+           [GenAst.yop EVM.Op.mload [GenAst.yop EVM.Op.mload [rolledSrc k]],
+            GenAst.yvar "pow", GenAst.yvar "r"],
+         GenAst.yvar "r"]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hq =>
+          cases hrest with
+          | argsCons hrest2 hmul =>
+              cases hrest2 with
+              | argsCons hnil hr =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact b1_eval_args_halt_false (fun e he st0 st1 hh => by
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+        · exact b3_eval_mulmod_expr_vars_halt
+            (fun st1 st2 hh' => by
+              by_cases hk : k = 0
+              · exact b3_eval_mload2_var_halt
+                  (by simpa only [GenAst.yop, GenAst.yvar, GenAst.ylit, hk, rolledSrc_zero] using hh')
+              · exact b3_eval_mload2_add_var_lit_halt
+                  (by simpa only [GenAst.yop, GenAst.yvar, GenAst.ylit, rolledSrc_pos hk] using hh')) hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) hargs
+
+set_option maxHeartbeats 1600000 in
+/-- The rolled body's one fold step, with the nested-mload value named. -/
+theorem b3_exec_rolled_fold_set {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome} (k : Nat)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (b3RolledFoldStmt k) V' st' o) :
+    o = .normal ∧ ∃ cur pw rv pv wv,
+      VEnv.get V ("q_eval_set_" ++ toString k) = some cur ∧
+      VEnv.get V "pow" = some pw ∧
+      VEnv.get V "r" = some rv ∧
+      VEnv.get V "eval_p" = some pv ∧
+      wv = (if k = 0 then loadWord st.memory (loadWord st.memory pv.toNat).toNat
+        else loadWord st.memory
+          (loadWord st.memory (pv + BitVec.ofNat 256 (k * Midfall.Generator.wordBytes)).toNat).toNat) ∧
+      V' = VEnv.set V ("q_eval_set_" ++ toString k)
+        (wAddmodAt cur (wMulmodAt wv pw rv) rv) ∧
+      st'.memory = st.memory := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨argvals, stq, hargs, hbi⟩ := b2_eval_builtin_vals_inv he
+      cases hargs with
+      | argsCons hrest hq =>
+          cases hrest with
+          | argsCons hrest2 hmul =>
+              cases hrest2 with
+              | argsCons hnil hr =>
+                  cases hnil with
+                  | argsNil =>
+                      -- right-to-left: r, mulmod, q
+                      obtain ⟨rv, hrv, hstr⟩ := b1_eval_var_vals hr
+                      rw [hstr] at hmul
+                      obtain ⟨wv, stm, pw, rvm, hmulE, hpw, hrvm, hmulval, hmulmem⟩ :=
+                        b3_eval_mulmod_expr_vars_inv hmul
+                      have hrvm' : rvm = rv := Option.some.inj (hrvm.symm.trans hrv)
+                      subst rvm
+                      -- the nested mload of rolledSrc k
+                      obtain ⟨pv, hpv, hwv, hmemn⟩ :
+                          ∃ pv, VEnv.get V "eval_p" = some pv ∧
+                            wv = (if k = 0 then
+                              loadWord st.memory (loadWord st.memory pv.toNat).toNat
+                              else loadWord st.memory
+                                (loadWord st.memory
+                                  (pv + BitVec.ofNat 256 (k * Midfall.Generator.wordBytes)).toNat).toNat) ∧
+                            stm.memory = st.memory := by
+                        by_cases hk : k = 0
+                        · have h0 : rolledSrc k = GenAst.yvar "eval_p" := by
+                            simpa [hk] using rolledSrc_zero
+                          rw [h0] at hmulE
+                          obtain ⟨pv, hpv, hwv, hmem⟩ := b3_eval_mload2_var_inv hmulE
+                          refine ⟨pv, hpv, ?_, hmem⟩
+                          rw [hk]
+                          simpa using hwv
+                        · have h0 := rolledSrc_pos hk
+                          rw [h0] at hmulE
+                          obtain ⟨pv, hpv, hwv, hmem⟩ :=
+                            b3_eval_mload2_add_var_lit_inv hmulE
+                          refine ⟨pv, hpv, ?_, hmem⟩
+                          rw [if_neg hk]
+                          simpa using hwv
+                      obtain ⟨cur, hcur, hstrq⟩ := b1_eval_var_vals hq
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+                      have hqval : _ = cur := b1_eval_var_val_eq hq hcur
+                      have hrval : _ = rv := b1_eval_var_val_eq hr hrv
+                      refine ⟨rfl, cur, pw, rv, pv, wv, hcur, hpw, hrv, hpv, hwv, ?_, ?_⟩
+                      · rw [hqval, hmulval, hrval]
+                        simp [VEnv.setMany, wAddmodAt]
+                      · rw [hstrq, hmulmem, hmemn]
+  | assignHalt he =>
+      exact (b3_eval_rolled_addmod_halt k he).elim
+
+
+
+theorem qkey_ne_pow (k : Nat) : qkey k ≠ "pow" := by
+  intro h
+  have hlen := congrArg String.length h
+  unfold qkey at hlen
+  rw [String.length_append] at hlen
+  have h1 : ("q_eval_set_" : String).length = 11 := by decide
+  have h2 : ("pow" : String).length = 3 := by decide
+  rw [h1, h2] at hlen
+  omega
+
+theorem qkey_ne_eval_p (k : Nat) : qkey k ≠ "eval_p" := by
+  intro h
+  have hlen := congrArg String.length h
+  unfold qkey at hlen
+  rw [String.length_append] at hlen
+  have h1 : ("q_eval_set_" : String).length = 11 := by decide
+  have h2 : ("eval_p" : String).length = 6 := by decide
+  rw [h1, h2] at hlen
+  omega
+
+/-- One iteration's k-indexed fold accumulator. -/
+def b3FoldK (rv pw : U256) (f : Nat → U256) : List Nat → Nat → U256 → U256
+  | [], _, acc => acc
+  | k' :: rest, k, acc =>
+      b3FoldK rv pw f rest k
+        (if k' = k then wAddmodAt acc (wMulmodAt (f k') pw rv) rv else acc)
+
+theorem b3FoldK_append (rv pw : U256) (f : Nat → U256) (xs ys : List Nat)
+    (k : Nat) (acc : U256) :
+    b3FoldK rv pw f (xs ++ ys) k acc =
+      b3FoldK rv pw f ys k (b3FoldK rv pw f xs k acc) := by
+  induction xs generalizing acc with
+  | nil => rfl
+  | cons x rest ih =>
+      simp only [List.cons_append, b3FoldK]
+      exact ih _
+
+theorem b3FoldK_eq_self_of_not_mem (rv pw : U256) (f : Nat → U256) {k : Nat}
+    {xs : List Nat} (h : k ∉ xs) (acc : U256) :
+    b3FoldK rv pw f xs k acc = acc := by
+  induction xs generalizing acc with
+  | nil => rfl
+  | cons x rest ih =>
+      have hx : ¬ x = k := by intro hx; exact h (by simp [hx])
+      have hr : k ∉ rest := by intro hr; exact h (by simp [hr])
+      simp [b3FoldK, hx, ih hr]
+
+theorem b3FoldK_range_succ_self (rv pw : U256) (f : Nat → U256) (n : Nat) (acc : U256) :
+    b3FoldK rv pw f (List.range (n + 1)) n acc =
+      wAddmodAt acc (wMulmodAt (f n) pw rv) rv := by
+  rw [List.range_succ, b3FoldK_append]
+  rw [show b3FoldK rv pw f (List.range n) n acc = acc from
+    b3FoldK_eq_self_of_not_mem (rv := rv) (pw := pw) (f := f) (k := n)
+      (xs := List.range n) (by simp) acc]
+  simp [b3FoldK]
+
+theorem b3FoldK_range_succ_lt (rv pw : U256) (f : Nat → U256) {k n : Nat} (hk : k < n)
+    (acc : U256) :
+    b3FoldK rv pw f (List.range (n + 1)) k acc =
+      b3FoldK rv pw f (List.range n) k acc := by
+  rw [List.range_succ, b3FoldK_append]
+  have hnk : ¬ n = k := by omega
+  simp [b3FoldK, hnk]
+
+set_option maxHeartbeats 2000000 in
+theorem b3_rolled_body_contract {funs : FunEnv (Bridge.Dialect c g)} (nRot : Nat)
+    (init : Nat → U256) (f : Nat → U256) (pw rv pv : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      ((List.range nRot).map b3RolledFoldStmt)
+      (fun V st =>
+        (∀ k, k < nRot → VEnv.get V ("q_eval_set_" ++ toString k) = some (init k)) ∧
+        VEnv.get V "pow" = some pw ∧
+        VEnv.get V "r" = some rv ∧
+        VEnv.get V "eval_p" = some pv ∧
+        (∀ k, k < nRot → f k = (if k = 0 then
+          loadWord st.memory (loadWord st.memory pv.toNat).toNat
+          else loadWord st.memory
+            (loadWord st.memory
+              (pv + BitVec.ofNat 256 (k * Midfall.Generator.wordBytes)).toNat).toNat)))
+      (fun V st V' st' o => o = .normal ∧
+        (∀ k, k < nRot →
+          VEnv.get V' ("q_eval_set_" ++ toString k) =
+            some (b3FoldK rv pw f (List.range nRot) k (init k))) ∧
+        (∀ y, (∀ k, k < nRot → y ≠ "q_eval_set_" ++ toString k) →
+          VEnv.get V' y = VEnv.get V y) ∧
+        st'.memory = st.memory) := by
+  induction nRot with
+  | zero =>
+      intro V st hpre V' st' o hrun
+      cases hrun
+      obtain ⟨hinit, hpw, hrv, hpv, hf⟩ := hpre
+      refine ⟨rfl, ?_, ?_, rfl⟩
+      · intro k hk; omega
+      · intro y _; rfl
+  | succ n ih =>
+      intro V st hpre V' st' o hrun
+      rw [List.range_succ, List.map_append, List.map_singleton] at hrun
+      obtain ⟨hinit, hpw, hrv, hpv, hf⟩ := hpre
+      refine (b2_append_dep
+        (pre := fun (V : VEnv (Bridge.Dialect c g)) (st : EvmState) =>
+          (∀ k, k < n + 1 → VEnv.get V ("q_eval_set_" ++ toString k) = some (init k)) ∧
+          VEnv.get V "pow" = some pw ∧ VEnv.get V "r" = some rv ∧
+          VEnv.get V "eval_p" = some pv ∧
+          (∀ k, k < n + 1 → f k = (if k = 0 then
+            loadWord st.memory (loadWord st.memory pv.toNat).toNat
+            else loadWord st.memory
+              (loadWord st.memory
+                (pv + BitVec.ofNat 256 (k * Midfall.Generator.wordBytes)).toNat).toNat)))
+        (mid := fun (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+            (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) =>
+          (∀ k, k < n → VEnv.get V' ("q_eval_set_" ++ toString k) =
+            some (b3FoldK rv pw f (List.range n) k (init k))) ∧
+          (∀ y, (∀ k, k < n → y ≠ "q_eval_set_" ++ toString k) →
+            VEnv.get V' y = VEnv.get V y) ∧
+          st'.memory = st.memory)
+        (post := fun V st V' st' o => o = .normal ∧
+          (∀ k, k < n + 1 →
+            VEnv.get V' ("q_eval_set_" ++ toString k) =
+              some (b3FoldK rv pw f (List.range (n + 1)) k (init k))) ∧
+          (∀ y, (∀ k, k < n + 1 → y ≠ "q_eval_set_" ++ toString k) →
+            VEnv.get V' y = VEnv.get V y) ∧
+          st'.memory = st.memory) ?h₁ ?h₂)
+        V st ⟨hinit, hpw, hrv, hpv, hf⟩ V' st' o hrun
+      · intro V st hpre' V' st' o hrun
+        obtain ⟨hinit', hpw', hrv', hpv', hf'⟩ := hpre'
+        obtain ⟨ho, hlook, hout, hmem⟩ :=
+          ih V st ⟨fun k hk => hinit' k (by omega), hpw', hrv', hpv',
+              fun k hk => hf' k (by omega)⟩ V' st' o hrun
+        exact Or.inl ⟨ho, hlook, hout, hmem⟩
+      · intro V st hpre' Vp stp hmid V' st' o hrun
+        obtain ⟨hlookp, houtp, hmemp⟩ := hmid
+        obtain ⟨hinit', hpw', hrv', hpv', hf'⟩ := hpre'
+        have hkeyn : VEnv.get Vp ("q_eval_set_" ++ toString n) = some (init n) := by
+          have hout := houtp ("q_eval_set_" ++ toString n) (fun k hk h => by
+            have := qkey_inj h
+            omega)
+          rw [hout]
+          exact hinit' n (by omega)
+        have houtp' : ∀ y, (∀ k, k < n → y ≠ "q_eval_set_" ++ toString k) →
+            VEnv.get Vp y = VEnv.get V y := houtp
+        have hpwp : VEnv.get Vp "pow" = some pw := by
+          rw [houtp' "pow" (fun k hk h => by
+            exact qkey_ne_pow k h.symm)]
+          exact hpw'
+        have hrvp : VEnv.get Vp "r" = some rv := by
+          rw [houtp' "r" (fun k hk h => by exact qkey_ne_r k h.symm)]
+          exact hrv'
+        have hpvp : VEnv.get Vp "eval_p" = some pv := by
+          rw [houtp' "eval_p" (fun k hk h => by
+            exact qkey_ne_eval_p k h.symm)]
+          exact hpv'
+        have hfn : f n = (if n = 0 then
+            loadWord st.memory (loadWord st.memory pv.toNat).toNat
+            else loadWord st.memory
+              (loadWord st.memory
+                (pv + BitVec.ofNat 256 (n * Midfall.Generator.wordBytes)).toNat).toNat) :=
+          hf' n (by omega)
+        have hfnp : f n = (if n = 0 then
+            loadWord stp.memory (loadWord stp.memory pv.toNat).toNat
+            else loadWord stp.memory
+              (loadWord stp.memory
+                (pv + BitVec.ofNat 256 (n * Midfall.Generator.wordBytes)).toNat).toNat) := by
+          rw [hmemp]; exact hfn
+        have hstep := b1_stmt_of_singleton hrun
+        obtain ⟨ho, cur, pw', rv', pv', wv, hcur, hpw', hrv', hpv', hwv, hV',
+          hmem⟩ := b3_exec_rolled_fold_set (c := c) (g := g) (funs := funs) n hstep
+        have hcur' : cur = init n := Option.some.inj (hcur.symm.trans hkeyn)
+        have hpw'' : pw' = pw := Option.some.inj (hpw'.symm.trans hpwp)
+        have hrv'' : rv' = rv := Option.some.inj (hrv'.symm.trans hrvp)
+        have hpv'' : pv' = pv := Option.some.inj (hpv'.symm.trans hpvp)
+        subst cur; subst pw'; subst rv'; subst pv'
+        have hwv' : wv = f n := by
+          rw [hwv]
+          exact hfnp.symm
+        refine ⟨ho, ?_, ?_, by rw [hmem, hmemp]⟩
+        · intro k hk
+          by_cases hkn : k = n
+          · rw [hkn, hV']
+            rw [venv_get_set_same (D := Bridge.Dialect c g) hkeyn]
+            rw [b3FoldK_range_succ_self, hwv']
+          · have hkn' : k < n := by omega
+            rw [hV']
+            rw [venv_get_set_ne (D := Bridge.Dialect c g)
+              (x := "q_eval_set_" ++ toString n)
+              (y := "q_eval_set_" ++ toString k) (v := _) (by
+                intro h; exact hkn (qkey_inj h.symm).symm)]
+            rw [hlookp k hkn']
+            congr 1
+            rw [← b3FoldK_range_succ_lt (rv := rv) (pw := pw) (f := f) (k := k) (n := n)
+              (by omega)]
+        · intro y hy
+          rw [hV']
+          rw [venv_get_set_ne (D := Bridge.Dialect c g)
+            (x := "q_eval_set_" ++ toString n) (y := y) (v := _) (by
+              intro h; exact hy n (by omega) h)]
+          exact houtp' y (fun k hk => hy k (by omega))
+
+
+
+#assert_axioms Midfall.LoweringV3.PcsRows.qkey_ne_pow
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.qkey_ne_eval_p
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.rolledSrc
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3RolledFoldStmt
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_rolledSrc_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_rolled_addmod_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_exec_rolled_fold_set
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_rolled_body_contract
+  [propext, Classical.choice, Quot.sound] native []
+
+/-! ### Block 3: rolled-loop cursor and guard helpers -/
+
+/-- `x := add(y, 32*k)` (the loop-cursor update), with the source value named. -/
+theorem b3_exec_yset_add_var_lit {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {x y : String} {off : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.yset x (GenAst.yop EVM.Op.add
+        [GenAst.yvar y, GenAst.ylit off])) V' st' o) :
+    o = .normal ∧ ∃ yv, VEnv.get V y = some yv ∧
+      V' = VEnv.set V x (yv + BitVec.ofNat 256 off) ∧ st' = st := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨yv, hyv, hcv, hst⟩ := b1_eval_add_var_lit_inv he
+      subst hcv; subst hst
+      exact ⟨rfl, _, hyv, rfl, rfl⟩
+  | assignHalt he => exact (b1_eval_add_var_lit_halt he).elim
+
+/-- `lt(i, m)` on a register and a literal. -/
+theorem b3_eval_lt_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x : String} {m : Nat}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.lt [GenAst.yvar x, GenAst.ylit m]) (.vals [cv] st')) :
+    ∃ xv, VEnv.get V x = some xv ∧ cv = b2w (xv.ult (BitVec.ofNat 256 m)) ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hrest with
+      | argsCons hnil hm =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hmv, hstm⟩ := b2_eval_lit_inv hm
+              obtain ⟨hxv, hstx⟩ := b1_eval_var_inv hx
+              subst hstm; subst hstx
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨_, hxv, by rw [hmv], rfl⟩
+
+theorem b3_eval_lt_var_lit_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {x : String} {m : Nat}
+    {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (GenAst.yop EVM.Op.lt [GenAst.yvar x, GenAst.ylit m]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := EVM.Op.lt)
+    (fun _ _ _ _ hr => by
+      simp only [builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) h
+
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_exec_yset_add_var_lit
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_lt_var_lit_inv
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_lt_var_lit_halt
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow_halt
