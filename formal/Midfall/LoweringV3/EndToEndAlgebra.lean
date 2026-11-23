@@ -2309,6 +2309,553 @@ theorem parseTrace_shapes {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
         exact ⟨by simpa using hpermSz, hpermProp, hlksSize, hlksShape,
           by simpa using htrsSz, htrsMap⟩
 
+set_option maxHeartbeats 2000000
+
+/-! ### A6 - the `parseTrace` READ schedule (the width half of `ParseTraceSchedule`)
+
+    The parser's transcript log is exactly its reads: `vk.hashInto`, the committed
+    and instance absorbs, the four challenges and the trailing `y` all go through
+    `Transcript.common` / `squeeze`, neither of which touches `log`. What appends
+    widths is only
+
+      * the phase loop - one `g1` read per (phase, proof, advice column of that phase);
+      * the multiplicity pass - one `g1` per (proof, lookup);
+      * `Permutation.readProductCommitments` - `numChunksOf columns (csDegree - 2)` per proof;
+      * the lookup-commitment pass - `numChunks + 1` per (proof, lookup);
+      * the trashcan pass - one `g1` per (proof, trashcan).
+
+    The lemmas below walk the loops one at a time; `parseTrace_widths` composes them
+    on an actual run (the same bind-peeling `parseTrace_shapes` uses) and yields the
+    exact count as one `replicate`. No count is assumed. -/
+
+/-- The advice columns the parser reads while processing phase `ph`: the columns
+    `i < numAdviceColumns` whose recorded phase is `ph`, in index order. -/
+def advicePhaseCols {p : ℕ} [Fact (Nat.Prime p)] (cs : ConstraintSystem (Fr p))
+    (ph : Nat) : List Nat :=
+  (List.range cs.numAdviceColumns).filterMap fun i =>
+    if (cs.adviceColumnPhase[i]?.map (fun q => q.val)) == some ph then some i else none
+
+/-- The G1 reads the phase loop performs: one per advice column, per proof. -/
+def adviceReadCount {p : ℕ} [Fact (Nat.Prime p)] (cs : ConstraintSystem (Fr p))
+    (n : Nat) : Nat :=
+  ((cs.phases.map fun ph => n * (advicePhaseCols cs ph.val).length)).sum
+
+/-- The G1 reads the lookup-commitment pass performs: `numChunks + 1` per lookup. -/
+def lookupCommitReadCount {F : Type} (deg : Nat)
+    (lookups : List (LogupBatchedArgument F)) : Nat :=
+  (((chunkedOf deg lookups).getD []).map (fun c => c.numChunks + 1)).sum
+
+/-- The exact number of G1 reads `parseTrace` performs at the deployed profile
+    (one proof, one committed instance). -/
+def parseTraceReadCount {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : VerifyingKey (Fr p) G₁) : Nat :=
+  adviceReadCount vk.cs 1
+    + vk.cs.lookups.size
+    + Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2)
+    + lookupCommitReadCount vk.csDegree vk.cs.lookups.toList
+    + vk.cs.trashcans.size
+
+/-- Dropping the trailing `[]` of a composed width. -/
+theorem PresWidthSeq.nil_right {α : Type} {m : TranscriptM α} {ws : List Nat}
+    (h : PresWidthSeq (ws ++ []) m) : PresWidthSeq ws m := by
+  simpa using h
+
+/-- A single read/bind followed by `pure` of a function of its value. -/
+theorem PresWidthSeq.bind_pure {α β : Type} {ws : List Nat} {m : TranscriptM α}
+    (hm : PresWidthSeq ws m) (f : α → β) :
+    PresWidthSeq ws (m >>= fun x => StateT.pure (f x)) :=
+  PresWidthSeq.nil_right (PresWidthSeq.bind (ws2 := []) hm
+    (fun x => PresWidthSeq.pure (f x)))
+
+/-- `Permutation.readProductCommitments` reads `numChunksOf columns (csDegree - 2)`
+    G1 points (and throws before reading when the chunk length is zero, in which
+    case no run succeeds and the width is vacuous). -/
+theorem readProductCommitments_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁) (perm : PermutationArgument) (csDegree : Nat) :
+    PresWidthSeq
+      (List.replicate (Permutation.numChunksOf perm.columns.size (csDegree - 2))
+        (hashableG1 g1).width)
+      (Permutation.readProductCommitments perm csDegree (hashableG1 g1)) := by
+  unfold Permutation.readProductCommitments
+  by_cases hc : csDegree - 2 > 0
+  · simp only [hc, if_true]
+    exact PresWidthSeq.bind_pure (PresWidthSeq.readN (hashableG1 g1) _) _
+  · simp only [hc, if_false]
+    exact PresWidthSeq.bind (ws2 := List.replicate
+        (Permutation.numChunksOf perm.columns.size (csDegree - 2)) (hashableG1 g1).width)
+      (PresWidthSeq.throwFault (Fault.panic "proofs/src/plonk/permutation/verifier.rs:45"))
+      (fun _ => PresWidthSeq.bind_pure (PresWidthSeq.readN (hashableG1 g1) _) _)
+
+/-- `Trash.readCommitted` reads exactly one G1 point. -/
+theorem trashReadCommitted_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁) (x : TrashArgument (Fr p)) :
+    PresWidthSeq [(hashableG1 g1).width] (Trash.readCommitted x (hashableG1 g1)) := by
+  unfold Trash.readCommitted
+  exact PresWidthSeq.bind_pure (PresWidthSeq.read (hashableG1 g1)) _
+
+/-- `Logup.CommittedMultiplicities.readCommitment` reads `numChunks + 1` G1 points. -/
+theorem readCommitment_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁) (cm : Logup.CommittedMultiplicities G₁) (n : Nat) :
+    PresWidthSeq (List.replicate (n + 1) (hashableG1 g1).width)
+      (cm.readCommitment n (hashableG1 g1)) := by
+  rw [List.replicate_succ']
+  unfold Logup.CommittedMultiplicities.readCommitment
+  refine PresWidthSeq.bind (ws2 := [(hashableG1 g1).width])
+    (PresWidthSeq.readN (hashableG1 g1) n) (fun helperPolys => ?_)
+  exact PresWidthSeq.bind_pure (PresWidthSeq.read (hashableG1 g1)) _
+
+/-- `Logup.readMultiplicities` reads exactly one G1 point. -/
+theorem readMultiplicities_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁) (chunked : LogupChunkedArgument (Fr p)) :
+    PresWidthSeq [(hashableG1 g1).width]
+      (Logup.readMultiplicities chunked (hashableG1 g1)) := by
+  unfold Logup.readMultiplicities
+  exact PresWidthSeq.bind_pure (PresWidthSeq.read (hashableG1 g1)) _
+
+/-- One multiplicity row's commitment pass: exactly the sum of `numChunks + 1`. -/
+theorem commitRow_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁)
+    (row : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+    (c : Nat) (hc : (row.toList.map (fun x => x.2.numChunks + 1)).sum = c) :
+    PresWidthSeq (List.replicate c (hashableG1 g1).width)
+      (row.toList.foldlM (fun (acc' : Array (Logup.Committed G₁))
+        (x : Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)) => do
+        let c ← x.1.readCommitment x.2.numChunks (hashableG1 g1)
+        pure (acc'.push c)) #[]) := by
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc' : Array (Logup.Committed G₁))
+      (x : Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)) => do
+      let c ← x.1.readCommitment x.2.numChunks (hashableG1 g1)
+      pure (acc'.push c))
+    (wf := fun x => List.replicate (x.2.numChunks + 1) (hashableG1 g1).width)
+    (fun acc' x => PresWidthSeq.bind_pure
+      (readCommitment_width (p := p) (G₁ := G₁) g1 x.1 x.2.numChunks) _)
+    row.toList #[]
+  rw [AlgebraWidths.flatten_map_replicate] at h
+  simpa [hc] using h
+
+/-- The whole lookup-commitment pass over the multiplicity rows. -/
+theorem commitRows_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁)
+    (rows : List (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) :
+    PresWidthSeq
+      ((rows.map (fun row => List.replicate
+        (row.toList.map (fun x => x.2.numChunks + 1)).sum (hashableG1 g1).width)).flatten)
+      (rows.foldlM (init := #[]) (fun (acc : Array (Array (Logup.Committed G₁)))
+        (row : Array (Logup.CommittedMultiplicities G₁ ×
+          LogupChunkedArgument (Fr p))) => do
+        let out ← row.toList.foldlM (fun (acc' : Array (Logup.Committed G₁))
+          (x : Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)) => do
+          let c ← x.1.readCommitment x.2.numChunks (hashableG1 g1)
+          pure (acc'.push c)) #[]
+        pure (acc.push out))) := by
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc : Array (Array (Logup.Committed G₁)))
+      (row : Array (Logup.CommittedMultiplicities G₁ ×
+        LogupChunkedArgument (Fr p))) => do
+      let out ← row.toList.foldlM (fun (acc' : Array (Logup.Committed G₁))
+        (x : Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)) => do
+        let c ← x.1.readCommitment x.2.numChunks (hashableG1 g1)
+        pure (acc'.push c)) #[]
+      pure (acc.push out))
+    (wf := fun row => List.replicate
+      (row.toList.map (fun x => x.2.numChunks + 1)).sum (hashableG1 g1).width)
+    (fun acc row => PresWidthSeq.bind_pure (commitRow_width g1 row _ rfl) _) rows #[]
+  exact h
+
+/-- The same pass with a single row width `c`: `rows.length * c` G1 reads. -/
+theorem commitRows_width_const {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁)
+    (rows : List (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) (c : Nat)
+    (hc : ∀ row ∈ rows, (row.toList.map (fun x => x.2.numChunks + 1)).sum = c) :
+    PresWidthSeq (List.replicate (rows.length * c) (hashableG1 g1).width)
+      (rows.foldlM (init := #[]) (fun (acc : Array (Array (Logup.Committed G₁)))
+        (row : Array (Logup.CommittedMultiplicities G₁ ×
+          LogupChunkedArgument (Fr p))) => do
+        let out ← row.toList.foldlM (fun (acc' : Array (Logup.Committed G₁))
+          (x : Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)) => do
+          let c ← x.1.readCommitment x.2.numChunks (hashableG1 g1)
+          pure (acc'.push c)) #[]
+        pure (acc.push out))) := by
+  have h := commitRows_width g1 rows
+  have hsum : (rows.map (fun row => (row.toList.map (fun x => x.2.numChunks + 1)).sum)).sum
+      = rows.length * c := by
+    clear h
+    induction rows with
+    | nil => simp
+    | cons a as ih =>
+        rw [List.map_cons, List.sum_cons, List.length_cons, hc a (by simp),
+          ih (fun row hrow => hc row (by simp [hrow]))]
+        ring
+  have hflat :
+      ((rows.map (fun row => List.replicate
+        (row.toList.map (fun x => x.2.numChunks + 1)).sum (hashableG1 g1).width)).flatten)
+      = List.replicate
+          ((rows.map (fun row => (row.toList.map (fun x => x.2.numChunks + 1)).sum)).sum)
+          (hashableG1 g1).width :=
+    AlgebraWidths.flatten_map_replicate _ _ _
+  rw [hflat, hsum] at h
+  exact h
+
+/-- A `for`-loop whose body reads nothing and always yields appends nothing. -/
+theorem forIn_yield_width {α : Type} {g : α → PUnit → TranscriptM (ForInStep PUnit)}
+    (hg : ∀ a b, PresWidthSeq [] (g a b))
+    (hy : ∀ a b t r t', g a b t = .ok (r, t') → ∃ b', r = .yield b') :
+    ∀ (xs : List α) (b : PUnit), PresWidthSeq [] (forIn xs b g) := by
+  intro xs b
+  have h := PresWidthSeq.listForIn xs b (f := g) (wf := fun _ => []) hg hy
+  simpa [AlgebraWidths.flatten_map_nil] using h
+
+/-- Array version of `forIn_yield_width`. -/
+theorem arrayForIn_yield_width {α : Type} {g : α → PUnit → TranscriptM (ForInStep PUnit)}
+    (hg : ∀ a b, PresWidthSeq [] (g a b))
+    (hy : ∀ a b t r t', g a b t = .ok (r, t') → ∃ b', r = .yield b') :
+    ∀ (xs : Array α) (b : PUnit), PresWidthSeq [] (forIn xs b g) := by
+  intro xs b
+  rw [← Array.forIn_toList]
+  exact forIn_yield_width hg hy xs.toList b
+
+/-- `do m; pure (.yield b)` always yields. -/
+theorem yieldSeq {α : Type} (m : TranscriptM α) (b : PUnit) :
+    ∀ t r t', ((m >>= fun _ => pure (ForInStep.yield b)) t = .ok (r, t')) →
+      ∃ b', r = .yield b' := by
+  intro t r t' hr
+  exact PresWidthSeq.forIn_step_yield
+    (m := m) (g := fun _ => pure (ForInStep.yield b))
+    (fun a t1 r1 t1' h1 => PresWidthSeq.forIn_pure_yield _ t1 r1 t1' h1) t r t' hr
+
+/-- A single `tmCommon` followed by `pure (.yield b)` reads nothing. -/
+theorem commonYield_width {T : Type} (h : Midfall.Halo2.Hashable T) (x : T) :
+    PresWidthSeq [] (do tmCommon h x; pure (ForInStep.yield PUnit.unit)) :=
+  PresWidthSeq.bind_pure (PresWidthSeq.common h x) _
+
+theorem commonYield {T : Type} (h : Midfall.Halo2.Hashable T) (x : T) :
+    ∀ t r t', ((do tmCommon h x; pure (ForInStep.yield PUnit.unit)) t = .ok (r, t')) →
+      ∃ b, r = .yield b := by
+  intro t r t' hr
+  exact yieldSeq (tmCommon h x) PUnit.unit t r t' hr
+
+/-- The per-row body of the committed-instance absorb loop. -/
+def absorbCommittedBody {T : Type} (h : Midfall.Halo2.Hashable T) (row : Array T) :
+    TranscriptM (ForInStep PUnit) := do
+  forIn row PUnit.unit fun x _ => do tmCommon h x; pure (ForInStep.yield PUnit.unit)
+  pure (ForInStep.yield PUnit.unit)
+
+/-- The committed-instance absorb loop (the parser's first `for`). -/
+def absorbCommitted {T : Type} (h : Midfall.Halo2.Hashable T) (rows : List (Array T)) :
+    TranscriptM Unit :=
+  forIn rows PUnit.unit fun row _ => absorbCommittedBody h row
+
+/-- The scalar value loop of one instance column. -/
+def absorbInstColBody {p : ℕ} [Fact (Nat.Prime p)] (col : Array (Fr p)) :
+    TranscriptM Unit :=
+  forIn col PUnit.unit fun v _ => do
+    tmCommon (hashableFr (p := p)) v; pure (ForInStep.yield PUnit.unit)
+
+/-- One instance column: its length, then its values. -/
+def absorbInstCol {p : ℕ} [Fact (Nat.Prime p)] (col : Array (Fr p)) :
+    TranscriptM (ForInStep PUnit) := do
+  tmCommon (hashableFr (p := p)) (Nat.cast col.size)
+  absorbInstColBody col
+  pure (ForInStep.yield PUnit.unit)
+
+/-- One instance row. -/
+def absorbInstRow {p : ℕ} [Fact (Nat.Prime p)] (row : Array (Array (Fr p))) :
+    TranscriptM (ForInStep PUnit) := do
+  forIn row PUnit.unit fun col _ => absorbInstCol col
+  pure (ForInStep.yield PUnit.unit)
+
+/-- The instance-column absorb loop (the parser's second `for`). -/
+def absorbInst {p : ℕ} [Fact (Nat.Prime p)] (rows : List (Array (Array (Fr p)))) :
+    TranscriptM Unit :=
+  forIn rows PUnit.unit fun row _ => absorbInstRow row
+
+theorem absorbCommittedBody_width {T : Type} (h : Midfall.Halo2.Hashable T)
+    (row : Array T) : PresWidthSeq [] (absorbCommittedBody h row) := by
+  unfold absorbCommittedBody
+  exact PresWidthSeq.bind_pure
+    (arrayForIn_yield_width (g := fun x _ => do
+        tmCommon h x; pure (ForInStep.yield PUnit.unit))
+      (fun x b => commonYield_width h x)
+      (fun x b t r t' hr => commonYield h x t r t' hr) row PUnit.unit) _
+
+theorem absorbCommitted_width {T : Type} (h : Midfall.Halo2.Hashable T)
+    (rows : List (Array T)) : PresWidthSeq [] (absorbCommitted h rows) := by
+  unfold absorbCommitted
+  exact forIn_yield_width (g := fun row _ => absorbCommittedBody h row)
+    (fun row b => absorbCommittedBody_width h row)
+    (fun row b t r t' hr => by
+      unfold absorbCommittedBody at hr
+      exact yieldSeq _ _ t r t' hr) rows PUnit.unit
+
+theorem absorbInstColBody_width {p : ℕ} [Fact (Nat.Prime p)] (col : Array (Fr p)) :
+    PresWidthSeq [] (absorbInstColBody col) := by
+  unfold absorbInstColBody
+  rw [← Array.forIn_toList]
+  exact forIn_yield_width (g := fun v _ => do
+      tmCommon (hashableFr (p := p)) v; pure (ForInStep.yield PUnit.unit))
+    (fun v b => commonYield_width _ v)
+    (fun v b t r t' hr => commonYield _ v t r t' hr) col.toList PUnit.unit
+
+theorem absorbInstCol_width {p : ℕ} [Fact (Nat.Prime p)] (col : Array (Fr p)) :
+    PresWidthSeq [] (absorbInstCol col) := by
+  unfold absorbInstCol
+  exact PresWidthSeq.bind (ws2 := []) (PresWidthSeq.common _ (Nat.cast col.size))
+    (fun _ => PresWidthSeq.bind_pure (absorbInstColBody_width col) _)
+
+theorem absorbInstCol_yield {p : ℕ} [Fact (Nat.Prime p)] (col : Array (Fr p)) :
+    ∀ t r t', absorbInstCol col t = .ok (r, t') → ∃ b, r = .yield b := by
+  unfold absorbInstCol
+  exact yieldSeq _ _
+
+theorem absorbInstRow_width {p : ℕ} [Fact (Nat.Prime p)] (row : Array (Array (Fr p))) :
+    PresWidthSeq [] (absorbInstRow row) := by
+  unfold absorbInstRow
+  exact PresWidthSeq.bind_pure
+    (arrayForIn_yield_width (g := fun col _ => absorbInstCol col)
+      (fun col b => absorbInstCol_width col)
+      (fun col b t r t' hr => absorbInstCol_yield col t r t' hr) row PUnit.unit) _
+
+theorem absorbInst_width {p : ℕ} [Fact (Nat.Prime p)]
+    (rows : List (Array (Array (Fr p)))) : PresWidthSeq [] (absorbInst rows) := by
+  unfold absorbInst
+  exact forIn_yield_width (g := fun row _ => absorbInstRow row)
+    (fun row b => absorbInstRow_width row)
+    (fun row b t r t' hr => by
+      unfold absorbInstRow at hr
+      exact yieldSeq _ _ t r t' hr) rows PUnit.unit
+
+/-- The per-proof advice-read fold of one phase. -/
+def adviceProofFold {G₁ : Type} [Group G₁] (g1 : G1Codec G₁) (n : Nat) (cols : List Nat)
+    (init : List (List (Nat × G₁))) : TranscriptM (List (List (Nat × G₁))) :=
+  (List.range n).foldlM (init := init) fun acc k => do
+    let reads ← tmReadN (hashableG1 g1) cols.length
+    pure ((acc.take k) ++ [((acc[k]?.getD []) ++ (List.zip cols reads.toList))] ++
+      (acc.drop (k + 1)))
+
+/-- The challenge squeezes of one phase. -/
+def phaseChalFold {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : VerifyingKey (Fr p) G₁) (ph : Nat) (init : List (Nat × Fr p)) :
+    TranscriptM (List (Nat × Fr p)) :=
+  (List.zip (List.range vk.cs.numChallenges) vk.cs.challengePhase.toList).foldlM
+    (init := init) fun acc (e : Nat × Phase) =>
+      if e.2.val == ph then do
+        let c ← tmSqueezeChallenge
+        pure (acc ++ [(e.1, c)])
+      else pure acc
+
+/-- One iteration of the parser's phase loop. -/
+def phaseStep {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat) (ph : Phase)
+    (st : List (List (Nat × G₁)) × List (Nat × Fr p)) :
+    TranscriptM (List (List (Nat × G₁)) × List (Nat × Fr p)) := do
+  let cols := advicePhaseCols vk.cs ph.val
+  let adv ← adviceProofFold g1 n cols st.1
+  let chals ← phaseChalFold vk ph.val st.2
+  pure (adv, chals)
+
+/-- The parser's phase loop. -/
+def phaseFold {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat)
+    (init : List (List (Nat × G₁)) × List (Nat × Fr p)) :
+    TranscriptM (List (List (Nat × G₁)) × List (Nat × Fr p)) :=
+  vk.cs.phases.foldlM (init := init) fun st ph => phaseStep g1 vk n ph st
+
+/-- The lookup-multiplicity row of one proof. -/
+def multRow {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) :
+    TranscriptM (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p))) :=
+  vk.cs.lookups.toList.foldlM
+    (fun (acc' : Array (Logup.CommittedMultiplicities G₁ ×
+        LogupChunkedArgument (Fr p))) (x : LogupBatchedArgument (Fr p)) => do
+      let chunked ← StateT.lift (x.chunkByDegree vk.csDegree)
+      let m ← Logup.readMultiplicities chunked (hashableG1 g1)
+      pure (acc'.push (m, chunked))) #[]
+
+/-- The multiplicity pass over the proofs. -/
+def multFold {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat)
+    (init : Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) :
+    TranscriptM (Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) :=
+  (List.range n).foldlM (init := init) fun acc _ => do
+    let row ← multRow g1 vk
+    pure (acc.push row)
+
+/-- The permutation-product pass over the proofs. -/
+def permFold {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat)
+    (init : Array (Permutation.Committed G₁)) : TranscriptM (Array (Permutation.Committed G₁)) :=
+  (List.range n).foldlM (init := init) fun acc _ => do
+    let pc ← Permutation.readProductCommitments vk.cs.permutation vk.csDegree
+      (hashableG1 g1)
+    pure (acc.push pc)
+
+/-- The trashcan row of one proof. -/
+def trashRow {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) :
+    TranscriptM (Array (Trash.Committed G₁)) :=
+  vk.cs.trashcans.toList.foldlM
+    (fun (acc' : Array (Trash.Committed G₁)) (x : TrashArgument (Fr p)) => do
+      let c ← Trash.readCommitted x (hashableG1 g1)
+      pure (acc'.push c)) #[]
+
+/-- The trashcan pass over the proofs. -/
+def trashFold {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat)
+    (init : Array (Array (Trash.Committed G₁))) : TranscriptM (Array (Array (Trash.Committed G₁))) :=
+  (List.range n).foldlM (init := init) fun acc _ => do
+    let row ← trashRow g1 vk
+    pure (acc.push row)
+
+theorem adviceProofFold_width {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (n : Nat) (cols : List Nat) (init : List (List (Nat × G₁))) :
+    PresWidthSeq (List.replicate (n * cols.length) (hashableG1 g1).width)
+      (adviceProofFold g1 n cols init) := by
+  unfold adviceProofFold
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc : List (List (Nat × G₁))) (k : Nat) => do
+      let reads ← tmReadN (hashableG1 g1) cols.length
+      pure ((acc.take k) ++ [((acc[k]?.getD []) ++ (List.zip cols reads.toList))] ++
+        (acc.drop (k + 1))))
+    (wf := fun _ => List.replicate cols.length (hashableG1 g1).width)
+    (fun acc k => PresWidthSeq.bind_pure
+      (PresWidthSeq.readN (hashableG1 g1) cols.length) _) (List.range n) init
+  rw [AlgebraWidths.flatten_map_replicate_const, List.length_range] at h
+  exact h
+
+theorem phaseChalFold_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : VerifyingKey (Fr p) G₁) (ph : Nat) (init : List (Nat × Fr p)) :
+    PresWidthSeq [] (phaseChalFold vk ph init) := by
+  unfold phaseChalFold
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc : List (Nat × Fr p)) (e : Nat × Phase) =>
+      if e.2.val == ph then do
+        let c ← tmSqueezeChallenge
+        pure (acc ++ [(e.1, c)])
+      else pure acc)
+    (wf := fun _ => [])
+    (fun acc e => by
+      split
+      · exact PresWidthSeq.bind_pure (PresWidthSeq.squeezeChallenge (p := p)) _
+      · exact PresWidthSeq.pure _)
+    (List.zip (List.range vk.cs.numChallenges) vk.cs.challengePhase.toList) init
+  simpa [AlgebraWidths.flatten_map_nil] using h
+
+theorem phaseStep_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat) (ph : Phase)
+    (st : List (List (Nat × G₁)) × List (Nat × Fr p)) :
+    PresWidthSeq (List.replicate (n * (advicePhaseCols vk.cs ph.val).length)
+        (hashableG1 g1).width) (phaseStep g1 vk n ph st) := by
+  unfold phaseStep
+  exact PresWidthSeq.nil_right (PresWidthSeq.bind (ws2 := [])
+    (adviceProofFold_width g1 n _ st.1)
+    (fun adv => PresWidthSeq.bind_pure (phaseChalFold_width vk ph.val st.2) _))
+
+theorem phaseFold_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat)
+    (init : List (List (Nat × G₁)) × List (Nat × Fr p)) :
+    PresWidthSeq (List.replicate (adviceReadCount vk.cs n) (hashableG1 g1).width)
+      (phaseFold g1 vk n init) := by
+  unfold phaseFold
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (st : List (List (Nat × G₁)) × List (Nat × Fr p)) (ph : Phase) =>
+      phaseStep g1 vk n ph st)
+    (wf := fun ph => List.replicate (n * (advicePhaseCols vk.cs ph.val).length)
+      (hashableG1 g1).width)
+    (fun st ph => phaseStep_width g1 vk n ph st) vk.cs.phases init
+  rw [AlgebraWidths.flatten_map_replicate] at h
+  exact h
+
+theorem multRow_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) :
+    PresWidthSeq (List.replicate vk.cs.lookups.toList.length (hashableG1 g1).width)
+      (multRow g1 vk) := by
+  unfold multRow
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc' : Array (Logup.CommittedMultiplicities G₁ ×
+        LogupChunkedArgument (Fr p))) (x : LogupBatchedArgument (Fr p)) => do
+      let chunked ← StateT.lift (x.chunkByDegree vk.csDegree)
+      let m ← Logup.readMultiplicities chunked (hashableG1 g1)
+      pure (acc'.push (m, chunked)))
+    (wf := fun _ => [(hashableG1 g1).width])
+    (fun acc' x => PresWidthSeq.bind (ws2 := [(hashableG1 g1).width])
+      (PresWidthSeq.lift (x.chunkByDegree vk.csDegree))
+      (fun chunked => PresWidthSeq.bind_pure (readMultiplicities_width g1 chunked) _))
+    vk.cs.lookups.toList #[]
+  simpa [AlgebraWidths.flatten_map_single] using h
+
+theorem multFold_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat)
+    (init : Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) :
+    PresWidthSeq (List.replicate (n * vk.cs.lookups.toList.length) (hashableG1 g1).width)
+      (multFold g1 vk n init) := by
+  unfold multFold
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc : Array (Array (Logup.CommittedMultiplicities G₁ ×
+        LogupChunkedArgument (Fr p)))) (_ : Nat) => do
+      let row ← multRow g1 vk
+      pure (acc.push row))
+    (wf := fun _ => List.replicate vk.cs.lookups.toList.length (hashableG1 g1).width)
+    (fun acc _ => PresWidthSeq.bind_pure (multRow_width g1 vk) _) (List.range n) init
+  rw [AlgebraWidths.flatten_map_replicate_const, List.length_range] at h
+  exact h
+
+theorem permFold_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat)
+    (init : Array (Permutation.Committed G₁)) :
+    PresWidthSeq
+      (List.replicate (n * Permutation.numChunksOf vk.cs.permutation.columns.size
+        (vk.csDegree - 2)) (hashableG1 g1).width)
+      (permFold g1 vk n init) := by
+  unfold permFold
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc : Array (Permutation.Committed G₁)) (_ : Nat) => do
+      let pc ← Permutation.readProductCommitments vk.cs.permutation vk.csDegree
+        (hashableG1 g1)
+      pure (acc.push pc))
+    (wf := fun _ => List.replicate (Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2)) (hashableG1 g1).width)
+    (fun acc _ => PresWidthSeq.bind_pure
+      (readProductCommitments_width (p := p) (G₁ := G₁) g1 vk.cs.permutation vk.csDegree) _)
+    (List.range n) init
+  rw [AlgebraWidths.flatten_map_replicate_const, List.length_range] at h
+  exact h
+
+theorem trashRow_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) :
+    PresWidthSeq (List.replicate vk.cs.trashcans.toList.length (hashableG1 g1).width)
+      (trashRow g1 vk) := by
+  unfold trashRow
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc' : Array (Trash.Committed G₁)) (x : TrashArgument (Fr p)) => do
+      let c ← Trash.readCommitted x (hashableG1 g1)
+      pure (acc'.push c))
+    (wf := fun _ => [(hashableG1 g1).width])
+    (fun acc' x => PresWidthSeq.bind_pure (trashReadCommitted_width g1 x) _)
+    vk.cs.trashcans.toList #[]
+  simpa [AlgebraWidths.flatten_map_single] using h
+
+theorem trashFold_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (n : Nat)
+    (init : Array (Array (Trash.Committed G₁))) :
+    PresWidthSeq (List.replicate (n * vk.cs.trashcans.size) (hashableG1 g1).width)
+      (trashFold g1 vk n init) := by
+  unfold trashFold
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc : Array (Array (Trash.Committed G₁))) (_ : Nat) => do
+      let row ← trashRow g1 vk
+      pure (acc.push row))
+    (wf := fun _ => List.replicate vk.cs.trashcans.toList.length (hashableG1 g1).width)
+    (fun acc _ => PresWidthSeq.bind_pure (trashRow_width g1 vk) _) (List.range n) init
+  rw [AlgebraWidths.flatten_map_replicate_const, List.length_range] at h
+  exact h
+
 theorem map_add_three_map {α : Type} (l : List α) (f : α → Nat) :
     (l.map f).map (fun x => x + 3) = l.map (fun x => f x + 3) := by
   induction l with
