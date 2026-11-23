@@ -638,6 +638,113 @@ theorem plan_of_generated {R : Render p G₁ G₂ Gₜ} (h : Midfall.LoweringV3.
     have hp : plan = R.plan := (congrArg GenOut.plan hA).trans hplan
     exact ⟨rawMeta, plan, hraw, hpl, hp.symm⟩
 
+/-- **STEP 1b: EVERY FIELD OF THE PLAN THAT `PlanMeta` READS.** The `newFromVk` peel every
+    plan-shape lemma in this file repeats, stopped at the four fields the plan-meta card
+    needs: the `meta_data_for_stable_static_layout` result (its four components are the
+    pointer, the post-processed meta, the data and the default-config layout), the payload the
+    plan was built for, and the plan's own meta/data/memory. The plan's memory is exposed as
+    the concrete constructor on the post-processed meta, which is what `plan.rs:259-270`'s
+    four config overrides build. PROVED. -/
+theorem newFromVk_planParts {F : Type} [BEq F] (feat : Features) (field : FieldCtx F)
+    (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding)
+    (payload : Halo2VerifyingKey) (plan : LoweringPlan Unit Unit)
+    (h : newFromVk feat field cs rawMeta numInstances accEncoding payload = .ok plan) :
+    ∃ (vkMptr : Ptr) (meta_ : ConstraintSystemMeta) (dat : Data)
+      (memQ : VerifierMemoryLayout) (cfg : VerifierMemoryLayoutConfig),
+      metaDataForStableStaticLayout feat (envOf field cs) rawMeta numInstances payload
+        = .ok (vkMptr, meta_, dat, memQ) ∧
+      plan.vk = payload ∧ plan.meta_ = meta_ ∧ plan.data = dat ∧
+      plan.memory = VerifierMemoryLayout.new meta_ payload vkMptr cfg := by
+  simp only [newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨q, hq, h1⟩ := (match_ok_iff _ _).mp h
+  obtain ⟨_proofLayout, _, h2⟩ := (match_ok_iff _ _).mp h1
+  obtain ⟨_qplan, _, h3⟩ := (match_ok_iff _ _).mp h2
+  obtain ⟨_build, _, h4⟩ := (match_ok_iff _ _).mp h3
+  obtain ⟨_nativeWords, _, h5⟩ := (match_ok_iff _ _).mp h4
+  obtain ⟨_pcsReq, _, h6⟩ := (match_ok_iff _ _).mp h5
+  obtain ⟨_accTerms, _, h7⟩ := (match_ok_iff _ _).mp h6
+  obtain ⟨memory, hmem, h8⟩ := (match_ok_iff _ _).mp h7
+  obtain ⟨_opModel, _, h9⟩ := (match_ok_iff _ _).mp h8
+  obtain ⟨_trip, _, h10⟩ := (match_ok_iff _ _).mp h9
+  have hnew : ∃ cfg : VerifierMemoryLayoutConfig,
+      memory = VerifierMemoryLayout.new q.2.1 payload q.1 cfg := by
+    simp only [memoryLayoutFor, Bind.bind, Except.bind, envOf] at hmem
+    obtain ⟨t, _, hmem2⟩ := (match_ok_iff _ _).mp hmem
+    exact ⟨_, (Except.ok.inj hmem2).symm⟩
+  obtain ⟨cfg, hcfg⟩ := hnew
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals
+    (exact ⟨q.1, q.2.1, q.2.2.1, q.2.2.2, cfg, by simpa using hq, rfl, rfl, rfl, hcfg⟩)
+
+/-- **THE INTERMEDIATE-VS-FINAL STABILITY LEMMA, AT THE `meta_data_for_vk` BOUNDARY.**
+    `meta_data_for_vk` builds its `Data` against the default-config layout of
+    `meta1 = m.setNumDummyEvals 0` (VK:512-514), while the plan the caller builds carries the
+    PCS/quotient-configured layout of `meta2 = meta1.setNumPointSets n` (VK:519-522 then
+    PL:259-270). This says the constructor's `Data` is ALSO `Data.new meta1` on the final
+    layout, for EVERY configuration: `VerifierMemoryLayout.new` gives the ten bases `Data.new`
+    reads the same values (`LayoutMemory.new_dataBases_setNumPointSets`) and `Data.new_congr`
+    transfers the equation. This is the exact missing fact CERT.1 named. PROVED. -/
+theorem metaDataForVk_data_new_final {F : Type} [BEq F] (field : FieldCtx F)
+    (cs : ConstraintSystem F) (m : ConstraintSystemMeta) (numInstances : Nat)
+    (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    {meta' : ConstraintSystemMeta} {dat : Data} {mem : VerifierMemoryLayout}
+    (h : metaDataForVk Features.solidity (envOf field cs) m numInstances vk vkMptr
+        = .ok (meta', dat, mem))
+    (cfg : VerifierMemoryLayoutConfig) :
+    Data.new (m.setNumDummyEvals 0) vk
+      (VerifierMemoryLayout.new meta' vk vkMptr cfg) = .ok dat := by
+  obtain ⟨_rawMemory, memory0, _rawData, data0, n, _hrm, _hrd, hmem0, hdata0, hdat, _hn,
+    hmetaEq, _hmemQ⟩ :=
+    metaDataForVk_parts Features.solidity (envOf field cs) m numInstances vk vkMptr rfl h
+  obtain ⟨cfg0, hcfg0⟩ := memoryLayoutFor_new (envOf field cs) (m.setNumDummyEvals 0)
+    numInstances vk vkMptr verifierMemoryLayoutConfigDefault hmem0
+  have hcfg0' : memory0 = VerifierMemoryLayout.new (m.setNumDummyEvals 0) vk vkMptr cfg0 := hcfg0
+  have hs : SameDataBases (VerifierMemoryLayout.new (m.setNumDummyEvals 0) vk vkMptr cfg0)
+      (VerifierMemoryLayout.new meta' vk vkMptr cfg) := by
+    rw [hmetaEq]
+    exact new_dataBases_setNumPointSets (m.setNumDummyEvals 0) vk vkMptr n cfg0 cfg
+  rw [hcfg0'] at hdata0
+  rw [Data.new_congr hs] at hdata0
+  rw [hdat]
+  exact hdata0
+
+/-- **THE PLAN META, FROM THE GENERATED CLAUSE (CERT.1).** `PlanMeta`'s `Data.new` equation
+    is stated on the FINAL plan memory (`plan.rs:259-270`, PCS/quotient config, meta after
+    `set_num_point_sets`), while `meta_data_for_vk` builds its `Data` on the INTERMEDIATE
+    default-config layout (`vk.rs:512-514`, meta before `set_num_point_sets`). The two layouts
+    differ in exactly the two ways `LayoutMemory.new_dataBases_setNumPointSets` covers - the
+    point-set count and the config - and `Data.new` reads only the ten bases that lemma pins,
+    so the constructor's `Data` is also `Data.new` on the plan's memory. The point-set
+    equation and the post-processed meta come straight from `metaDataForVk_parts`. PROVED. -/
+theorem planMeta_of_generated {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) : Midfall.LoweringV3.PlanMeta R := by
+  obtain ⟨rawMeta, plan, hraw, hpl, hp⟩ := plan_of_generated h
+  obtain ⟨vkMptr, metaOut, dat, memQ, cfgP, hqM, hvk, hmeta, hdat, hmemP⟩ :=
+    newFromVk_planParts Features.solidity (frFieldCtx R.E.delta) R.vk.cs rawMeta
+      R.cfg.numInstances R.cfg.accumulator R.plan.vk plan hpl
+  have hqVk : metaDataForVk Features.solidity (envOf (frFieldCtx R.E.delta) R.vk.cs)
+      rawMeta R.cfg.numInstances R.plan.vk vkMptr = .ok (metaOut, dat, memQ) :=
+    metaDataForStableStaticLayout_metaDataForVk hqM
+  obtain ⟨_rawMemory, _memory0, _rawData, _data0, n, _hrm, _hrd, _hmem0, _hdata0, _hdat0, hn,
+    hmetaEq, _hmemQ⟩ :=
+    metaDataForVk_parts Features.solidity (envOf (frFieldCtx R.E.delta) R.vk.cs) rawMeta
+      R.cfg.numInstances R.plan.vk vkMptr rfl hqVk
+  have hdataPlan : Data.new (rawMeta.setNumDummyEvals 0) R.plan.vk plan.memory = .ok dat := by
+    rw [hmemP]
+    exact metaDataForVk_data_new_final (frFieldCtx R.E.delta) R.vk.cs rawMeta
+      R.cfg.numInstances R.plan.vk vkMptr hqVk cfgP
+  refine ⟨rawMeta, n, hraw, ?_, ?_, ?_⟩
+  · rw [hp]
+    rw [hvk, hdat]
+    exact hdataPlan
+  · rw [hp, hdat]
+    exact hn
+  · rw [hp]
+    rw [hmeta, hmetaEq]
+
 /-- THE RENDER FACE, UNCONDITIONAL. -/
 theorem plan_memory_eq_new {R : Render p G₁ G₂ Gₜ}
     (h : Midfall.LoweringV3.GeneratedBy R) :
@@ -1619,7 +1726,13 @@ end Midfall.LoweringV3.MemoryPairs
 #cone_sorries Midfall.LoweringV3.MemoryPairs.vkPins_disjoint_of_memory_new
 #cone_sorries Midfall.LoweringV3.MemoryPairs.vkPayload_g1Identity_disjoint
 #print axioms Midfall.LoweringV3.MemoryPairs.newFromVk_memory
+#print axioms Midfall.LoweringV3.MemoryPairs.newFromVk_planParts
+#print axioms Midfall.LoweringV3.MemoryPairs.metaDataForVk_data_new_final
 #print axioms Midfall.LoweringV3.MemoryPairs.plan_of_generated
+#print axioms Midfall.LoweringV3.MemoryPairs.planMeta_of_generated
+#assert_axioms Midfall.LoweringV3.MemoryPairs.planMeta_of_generated
+  [propext, Classical.choice, Quot.sound] native []
+#cone_sorries Midfall.LoweringV3.MemoryPairs.planMeta_of_generated
 #print axioms Midfall.LoweringV3.MemoryPairs.plan_memory_eq_new
 #print axioms Midfall.LoweringV3.MemoryPairs.vkPins_disjoint_of_generated
 #cone_sorries Midfall.LoweringV3.MemoryPairs.vkPins_disjoint_of_generated

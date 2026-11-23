@@ -253,7 +253,7 @@ theorem curveSupported : SupportedS curveSurface curveSurface.o₀ := by
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
       ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl,
-      by decide, by decide⟩
+      by decide, by decide, by decide⟩
 
 /-- **THE 'vkPoints' CLAUSE IS NOT DOING THE IDENTITY TRICK HERE.** Stated for an
     ARBITRARY point of the carrier, which makes it a fact about the CODEC and not about

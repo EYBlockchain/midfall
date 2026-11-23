@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `e8145055` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`,
+**As of:** `091101f7` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`,
 KAT 1648/119, closure 5251/620 digest `da67ab3de31b92e9`). Later merges are proof terms and below-root KZG modules; the closure digest is unchanged. Current report: root **11 / sound 5**,
 register **96 rows / 11 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
 260 modules; closure **5251 declarations / 620 external leaves / digest `da67ab3de31b92e9`**.
@@ -250,6 +250,22 @@ At `7a55dc8d` (2026-11-23): register **96 rows / 11 ROOT / 22 CERT**, 0 REFUTED,
 (`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
 620 external leaves / digest 209cde2f48115a76**; quick gate green.
 
+**D-GATE13 (signed, 2026-11-23)**: `calldata_roundtrip` carries the size bound
+`proofEnd + 32 + 32*numInstances < 2^256`, supplied from the entry frame's `cdBoundB`/`cdSize`
+(ABI length words are `u256`). It is a calldata/entry-frame bound, not a row/root hypothesis; the
+roundtrip is proved at `Midfall.Lowering.calldata_roundtrip` with standard axioms.
+
+**D-GATE12 (signed, 2026-11-23)**: `WellFormed` gains `lookupChunkable` — every lookup's
+`nbParallelLookupsPerChunk vk.csDegree` succeeds and is positive, so `chunkByDegree`/`rustChunks` is
+total on the verifier's lookups. This is the missing static fact the parseTrace multiplicity walk
+needs; it is a VK well-formedness clause, not a row/root hypothesis.
+
+**D-GATE11 (signed, 2026-11-23)**: `SupportedInput` gains a count bound (CS/lookup/
+commitment/point-set counts and VK payload length) so the generated layout's
+`staticWorkingSetFits`/`batchInvertScratchFits` and `proofEnd` bounds follow from the input; this closes
+the `prog_programFits`/`v3_cdBound` CERT leaves. It is a generator input-predicate strengthening, not a
+`ValidV3`/row/root hypothesis.
+
 **D-GATE8 (signed, 2026-11-23)**: `programFits`/`programFitB` carry `staticWorkingSetFits pv`
 (`traceU256Mptr + wordBytes < 2^256`), the full static-region fit. A11 derived `PG_PAIRINGFIT`,
 `pairingLhsMptr_toNat_of_valid` and `pairingRhsMptr_toNat_of_valid` from it;
@@ -338,12 +354,22 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
   same steps inside `hp_selector`, not as an exported lemma). No `ValidV3`, row, bundle or root
   hypothesis was added, and `SupportedInput` was strengthened.
 
+### `block_live` assembly architecture (critical)
+
+The closed case proofs (`FpFit.block_live_finalPairing`, `PcsBlock4.pcsBlock_contract`,
+`LagrangeBlock.lagBlock_contract`, `TranscriptRows.tp_blockProgS`, `QuotientRows.q_blockProgS`) live
+ABOVE `Totality`. `block_live`/`totalV3_correct` therefore cannot be closed in `Totality`; they move
+to a new `Midfall.LoweringV3.BlockLive` module that imports `Totality` + the case modules and sits
+below `Composition` (which will import it for `totalV3_correct`). The current `Totality` versions
+stay as the per-case lemmas only.
+
 ### Six-lane critical path (user cap)
 
-Phase 1 (live): A9 PCS `bpLines`/`bq`/term lines; A4 lag group 13 + inner contract; A6
-`common_uncompressed_g1` scope/body contract; A11b SIM.10 `xcript_total`; A5 KZG query-map bridge;
-D2 CERT.5 gas scans. A12's F1 gate is data-blocked on `LeanAccepts` (test-SRS proof vs production
-key).
+Nine-lane wave (2026-11-23): A9b PCS `pcsGenBody`/set-block/block; A4 lag group 13 + inner contract;
+A6 `common_uncompressed_g1` scope/body contract; A11c `XcriptAlgebraRun`/`tp_agrees`; A5 KZG
+same-order query shape/`hclass`; D2 CERT.5 gas scans; calldata `calldata_roundtrip`; PlanMeta/CERT.1;
+D-GATE11 generator input-fit. A12's F1 gate is data-blocked on `LeanAccepts` (test-SRS proof vs
+production key).
 
 Phase 2: `block_live` (3/7: traceReturn, vkLoading, finalPairing poison; clean finalPairing via A12),
 then the TP/PCS/lag/quotient cases, `TotalV3`, and the `Rows` glue.
