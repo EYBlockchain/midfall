@@ -3084,6 +3084,254 @@ theorem block_live_finalPairing_of_body
   · exact block_live_finalPairing_clean_of_body R product hR hpc H vkAddr cd hbody V st hclean
   · exact block_live_finalPairing_poison R product hR H vkAddr cd V st hpois
 
+theorem ec_gate_halts {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} (err : Nat)
+    (hlookup : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (hret0 : VEnv.get V "ret" = some (0 : U256)) :
+    ∃ V' st', ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
+        [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number err)])]) V' st' .halt := by
+  let e : Expr EVM.Op := Expr.lit (.number err)
+  obtain ⟨stR, hbody⟩ := fail_body_run (c := c) (g := g)
+    (([] : FScope (Bridge.Dialect c g)) :: cenv) (BitVec.ofNat 256 err) st
+  have hvar : EvalExpr (Bridge.Dialect c g) funs V st (Expr.var "ret") (.vals [0] st) :=
+    Step.var hret0
+  have hz : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.var "ret"]) (.vals [1] st) :=
+    Step.builtinOk (D := Bridge.Dialect c g) (Step.argsCons Step.argsNil hvar)
+      (by simp [builtinWithExternal, stepOp, un, b2w])
+  have harg : EvalExpr (Bridge.Dialect c g)
+      (([] : FScope (Bridge.Dialect c g)) :: funs) V st e
+      (.vals [BitVec.ofNat 256 err] st) := Step.lit
+  have hlookup' : lookupFun (([] : FScope (Bridge.Dialect c g)) :: funs) "fail" =
+      some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv) := hlookup
+  have hbody' : ExecStmts (Bridge.Dialect c g) (([] : FScope (Bridge.Dialect c g)) :: cenv)
+      ([("sel", BitVec.ofNat 256 err)] : VEnv (Bridge.Dialect c g)) st
+      (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl.body) [("sel", BitVec.ofNat 256 err)] stR .halt := hbody
+  have hcall : Step (Bridge.Dialect c g) (([] : FScope (Bridge.Dialect c g)) :: funs) V st
+      (.expr (.call "fail" [e])) (.eres (.halt stR)) := by
+    refine Step.callHalt (D := Bridge.Dialect c g) (fn := "fail") (args := [e])
+      (argvals := [BitVec.ofNat 256 err]) (decl := Midfall.LoweringV2.Blocks.TraceReturn.failFDecl)
+      (cenv := cenv) (Vend := [("sel", BitVec.ofNat 256 err)]) (st1 := st) (st2 := stR)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [])
+        (Step.argsNil (D := Bridge.Dialect c g)) harg) hlookup' (by rfl) ?_
+    exact Step.block (D := Bridge.Dialect c g) (funs := cenv)
+      (body := Midfall.LoweringV2.Blocks.TraceReturn.failFDecl.body) hbody'
+  have hstmt : Step (Bridge.Dialect c g) (([] : FScope (Bridge.Dialect c g)) :: funs) V st
+      (.stmt (.exprStmt (.call "fail" [e]))) (.sres V stR .halt) :=
+    Step.exprStmtHalt hcall
+  have hbodyCond : ExecStmts (Bridge.Dialect c g) (([] : FScope (Bridge.Dialect c g)) :: funs) V st
+      [Stmt.exprStmt (.call "fail" [e])] V stR .halt :=
+    Step.seqStop hstmt (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide)
+  have hcond : Step (Bridge.Dialect c g) funs V st
+      (.stmt (.cond (Expr.builtin Op.iszero [Expr.var "ret"])
+        [Stmt.exprStmt (.call "fail" [e])]))
+      (.sres (restore V V) stR .halt) :=
+    Step.ifTrue (D := Bridge.Dialect c g) (body := [Stmt.exprStmt (.call "fail" [e])])
+      hz (by show (1 : U256) ≠ 0; decide)
+      (Step.block (D := Bridge.Dialect c g) (funs := funs)
+        (body := [Stmt.exprStmt (.call "fail" [e])]) hbodyCond)
+  exact ⟨restore V V, stR, hcond⟩
+
+
+/-- The second guard's halt, from `ret = 0` after the mload assign. -/
+theorem ecPairing_gate2_halts {c : ExternalCalls} {g : ExternalGas} {funs cenv V st err} 
+    (hlookup : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (hret0 : VEnv.get V "ret" = some (0 : U256)) :
+    ∃ V' st', ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
+        [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number err)])]) V' st' .halt :=
+  ec_gate_halts err hlookup hret0
+
+/-- **PHASE 3b - THE HALT TAIL.** If the incoming `ret` is 0, or it is 1 with a 32-byte
+    return and a scratch word other than 1, the helper's post-staticcall statements take a
+    `fail` arm and halt. -/
+theorem ecPairing_tail_halt {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState)
+    (V : VEnv (Bridge.Dialect c g)) (scratch errPre errProof : Nat)
+    (hfail : ∃ cenv, lookupFun funs "fail" =
+      some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (r : U256) (hret : VEnv.get V "ret" = some r)
+    (hc : r = 0 ∨ (r = 1 ∧ st.returndata.length = 32 ∧ loadWord st.memory scratch ≠ 1))
+    (hscratchv : VEnv.get V "scratch" = some (BitVec.ofNat 256 scratch))
+    (hscratchWin : scratch < 2 ^ 256) :
+    ∃ (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState),
+      ExecStmts (Bridge.Dialect c g) funs V st
+        [Stmt.assign ["ret"] (Expr.builtin Op.and
+           [Expr.var "ret", Expr.builtin Op.eq
+             [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)]]),
+         Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
+           [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errPre)])],
+         Stmt.assign ["ret"] (Expr.builtin Op.and
+           [Expr.var "ret", Expr.builtin Op.eq
+             [Expr.builtin Op.mload [Expr.var "scratch"], Expr.lit (.number 1)]]),
+         Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
+           [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errProof)])],
+         Stmt.assign ["ret"] (Expr.lit (.number 1))] V' st' .halt := by
+  obtain ⟨cenv, hlookup⟩ := hfail
+  -- statement 9, at a general incoming `r`
+  have hrd : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.returndatasize []) (.vals [(BitVec.ofNat 256 st.returndata.length : U256)] st) :=
+    Step.builtinOk (D := Bridge.Dialect c g) Step.argsNil
+      (by simp only [builtinWithExternal, stepOp, rd0])
+  have hlit32 : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (.number 32))
+      (.vals [(32 : U256)] st) := Step.lit
+  have heq1 : ∀ (r : U256), VEnv.get V "ret" = some r →
+      EvalExpr (Bridge.Dialect c g) funs V st
+        (Expr.builtin Op.eq [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)])
+        (.vals [b2w (BitVec.ofNat 256 st.returndata.length = (32 : U256))] st) := by
+    intro r _
+    refine Step.builtinOk (D := Bridge.Dialect c g) (op := Op.eq)
+      (args := [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)])
+      (argvals := [BitVec.ofNat 256 st.returndata.length, (32 : U256)])
+      (rets := [b2w (BitVec.ofNat 256 st.returndata.length = (32 : U256))]) (st1 := st) (st2 := st)
+      (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g)
+        Step.argsNil hlit32) hrd) ?_
+    simp only [builtinWithExternal, stepOp, bin]
+  have hand1 : ∀ (r : U256), VEnv.get V "ret" = some r →
+      EvalExpr (Bridge.Dialect c g) funs V st
+        (Expr.builtin Op.and [Expr.var "ret", Expr.builtin Op.eq
+          [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)]])
+        (.vals [r &&& b2w (BitVec.ofNat 256 st.returndata.length = (32 : U256))] st) := by
+    intro r hr
+    refine Step.builtinOk (D := Bridge.Dialect c g)
+      (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g)
+        Step.argsNil (heq1 r hr)) (Step.var hr)) ?_
+    simp only [builtinWithExternal, stepOp, bin]
+  have hret0 : VEnv.get (VEnv.setMany V ["ret"] [0]) "ret" = some (0 : U256) := by
+    rw [show VEnv.setMany V ["ret"] [0] = VEnv.set V "ret" (0 : U256) by dsimp only; rfl]
+    exact Midfall.LoweringV2.Blocks.EcPairing.venv_get_set_same hret
+  rcases hc with hr0 | ⟨hr1, hlen, hload⟩
+  · -- incoming ret = 0: the first guard fires
+    subst hr0
+    have hand0 : EvalExpr (Bridge.Dialect c g) funs V st
+        (Expr.builtin Op.and [Expr.var "ret", Expr.builtin Op.eq
+          [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)]]) (.vals [(0 : U256)] st) := by
+      have h := hand1 (0 : U256) hret
+      have hz : (0 : U256) &&& b2w (BitVec.ofNat 256 st.returndata.length = (32 : U256)) = 0 := by
+        simp
+      simpa only [hz] using h
+    have hs9 : ExecStmt (Bridge.Dialect c g) funs V st
+        (Stmt.assign ["ret"] (Expr.builtin Op.and
+          [Expr.var "ret", Expr.builtin Op.eq
+            [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)]]))
+        (VEnv.setMany V ["ret"] [0]) st .normal :=
+      Step.assignVal hand0 rfl
+    have hret0' : VEnv.get (VEnv.setMany V ["ret"] [0]) "ret" = some (0 : U256) := by
+      rw [show VEnv.setMany V ["ret"] [0] = VEnv.set V "ret" (0 : U256) by dsimp only; rfl]
+      exact Midfall.LoweringV2.Blocks.EcPairing.venv_get_set_same hret
+    obtain ⟨V', st', hgate⟩ := ec_gate_halts (c := c) (g := g)
+      (funs := funs) (cenv := cenv) (V := VEnv.setMany V ["ret"] [0]) (st := st)
+      errPre hlookup hret0'
+    refine ⟨V', st', ?_⟩
+    exact Step.seqCons hs9 (Step.seqStop hgate (by decide))
+  · -- incoming ret = 1, 32-byte return, scratch word ≠ 1: the second guard fires
+    subst hr1
+    have h1 : b2w (BitVec.ofNat 256 st.returndata.length = (32 : U256)) = 1 := by
+      rw [hlen]; decide
+    have hand1v : EvalExpr (Bridge.Dialect c g) funs V st
+        (Expr.builtin Op.and [Expr.var "ret", Expr.builtin Op.eq
+          [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)]]) (.vals [(1 : U256)] st) := by
+      have h := hand1 (1 : U256) hret
+      have hz : (1 : U256) &&& b2w (BitVec.ofNat 256 st.returndata.length = (32 : U256)) = 1 := by
+        rw [h1]; simp
+      simpa only [hz] using h
+    have hs9 : ExecStmt (Bridge.Dialect c g) funs V st
+        (Stmt.assign ["ret"] (Expr.builtin Op.and
+          [Expr.var "ret", Expr.builtin Op.eq
+            [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)]]))
+        (VEnv.setMany V ["ret"] [1]) st .normal :=
+      Step.assignVal hand1v rfl
+    have hret1 : VEnv.get (VEnv.setMany V ["ret"] [1]) "ret" = some (1 : U256) := by
+      rw [show VEnv.setMany V ["ret"] [1] = VEnv.set V "ret" (1 : U256) by dsimp only; rfl]
+      exact Midfall.LoweringV2.Blocks.EcPairing.venv_get_set_same hret
+    -- the first guard skips
+    have hz1 : EvalExpr (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+        (Expr.builtin Op.iszero [Expr.var "ret"]) (.vals [0] st) := by
+      refine Step.builtinOk (D := Bridge.Dialect c g) (args := [Expr.var "ret"])
+        (argvals := [(1 : U256)]) (rets := [0]) (st1 := st) (st2 := st)
+        (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil
+          (Step.var (D := Bridge.Dialect c g) (v := (1 : U256)) hret1)) ?_
+      simp only [builtinWithExternal, stepOp, un, b2w]; rfl
+    have hg1 : ExecStmt (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+        (Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
+          [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errPre)])])
+        (VEnv.setMany V ["ret"] [1]) st .normal :=
+      Step.ifFalse hz1 rfl
+    -- statement 11: mload = 1 is false
+    have hml : EvalExpr (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+        (Expr.builtin Op.mload [Expr.var "scratch"])
+        (.vals [loadWord st.memory (BitVec.ofNat 256 scratch).toNat]
+          (touchMemory st (BitVec.ofNat 256 scratch).toNat 32)) := by
+      have hsv : VEnv.get (VEnv.setMany V ["ret"] [1]) "scratch" = some (BitVec.ofNat 256 scratch) := by
+        rw [show VEnv.setMany V ["ret"] [1] = VEnv.set V "ret" (1 : U256) by dsimp only; rfl,
+          Midfall.LoweringV2.Blocks.EcPairing.fp_venv_get_set_ne (D := Bridge.Dialect c g) (x := "ret") (y := "scratch")
+            (v := (1 : U256)) (by decide)]
+        exact hscratchv
+      have hv : EvalExpr (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+          (Expr.var "scratch") (.vals [BitVec.ofNat 256 scratch] st) := Step.var hsv
+      refine Step.builtinOk (D := Bridge.Dialect c g)
+        (args := [Expr.var "scratch"]) (argvals := [BitVec.ofNat 256 scratch])
+        (rets := [loadWord st.memory (BitVec.ofNat 256 scratch).toNat])
+        (st1 := st) (st2 := touchMemory st (BitVec.ofNat 256 scratch).toNat 32)
+        (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil hv) ?_
+      simp only [builtinWithExternal, stepOp]
+    have hto : (BitVec.ofNat 256 scratch).toNat = scratch := by
+      rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hscratchWin]
+    have hload0 : b2w (loadWord st.memory scratch = (1 : U256)) = 0 := by
+      simp only [b2w, decide_eq_false hload, Bool.false_eq_true, if_false]
+    have hml' : EvalExpr (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+        (Expr.builtin Op.mload [Expr.var "scratch"])
+        (.vals [loadWord st.memory scratch] (touchMemory st scratch 32)) := by
+      have h := hml
+      rw [hto] at h
+      exact h
+    have hlit1 : EvalExpr (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+        (Expr.lit (.number 1)) (.vals [(1 : U256)] st) :=
+      Step.lit (D := Bridge.Dialect c g) (funs := funs) (V := VEnv.setMany V ["ret"] [1])
+        (st := st) (l := Literal.number 1)
+    have heq2 : EvalExpr (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+        (Expr.builtin Op.eq [Expr.builtin Op.mload [Expr.var "scratch"], Expr.lit (.number 1)])
+        (.vals [b2w (loadWord st.memory scratch = (1 : U256))] (touchMemory st scratch 32)) := by
+      refine Step.builtinOk (D := Bridge.Dialect c g) (op := Op.eq)
+        (args := [Expr.builtin Op.mload [Expr.var "scratch"], Expr.lit (.number 1)])
+        (argvals := [loadWord st.memory scratch, (1 : U256)])
+        (rets := [b2w (loadWord st.memory scratch = (1 : U256))])
+        (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g)
+          Step.argsNil hlit1) hml') ?_
+      simp only [builtinWithExternal, stepOp, bin]
+    have heq2' : EvalExpr (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+        (Expr.builtin Op.eq [Expr.builtin Op.mload [Expr.var "scratch"], Expr.lit (.number 1)])
+        (.vals [0] (touchMemory st scratch 32)) := by
+      simpa only [hload0] using heq2
+    have hand2 : EvalExpr (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+        (Expr.builtin Op.and [Expr.var "ret", Expr.builtin Op.eq
+          [Expr.builtin Op.mload [Expr.var "scratch"], Expr.lit (.number 1)]]) (.vals [0]
+            (touchMemory st scratch 32)) := by
+      refine Step.builtinOk (D := Bridge.Dialect c g)
+        (Step.argsCons (D := Bridge.Dialect c g) (Step.argsCons (D := Bridge.Dialect c g)
+          Step.argsNil heq2') (Step.var hret1)) ?_
+      simp only [builtinWithExternal, stepOp, bin]; simp
+    have hs11 : ExecStmt (Bridge.Dialect c g) funs (VEnv.setMany V ["ret"] [1]) st
+        (Stmt.assign ["ret"] (Expr.builtin Op.and
+          [Expr.var "ret", Expr.builtin Op.eq
+            [Expr.builtin Op.mload [Expr.var "scratch"], Expr.lit (.number 1)]]))
+        (VEnv.setMany (VEnv.setMany V ["ret"] [1]) ["ret"] [0])
+        (touchMemory st scratch 32) .normal :=
+      Step.assignVal hand2 rfl
+    have hret2 : VEnv.get (VEnv.setMany (VEnv.setMany V ["ret"] [1]) ["ret"] [0]) "ret" =
+        some (0 : U256) := by
+      rw [show VEnv.setMany (VEnv.setMany V ["ret"] [1]) ["ret"] [0] =
+        VEnv.set (VEnv.setMany V ["ret"] [1]) "ret" (0 : U256) by dsimp only; rfl]
+      exact Midfall.LoweringV2.Blocks.EcPairing.venv_get_set_same hret1
+    obtain ⟨V', st', hgate⟩ := ec_gate_halts (c := c) (g := g)
+      (funs := funs) (cenv := cenv) (V := VEnv.setMany (VEnv.setMany V ["ret"] [1]) ["ret"] [0])
+      (st := touchMemory st scratch 32) errProof hlookup hret2
+    refine ⟨V', st', ?_⟩
+    exact Step.seqCons hs9 (Step.seqCons hg1 (Step.seqCons hs11
+      (Step.seqStop hgate (by decide))))
+
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
     answering at the four precompile addresses, and the block's all-runs row to classify the

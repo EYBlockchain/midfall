@@ -287,7 +287,7 @@ theorem fp_venv_get_set_ne {D : YulSemantics.Dialect} [DecidableEq D.Value] {V :
     1 (the honest response on a valid frame with a true product), the five statements after the
     staticcall run normally with `ret = 1`; the two `fail` arms are not taken. -/
 theorem ecPairing_tail_normal (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState)
-    (V : VEnv (Bridge.Dialect c g)) (scratch errProof : Nat)
+    (V : VEnv (Bridge.Dialect c g)) (scratch errPre errProof : Nat)
     (hret : VEnv.get V "ret" = some (1 : U256))
     (hscratch : VEnv.get V "scratch" = some (BitVec.ofNat 256 scratch))
     (hlen : st.returndata.length = 32)
@@ -299,7 +299,7 @@ theorem ecPairing_tail_normal (funs : FunEnv (Bridge.Dialect c g)) (st : EvmStat
            [Expr.var "ret", Expr.builtin Op.eq
              [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)]]),
          Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
-           [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errProof)])],
+           [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errPre)])],
          Stmt.assign ["ret"] (Expr.builtin Op.and
            [Expr.var "ret", Expr.builtin Op.eq
              [Expr.builtin Op.mload [Expr.var "scratch"], Expr.lit (.number 1)]]),
@@ -351,7 +351,7 @@ theorem ecPairing_tail_normal (funs : FunEnv (Bridge.Dialect c g)) (st : EvmStat
     simp only [builtinWithExternal, stepOp, un, b2w]; rfl
   have hg1 : ExecStmt (Bridge.Dialect c g) funs V1 st
       (Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
-        [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errProof)])]) V1 st .normal :=
+        [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errPre)])]) V1 st .normal :=
     Step.ifFalse hz1 rfl
   let V2 : VEnv (Bridge.Dialect c g) := VEnv.setMany V1 ["ret"] [1]
   have hml : EvalExpr (Bridge.Dialect c g) funs V1 st
