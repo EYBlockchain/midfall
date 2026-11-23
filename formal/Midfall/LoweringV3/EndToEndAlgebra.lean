@@ -2635,6 +2635,99 @@ theorem readAlgebraEvalCount_parseTrace_eq_numMainEvals {G₁ : Type} (g1 : G1Co
     · cases hp5
   · cases hp5
 
+set_option maxHeartbeats 4000000 in
+/-- The generated plan's protocol is `fromConstraintSystem` applied to the same
+    constraint system and the deployed committed-instance count (`1`, from
+    `SupportedV2.instShape`). -/
+theorem plan_protocol_fromConstraintSystem {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) :
+    ProtocolPlan.fromConstraintSystem Features.solidity R.vk.cs 1
+      = .ok R.plan.meta_.protocol := by
+  obtain ⟨rawMeta, plan, hraw, hpl, hp⟩ := Midfall.LoweringV2.pfx_plan_of_generated hR.generated
+  unfold ConstraintSystemMeta.new at hraw
+  simp only [Bind.bind] at hraw
+  obtain ⟨protocol, hproto, hok⟩ := AlgebraWidths.except_bind_ok hraw
+  have hrawMeta : rawMeta.protocol = protocol := by
+    have h := Except.ok.inj hok
+    rw [← h]
+  have hmetaprot : plan.meta_.protocol = protocol := by
+    have h2 := (newFromVk_meta_numEvals (Midfall.Generator.PlanNew.frFieldCtx R.E.delta)
+      R.vk.cs rawMeta R.cfg.numInstances R.cfg.accumulator R.plan.vk plan hpl).2
+    rw [h2, hrawMeta]
+  rw [hp, hmetaprot]
+  rw [hR.supported.instShape.2] at hproto
+  exact hproto
+
+/-- **`PrepareLogSlots` from A6, the KZG point-set bridge, and the two count
+    identities that remain outside this lane.** The readAlgebra eval count is no
+    longer assumed for an arbitrary trace: it is derived for the trace the
+    `prepare` run actually parses, from `readAlgebraEvalCount_parseTrace` and the
+    protocol's seven-group decomposition. -/
+theorem PrepareLogSlots_of_parsed {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (nParse n : Nat)
+    (hParse : ∀ (inst : Array (Fr p)),
+      ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
+    (hMulti : MultiPrepareBlockWidth R.E.g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) n)
+    (hQuot : nParse + readAlgebraQuotientCount Features.solidity R.vk
+      = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).prefixG1Count)
+    (hPoint : n = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numPointSets) :
+    PrepareLogSlots R := by
+  intro inst π d t hrun
+  unfold Midfall.Halo2.prepare at hrun
+  unfold Midfall.Halo2.prepareWith at hrun
+  unfold Verifier.prepare at hrun
+  obtain ⟨trace, t1, hparse, hver⟩ := PresWidthSeq.run_bind_ok hrun
+  have heval := readAlgebraEvalCount_parseTrace_eq_numMainEvals R.E.g1 R.vk
+    hR.supported.wf (1 : G₁) inst (plan_protocol_fromConstraintSystem R hR) hparse
+  have h2 : readAlgebraEvalCount R.vk trace.permutations trace.lookups trace.trashcans
+      1 1 #[#[inst.toList.toArray]]
+      = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numEvals :=
+    heval.trans (plan_numEvals_eq_protocol R hR).symm
+  have hslots := prepareSlots_of_counts R inst trace nParse n hQuot h2 hPoint
+  have hparseW : t1.log.toList.map (fun r => r.1) =
+      (Transcript.initFromBytes π).log.toList.map (fun r => r.1)
+        ++ List.replicate nParse (hashableG1 R.E.g1).width :=
+    hParse inst (Transcript.initFromBytes π) t1 trace hparse
+  have hverW : t.log.toList.map (fun r => r.1) = t1.log.toList.map (fun r => r.1) ++
+      (readAlgebraWidths R.E.g1 Features.solidity R.vk trace.permutations
+          trace.lookups trace.trashcans 1 1 #[#[inst.toList.toArray]]
+        ++ ([(hashableG1 R.E.g1).width]
+            ++ List.replicate n (hashableFr (p := p)).width
+            ++ [(hashableG1 R.E.g1).width])) :=
+    verifyAlgebraicConstraints_width R.E.g1 R.E.delta Features.solidity
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) R.vk trace #[#[(1 : G₁)]] #[#[inst.toList.toArray]] n hMulti
+      rfl t1 t d hver
+  have hcompose : ∀ (l : List (Nat × Bytes)),
+      l.map (fun r => if r.1 = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                      else Midfall.Lowering.WireSlot.fr)
+        = (l.map (fun r => r.1)).map
+            (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                      else Midfall.Lowering.WireSlot.fr) := by
+    intro l
+    rw [List.map_map]
+    rfl
+  rw [hcompose, hverW, hparseW]
+  have hinit : (Transcript.initFromBytes π).log.toList.map (fun r => r.1) = [] := rfl
+  rw [hinit]
+  simp only [List.nil_append]
+  exact hslots
+
 end Composition
 
 end Midfall.LoweringV3
