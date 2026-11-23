@@ -2235,6 +2235,11 @@ theorem ult_of_toNat_lt {x y : U256} (h : x.toNat < y.toNat) : x.ult y = true :=
   rw [BitVec.ult]
   exact decide_eq_true h
 
+/-- The converse of `ult_of_toNat_lt`. -/
+theorem toNat_lt_of_ult {x y : U256} (h : x.ult y = true) : x.toNat < y.toNat := by
+  rw [BitVec.ult] at h
+  exact of_decide_eq_true h
+
 theorem exec_guard_ret0_lt_vars_false {funs : FunEnv (Bridge.Dialect c g)}
     {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
     {x y : String} {xv yv : U256}
@@ -2763,6 +2768,7 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms exec_guard_false [propext, Classical.choice, Quot.sound]
 #assert_axioms ofNat_ult_ofNat_false [propext, Classical.choice, Quot.sound]
 #assert_axioms ult_of_toNat_lt [propext, Classical.choice, Quot.sound]
+#assert_axioms toNat_lt_of_ult [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_ret0_lt_vars_false [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_ret0_iszero_lt_vars_false [propext, Classical.choice, Quot.sound]
 #assert_axioms b2w_eq_false_of_ne [propext, Classical.choice, Quot.sound]

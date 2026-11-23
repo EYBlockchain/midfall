@@ -2054,6 +2054,7 @@ structure BridgeHeadSucc (p a : Nat) (gv x_last : U256) (st st' : EvmState)
   hmem : st'.memory = st.memory
   henv : st'.env = st.env
   hhalt : st'.halted = st.halted
+  hx_canon : x_last.toNat < Midfall.Yul.blsR
 
 theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
     (p a mp : Nat) (gv x_last : U256) (hmp : mp < 2 ^ 256) :
@@ -2157,7 +2158,15 @@ theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dial
                   exact hpf,
                 by rw [hst4, hst3, hst2, hst1]; rfl,
                 by rw [hst4, hst3, hst2, hst1]; rfl,
-                by rw [hst4, hst3, hst2, hst1]; rfl⟩
+                by rw [hst4, hst3, hst2, hst1]; rfl,
+                by
+                  have hbR : Midfall.Yul.blsR < 2 ^ 256 := by decide
+                  have htoNatR : (BitVec.ofNat 256 Midfall.Yul.blsR).toNat = Midfall.Yul.blsR := by
+                    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hbR]
+                  have hxlt : v11.toNat < Midfall.Yul.blsR := by
+                    rw [← htoNatR]
+                    exact toNat_lt_of_ult hlt
+                  exact hxlt⟩
           · have h4c := exec_guard_iszero_reject (funs := funs) (x := "gp") hgetgp h4
             by_cases hgp0 : Midfall.LoweringV3.QuotientRows.wMulmodAt gv v11
                 (BitVec.ofNat 256 Midfall.Yul.blsR) = 0
@@ -2195,7 +2204,7 @@ theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dial
   · obtain ⟨-, -, -, -, ho1, -, -⟩ := exec_let_mload_var_inv (x := "x_last") (y := "mptr") h1
     exact absurd ho1 hne1
 
-structure BridgeSucc (p a : Nat) (gp' : U256) (st st' : EvmState)
+structure BridgeSucc (p a : Nat) (gp' x_last : U256) (st st' : EvmState)
     (V' : VEnv (Bridge.Dialect c g)) (o : Outcome) : Prop where
   hok : o = .normal
   hgp : VEnv.get V' "gp" = some gp'
@@ -2209,6 +2218,7 @@ structure BridgeSucc (p a : Nat) (gp' : U256) (st st' : EvmState)
   hmem : st'.memory = mxMem st.memory p gp'
   henv : st'.env = st.env
   hhalt : st'.halted = st.halted
+  hx_canon : x_last.toNat < Midfall.Yul.blsR
 
 theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
     (p a mp : Nat) (gv x_last : U256)
@@ -2227,7 +2237,7 @@ theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c
       (fun _ st V' st' o =>
         BridgeReject st st' V' o ∨
         BridgeSucc p a (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
-          (BitVec.ofNat 256 Midfall.Yul.blsR)) st st' V' o) := by
+          (BitVec.ofNat 256 Midfall.Yul.blsR)) x_last st st' V' o) := by
   have hsplit : seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10 =
       seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 4 ++
         seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 15 6 := by
@@ -2244,7 +2254,7 @@ theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c
           (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
             (BitVec.ofNat 256 Midfall.Yul.blsR)) hp
           V1 st1 ⟨hs.hgp_mptr, hs.hgp, hs.hr⟩ V' st' o hstores
-      refine Or.inr ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      refine Or.inr ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
       · rw [hV']; exact hs.hgp
       · exact hs.hgp_canon
       · exact hs.hgp_ne
@@ -2256,6 +2266,7 @@ theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c
       · rw [hmem, hs.hmem]
       · rw [henv, hs.henv]
       · rw [hhalt, hs.hhalt]
+      · exact hs.hx_canon
   · have hh := bi_bridge_head_full (c := c) (g := g) consts funs p a mp gv x_last hmp
       V st hpre V' st' o hhead
     rcases hh with hrej | hs
