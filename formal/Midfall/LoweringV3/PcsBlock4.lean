@@ -3675,6 +3675,26 @@ def PcsGP3 (n : Nat) (rv x2v fev cptr qep : U256) (a : Nat → U256)
     (∀ i, i < n → VEnv.get V (pcsBpName i) = some (pcsBpVal rv a i)) ∧
     (∀ i, i < n → VEnv.get V (nm i) = some (a i))
 
+theorem pcsStmtsContractAll_append_mid4 {funs : FunEnv (Bridge.Dialect c g)}
+    {ss1 ss2 : Block EVM.Op}
+    {pre : VEnv (Bridge.Dialect c g) → EvmState → Prop}
+    {mid : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Prop}
+    {post : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Outcome → Prop}
+    (h1 : StmtsContractAll (D := Bridge.Dialect c g) funs ss1 pre
+      (fun V st V' st' o => o = .normal ∧ mid V st V' st'))
+    (h2 : ∀ V st, pre V st → StmtsContractAll (D := Bridge.Dialect c g) funs ss2
+      (fun V' st' => mid V st V' st')
+      (fun _ _ V' st' o => post V st V' st' o)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (ss1 ++ ss2) pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1run, h2run⟩ | ⟨h1run, hne⟩
+  · obtain ⟨_, hmid⟩ := h1 V st hpre V1 st1 .normal h1run
+    exact h2 V st hpre V1 st1 hmid V' st' o h2run
+  · exact absurd (h1 V st hpre V' st' o h1run).1 hne
+
 set_option maxHeartbeats 30000000 in
 theorem pcsGenPrefix_contract {funs : FunEnv (Bridge.Dialect c g)}
     (points : List Int) (distinctRotations : List Int)
@@ -3695,7 +3715,8 @@ theorem pcsGenPrefix_contract {funs : FunEnv (Bridge.Dialect c g)}
         ++ (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten
         ++ pcsBpLines n nm)
       (PcsGPre x3v rv x2v fev cptr qep p xs n)
-      (fun _ _ V' st' o => o = .normal ∧ PcsGP3 n rv x2v fev cptr qep a nm V' st') := by
+      (fun V st V' st' o => o = .normal ∧ PcsGP3 n rv x2v fev cptr qep a nm V' st' ∧
+        st' = st) := by
   intro V st hpre V' st' o hrun
   unfold PcsGPre at hpre
   obtain ⟨hx3, hr, hx2, hf, hcptrV, hqepV, hrot, hbpnone, hlbnone⟩ := hpre
@@ -3727,12 +3748,12 @@ theorem pcsGenPrefix_contract {funs : FunEnv (Bridge.Dialect c g)}
   have hdx' : StmtsContractAll (D := Bridge.Dialect c g) funs
       (xs.map (fun q => pcsDxStmt q.1 q.2))
       (PcsGPre x3v rv x2v fev cptr qep p xs n)
-      (fun V st V' st' o => o = .normal ∧ P1 V' st') := by
+      (fun V st V' st' o => o = .normal ∧ P1 V' st' ∧ st' = st) := by
     intro V0 st0 hp V1 st1 o1 h1
     unfold PcsGPre at hp
     obtain ⟨hx3', hr', hx2', hf', hcptr', hqep', hrot', hbp', hlb'⟩ := hp
     obtain ⟨ho, hgets, hpres, hst⟩ := hdx V0 st0 ⟨hx3', hr', hrot'⟩ V1 st1 o1 h1
-    refine ⟨ho, ?_⟩
+    refine ⟨ho, ?_, hst⟩
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, hgets, ?_, ?_⟩
     · rw [hpres "r" (fun q hq => by
         intro h; exact hnames.dxR q hq h.symm)]
@@ -3759,7 +3780,7 @@ theorem pcsGenPrefix_contract {funs : FunEnv (Bridge.Dialect c g)}
   let P2 := PcsGP2 (c := c) (g := g) points.length n rv x2v fev cptr qep a xs
   have hlb : StmtsContractAll (D := Bridge.Dialect c g) funs
       (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten
-      P1 (fun V st V' st' o => o = .normal ∧ P2 V' st') := by
+      P1 (fun V st V' st' o => o = .normal ∧ P2 V' st' ∧ st' = st) := by
     intro V0 st0 hp V1 st1 o1 h1
     obtain ⟨hr', hx2', hf', hcptr', hqep', hrot', hdx', hbp', hlb'⟩ := hp
     obtain ⟨ho, hlgets, hpres, hst⟩ := pcsLbasisLines_contract
@@ -3768,7 +3789,7 @@ theorem pcsGenPrefix_contract {funs : FunEnv (Bridge.Dialect c g)}
       hnames.lbDist hnames.lbIdx
       V0 st0 ⟨hr', hrot', (fun g hg k hk => hrot' k (hks_sub g hg k hk)), hlb'⟩
       V1 st1 o1 h1
-    refine ⟨ho, ?_⟩
+    refine ⟨ho, ?_, hst⟩
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · rw [hpres "r" (fun g hg => by pcs_ne1)]
       exact hr'
@@ -3796,18 +3817,21 @@ theorem pcsGenPrefix_contract {funs : FunEnv (Bridge.Dialect c g)}
       ((xs.map (fun q => pcsDxStmt q.1 q.2))
         ++ (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten)
       (PcsGPre x3v rv x2v fev cptr qep p xs n)
-      (fun _ _ V' st' o => o = .normal ∧ P2 V' st') :=
-    pcsStmtsContractAll_append_mid' (c := c) (g := g) (funs := funs)
+      (fun V0 st0 V' st' o => o = .normal ∧ P2 V' st' ∧ st' = st0) :=
+    pcsStmtsContractAll_append_mid4 (c := c) (g := g) (funs := funs)
       (ss1 := xs.map (fun q => pcsDxStmt q.1 q.2))
       (ss2 := (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten)
       (pre := PcsGPre x3v rv x2v fev cptr qep p xs n)
-      (mid := fun _ _ V' st' => P1 V' st')
-      (post := fun _ _ V' st' o => o = .normal ∧ P2 V' st')
-      hdx' (fun V st hp => hlb)
+      (mid := fun V0 st0 V' st' => P1 V' st' ∧ st' = st0)
+      (post := fun V0 st0 V' st' o => o = .normal ∧ P2 V' st' ∧ st' = st0)
+      hdx' (fun V0 st0 _hp => by
+        intro V1 st1 hmid V2 st2 o2 h2
+        obtain ⟨ho, hp2, hst2⟩ := hlb V1 st1 hmid.1 V2 st2 o2 h2
+        exact ⟨ho, hp2, hst2.trans hmid.2⟩)
   -- bp lines
   let P3 := PcsGP3 (c := c) (g := g) n rv x2v fev cptr qep a nm
   have hbp : StmtsContractAll (D := Bridge.Dialect c g) funs
-      (pcsBpLines n nm) P2 (fun V st V' st' o => o = .normal ∧ P3 V' st') := by
+      (pcsBpLines n nm) P2 (fun V st V' st' o => o = .normal ∧ P3 V' st' ∧ st' = st) := by
     intro V0 st0 hp V1 st1 o1 h1
     obtain ⟨hr', hx2', hf', hcptr', hqep', hdx', hlb', hbp'⟩ := hp
     have hnmv : ∀ i, i < n → VEnv.get V0 (nm i) = some (a i) := by
@@ -3837,7 +3861,7 @@ theorem pcsGenPrefix_contract {funs : FunEnv (Bridge.Dialect c g)}
         rw [hn, pcsBatchInputs_length]; omega)
       hbpR hbpIn hbpDist
       V0 st0 ⟨hr', hnmv, hbp'⟩ V1 st1 o1 h1
-    refine ⟨ho, ?_⟩
+    refine ⟨ho, ?_, hst⟩
     refine ⟨?_, ?_, ?_, ?_, ?_, hbgets, ?_⟩
     · rw [hpres "r" (fun i hi => by pcs_ne1)]
       exact hr'
@@ -3858,15 +3882,18 @@ theorem pcsGenPrefix_contract {funs : FunEnv (Bridge.Dialect c g)}
         ++ (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten
         ++ pcsBpLines n nm)
       (PcsGPre x3v rv x2v fev cptr qep p xs n)
-      (fun _ _ V' st' o => o = .normal ∧ P3 V' st') :=
-    pcsStmtsContractAll_append_mid' (c := c) (g := g) (funs := funs)
+      (fun V0 st0 V' st' o => o = .normal ∧ P3 V' st' ∧ st' = st0) :=
+    pcsStmtsContractAll_append_mid4 (c := c) (g := g) (funs := funs)
       (ss1 := (xs.map (fun q => pcsDxStmt q.1 q.2))
         ++ (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten)
       (ss2 := pcsBpLines n nm)
       (pre := PcsGPre x3v rv x2v fev cptr qep p xs n)
-      (mid := fun _ _ V' st' => P2 V' st')
-      (post := fun _ _ V' st' o => o = .normal ∧ P3 V' st')
-      (by simpa [List.append_assoc] using h12) (fun V st hp => hbp)
+      (mid := fun V0 st0 V' st' => P2 V' st' ∧ st' = st0)
+      (post := fun V0 st0 V' st' o => o = .normal ∧ P3 V' st' ∧ st' = st0)
+      (by simpa [List.append_assoc] using h12) (fun V0 st0 _hp => by
+        intro V1 st1 hmid V2 st2 o2 h2
+        obtain ⟨ho, hp3, hst2⟩ := hbp V1 st1 hmid.1 V2 st2 o2 h2
+        exact ⟨ho, hp3, hst2.trans hmid.2⟩)
   exact h123 V st ⟨hx3, hr, hx2, hf, hcptrV, hqepV, hrot, hbpnone, hlbnone⟩ V' st' o hrun
 
 
@@ -3926,26 +3953,6 @@ theorem pcsStmtsContractAll_append_halt' {funs : FunEnv (Bridge.Dialect c g)}
   · rcases h1 V st hpre V' st' o h1run with ⟨hh, _⟩ | ⟨_, hpost⟩
     · exact absurd hh hne
     · exact hpost
-
-theorem pcsStmtsContractAll_append_mid4 {funs : FunEnv (Bridge.Dialect c g)}
-    {ss1 ss2 : Block EVM.Op}
-    {pre : VEnv (Bridge.Dialect c g) → EvmState → Prop}
-    {mid : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
-      EvmState → Prop}
-    {post : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
-      EvmState → Outcome → Prop}
-    (h1 : StmtsContractAll (D := Bridge.Dialect c g) funs ss1 pre
-      (fun V st V' st' o => o = .normal ∧ mid V st V' st'))
-    (h2 : ∀ V st, pre V st → StmtsContractAll (D := Bridge.Dialect c g) funs ss2
-      (fun V' st' => mid V st V' st')
-      (fun _ _ V' st' o => post V st V' st' o)) :
-    StmtsContractAll (D := Bridge.Dialect c g) funs (ss1 ++ ss2) pre post := by
-  intro V st hpre V' st' o hrun
-  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
-      ⟨V1, st1, h1run, h2run⟩ | ⟨h1run, hne⟩
-  · obtain ⟨_, hmid⟩ := h1 V st hpre V1 st1 .normal h1run
-    exact h2 V st hpre V1 st1 hmid V' st' o h2run
-  · exact absurd (h1 V st hpre V' st' o h1run).1 hne
 
 set_option maxHeartbeats 30000000 in
 theorem pcsGenBatch_contract {g : ExternalGas} (product : PairingProduct)
