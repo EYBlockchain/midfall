@@ -1042,6 +1042,58 @@ def QEvalSetCountMatches {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     (g1 : G1Codec G₁) (pcs : Pcs p G₁ G₂ Gₜ) (n : Nat) : Prop :=
   MultiPrepareBlockWidth g1 pcs n
 
+/-- `StateT.get`'s run. -/
+theorem StateT_get_run (s : Transcript) :
+    (StateT.get : TranscriptM Transcript).run s = .ok (s, s) := rfl
+
+/-- `run` distributes over a propositional `if`. -/
+theorem run_ite {α : Type} (c : Prop) [Decidable c] (a b : TranscriptM α) (s : Transcript) :
+    (if c then a else b).run s = if c then a.run s else b.run s := by
+  by_cases h : c <;> simp [h]
+
+/-- `PresWidthSeq` is invariant under equality of the width list. -/
+theorem PresWidthSeq.congr_width {α : Type} {m : TranscriptM α} {ws ws' : List Nat}
+    (h : PresWidthSeq ws m) (hw : ws = ws') : PresWidthSeq ws' m := by
+  rw [← hw]
+  exact h
+
+/-- `PresWidthSeq` of the exact `StateT.get` / `match m.run` / `StateT.set`
+    dance of `verifyAlgebraicConstraints` is `m`'s width: the ok arm sets the
+    state and returns, the error arms throw. -/
+theorem rerun {α : Type} {m : TranscriptM α} {ws : List Nat} (hm : PresWidthSeq ws m) :
+    PresWidthSeq ws
+      (StateT.get >>= fun (t : Transcript) =>
+        match m.run t with
+        | .ok (a, t2) => (do StateT.set t2; (pure a : TranscriptM α))
+        | .error (Fault.panic site) => throw (Fault.panic site)
+        | .error (Fault.error e) => throw (Fault.error Error.opening)) := by
+  intro s s' b h
+  rw [StateT.run_bind, StateT_get_run] at h
+  change StateT.run (match m.run s with
+      | .ok (a, t2) => (do StateT.set t2; (pure a : TranscriptM α))
+      | .error (Fault.panic site) => throw (Fault.panic site)
+      | .error (Fault.error e) => throw (Fault.error Error.opening)) s = .ok (b, s') at h
+  cases hmr : m.run s with
+  | error e =>
+      cases e with
+      | panic site =>
+          simp only [hmr] at h
+          change (Except.error (Fault.panic site) : Except Fault (α × Transcript)) =
+            .ok (b, s') at h
+          cases h
+      | error e2 =>
+          simp only [hmr] at h
+          change (Except.error (Fault.error Error.opening) : Except Fault (α × Transcript)) =
+            .ok (b, s') at h
+          cases h
+  | ok p =>
+      obtain ⟨a0, t2⟩ := p
+      simp only [hmr] at h
+      have hh : (a0, t2) = (b, s') := Except.ok.inj h
+      have hw := hm s t2 a0 hmr
+      cases hh
+      exact hw
+
 section Composition
 
 variable {G₁ G₂ Gₜ : Type}
@@ -1079,6 +1131,97 @@ theorem readAlgebra_multiPrepare_widths (g1 : G1Codec G₁) (feat : Features)
   refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift (lin alg))
     (fun queries => ?_)
   exact hMulti queries
+
+/-- **The `verifyAlgebraicConstraints` run glue.** `readAlgebra`'s exact
+    widths, the width-free `linearize` lift, and the `multiPrepare` block (via
+    `MultiPrepareBlockWidth`), with the `committed.isEmpty` guard and the
+    `StateT.get`/`match`/`StateT.set` re-run dance discharged. -/
+theorem verifyAlgebraicConstraints_width (g1 : G1Codec G₁) (delta : Fr p)
+    (feat : Features) (pcs : Pcs p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁)
+    (trace : VerifierTrace (Fr p) G₁)
+    (committedInstances : Array (Array G₁)) (instances : Array (Array (Array (Fr p))))
+    (n : Nat) (hMulti : MultiPrepareBlockWidth g1 pcs n)
+    (hCommit : feat.committedInstances = true) :
+    PresWidthSeq
+      (readAlgebraWidths g1 feat vk trace.permutations trace.lookups trace.trashcans
+          ((Option.map (fun r => r.size)
+            (if feat.committedInstances then committedInstances
+             else arrayReplicate instances.size (#[] : Array G₁))[0]?).getD 0)
+          instances.size instances
+        ++ ([(hashableG1 g1).width] ++
+          List.replicate n (hashableFr (p := p)).width ++
+          [(hashableG1 g1).width]))
+      (Verifier.verifyAlgebraicConstraints (p := p) g1 delta feat pcs vk trace
+        committedInstances instances) := by
+  unfold Verifier.verifyAlgebraicConstraints
+  dsimp only
+  simp only [hCommit]
+  refine PresWidthSeq.ite ?_ ?_
+  · refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.throwFault _) (fun _ => ?_)
+    refine PresWidthSeq.bind
+      (ws1 := readAlgebraWidths g1 feat vk trace.permutations trace.lookups trace.trashcans
+        _ instances.size instances)
+      (PresWidthSeq.readAlgebra_widths g1 feat vk trace.permutations trace.lookups
+        trace.trashcans _ instances.size instances) (fun alg => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun queries => ?_)
+    intro t2 t' d hd
+    rw [StateT.run_bind, StateT_get_run] at hd
+    change StateT.run (match (pcs.multiPrepare queries).run t2 with
+        | .ok (guard, t3) => (do StateT.set t3; (pure guard : TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ)))
+        | .error (Fault.panic site) => throw (Fault.panic site)
+        | .error (Fault.error e) => throw (Fault.error Error.opening)) t2 = .ok (d, t') at hd
+    cases hmr : (pcs.multiPrepare queries).run t2 with
+    | error e =>
+        cases e with
+        | panic site =>
+            simp only [hmr] at hd
+            change (Except.error (Fault.panic site) :
+              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+            cases hd
+        | error e2 =>
+            simp only [hmr] at hd
+            change (Except.error (Fault.error Error.opening) :
+              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+            cases hd
+    | ok p =>
+        obtain ⟨a0, t3⟩ := p
+        simp only [hmr] at hd
+        have hh : (a0, t3) = (d, t') := Except.ok.inj hd
+        have hw := hMulti queries t2 t3 a0 hmr
+        cases hh
+        simpa using hw
+  · refine PresWidthSeq.bind
+      (ws1 := readAlgebraWidths g1 feat vk trace.permutations trace.lookups trace.trashcans
+        _ instances.size instances)
+      (PresWidthSeq.readAlgebra_widths g1 feat vk trace.permutations trace.lookups
+        trace.trashcans _ instances.size instances) (fun alg => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun queries => ?_)
+    intro t2 t' d hd
+    rw [StateT.run_bind, StateT_get_run] at hd
+    change StateT.run (match (pcs.multiPrepare queries).run t2 with
+        | .ok (guard, t3) => (do StateT.set t3; (pure guard : TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ)))
+        | .error (Fault.panic site) => throw (Fault.panic site)
+        | .error (Fault.error e) => throw (Fault.error Error.opening)) t2 = .ok (d, t') at hd
+    cases hmr : (pcs.multiPrepare queries).run t2 with
+    | error e =>
+        cases e with
+        | panic site =>
+            simp only [hmr] at hd
+            change (Except.error (Fault.panic site) :
+              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+            cases hd
+        | error e2 =>
+            simp only [hmr] at hd
+            change (Except.error (Fault.error Error.opening) :
+              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+            cases hd
+    | ok p =>
+        obtain ⟨a0, t3⟩ := p
+        simp only [hmr] at hd
+        have hh : (a0, t3) = (d, t') := Except.ok.inj hd
+        have hw := hMulti queries t2 t3 a0 hmr
+        cases hh
+        simpa using hw
 
 end Composition
 
