@@ -262,9 +262,10 @@ needs; it is a VK well-formedness clause, not a row/root hypothesis.
 
 **D-GATE11 (signed, 2026-11-23)**: `SupportedInput` gains a count bound (CS/lookup/
 commitment/point-set counts and VK payload length) so the generated layout's
-`staticWorkingSetFits`/`batchInvertScratchFits` and `proofEnd` bounds follow from the input; this closes
-the `prog_programFits`/`v3_cdBound` CERT leaves. It is a generator input-predicate strengthening, not a
-`ValidV3`/row/root hypothesis.
+`staticWorkingSetFits`/`batchInvertScratchFits` and `proofEnd` bounds follow from the input. The
+`v3_cdBound` CERT leaf is PROVED; `prog_programFits` remains OPEN with the exact quotient-build/
+config-sizing residual recorded in the detailed D-GATE11 bullet below. It is a generator
+input-predicate strengthening, not a `ValidV3`/row/root hypothesis.
 
 **D-GATE8 (signed, 2026-11-23)**: `programFits`/`programFitB` carry `staticWorkingSetFits pv`
 (`traceU256Mptr + wordBytes < 2^256`), the full static-region fit. A11 derived `PG_PAIRINGFIT`,
