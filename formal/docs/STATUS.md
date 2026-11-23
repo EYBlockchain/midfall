@@ -1,9 +1,10 @@
 # STATUS - midfall
 
-**As of:** `72e5534` (2026-11-22). **FULL GATE GREEN at `d0bf226`:** `verify.sh: ok (full)`,
-EXIT=0, KAT 1648/119, `axiom_sweep: ok`, closure fingerprint 4823 declarations / 526 external
-leaves / `bd27cd298a04fc1a`. The later A3/QVM commits are quick-gate green. Current report:
-root **11 / sound 5**, register **73 / 11 ROOT**, 0 REFUTED, exhibits **4 / 4**.
+**As of:** `fe9ba7a7` (2026-11-23). **Quick gate green.** The last FULL gate was at `d0bf226` (KAT
+1648/119); it is stale after the D-GATE5-8 statement wave and the current lane merges, so the final
+full gate is deferred until the next integration point. Current report: root **11 / sound 5**,
+register **109 rows / 11 ROOT / 31 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
+251 modules; closure **5249 declarations / 620 external leaves / digest `128d7f9cb4eb39ac`**.
 
 ## 1. Verified - PROGRESS
 
@@ -246,70 +247,42 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `e2159069`: D2 is merged and the next generation peels are closed (`env_nG2`, `prog_noDirect`,
-`env_vkDigest`, `v3_payload`); the register is **105 sorried declarations / 11 ROOT / 32 CERT /
-0 REFUTED** (105 rows in `SORRY.md`); D1A's exact `readAlgebra` width sequence, `multiPrepare`
-phase A/B/C widths, `PrepareLogSlots` composition layer, and eval-count/`PrepareLogSlots_of_counts'`
-are merged. Since then, A5's single-word prelude, A9's `PcsBlock4` sub/mload inversions, A11's
-literal `ec_pairing` call/`FpClean` G1 slots, A12's finalPairing clean slice/block case, and D2's
-header length/`generateVkFinalize` are merged. A11 has isolated a G2 encoder-width/header-slot
-coverage premise that may need a signed clause; it is checking a falsifier. A4's
-`runBody_mono` (ST.13), lag statements 0–27 except the batch-invert call 10, the five loop
-contracts, and the `litValue_number_nat` helper are merged; A5's
-8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, bridge modulus arithmetic, six-store
-frame composition, and bridge 11–20 form are merged; A9's PCS block-1/block-2/block-3-seed
-semantics, generator Word bridge, complete block-1 ROT_POINTS table spec, block-3 straight-line
-list folds, rolled-arm nested-mload inversions, and body/iteration contracts are merged; A11's guard helpers, trim, normal leaf, call inversion/VK wire, `FpWire`, selector-bucket
-monotonicity, and the full `Inv .pcs → Inv .pairing` transfer are merged; A6's `GroupsMatch` split,
-state-threaded fold, and `phaseCols` are in its branch; A12's `block_live` traceReturn/vkLoading
-cases, finalPairing poison arm, loop-existence rule, and `FpScratchSeparated` at every render are
-merged (3 of 7 block-cases). B4's `ValidV3InhabitationF1Completion` proves `f1GeneratedRender_notValidV3` and the
-exact reduction `ValidV3 R ↔ ValidV3ExceptPayload R ∧ PayloadPointHalf R`; B4's
-`ValidV3SyntheticInhabitant.exists_validV3` proves `∃ R, ValidV3 R` at a synthetic render, so the
-**generic root is non-vacuous**, and B4's DG.4 `GeneratorDone`/`Done`/`not_done_today` card is merged.
-B3's `PayloadPointsF1` supplies the resourced 19/8 commitments and the point half; the test-SRS
-exponent is `n = blsR - sTest`, but the production F1 NEG_S_G2 scalar is in no tracked file. The
-F1-real `ValidV3` at `f1PointRenderCN n` is therefore conditional on
-`hpay : vkG2Words f1Pv vkNegSG2BaseSlot = g2foldToEip (g2foldExp n)`; `ValidV3F1Real` proves it from
-that data input. B4's DG.4 `Done` card is merged; a positive F1 `Done` remains blocked on a concrete
-codec law, a render-correct `Done` statement, `TotalV3`, and `ArtifactEq`. The D2 KAT is green
-(**1648 annotated checks / 120 files**), quick gate and `checks.sh` are green, and the
-`ChallengesGood.xNonzero` statement pin is in place.
+At `fe9ba7a7` (2026-11-23): register **109 rows / 11 ROOT / 31 CERT**, 0 REFUTED, 1 legacy VACUOUS
+(`end_to_end_acc_complete`); 108 sorried declarations; 251 modules; closure **5249 declarations /
+620 external leaves / digest 128d7f9cb4eb39ac**; quick gate green.
 
-**Generator-layout finding (`PG-FPSCRATCH`), refuted.** The proposed gap is false:
-`theta_scalar_and_g1_slots` is `MemoryLifetime.permanent`, and `memoryLifetimeIntersects` compares a
-permanent region with any phase, so `validate` rejects the finalPairing scratch/theta overlap.
-`pgFpScratchCandidate_rejected` proves the closest candidate is rejected; the phase-only overlap
-`fpScratch_phaseOverlap_accepted` is between two non-`Inv` regions. The exact residual for the
-finalPairing clean arm is the four generator-side `VerifierMemoryLayout.new` region equations needed
-by `FpScratchSeparated`; no `programOk`/`ValidV3` clause and no `block_live` hypothesis is needed.
+**D-GATE8 (signed, 2026-11-23)**: `programFits`/`programFitB` carry `staticWorkingSetFits pv`
+(`traceU256Mptr + wordBytes < 2^256`), the full static-region fit. A11 derived `PG_PAIRINGFIT`,
+`pairingLhsMptr_toNat_of_valid` and `pairingRhsMptr_toNat_of_valid` from it;
+`block_live_finalPairing_of_body_fit` discharges the finalPairing fit premises. The closure manifest
+was regenerated (5249 decls, digest `128d7f9cb4eb39ac`) and `Frozen.sha256` re-pinned.
 
-The vacuity report is the non-vacuity ledger: the generic V3 root is now **NON-VACUOUS (synthetic)**
-via `exists_validV3`, but **VACUOUS at F1** (`f1_ValidV3_false`), and `0 REFUTED / 1 VACUOUS` is not
-a non-vacuity certificate. The F1-real `ValidV3` is conditional on the production SRS `hpay`; the
-shortest path to the fully verified **generic** verifier is the root rows plus `EndToEnd`/generator,
-with the F1-specific `Done` recorded as data-blocked.
+**Merged this wave**:
+- A5: bridge head/full success+reject, stores env/halt frame, canonical/nonzero `BridgeSucc`,
+  forward-loop leave arm and staticcall walk carrying `mptr`; `BatchInvertPost` is defined.
+- A9: m1 no-halt/exec contracts, `finishCall`/`copyReturn` outside-window frames, `storesLit`
+  output memory and the guard memory frame.
+- A12: `FpBodyRun` actual-source post, `.vk` payload projection, `ec_pairing` prefix/tail/body phases.
+- A11: clean `ec_pairing` call contract at the boundary state (`ecPairing_call_clean_at`) and
+  `block_live_finalPairing_of_body_fit`.
+- A6: `TranscriptRows` merged (`tp_events_slots` and `tp_blockSim` proved; five TP leaves registered),
+  and the lane resumed on the Lean-side `parseTrace` widths plus those leaves.
+- D1A: protocol eval decomposition, `PrepareLogSlots` from the parsed trace, and
+  `end_to_end_of_A6_KZG`/`end_to_end_of_tpEvents` with exactly two named Props:
+  `ParseTraceSchedule` (A6) and `KzgMultiPrepareWidths` (D-GATE5/KZG).
+- D2: `generateBaseVkHeader_slots` (slots 0-10), reservation/fill `getD` prefix lemmas, header
+  insert get?/frame specs; `payload_header` is next.
 
 ### Six-lane critical path (user cap)
 
-Phase 1 (live now):
-- **A5** general-path bridge assembly → `BatchInvertPost`.
-- **A9** PCS block-4 `m==1`/general arm → blocks 5/6.
-- **A12** finalPairing clean slice / `ec_pairing` body run → `block_live`.
-- **D1A** trace shapes / protocol eval decomposition → `PrepareLogSlots`.
-- **D2** `generateVkFinalize` split → payload leaves.
-- **A11** G2 encoder-width premise gap / FP rows.
-Paused: A4 lag call stmt 10 (waiting A5), A6 TP accessor/parser count, B3/B4 F1-real/Done residual,
-port audit D-GATE6/7, calldata, CERT2.
+Phase 1 (live): A5 `batch_invert_summary`; A9 PCS block-4 general arm/blocks 5-6; A12
+`FpBodyRun`/finalPairing; A11 `fp_blockSim`; A6 `parseTrace` widths + TP leaves; A4 lagrange block
+composition; D2 CERT payload. (D1A is paused after its link commit; A4 took the rotated slot.)
 
-Phase 2, as A5/A11 close: **A4** lag fixed segments/rows, **D1P/D1A** `EndToEnd` widths,
-then **A12** `block_live` (2/7 done) and the port audit D-GATE6 bridge.
+Phase 2: `block_live` (3/7: traceReturn, vkLoading, finalPairing poison; clean finalPairing via A12),
+then the TP/PCS/lag/quotient cases, `TotalV3`, and the `Rows` glue.
 
-Phase 3, as rows/ValidV3 close: **D2** CERT (`env_nG2` + remaining 36), **DG.4** `Done`/`ArtifactEq`,
-**calldata** and the final full gate.
-
-Paused, resumable from their worktrees/sessions: D2 (env_nG2), A4 (lag), A12 (`block_live`),
-D1P/D1A (`EndToEnd`), port audit D-GATE6/7, calldata, CERT2, DG.4. QVM is with the separate external
-agent.
+Phase 3: D2 CERT payload; `Done`/`ArtifactEq`; port audit D-GATE6/KZG; calldata; final full gate.
+QVM is with the separate external agent.
 
 The root remains **11 / 5**. No row, bundle, `ValidV3`, `ValidW`, or root hypothesis was added.
