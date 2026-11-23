@@ -1709,6 +1709,45 @@ noncomputable def KzgQueryMapData.ofList {F C : Type} [BEq F]
     exact hPointEq p.1.point p'.1.point
 
 
+/-- **THE PAIRED-LIST DATUM CONSTRUCTOR.** The concrete `L` is
+    `pairQueries queriesV queriesG`; `pairQueries_fst`/`_snd` supply the two
+    list projections whenever the lengths agree.  The remaining arguments are
+    the per-pair point/commitment facts and the reflection hypotheses, exactly
+    as in `KzgQueryMapData.ofList`. -/
+noncomputable def KzgQueryMapData.ofPairQueries {F C : Type} [BEq F]
+    (eqC : CommitmentReference F C → CommitmentReference F C → Bool)
+    (queriesV : Array (VerifierQuery F C)) (queriesG : List Query)
+    (hLen : queriesV.size = queriesG.length)
+    (fk : F → Int) (hPointEq : ∀ a b, (a == b) = (fk a == fk b))
+    (hpairP : ∀ p ∈ pairQueries queriesV queriesG, fk p.1.point = p.2.rotation)
+    (hclass : ∀ p ∈ pairQueries queriesV queriesG, ∀ p' ∈ pairQueries queriesV queriesG,
+      eqC p.1.commitment p'.1.commitment = ecPointBeq p.2.comm p'.2.comm)
+    (hCommRefl : ∀ p ∈ pairQueries queriesV queriesG,
+      eqC p.1.commitment p.1.commitment = true)
+    (hCommSymm : ∀ p ∈ pairQueries queriesV queriesG,
+      ∀ p' ∈ pairQueries queriesV queriesG,
+      eqC p.1.commitment p'.1.commitment = eqC p'.1.commitment p.1.commitment)
+    (hCommTrans : ∀ p ∈ pairQueries queriesV queriesG,
+      ∀ p' ∈ pairQueries queriesV queriesG, ∀ p'' ∈ pairQueries queriesV queriesG,
+      eqC p.1.commitment p'.1.commitment = true →
+      eqC p'.1.commitment p''.1.commitment = true →
+      eqC p.1.commitment p''.1.commitment = true)
+    (hGRefl : ∀ p ∈ pairQueries queriesV queriesG,
+      ecPointBeq p.2.comm p.2.comm = true)
+    (hGSymm : ∀ p ∈ pairQueries queriesV queriesG,
+      ∀ p' ∈ pairQueries queriesV queriesG,
+      ecPointBeq p.2.comm p'.2.comm = ecPointBeq p'.2.comm p.2.comm)
+    (hGTrans : ∀ p ∈ pairQueries queriesV queriesG,
+      ∀ p' ∈ pairQueries queriesV queriesG, ∀ p'' ∈ pairQueries queriesV queriesG,
+      ecPointBeq p.2.comm p'.2.comm = true →
+      ecPointBeq p'.2.comm p''.2.comm = true →
+      ecPointBeq p.2.comm p''.2.comm = true) :
+    KzgQueryMapData eqC queriesV queriesG :=
+  KzgQueryMapData.ofList eqC queriesV queriesG (pairQueries queriesV queriesG)
+    (pairQueries_fst queriesV queriesG hLen).symm
+    (pairQueries_snd queriesV queriesG hLen).symm
+    fk hPointEq hpairP hclass hCommRefl hCommSymm hCommTrans hGRefl hGSymm hGTrans
+
 theorem constructIntermediateSets_pointSets_size_eq_of_queryMap
     {F C K : Type} [Field F] [BEq F] [BEq K]
     [LawfulBEq F] [LawfulBEq K]
