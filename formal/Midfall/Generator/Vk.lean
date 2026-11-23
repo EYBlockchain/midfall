@@ -821,6 +821,93 @@ theorem VkHeaderBuilder.insert_get?_other (self : VkHeaderBuilder) (slot : VkHea
           · omega
           · omega
 
+/-- A `foldlM` of header-builder steps whose offsets are distinct writes each of its own
+    words and no others. PROVED. -/
+theorem VkHeaderBuilder.foldlM_step_get?_at
+    (l : List (Nat × (String × Word256))) (self : VkHeaderBuilder)
+    (start : Nat) (name : String) (b' : VkHeaderBuilder)
+    (h : l.foldlM (VkHeaderBuilder.step start name) self = .ok b')
+    (hbound : ∀ p ∈ l, start + p.1 < self.words.length)
+    (hnd : (l.map Prod.fst).Nodup)
+    (j : Nat) (v : String × Word256) (hj : (j, v) ∈ l) :
+    b'.words[start + j]? = some (some v) := by
+  induction l generalizing self with
+  | nil => simp at hj
+  | cons p ps ih =>
+      obtain ⟨k, w⟩ := p
+      simp only [List.foldlM_cons] at h
+      cases hs : VkHeaderBuilder.step start name self (k, w) with
+      | error e => simp only [hs] at h; cases h
+      | ok b1 =>
+          simp only [hs] at h
+          have hp : (k, w) ∈ (k, w) :: ps := List.mem_cons_self ..
+          have hkw := hbound (k, w) hp
+          have hlen := VkHeaderBuilder.step_length start name self (k, w) b1 hs hkw
+          have hnd' : (ps.map Prod.fst).Nodup := (List.nodup_cons.mp hnd).2
+          have hknot : k ∉ ps.map Prod.fst := (List.nodup_cons.mp hnd).1
+          have hbound' : ∀ q ∈ ps, start + q.1 < b1.words.length := by
+            intro q hq
+            have hq' := hbound q (List.mem_cons_of_mem _ hq)
+            omega
+          by_cases hjk : j = k
+          · subst hjk
+            have hvw : v = w := by
+              rcases List.mem_cons.mp hj with heq | hin
+              · simpa using heq
+              · exfalso
+                exact hknot (List.mem_map_of_mem (f := Prod.fst) hin)
+            subst hvw
+            have hframe := VkHeaderBuilder.foldlM_step_frame ps b1 start name b' h
+              hbound' (start + j) (by
+                intro q hq heq
+                have hqj : q.1 = j := by omega
+                exact hknot (hqj ▸ List.mem_map_of_mem (f := Prod.fst) hq))
+            rw [hframe]
+            exact VkHeaderBuilder.step_get?_at start name self j v b1 hs hkw
+          · have hmem : (j, v) ∈ ps := by
+              rcases List.mem_cons.mp hj with heq | hin
+              · exact absurd (by simpa using (Prod.mk.injEq j v k w ▸ heq).1) hjk
+              · exact hin
+            exact ih b1 h hbound' hnd' hmem
+
+/-- A successful multi-word `insert` writes each word of its value list at its own
+    offset. PROVED. -/
+theorem VkHeaderBuilder.insert_get?_at (self : VkHeaderBuilder) (slot : VkHeaderSlot)
+    (expectedWidth : Nat) (values : List (String × Word256)) (b' : VkHeaderBuilder)
+    (h : self.insert slot expectedWidth values = .ok b')
+    (i : Nat) (v : String × Word256) (hv : values[i]? = some v) :
+    b'.words[VkHeaderSlot.word slot + i]? = some (some v) := by
+  by_cases hw : ((VkHeaderLayout.field slot).widthWords != expectedWidth)
+  · simp only [VkHeaderBuilder.insert, hw] at h; cases h
+  · by_cases hvlen : (values.length != (VkHeaderLayout.field slot).widthWords)
+    · simp only [VkHeaderBuilder.insert, hw, hvlen] at h; cases h
+    · by_cases hf : (VkHeaderSlot.word slot + (VkHeaderLayout.field slot).widthWords >
+          self.words.length)
+      · simp only [VkHeaderBuilder.insert, hw, hvlen, hf] at h; cases h
+      · simp only [VkHeaderBuilder.insert, hw, hvlen, hf] at h
+        have hvfalse : (values.length != (VkHeaderLayout.field slot).widthWords) = false := by
+          cases hh : (values.length != (VkHeaderLayout.field slot).widthWords) <;> simp_all
+        have hlen : values.length = (VkHeaderLayout.field slot).widthWords :=
+          bne_eq_false_iff_eq.mp hvfalse
+        have hi : i < values.length := (List.getElem?_eq_some_iff.mp hv).1
+        refine VkHeaderBuilder.foldlM_step_get?_at ((List.range values.length).zip values)
+          self (VkHeaderSlot.word slot) (VkHeaderLayout.field slot).name b' h ?_ ?_ i v ?_
+        · intro p hp
+          have hp' := List.of_mem_zip hp
+          have hp1 : p.1 < values.length := List.mem_range.mp hp'.1
+          have hpw : p.1 < (VkHeaderLayout.field slot).widthWords := by omega
+          omega
+        · rw [show List.map Prod.fst ((List.range values.length).zip values) =
+              List.range values.length from List.map_fst_zip (by simp)]
+          exact List.nodup_range
+        · rw [List.mem_iff_getElem]
+          refine ⟨i, ?_, ?_⟩
+          · rw [List.length_zip, Nat.min_eq_right (by simp)]
+            exact hi
+          · rw [List.getElem_zip]
+            rw [List.getElem_range]
+            rw [(List.getElem?_eq_some_iff.mp hv).2]
+
 /-- `insert` preserves the number of header words. PROVED. -/
 theorem VkHeaderBuilder.insert_length (self : VkHeaderBuilder) (slot : VkHeaderSlot)
     (expectedWidth : Nat) (values : List (String × Word256)) (b' : VkHeaderBuilder)
@@ -1081,6 +1168,15 @@ theorem VkHeaderBuilder.finish_get? (b : VkHeaderBuilder) (l : List (String × W
   rw [heq]
   simpa using hfilter
 
+/-- `finish` reads a written word back at the same index. PROVED. -/
+theorem VkHeaderBuilder.finish_getD (b : VkHeaderBuilder) (l : List (String × Word256))
+    (h : b.finish = .ok l) (i : Nat) (hi : i < b.words.length)
+    {v : String × Word256} (hv : b.words[i]? = some (some v)) (d : String × Word256) :
+    l.getD i d = v := by
+  rw [List.getD_eq_getElem?_getD, VkHeaderBuilder.finish_get? b l h i hi hv]
+  rfl
+
+
 /-- **A SUCCESSFUL `finish` RETURNS ONE WORD PER HEADER SLOT.** The length half of the
     `VkHeaderBuilder` spec the payload leaves need. PROVED. -/
 theorem VkHeaderBuilder.finish_length (b : VkHeaderBuilder) (l : List (String × Word256))
@@ -1333,6 +1429,25 @@ theorem headerG2Insert_length (b : VkHeaderBuilder) (site : String) (slot : VkHe
     b'.words.length = b.words.length := by
   apply VkHeaderBuilder.insert_length
   simpa [headerG2Insert, VkHeaderBuilder.g2] using unwrapAt_ok h
+/-- A successful G1 insert writes each of its four words. PROVED. -/
+theorem headerG1Insert_get (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (names : List String) (values : List Word256) (b' : VkHeaderBuilder)
+    (h : headerG1Insert b site slot names values = .ok b')
+    (j : Nat) (v : String × Word256) (hv : (List.zip names values)[j]? = some v) :
+    b'.words[VkHeaderSlot.word slot + j]? = some (some v) := by
+  exact VkHeaderBuilder.insert_get?_at b slot g1WordsCount (List.zip names values) b'
+    (by simpa [headerG1Insert, VkHeaderBuilder.g1] using unwrapAt_ok h) j v hv
+
+/-- A successful G2 insert writes each of its eight words. PROVED. -/
+theorem headerG2Insert_get (b : VkHeaderBuilder) (site : String) (slot : VkHeaderSlot)
+    (names : List String) (values : List Word256) (b' : VkHeaderBuilder)
+    (h : headerG2Insert b site slot names values = .ok b')
+    (j : Nat) (v : String × Word256) (hv : (List.zip names values)[j]? = some v) :
+    b'.words[VkHeaderSlot.word slot + j]? = some (some v) := by
+  exact VkHeaderBuilder.insert_get?_at b slot g2WordsCount (List.zip names values) b'
+    (by simpa [headerG2Insert, VkHeaderBuilder.g2] using unwrapAt_ok h) j v hv
+
+
 
 def generateBaseVkHeader (inputs : VerifierBuildInputs p G₁ G₂)
     (pre : Word256 × Word256 × Word256 × Word256 × Word256)
@@ -1631,6 +1746,24 @@ def metaDataForVkInputs (feat : Features) (env : VkBuildEnv Plan)
     Except Fault (ConstraintSystemMeta × Data × VerifierMemoryLayout) :=
   metaDataForVk feat env inputs.meta_ inputs.numInstances vk vkMptr
 
+/-- One iteration of the VK:537-544 stabilisation loop, named so its `rotationLast`
+    invariant can be stated and proved. Lean-side scaffolding: the body is the lambda
+    `metaDataForStableStaticLayout` folded. -/
+def metaDataReservationStep (feat : Features) (env : VkBuildEnv Plan)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey)
+    (st : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr)
+    (_ : Nat) :
+    Except Fault (Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr) := do
+  if st.1.isSome then Except.ok st else do
+    let vkMptr := st.2
+    let (metaOut, data, memory) ← metaDataForVk feat env meta_ numInstances vk vkMptr
+    let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
+    let cur ← Value.asUsize vkMptr.value
+    if planned == cur then
+      Except.ok (some (vkMptr, metaOut, data, memory), vkMptr)
+    else
+      Except.ok (none, ptrMemory (valueFromNat planned))
+
 /-- rust: VK:525-547 (VerifierBuildInputs::meta_data_for_stable_static_layout)
     @formal-baseline. for _ in 0..3 with an early return becomes a List.range 3
     fold carrying an Option result and short-circuiting once it is some - the
@@ -1653,21 +1786,117 @@ def metaDataForStableStaticLayout (feat : Features) (env : VkBuildEnv Plan)
   let startPtr := ptrMemory (valueFromNat start)
   -- VK:537-544
   let (result, _) ← (List.range 3).foldlM
-    (fun st _ => do
-      if st.1.isSome then Except.ok st else do
-        let vkMptr := st.2
-        let (metaOut, data, memory) ← metaDataForVk feat env meta_ numInstances vk vkMptr
-        let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
-        let cur ← Value.asUsize vkMptr.value
-        if planned == cur then
-          Except.ok (some (vkMptr, metaOut, data, memory), vkMptr)
-        else
-          Except.ok (none, ptrMemory (valueFromNat planned)))
+    (metaDataReservationStep feat env meta_ numInstances vk)
     (none, startPtr)
   -- VK:546
   match result with
   | some r => Except.ok r
   | none => throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:546")
+
+private theorem meta_except_bind_ok {ε α β : Type} {x : Except ε α}
+    {f : α → Except ε β} {b : β} (h : (x >>= f) = .ok b) :
+    ∃ a, x = .ok a ∧ f a = .ok b := by
+  cases x with
+  | error e => cases h
+  | ok a => exact ⟨a, rfl, h⟩
+
+/-- `metaDataForVk` changes `numEvals`, `numDummyEvals` and `numPointSets` only, so the
+    rotation survives. PROVED. -/
+theorem metaDataForVk_rotationLast {feat : Features} {env : VkBuildEnv Plan}
+    {meta_ : ConstraintSystemMeta} {numInstances : Nat} {vk : Halo2VerifyingKey}
+    {vkMptr : Ptr} {metaOut : ConstraintSystemMeta} {data : Data}
+    {memory : VerifierMemoryLayout}
+    (h : metaDataForVk feat env meta_ numInstances vk vkMptr = .ok (metaOut, data, memory)) :
+    metaOut.rotationLast = meta_.rotationLast := by
+  simp only [metaDataForVk] at h
+  obtain ⟨_rawMemory, _, h⟩ := meta_except_bind_ok h
+  obtain ⟨_rawData, _, h⟩ := meta_except_bind_ok h
+  split at h
+  · obtain ⟨_nDummy, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_memory, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_data0, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_nSets, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_memory2, _, h⟩ := meta_except_bind_ok h
+    cases h
+    rfl
+  · obtain ⟨_nDummy, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_memory, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_data0, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_nSets, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_memory2, _, h⟩ := meta_except_bind_ok h
+    cases h
+    rfl
+
+/-- One stabilisation step keeps every stored meta's rotation. PROVED. -/
+theorem metaDataReservationStep_rotationLast {feat : Features} {env : VkBuildEnv Plan}
+    {meta_ : ConstraintSystemMeta} {numInstances : Nat} {vk : Halo2VerifyingKey}
+    {st st' : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr}
+    (x : Nat) (h : metaDataReservationStep feat env meta_ numInstances vk st x = .ok st')
+    (hinv : ∀ r, st.1 = some r → r.2.1.rotationLast = meta_.rotationLast) :
+    ∀ r, st'.1 = some r → r.2.1.rotationLast = meta_.rotationLast := by
+  unfold metaDataReservationStep at h
+  by_cases hb : st.1.isSome
+  · simp only [hb, if_true] at h
+    cases h
+    exact hinv
+  · simp only [hb, if_false, Bool.false_eq_true] at h
+    obtain ⟨metaOut, hmeta, h⟩ := meta_except_bind_ok h
+    obtain ⟨_planned, _, h⟩ := meta_except_bind_ok h
+    obtain ⟨_cur, _, h⟩ := meta_except_bind_ok h
+    split at h
+    · cases h
+      intro r hr
+      simp only [Prod.mk.injEq, Option.some.injEq] at hr
+      obtain ⟨rfl, rfl⟩ := hr
+      exact metaDataForVk_rotationLast hmeta
+    · cases h
+      intro r hr
+      simp at hr
+
+/-- The stabilisation fold keeps every stored meta's rotation. PROVED. -/
+theorem foldlM_metaDataReservationStep_rotationLast (l : List Nat)
+    {feat : Features} {env : VkBuildEnv Plan}
+    {meta_ : ConstraintSystemMeta} {numInstances : Nat} {vk : Halo2VerifyingKey}
+    (st st' : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr)
+    (h : l.foldlM (metaDataReservationStep feat env meta_ numInstances vk) st = .ok st')
+    (hinv : ∀ r, st.1 = some r → r.2.1.rotationLast = meta_.rotationLast) :
+    ∀ r, st'.1 = some r → r.2.1.rotationLast = meta_.rotationLast := by
+  induction l generalizing st with
+  | nil =>
+      change Except.ok st = Except.ok st' at h
+      injection h with hst
+      subst hst
+      exact hinv
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : metaDataReservationStep feat env meta_ numInstances vk st x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          exact ih s1 h (metaDataReservationStep_rotationLast x hs hinv)
+
+/-- `metaDataForStableStaticLayout` converges to a meta with the input's rotation.
+    PROVED. -/
+theorem metaDataForStableStaticLayout_rotationLast {feat : Features} {env : VkBuildEnv Plan}
+    {meta_ : ConstraintSystemMeta} {numInstances : Nat} {vk : Halo2VerifyingKey}
+    {vkMptr : Ptr} {metaOut : ConstraintSystemMeta} {data : Data}
+    {memory : VerifierMemoryLayout}
+    (h : metaDataForStableStaticLayout feat env meta_ numInstances vk =
+      .ok (vkMptr, metaOut, data, memory)) :
+    metaOut.rotationLast = meta_.rotationLast := by
+  simp only [metaDataForStableStaticLayout] at h
+  obtain ⟨start, _, h⟩ := meta_except_bind_ok h
+  obtain ⟨⟨result, lastPtr⟩, hres, h⟩ := meta_except_bind_ok h
+  cases result with
+  | none =>
+      simp only at h
+      cases h
+  | some r =>
+      cases h
+      exact foldlM_metaDataReservationStep_rotationLast (List.range 3)
+        (none, ptrMemory (valueFromNat start))
+        (some (vkMptr, metaOut, data, memory), lastPtr) hres
+        (by intro q hq; simp at hq) (vkMptr, metaOut, data, memory) rfl
 
 /-- The &self form of metaDataForStableStaticLayout, kept as a wrapper: this is the call
     generate_vk (VK:378, VK:450) and plan.rs's constructor (PL:238) make on the receiver. -/
