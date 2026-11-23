@@ -1391,6 +1391,82 @@ theorem RunsAll.squeeze (E : VerifierEnv p G₁ G₂ Gₜ) :
   rw [hpos', hpos, List.map_nil, List.sum_nil, Nat.add_zero]
 
 
+/-- `RunsAll` with a postcondition on the program's result: the composition needs the
+    read arrays' LENGTHS, which plain `RunsAll` existentially hides. -/
+def RunsAllP (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (m : TranscriptM α)
+    (ms : List (Msg (Fr p) G₁)) (P : α → Prop) : Prop :=
+  ∀ (t : Transcript) (pref rest : Bytes),
+    t.buffer = pref ++ (wireMsgs E ms ++ rest) → t.pos = pref.size →
+    p ≤ 2 ^ 256 →
+    (∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q) →
+    (∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth) →
+    ∃ a t', m.run t = .ok (a, t') ∧ t'.buffer = t.buffer ∧
+      t'.pos = pref.size + (ms.map fun m => (msgWire E m).size).sum ∧ P a
+
+theorem RunsAllP.toRunsAll (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} {m : TranscriptM α}
+    {ms : List (Msg (Fr p) G₁)} {P : α → Prop} (h : RunsAllP E m ms P) :
+    RunsAll E m ms := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨a, t', hrun, hbuf', hpos', _⟩ := h t pref rest hbuf hpos hp henc hwidth
+  exact ⟨a, t', hrun, hbuf', hpos'⟩
+
+theorem RunsAllP.mono (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} {m : TranscriptM α}
+    {ms : List (Msg (Fr p) G₁)} {P Q : α → Prop} (h : RunsAllP E m ms P)
+    (hPQ : ∀ a, P a → Q a) : RunsAllP E m ms Q := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨a, t', hrun, hbuf', hpos', hP⟩ := h t pref rest hbuf hpos hp henc hwidth
+  exact ⟨a, t', hrun, hbuf', hpos', hPQ a hP⟩
+
+theorem RunsAllP.pure (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (a : α) (P : α → Prop)
+    (ha : P a) : RunsAllP E (pure a : TranscriptM α) [] P := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨a, t, rfl, rfl, ?_, ha⟩
+  rw [hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+
+theorem RunsAllP.common (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type}
+    (h : Midfall.Halo2.Hashable T) (x : T) :
+    RunsAllP E (tmCommon h x) [] (fun _ => True) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨(), t.common h x, ?_, rfl, ?_, trivial⟩
+  · unfold tmCommon
+    rfl
+  · rw [show (Transcript.common h t x).pos = t.pos from rfl, hpos, List.map_nil,
+      List.sum_nil, Nat.add_zero]
+
+theorem RunsAllP.squeeze (E : VerifierEnv p G₁ G₂ Gₜ) :
+    RunsAllP E (tmSqueezeChallenge (p := p)) [] (fun _ => True) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨x, t', hrun, hpos', hbuf'⟩ := tmSqueezeChallenge_run_spec (p := p) t
+  refine ⟨x, t', hrun, hbuf', ?_, trivial⟩
+  rw [hpos', hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+
+theorem RunsAllP.lift_ok (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (a : α) (P : α → Prop)
+    (ha : P a) : RunsAllP E (StateT.lift (.ok a : Except Fault α)) [] P := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  refine ⟨a, t, rfl, rfl, ?_, ha⟩
+  rw [hpos, List.map_nil, List.sum_nil, Nat.add_zero]
+
+theorem RunsAllP.bind (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    {m : TranscriptM α} {f : α → TranscriptM β} {ms₁ ms₂ : List (Msg (Fr p) G₁)}
+    {P : α → Prop} {Q : β → Prop}
+    (hm : RunsAllP E m ms₁ P) (hf : ∀ a, P a → RunsAllP E (f a) ms₂ Q) :
+    RunsAllP E (m >>= f) (ms₁ ++ ms₂) Q := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  rw [wireMsgs_append] at hbuf
+  simp only [ByteArray.append_assoc] at hbuf
+  obtain ⟨a, t1, hrun1, hbuf1, hpos1, hP⟩ := hm t pref (wireMsgs E ms₂ ++ rest) hbuf hpos hp henc hwidth
+  have hbuf1' : t1.buffer = (pref ++ wireMsgs E ms₁) ++ (wireMsgs E ms₂ ++ rest) := by
+    rw [hbuf1, hbuf, ← ByteArray.append_assoc]
+  have hpos1' : t1.pos = (pref ++ wireMsgs E ms₁).size := by
+    rw [hpos1, ByteArray.size_append, wireMsgs_size]
+  obtain ⟨b, t2, hrun2, hbuf2, hpos2, hQ⟩ := hf a hP t1 (pref ++ wireMsgs E ms₁) rest hbuf1' hpos1' hp henc hwidth
+  refine ⟨b, t2, ?_, hbuf2.trans hbuf1, ?_, hQ⟩
+  · simp only [StateT.run_bind]
+    rw [hrun1]
+    exact hrun2
+  · rw [hpos2, ByteArray.size_append, wireMsgs_size, List.map_append, List.sum_append]
+    omega
+
 /-- Read a list of homogeneous G1 groups in order. -/
 def readG1Groups (E : VerifierEnv p G₁ G₂ Gₜ) : List Nat → TranscriptM Unit
   | [] => pure ()
@@ -1884,6 +1960,16 @@ theorem runsAll_tmReadN_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs : Li
     tmReadN_g1_wire E n t pref Qs rest hlen hbuf hpos hp henc hwidth
   refine ⟨arr, t', hrun, hbuf', ?_⟩
   simpa only [List.map_map, Function.comp_def] using hpos'
+
+/-- The group read, WITH the length postcondition the scatter step needs. -/
+theorem runsAllP_tmReadN_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs : List G₁)
+    (hlen : Qs.length = n) :
+    RunsAllP E (tmReadN (hashableG1 E.g1) n)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (fun arr => arr.size = n) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨arr, t', hrun, hbuf', hpos'⟩ :=
+    runsAll_tmReadN_g1 E n Qs hlen t pref rest hbuf hpos hp henc hwidth
+  exact ⟨arr, t', hrun, hbuf', hpos', tmReadN_size (hashableG1 E.g1) n hrun⟩
 
 /-- The permutation-product fragment of `parseTrace`, verbatim. -/
 def parseTracePermutations (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁)
@@ -4516,6 +4602,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.scatterIndexed_ok_of_cover [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.bind [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_tmReadN_g1 [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_hashInto [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_absorb_committed [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_absorb_instance [propext, Classical.choice, Quot.sound] native []
