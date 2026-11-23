@@ -33,6 +33,7 @@ import Midfall.LoweringV3.QueryTail
 import Midfall.LoweringV3.QueryBlockShape
 import Midfall.LoweringV3.PcsOrder
 import Midfall.LoweringV3.UpstreamSets
+import Midfall.LoweringV3.QuotientFresh
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -4669,6 +4670,40 @@ open Midfall.Tools.Done in
 #assert_axioms upstreamBlock_permZBlock
   [propext, Classical.choice, Quot.sound]
 #assert_axioms assertPermutationQueryOrderIsUpstreamEquivalent_parts
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamSources_zslice
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamSources_filter_pcsBlockList
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms KzgQueryMapData.ofPairQueries
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Data.new_computedQuotientComm
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Data.new_commsNumericOrIdentity
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms VerifierMemoryLayout.new_numericBases
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms ecPointBeq_quotient_of_numeric
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms ecPointBeq_quotient_g1
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms ecPointBeq_self
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_comm_classification
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms ecPointBeq_quotient_of_classification
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms listGetMut_mem
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms hashMapGet_mem
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms kzgCommitBeq_linear_onePiece
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms kzgCommitBeq_linear_offdiag
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms kzgCommitBeq_linear_self
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms kzgCommitBeq_linear_self_eq
   [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
