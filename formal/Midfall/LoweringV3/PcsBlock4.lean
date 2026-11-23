@@ -1489,6 +1489,26 @@ theorem pcsLbasisLines_contract {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisLines_contract
   [propext, Classical.choice, Quot.sound] native []
 
+/-- The exec step of one `bp_i := mulmod(bp_{i-1}, input_i, r)` line. -/
+theorem b1_exec_ylet_mulmod_vars {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome} {x a b z : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.ylet x (GenAst.yop EVM.Op.mulmod
+        [GenAst.yvar a, GenAst.yvar b, GenAst.yvar z])) V' st' o) :
+    o = .normal ∧ ∃ av bv zv, VEnv.get V a = some av ∧ VEnv.get V b = some bv ∧
+      VEnv.get V z = some zv ∧ V' = (x, wMulmodAt av bv zv) :: V ∧ st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨av, bv, zv, ha, hb, hz, hcv, hst⟩ := b1_eval_mulmod_vars_inv he
+      subst hcv; subst hst
+      exact ⟨rfl, av, bv, zv, ha, hb, hz, by simp [VEnv.setMany], rfl⟩
+  | letHalt he => exact (b1_eval_mulmod_vars_halt he).elim
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.b1_exec_ylet_mulmod_vars
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
