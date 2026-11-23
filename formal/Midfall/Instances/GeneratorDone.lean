@@ -29,6 +29,12 @@
   `TotalV3`, and `artifact` is T7's equality. No hypothesis was added to `ValidV3` or to any root.
   `Done` takes `cd` as a parameter; no fixture occurs in its headline (the fixture enters only
   through the `cd` argument and the last two fields, as in T7).
+
+  D-GATE17: field 5 is the D-B5 artifact variant `ArtifactEqV3`, i.e. `ArtifactEq` with the
+  BUILD_ID input supplied (`poseidonArtifactBuildId`, the tracked artifact's own value). The raw
+  `ArtifactEq poseidonRender.model poseidonVerifierDump` is FALSE and stays refuted in
+  `Instances/ArtifactB5Poseidon.lean`: the only differing line is BUILD_ID, machine-checked. This
+  is the signed variant, not a weakening hidden inside `ArtifactEq`.
 -/
 import Midfall.LoweringV3.GeneratorTheorem
 import Midfall.Instances.VacuityWitnesses
@@ -117,6 +123,42 @@ structure ArtifactEq (m : Model) (artifact : String) : Prop where
   whole : renderHalo2Verifier (rootCtxOfVerifier m) (partsOf m) = artifact
   main : (artifact.splitOn (mainAssemblyText m)).length = 2
   guard : (artifact.splitOn (abiGuardText m)).length = 2
+
+/-- **THE D-B5 ARTIFACT VARIANT.** The same three clauses as `ArtifactEq`, with the BUILD_ID
+    INPUT SUPPLIED: every clause is read at the model whose `buildId` is the artifact's own
+    `bytes32 public constant BUILD_ID = <value>` value. `buildId` is that value, not a free
+    choice; the positive gates supply the literal the tracked artifact carries.
+
+    Why this variant: the raw `ArtifactEq m artifact` is FALSE at the tracked verifier dump
+    for both models whose render is otherwise the artifact - the sole differing line is the
+    BUILD_ID line (`Instances/ArtifactB5Poseidon.lean:poseidon_diff_exact`,
+    `ArtifactB5F1.lean:f1_diff_exact`, machine-checked). D-B5 pins the VK exactly and the
+    verifier except that NAMED INPUT; this structure is that named-input gate, and it is
+    NOT a weakening of `ArtifactEq` (which stays in the tree, with its refutation). -/
+structure ArtifactEqV3 (m : Model) (artifact : String) (buildId : Word256) : Prop where
+  whole : renderHalo2Verifier (rootCtxOfVerifier { m with buildId := buildId })
+    (partsOf { m with buildId := buildId }) = artifact
+  main : (artifact.splitOn (mainAssemblyText { m with buildId := buildId })).length = 2
+  guard : (artifact.splitOn (abiGuardText { m with buildId := buildId })).length = 2
+
+/-- The variant generalizes `ArtifactEq`: with the model's own `buildId` supplied, the
+    record-update is the identity, so the three clauses are literally the raw ones. -/
+theorem ArtifactEq.toArtifactEqV3 {m : Model} {artifact : String}
+    (h : ArtifactEq m artifact) : ArtifactEqV3 m artifact m.buildId := by
+  refine ⟨?_, ?_, ?_⟩
+  · simpa using h.whole
+  · simpa using h.main
+  · simpa using h.guard
+
+/-- And it is not weaker: when the supplied `buildId` IS the model's, a raw `ArtifactEq` follows. -/
+theorem ArtifactEqV3.toArtifactEq {m : Model} {artifact : String} {buildId : Word256}
+    (hm : m.buildId = buildId) (h : ArtifactEqV3 m artifact buildId) : ArtifactEq m artifact := by
+  have hupd : ({ m with buildId := buildId } : Model) = m := by
+    rw [← hm]
+  refine ⟨?_, ?_, ?_⟩
+  · simpa [hupd] using h.whole
+  · simpa [hupd] using h.main
+  · simpa [hupd] using h.guard
 
 end Midfall.LoweringV2
 
@@ -720,6 +762,12 @@ theorem poseidonFixtureCalldata_keccak :
 
 /-! ## §5. `Done`, the five fields of the definition of done -/
 
+/-- **D-B5'S BUILD_ID INPUT, AS A TERM.** The value on the tracked artifact's line
+    `bytes32 public constant BUILD_ID = 0xf352...`; `ArtifactB5Poseidon` proves that line is
+    exactly the one line at which the port's render differs from the artifact. -/
+def poseidonArtifactBuildId : Word256 :=
+  0xf352d2670376fa01229e35428d69c1d623c4b3edf42f15a78622888a9b4285fd
+
 /-- **DONE AT THE POSEIDON DEPLOYMENT.** Exactly the five conjuncts of the definition of done.
     `cd` is supplied by the caller; `poseidonFixtureCalldata` is the value DG.5 gives it. -/
 structure Done (cd : Bytes) : Prop where
@@ -732,8 +780,11 @@ structure Done (cd : Bytes) : Prop where
   gate : ∃ product : PairingProduct, GateAtV3 poseidonRender product cd
   /-- 4. TOTALITY: the program is never stuck, for every product. -/
   total : ∀ product : PairingProduct, TotalV3 poseidonRender product
-  /-- 5. THE TEXT IS THE RUST ARTIFACT (whole file, main block, guard block). -/
-  artifact : Midfall.LoweringV2.ArtifactEq poseidonRender.model poseidonVerifierDump
+  /-- 5. THE TEXT IS THE RUST ARTIFACT at the D-B5 variant: the BUILD_ID input supplied
+         (`ArtifactEqV3`). The raw `ArtifactEq` at this dump is refuted only by the BUILD_ID
+         line, machine-checked in `Instances/ArtifactB5Poseidon.lean`. -/
+  artifact : Midfall.LoweringV2.ArtifactEqV3 poseidonRender.model poseidonVerifierDump
+    poseidonArtifactBuildId
 
 /-- **THE BRIDGE THE PLAN ASKS FOR.** A `Done` yields `GeneratorDone` at the fixture: the generic
     headline is `lowering_correct`, and `valid` + `gate` are `nonvacuous`. PROVED. -/
