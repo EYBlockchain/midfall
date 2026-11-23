@@ -4136,3 +4136,139 @@ theorem lag_stmt12_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inlin
       | letHalt he => exact (eval_mulmod_mload_lit_halt_false (c := c) (g := g)
           (funs := funs) (V := V) (st := st) (x := "x_n_minus_1") (z := "r")
           (a := aN) he).elim
+
+theorem lag_stmt14_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 14 1 =
+      [GenAst.ylet "l_blind" (GenAst.yop EVM.Op.mload
+        [GenAst.yop EVM.Op.add
+          [Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts, GenAst.ylit 32]])] := by
+  kernel_rfl
+
+theorem lag_stmt15_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 15 1 =
+      [GenAst.ylet "l_i_cptr" (GenAst.yop EVM.Op.add
+        [Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts, GenAst.ylit 64])] := by
+  kernel_rfl
+
+theorem eval_add_lit_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {a b : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.add [Expr.lit (.number a), Expr.lit (.number b)]) (.vals [cv] st')) :
+    cv = BitVec.ofNat 256 a + BitVec.ofNat 256 b ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hA =>
+      cases hrest with
+      | argsCons hnil hB =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hvB, hstB⟩ := eval_lit_inv hB
+              subst hvB; subst hstB
+              obtain ⟨hvA, hstA⟩ := eval_lit_inv hA
+              subst hvA; subst hstA
+              simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨rfl, rfl⟩
+
+theorem eval_add_lit_lit_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {a b : Nat} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.add [Expr.lit (.number a), Expr.lit (.number b)]) (.halt st')) : False := by
+  have hne : ∀ e ∈ [Expr.lit (.number a), Expr.lit (.number b)],
+      ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+    intro e he st0 st1 hh
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh
+    · exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs => exact eval_args_halt_false hne hargs
+
+theorem eval_mload_add_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {a b : Nat} {v : U256} {st' : EvmState}
+    (ha : a < 2 ^ 256) (hb : b < 2 ^ 256) (hab : a + b < 2 ^ 256)
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mload
+        [Expr.builtin Op.add [Expr.lit (.number a), Expr.lit (.number b)]])
+      (.vals [v] st')) :
+    v = loadWord st.memory (a + b) ∧ st' = touchMemory st (a + b) 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hnil hadd =>
+      cases hnil with
+      | argsNil =>
+          obtain ⟨hvadd, hstadd⟩ := eval_add_lit_lit_inv hadd
+          subst hvadd; subst hstadd
+          have hp : (BitVec.ofNat 256 a + BitVec.ofNat 256 b).toNat = a + b := by
+            rw [BitVec.toNat_add, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+              Nat.mod_eq_of_lt ha, Nat.mod_eq_of_lt hb]
+            exact Nat.mod_eq_of_lt hab
+          simp only [Bridge.Dialect, builtinWithExternal, stepOp, hp] at hbi
+          cases hbi
+          exact ⟨rfl, rfl⟩
+
+theorem eval_mload_add_lit_halt_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {a b : Nat} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mload
+        [Expr.builtin Op.add [Expr.lit (.number a), Expr.lit (.number b)]])
+      (.halt st')) : False := by
+  cases h with
+  | builtinHalt _ hbi =>
+      simp only [Bridge.Dialect, builtinWithExternal, stepOp] at hbi
+      split at hbi <;> simp at hbi
+  | builtinArgsHalt hargs =>
+      exact Midfall.LoweringV2.Blocks.TraceReturn.trArgs1_halt_inv hargs
+        (fun _ hh => eval_add_lit_lit_halt_false hh)
+
+theorem lag_stmt14_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aD : Nat) (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some aD)
+    (haD : aD < 2 ^ 256) (haD32 : aD + 32 < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 14 1)
+      (fun _ _ => True)
+      (fun V st V' st' o => o = .normal ∧ st' = touchMemory st (aD + 32) 32 ∧
+        V' = ("l_blind", loadWord st.memory (aD + 32)) :: V) := by
+  rw [lag_stmt14_form]
+  simp only [Blocks.VkLoading.vkSite, hD]
+  intro V st _ V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := list_length_one hlen
+              obtain ⟨hv, hst⟩ := eval_mload_add_lit_inv (c := c) (g := g)
+                (funs := funs) (V := V) haD (by norm_num) haD32 he
+              exact ⟨rfl, hst, by simp [hv]⟩
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => exact (eval_mload_add_lit_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) he).elim
+
+theorem lag_stmt15_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aD : Nat) (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some aD) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 15 1)
+      (fun _ _ => True)
+      (fun V st V' st' o => o = .normal ∧ st' = st ∧
+        V' = ("l_i_cptr", BitVec.ofNat 256 aD + BitVec.ofNat 256 64) :: V) := by
+  rw [lag_stmt15_form]
+  simp only [Blocks.VkLoading.vkSite, hD]
+  intro V st _ V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := list_length_one hlen
+              obtain ⟨hv, hst⟩ := eval_add_lit_lit_inv (c := c) (g := g)
+                (funs := funs) (V := V) he
+              exact ⟨rfl, hst, by simp [hv]⟩
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => exact (eval_add_lit_lit_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) he).elim
