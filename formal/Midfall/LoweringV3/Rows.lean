@@ -32,6 +32,7 @@ import Midfall.LoweringV3.FpWire
 import Midfall.LoweringV3.FpInvTransfer
 import Midfall.LoweringV3.FpConsts
 import Midfall.LoweringV3.FpClean
+import Midfall.LoweringV3.FpG2Width
 import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.Tools.ConeSorries
