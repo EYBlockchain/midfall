@@ -3684,3 +3684,112 @@ theorem lag_agrees_hval (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
   rw [hEget, hLwEq]
   apply (frWord_inj hp).eq_iff.mpr
   ring
+
+theorem lag_stmt0_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 0 1 = [GenAst.ylet "k" (GenAst.ylit k)] := by
+  kernel_rfl
+
+theorem lag_stmt0_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m : Nat) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 0 1)
+      (fun _ _ => True)
+      (fun V st V' st' o =>
+        o = .normal ∧ st' = st ∧
+        V' = ("k", BitVec.ofNat 256 k) :: V) := by
+  rw [lag_stmt0_form]
+  intro V st _ V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              cases he with
+              | lit =>
+                  rw [Midfall.Yul.Bridge.litValue_number_nat]
+                  simp
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => cases he
+
+theorem lag_stmt1_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 1 1 =
+      [GenAst.ylet "x" (GenAst.yop EVM.Op.mload [Blocks.VkLoading.vkSite "X_MPTR" consts])] := by
+  kernel_rfl
+
+theorem lag_stmt1_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aX : Nat) (hX : consts.lookup "X_MPTR" = some aX) (haX : aX < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 1 1)
+      (fun _ _ => True)
+      (fun V st V' st' o =>
+        o = .normal ∧ st' = touchMemory st aX 32 ∧
+        V' = ("x", loadWord st.memory aX) :: V) := by
+  rw [lag_stmt1_form]
+  intro V st _ V' st' o hrun
+  have hsite : Blocks.VkLoading.vkSite "X_MPTR" consts = Expr.lit (.number aX) := by
+    simp [Blocks.VkLoading.vkSite, hX]
+  have hp : (BitVec.ofNat 256 aX).toNat = aX := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt haX]
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv he
+              cases hargs with
+              | argsCons hnil hhead =>
+                  cases hnil with
+                  | argsNil =>
+                      rw [hsite] at hhead
+                      obtain ⟨hval, hstate⟩ := eval_lit_inv hhead
+                      subst hval; subst hstate
+                      simp only [Bridge.Dialect, builtinWithExternal, hp, stepOp] at hbi
+                      cases hbi
+                      simp
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he =>
+          cases he with
+          | builtinHalt hargs hbi =>
+              cases hargs with
+              | argsCons hnil hhead =>
+                  cases hnil with
+                  | argsNil =>
+                      rw [hsite] at hhead
+                      obtain ⟨hval, hstate⟩ := eval_lit_inv hhead
+                      subst hval; subst hstate
+                      simp [Bridge.Dialect, builtinWithExternal, stepOp, hp] at hbi
+          | builtinArgsHalt hargs =>
+              exact (eval_args_halt_false (by
+                intro e he st0 st1 hh
+                simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+                rcases he with rfl
+                rw [hsite] at hh
+                exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) hargs).elim
+
+theorem lag_stmt2_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 2 1 = [GenAst.ylet "x_n" (GenAst.yvar "x")] := by
+  kernel_rfl
+
+theorem lag_stmt2_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m : Nat) (x : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 2 1)
+      (fun V _ => VEnv.get V "x" = some x)
+      (fun V st V' st' o => o = .normal ∧ st' = st ∧ V' = ("x_n", x) :: V) := by
+  rw [lag_stmt2_form]
+  intro V st hx V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              cases he with
+              | var hget =>
+                  have hv : _ = x := Option.some.inj (hget.symm.trans hx)
+                  subst hv
+                  simp
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => cases he
