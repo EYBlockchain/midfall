@@ -1549,6 +1549,52 @@ theorem vk_run_exists (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (
           R.pv.expectedNumAccLimbBits R.pv.proofLayout.proofLen) hbody) Step.seqNil
 
 
+section LoopExists
+variable {D : YulSemantics.Dialect} [DecidableEq D.Value]
+
+/-- **THE EXISTENCE FORM OF THE LOOP RULE (GEN.3's other half), for a `for` statement.** A `for`
+    statement with a countdown invariant HAS a normal run: `ExecLoop.countdown` builds the loop
+    derivation from `done`/`step`, and `Step.forLoop` wraps the init run around it. The all-runs
+    form is `LoopRule.allRuns_for_cons_wp` / `ExecLoopAll.countdown_or_halt`; neither exhibits a
+    run, which is exactly what a `LiveTo` needs. Each per-loop existence leaf of TOT.1 is an
+    instance of this theorem at the loop's own invariant. -/
+theorem forLoop_exists_of_countdown {funs : FunEnv D} {V : VEnv D} {st : D.State}
+    {init : Block D.Op} {cond : Expr D.Op} {post body : Block D.Op}
+    {Inv : Nat → VEnv D → D.State → Prop} {V0 : VEnv D} {st0 : D.State}
+    (hinit : ExecStmts D (hoist D init :: funs) V st init V0 st0 .normal)
+    (done : ∀ V st, Inv 0 V st → ∃ cv st',
+      EvalExpr D (hoist D init :: funs) V st cond (.vals [cv] st') ∧ cv = D.zero ∧ Inv 0 V st')
+    (step : ∀ n V st, Inv (n + 1) V st → ∃ cv stc Vb stb ob Vp stp,
+      EvalExpr D (hoist D init :: funs) V st cond (.vals [cv] stc) ∧ cv ≠ D.zero ∧
+      ExecStmt D (hoist D init :: funs) V stc (.block body) Vb stb ob ∧
+      (ob = .normal ∨ ob = .«continue») ∧
+      ExecStmt D (hoist D init :: funs) Vb stb (.block post) Vp stp .normal ∧ Inv n Vp stp)
+    (n : Nat) (hInv : Inv n V0 st0) :
+    ∃ V' st', ExecStmt D funs V st (Stmt.forLoop init cond post body) V' st' .normal := by
+  obtain ⟨Vl, stl, hloop, -⟩ :=
+    ExecLoop.countdown (D := D) (funs := hoist D init :: funs) done step n V0 st0 hInv
+  exact ⟨restore V Vl, stl, Step.forLoop hinit hloop⟩
+
+/-- The one-statement-list face of `forLoop_exists_of_countdown` (the shape a slice segment has). -/
+theorem forLoop_stmts_exists_of_countdown {funs : FunEnv D} {V : VEnv D} {st : D.State}
+    {init : Block D.Op} {cond : Expr D.Op} {post body : Block D.Op}
+    {Inv : Nat → VEnv D → D.State → Prop} {V0 : VEnv D} {st0 : D.State}
+    (hinit : ExecStmts D (hoist D init :: funs) V st init V0 st0 .normal)
+    (done : ∀ V st, Inv 0 V st → ∃ cv st',
+      EvalExpr D (hoist D init :: funs) V st cond (.vals [cv] st') ∧ cv = D.zero ∧ Inv 0 V st')
+    (step : ∀ n V st, Inv (n + 1) V st → ∃ cv stc Vb stb ob Vp stp,
+      EvalExpr D (hoist D init :: funs) V st cond (.vals [cv] stc) ∧ cv ≠ D.zero ∧
+      ExecStmt D (hoist D init :: funs) V stc (.block body) Vb stb ob ∧
+      (ob = .normal ∨ ob = .«continue») ∧
+      ExecStmt D (hoist D init :: funs) Vb stb (.block post) Vp stp .normal ∧ Inv n Vp stp)
+    (n : Nat) (hInv : Inv n V0 st0) :
+    ∃ V' st', ExecStmts D funs V st [Stmt.forLoop init cond post body] V' st' .normal := by
+  obtain ⟨V', st', h⟩ :=
+    forLoop_exists_of_countdown hinit done step n hInv
+  exact ⟨V', st', Step.seqCons h Step.seqNil⟩
+
+end LoopExists
+
 /-- **THE TOT.1 DECOMPOSITION, NAMED.** A `LiveTo` is exactly an existence statement plus a
     classification of the exhibited run: the existential is `StmtsContract`'s first field, the
     disjunction is its postcondition. This is the shape every block case takes (the plan's "the
