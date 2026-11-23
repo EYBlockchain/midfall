@@ -237,15 +237,15 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `2107738`: D2 is merged and the next generation peels are closed (`env_nG2`, `prog_noDirect`,
+At `ec33847`: D2 is merged and the next generation peels are closed (`env_nG2`, `prog_noDirect`,
 `env_vkDigest`, `v3_payload`); the register is **105 sorried declarations / 11 ROOT / 32 CERT /
 0 REFUTED** (105 rows in `SORRY.md`); D1A's exact `readAlgebra` width sequence and `multiPrepare`
 phase A/B/C widths are merged. A4's
-`runBody_mono` (ST.13), lag statements 0–2, and the `litValue_number_nat` helper are merged; A5's
-8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, bridge modulus arithmetic, and
-six-store frame composition are merged; A9's PCS block-1/block-2/block-3-seed semantics, generator
-Word bridge, complete block-1 ROT_POINTS table spec, and block-3 straight-line list folds are
-merged; A11's guard helpers, trim, normal leaf, call inversion/VK wire, `FpWire`, selector-bucket
+`runBody_mono` (ST.13), lag statements 0–6, and the `litValue_number_nat` helper are merged; A5's
+8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, bridge modulus arithmetic, six-store
+frame composition, and bridge 11–20 form are merged; A9's PCS block-1/block-2/block-3-seed
+semantics, generator Word bridge, complete block-1 ROT_POINTS table spec, block-3 straight-line
+list folds, and rolled-arm nested-mload inversions are merged; A11's guard helpers, trim, normal leaf, call inversion/VK wire, `FpWire`, selector-bucket
 monotonicity, and the full `Inv .pcs → Inv .pairing` transfer are merged; A6's `GroupsMatch` split,
 state-threaded fold, and `phaseCols` are in its branch; A12's `block_live` traceReturn/vkLoading
 cases, finalPairing poison arm, and loop-existence rule are merged (3 of 7 block-cases). B4's `ValidV3InhabitationF1Completion` proves `f1GeneratedRender_notValidV3` and the
