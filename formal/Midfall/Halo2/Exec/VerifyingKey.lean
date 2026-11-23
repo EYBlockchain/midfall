@@ -117,7 +117,12 @@ def VerifyingKey.hashInto (vk : VerifyingKey (Fr p) G₁) : TranscriptM Unit :=
     `rustChunks` panics on a zero chunk count, both STATIC properties of the
     key. Stated as a decidable Bool equation so every witness is a computation.
   * fixedSelectorBound - D-GATE14: `num_simple_selectors ≤ num_fixed_columns`,
-    the no-throw precondition of `readFixedEvals` (`verifier.rs:400`). -/
+    the no-throw precondition of `readFixedEvals` (`verifier.rs:400`).
+  * fixedQueriesBound / simpleSelectorQueriesBound - D-GATE15: the two counts that
+    keep `listInsertAt` in range during `readFixedEvals`'s insert fold.
+  * instanceRotZero - D-GATE15: instance-query rotations are `0` (the deployed
+    `noRotInst` profile), making `i32Abs minRot` and the instance slice window
+    well-defined. -/
 structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features) : Prop where
   csDegreeMatches : vk.cs.degree = .ok vk.csDegree
   chunkLenPositive : 3 ≤ vk.csDegree
@@ -160,6 +165,24 @@ structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features)
       protocol plan's `validate` each imply it for the deployed renders; this is the
       interface clause the verifier statements quantify over.) -/
   fixedSelectorBound : vk.cs.numSimpleSelectors ≤ vk.cs.numFixedColumns
+  /-- **D-GATE15(a): the fixed-query insert has room.** `readFixedEvals` folds
+      `listInsertAt acc step.1` over the fixed queries, which panics when
+      `step.1 > acc.length` (`verifier.rs:410`). The list starts at
+      `numFixedColumns - numSimpleSelectors` and grows by one per simple-selector
+      query, so these two counts are the no-panic precondition. -/
+  fixedQueriesBound : vk.cs.fixedQueries.size ≤ vk.cs.numFixedColumns
+  /-- D-GATE15(a), second half: at most `numSimpleSelectors` of the fixed queries are
+      simple, so the insert fold never outruns the list. -/
+  simpleSelectorQueriesBound : vk.cs.numSimpleSelectors ≤
+    (vk.cs.fixedQueries.toList.filter
+      (fun q => vk.cs.hasSimpleSelectorCol q.1.index)).length
+  /-- **D-GATE15(b): the instance-query rotations are `0`** (the deployed profile's
+      `SupportedV2.noRotInst`, lifted to the interface). This is the key-side half of
+      the `i32Abs`/instance-window side conditions: with all rotations `0`,
+      `minRot = maxRot = 0` and `i32Abs 0` succeeds. (The runtime half -
+      `inst.size < 2^31` so the `asI32` window does not wrap - is a calldata fact,
+      stated at the `readAlgebra` walk, not a key field.) -/
+  instanceRotZero : ∀ q ∈ vk.cs.instanceQueries.toList, q.2.int = 0
 
 /-! rust: plonk/mod.rs:94-120 (write), :124-150 (read), :151-186
     (read_from_cs), :218-221 (bytes_length), :293-300 (pinned), and

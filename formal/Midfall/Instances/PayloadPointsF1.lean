@@ -654,7 +654,10 @@ theorem f1VkResourced_wf : f1VkResourced.WellFormed Features.solidity :=
       show f1VkResourced.cs.challengePhase.size = f1VkResourced.cs.numChallenges
       native_decide
     lookupChunkable := by native_decide
-    fixedSelectorBound := by native_decide }
+    fixedSelectorBound := by native_decide
+    fixedQueriesBound := by native_decide
+    simpleSelectorQueriesBound := by native_decide
+    instanceRotZero := by native_decide }
 
 /-- **`supported` AT THE RE-SOURCED RENDER.** The only changed field is `vkPoints`, which is
     `g1CodecZ_g1Valid` for EVERY carrier point (so the real commitments are readable by

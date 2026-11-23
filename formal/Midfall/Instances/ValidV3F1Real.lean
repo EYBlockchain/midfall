@@ -436,6 +436,9 @@ theorem f1VkResourced_wf : f1VkResourced.WellFormed Features.solidity where
   challengePhaseTotal := by native_decide
   lookupChunkable := by native_decide
   fixedSelectorBound := by native_decide
+  fixedQueriesBound := by native_decide
+  simpleSelectorQueriesBound := by native_decide
+  instanceRotZero := by native_decide
 
 /-- **`supported` AT THE RE-SOURCED RENDER.** `wf` is D.2's `WellFormed` (the re-source changes
     the commitment ELEMENTS; every count, domain and CS face is unchanged), `vkPoints` is
