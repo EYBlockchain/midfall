@@ -1223,6 +1223,101 @@ theorem verifyAlgebraicConstraints_width (g1 : G1Codec G₁) (delta : Fr p)
         cases hh
         simpa using hw
 
+/-- The plan-slot identity: once the three protocol counts match the three block
+    counts (`prefixG1Count = nonQuotient + nbQuotient`, `numEvals = evalCount`,
+    `numPointSets = n`), the concatenated block widths are exactly `slots`. -/
+theorem slots_eq_blocks (plan : Midfall.Generator.RepackedProofLayoutPlan)
+    (nNonQuot nbQuot nEval nPS : Nat)
+    (h1 : plan.prefixG1Count = nNonQuot + nbQuot)
+    (h2 : plan.numEvals = nEval) (h3 : plan.numPointSets = nPS) :
+    List.replicate nNonQuot Midfall.Lowering.WireSlot.g1 ++
+      List.replicate nbQuot Midfall.Lowering.WireSlot.g1 ++
+      List.replicate nEval Midfall.Lowering.WireSlot.fr ++
+      [Midfall.Lowering.WireSlot.g1] ++
+      List.replicate nPS Midfall.Lowering.WireSlot.fr ++
+      [Midfall.Lowering.WireSlot.g1]
+      = plan.slots := by
+  unfold Midfall.Generator.RepackedProofLayoutPlan.slots
+  rw [h1, h2, h3, ← List.replicate_append_replicate]
+
+/-- Mapping a width list block to `WireSlot`s: `g1` widths become
+    `WireSlot.g1`, `fr` widths become `WireSlot.fr`. -/
+theorem map_width_slots (g1 : G1Codec G₁) (nNonQuot nbQuot nEval nPS : Nat) :
+    (List.replicate nNonQuot (hashableG1 g1).width ++
+      List.replicate nbQuot (hashableG1 g1).width ++
+      List.replicate nEval (hashableFr (p := p)).width ++
+      [(hashableG1 g1).width] ++
+      List.replicate nPS (hashableFr (p := p)).width ++
+      [(hashableG1 g1).width]).map
+        (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                  else Midfall.Lowering.WireSlot.fr)
+      = List.replicate nNonQuot Midfall.Lowering.WireSlot.g1 ++
+        List.replicate nbQuot Midfall.Lowering.WireSlot.g1 ++
+        List.replicate nEval Midfall.Lowering.WireSlot.fr ++
+        [Midfall.Lowering.WireSlot.g1] ++
+        List.replicate nPS Midfall.Lowering.WireSlot.fr ++
+        [Midfall.Lowering.WireSlot.g1] := by
+  simp only [List.map_append, List.map_replicate, List.map_cons, List.map_nil,
+    hashableG1_width, hashableFr_width, Midfall.g1CompressedWidth]
+  simp [Midfall.g1CompressedWidth]
+
+/-- **`PrepareLogSlots` from the exact parts.** `hParse` is A6's `parseTrace`
+    schedule (the commitment prefix), `hMulti` is the KZG point-set count
+    residual, and `hSlots` is the plan-slot identity with the protocol counts
+    (`prefixG1Count = nonQuotient + nbQuotient`, `numEvals`, `numPointSets`).
+    The `readAlgebra` block is discharged here, not assumed. -/
+theorem PrepareLogSlots_of_parts (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (nParse n : Nat)
+    (hParse : ∀ (inst : Array (Fr p)),
+      ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
+    (hMulti : MultiPrepareBlockWidth R.E.g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) n)
+    (hSlots : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
+      (List.replicate nParse (hashableG1 R.E.g1).width
+        ++ (readAlgebraWidths R.E.g1 Features.solidity R.vk trace.permutations
+              trace.lookups trace.trashcans 1 1 #[#[inst.toList.toArray]]
+            ++ ([(hashableG1 R.E.g1).width]
+                ++ List.replicate n (hashableFr (p := p)).width
+                ++ [(hashableG1 R.E.g1).width]))).map
+          (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                    else Midfall.Lowering.WireSlot.fr)
+        = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots) :
+    PrepareLogSlots R := by
+  intro inst π d t hrun
+  unfold Midfall.Halo2.prepare at hrun
+  unfold Midfall.Halo2.prepareWith at hrun
+  unfold Verifier.prepare at hrun
+  obtain ⟨trace, t1, hparse, hver⟩ := PresWidthSeq.run_bind_ok hrun
+  have hparseW : t1.log.toList.map (fun r => r.1) =
+      (Transcript.initFromBytes π).log.toList.map (fun r => r.1)
+        ++ List.replicate nParse (hashableG1 R.E.g1).width :=
+    hParse inst (Transcript.initFromBytes π) t1 trace hparse
+  have hverW : t.log.toList.map (fun r => r.1) = t1.log.toList.map (fun r => r.1) ++
+      (readAlgebraWidths R.E.g1 Features.solidity R.vk trace.permutations
+          trace.lookups trace.trashcans 1 1 #[#[inst.toList.toArray]]
+        ++ ([(hashableG1 R.E.g1).width]
+            ++ List.replicate n (hashableFr (p := p)).width
+            ++ [(hashableG1 R.E.g1).width])) :=
+    verifyAlgebraicConstraints_width R.E.g1 R.E.delta Features.solidity
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) R.vk trace #[#[(1 : G₁)]] #[#[inst.toList.toArray]] n hMulti
+      rfl t1 t d hver
+  have hcompose : ∀ (l : List (Nat × Bytes)),
+      l.map (fun r => if r.1 = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                      else Midfall.Lowering.WireSlot.fr)
+        = (l.map (fun r => r.1)).map
+            (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                      else Midfall.Lowering.WireSlot.fr) := by
+    intro l
+    rw [List.map_map]
+    rfl
+  rw [hcompose, hverW, hparseW]
+  have hinit : (Transcript.initFromBytes π).log.toList.map (fun r => r.1) = [] := rfl
+  rw [hinit]
+  simp only [List.nil_append]
+  exact hSlots inst trace
+
 end Composition
 
 end Midfall.LoweringV3
