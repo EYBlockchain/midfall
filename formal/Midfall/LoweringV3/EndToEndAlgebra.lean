@@ -4227,8 +4227,8 @@ theorem KzgPartitionBridge_of_queryMap
   exact constructIntermediateSets_pointSets_size_eq_of_queryMap
     (eqC := kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ))
     (fk := qm.fk) (ck := qm.ck) (gk := qm.gk)
-    qm.hCommEq qm.hGCommEq qm.hPointEq
-    queriesV queriesG qm.L qm.hVlist qm.hGlist
+    qm.L qm.hCommEq qm.hGCommEq qm.hPointEq
+    queriesV queriesG qm.hVlist qm.hGlist
     qm.hpairP qm.hpairC (cm := setsV.1) (pointSets := setsV.2) setsG hV hG
 
 /-- **`KzgMultiPrepareWidths` FROM THE PER-LINEARIZE QUERY MAP.** This is the

@@ -315,3 +315,37 @@ EXACT RESIDUAL AND INTERFACE OBSTRUCTION:
 
 W12 remains green (`kzgPartitionBridge_false_at_x0`); no statement was weakened
 and no row/bundle/root gained a hypothesis.
+
+## Local/relational `KzgQueryMapData` (supersedes the global key fields)
+
+The global `hCommEq`/`hGCommEq` fields of the merged datum were the wrong
+interface for the real verifier (`kzgCommitBeq` compares `.onePiece` by slot,
+`ecPointBeq` by pointer). The datum is now **tail-local**:
+
+* `KzgQueryMapData.hCommEq`, `hGCommEq`, `hPointEq` quantify only over pairs in
+  the datum's paired list `L` (not over all `CommitmentReference`s/`EcPoint`s).
+* `pass1_step1_sim` takes the same local hypotheses plus an explicit
+  `pre`/`suffix` split (`L = pre ++ suffix`) and provenance of the verifier's
+  `cms`/`gs`/`pts` state in `L`. The provenance is maintained per step; the
+  counting theorem starts at `pre = []`, `suffix = L`, empty state.
+* The counting theorem `constructIntermediateSets_pointSets_size_eq_of_queryMap`
+  and the consumers `KzgPartitionBridge_of_queryMap` /
+  `KzgMultiPrepareWidths_of_queryMap` are unchanged in statement but now consume
+  the local fields.
+
+This is the interface the concrete `linearize` ↔ `Generator.queries` map should
+target. The remaining datum inputs are exactly the per-tail facts:
+
+1. `hclass : eqC p.1.commitment p'.1.commitment = ecPointBeq p.2.comm p'.2.comm`
+   for all paired entries (the slot/pointer alignment, including the
+   `.linear`-vs-`computedQuotientComm` entry);
+2. the equivalence facts for `eqC` and `ecPointBeq` restricted to `L`
+   (reflexivity/symmetry/transitivity), which the eventual `ck`/`gk` constructor
+   uses to turn the classes into keys;
+3. no-aliasing for the queried allocations (the committed-instance columns all
+   share `G1_IDENTITY_MPTR`, so the actual query list must not pair one pointer
+   with two distinct slot meanings; the `.linear` linearization key must be
+   unique to `computedQuotientComm`).
+
+The point half is already discharged by `exists_pointKey` (global `fk` with
+`(a == b) = (fk a == fk b)` and `fk (x·ω^r) = r` on the chosen rotation list).
