@@ -1043,6 +1043,171 @@ def QEvalSetCountMatches {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     (g1 : G1Codec G₁) (pcs : Pcs p G₁ G₂ Gₜ) (n : Nat) : Prop :=
   MultiPrepareBlockWidth g1 pcs n
 
+section KzgPointSetCount
+
+variable {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+/-! ### The point-set count: the exact gap in `KzgMultiPrepareWidths`
+
+    `PresWidthSeq.multiPrepare_width` (above) already gives the exact width list
+    `[g1] ++ replicate pointSets.size fr ++ [g1]` for every `multiPrepare` run, where
+    `pointSets` is the `constructIntermediateSets` result. The only remaining input of
+    `KzgMultiPrepareWidths` is therefore the COUNT equality `pointSets.size = n`.
+    The theorems here state that reduction exactly and consume the already-named
+    `KzgPartitionBridge` (`LoweringV3.EndToEnd`) on the generator side.
+
+    W12 BLOCKER, in the tree: the count is NOT queries-independent. `#[]` gives
+    `pointSets.size = 0`, while a deployed plan has `numPointSets > 0`, so the
+    `∀ queries` form of `MultiPrepareWidths` is FALSE at the empty query vector
+    (for any transcript on which the empty run succeeds). `pointSetsCount_forces_zero`
+    is that obstruction, not a weakening: the true residual has to be stated at the
+    LINEARIZED query vector (`Verifier.linearize`'s output), whose point-set count is
+    fixed by the VK under `ChallengesGood.xNonzero` + rotation distinctness. -/
+
+/-- `multiPrepare` succeeds only if `constructIntermediateSets` did: the
+    inversion of the phaseA `StateT.lift` (the `buildQ` lift is irrelevant here). -/
+theorem multiPrepare_constructIntermediateSets_ok
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (queries : Array (VerifierQuery (Fr p) G₁))
+    (hNoDummies : ¬ (feat.outerFewerPointSets && fewerPointSetsRuntime))
+    {t : Transcript} {a : DualMSM (Fr p) G₁ G₂ Gₜ} {t' : Transcript}
+    (hrun : (Midfall.Halo2.multiPrepare (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat
+      fewerPointSetsRuntime queries).run t = .ok (a, t')) :
+    ∃ cm pointSets,
+      constructIntermediateSets (F := Fr p) (C := G₁)
+        (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries
+        = .ok (cm, pointSets) := by
+  unfold Midfall.Halo2.multiPrepare at hrun
+  obtain ⟨aA, tA, hA, _⟩ := PresWidthSeq.run_bind_ok hrun
+  unfold Midfall.Halo2.phaseA at hA
+  dsimp only at hA
+  rw [if_neg hNoDummies] at hA
+  simp only [StateT.run_bind, StateT.run_pure, StateT.run_lift] at hA
+  obtain ⟨p1, hp1, h1⟩ := AlgebraWidths.except_bind_ok hA
+  cases hp1
+  obtain ⟨p2, _, h2⟩ := AlgebraWidths.except_bind_ok h1
+  obtain ⟨p3, _, h3⟩ := AlgebraWidths.except_bind_ok h2
+  obtain ⟨p4, hp4, _⟩ := AlgebraWidths.except_bind_ok h3
+  obtain ⟨cp, hcp, _⟩ := AlgebraWidths.except_bind_ok hp4
+  exact ⟨cp.1, cp.2, hcp⟩
+
+/-- The empty query vector has no point sets (the `where` folds reduce on `[]`). -/
+theorem constructIntermediateSets_empty :
+    constructIntermediateSets (F := Fr p) (C := G₁)
+      (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ))
+      (#[] : Array (VerifierQuery (Fr p) G₁)) = .ok (#[], #[]) := by
+  rfl
+
+/-- **THE `∀ queries` COUNT IS ZERO.** Any uniform point-set count must be `0`, by
+    the empty query vector. So `MultiPrepareBlockWidth … n` with `n ≠ 0` cannot be
+    established (and is false whenever the empty query run succeeds; see
+    `MultiPrepareBlockWidth.eq_zero_of_empty_run`). -/
+theorem pointSetsCount_forces_zero
+    (n : Nat)
+    (hPoint : ∀ (queries : Array (VerifierQuery (Fr p) G₁))
+      (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p))),
+      constructIntermediateSets (F := Fr p) (C := G₁)
+        (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries
+        = .ok (cm, pointSets) → pointSets.size = n) :
+    n = 0 := by
+  have h := hPoint #[] #[] #[] (constructIntermediateSets_empty (p := p) (G₁ := G₁)
+    (G₂ := G₂) (Gₜ := Gₜ))
+  simpa using h.symm
+
+/-- **THE COUNT REDUCTION.** `MultiPrepareBlockWidth` for the KZG instance follows
+    from the point-set count equality at every query vector. This is exactly the
+    missing count; the width sequence itself is `PresWidthSeq.multiPrepare_width`. -/
+theorem MultiPrepareBlockWidth_of_pointSets
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (n : Nat)
+    (hNoDummies : ¬ (feat.outerFewerPointSets && fewerPointSetsRuntime))
+    (hPoint : ∀ (queries : Array (VerifierQuery (Fr p) G₁))
+      (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p))),
+      constructIntermediateSets (F := Fr p) (C := G₁)
+        (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries
+        = .ok (cm, pointSets) → pointSets.size = n) :
+    MultiPrepareBlockWidth g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat fewerPointSetsRuntime) n := by
+  intro queries t t' a hrun
+  obtain ⟨cm, pointSets, hCI⟩ :=
+    multiPrepare_constructIntermediateSets_ok g1 fc feat fewerPointSetsRuntime queries
+      hNoDummies hrun
+  have hw := PresWidthSeq.multiPrepare_width (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat
+    fewerPointSetsRuntime queries hNoDummies cm pointSets hCI
+  have hp := hPoint queries cm pointSets hCI
+  rw [hp] at hw
+  exact hw t t' a hrun
+
+/-- **THE TRUE RESIDUAL'S SHAPE, PER QUERY VECTOR.** For the linearized query
+    vector, the width block is exact as soon as `constructIntermediateSets` gives
+    the plan's point-set count. This is the statement the D-GATE6 query-map bridge
+    must discharge at `Verifier.linearize`'s output; it is NOT the `∀ queries`
+    form (which is false at `#[]`). -/
+theorem multiPrepare_width_at (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (queries : Array (VerifierQuery (Fr p) G₁))
+    (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p)))
+    (hCI : constructIntermediateSets (F := Fr p) (C := G₁)
+      (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries
+      = .ok (cm, pointSets))
+    (hPoint : pointSets.size = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+      R.plan.proofLayout).numPointSets) :
+    PresWidthSeq ([(hashableG1 R.E.g1).width] ++
+        List.replicate (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numPointSets (hashableFr (p := p)).width ++
+        [(hashableG1 R.E.g1).width])
+      ((Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime).multiPrepare queries) := by
+  have hNoDummies : ¬ (Features.solidity.outerFewerPointSets && R.E.fewerPointSetsRuntime) := by
+    simp [Features.solidity]
+  have hw := PresWidthSeq.multiPrepare_width (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field
+    Features.solidity R.E.fewerPointSetsRuntime queries hNoDummies cm pointSets hCI
+  rw [hPoint] at hw
+  exact hw
+
+/-- The empty-query width block of `multiPrepare`: two `g1` reads, no scalars. -/
+theorem multiPrepare_width_empty
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool)
+    (hNoDummies : ¬ (feat.outerFewerPointSets && fewerPointSetsRuntime)) :
+    PresWidthSeq ([(hashableG1 g1).width] ++ [(hashableG1 g1).width])
+      (Midfall.Halo2.multiPrepare (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat
+        fewerPointSetsRuntime #[]) := by
+  have hCI := constructIntermediateSets_empty (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+  have hw := PresWidthSeq.multiPrepare_width (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat
+    fewerPointSetsRuntime #[] hNoDummies #[] #[] hCI
+  simpa using hw
+
+/-- **W12: THE `∀ queries` FORM IS REFUTED BY THE EMPTY QUERY VECTOR.** If the empty
+    query run succeeds, any uniform `MultiPrepareBlockWidth … n` forces `n = 0`; a
+    deployed plan has `numPointSets > 0`, so `KzgMultiPrepareWidths R` cannot be
+    closed in its `∀ queries` form. The true residual is the linearized-query form. -/
+theorem MultiPrepareBlockWidth.eq_zero_of_empty_run
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (n : Nat)
+    (hNoDummies : ¬ (feat.outerFewerPointSets && fewerPointSetsRuntime))
+    (h : MultiPrepareBlockWidth g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat fewerPointSetsRuntime) n)
+    {t : Transcript} {a : DualMSM (Fr p) G₁ G₂ Gₜ} {t' : Transcript}
+    (hrun : (Midfall.Halo2.multiPrepare (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat
+      fewerPointSetsRuntime #[]).run t = .ok (a, t')) :
+    n = 0 := by
+  have h1 := h #[] t t' a hrun
+  have h2 := multiPrepare_width_empty g1 fc feat fewerPointSetsRuntime hNoDummies
+    t t' a hrun
+  have hws : ([(hashableG1 g1).width] ++ List.replicate n (hashableFr (p := p)).width ++
+        [(hashableG1 g1).width])
+      = ([(hashableG1 g1).width] ++ [(hashableG1 g1).width]) :=
+    List.append_cancel_left (h1.symm.trans h2)
+  have hlen := congrArg List.length hws
+  simp only [List.length_append, List.length_replicate, List.length_singleton] at hlen
+  omega
+
+end KzgPointSetCount
+
 /-- `StateT.get`'s run. -/
 theorem StateT_get_run (s : Transcript) :
     (StateT.get : TranscriptM Transcript).run s = .ok (s, s) := rfl
@@ -3495,13 +3660,67 @@ def ParseTraceSchedule (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) : Prop :
     is pinned to the plan's `numPointSets`. The unconditional count equality is
     FALSE at `x = 0` (`kzgPartitionBridge_false_at_x0`), so this is the
     D-GATE5 `ChallengesGood.xNonzero` / partition-bridge obligation, stated with
-    no weakening. -/
+    no weakening.
+
+    **W12 REPAIR NOTE (measured).** In THIS `∀ queries` form the statement is also
+    false at the EMPTY query vector for any plan with `numPointSets ≠ 0`: the empty
+    construction yields zero point sets (`constructIntermediateSets_empty`) and the
+    empty run appends only the two `g1` widths (`multiPrepare_width_empty`), so a
+    successful empty run forces `n = 0` (`MultiPrepareBlockWidth.eq_zero_of_empty_run`).
+    The width half is unconditionally `PresWidthSeq.multiPrepare_width`; the true
+    residual is the COUNT at `Verifier.linearize`'s query vector, which is what the
+    D-GATE6 decision fixes under `x ≠ 0` + `omega` order `n` + rotation distinctness.
+    `KzgMultiPrepareWidths_of_pointSets` and
+    `KzgMultiPrepareWidths_of_kzgPartitionBridge` are the exact reductions: the
+    latter consumes the already-named `KzgPartitionBridge` and leaves the query-map
+    correspondence to the generator's query list as the only missing input. -/
 def KzgMultiPrepareWidths (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) : Prop :=
   MultiPrepareBlockWidth R.E.g1
     (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
       R.E.fewerPointSetsRuntime)
     (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
       R.plan.proofLayout).numPointSets
+
+/-- **`KzgMultiPrepareWidths` FROM THE POINT-SET COUNT** (the plan's
+    `numPointSets` is read from the proof layout). -/
+theorem KzgMultiPrepareWidths_of_pointSets (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hPoint : ∀ (queries : Array (VerifierQuery (Fr p) G₁))
+      (cm : Array (CD (Fr p) G₁)) (pointSets : Array (Array (Fr p))),
+      constructIntermediateSets (F := Fr p) (C := G₁)
+        (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries
+        = .ok (cm, pointSets) →
+      pointSets.size = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).numPointSets) :
+    KzgMultiPrepareWidths R := by
+  have hNoDummies : ¬ (Features.solidity.outerFewerPointSets && R.E.fewerPointSetsRuntime) := by
+    simp [Features.solidity]
+  unfold KzgMultiPrepareWidths
+  exact MultiPrepareBlockWidth_of_pointSets R.E.g1 R.E.field Features.solidity
+    R.E.fewerPointSetsRuntime _ hNoDummies hPoint
+
+/-- **`KzgMultiPrepareWidths` FROM THE PORT-AUDIT PARTITION BRIDGE.** This consumes
+    the bridge that is already named in `LoweringV3.EndToEnd`
+    (`KzgPartitionBridge`): per query vector it supplies a generator query list and
+    the point-set count identity. The generator-side count is then the plan's
+    `numPointSets`. What is still missing is the QUERY-MAP correspondence
+    `linearize's queries ↔ Generator.queries` (and the generator count identity);
+    this theorem reduces the width residual to exactly those. -/
+theorem KzgMultiPrepareWidths_of_kzgPartitionBridge
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hG : ∀ (queries : Array (VerifierQuery (Fr p) G₁)),
+      ∃ (queriesG : List Midfall.Generator.Query)
+        (setsG : Midfall.Generator.IntermediateSets),
+        Midfall.Generator.constructIntermediateSetsImpl queriesG = .ok setsG ∧
+        KzgPartitionBridge (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ) queries queriesG ∧
+        setsG.pointSets.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numPointSets) :
+    KzgMultiPrepareWidths R := by
+  refine KzgMultiPrepareWidths_of_pointSets R ?_
+  intro queries cm pointSets hCI
+  obtain ⟨queriesG, setsG, hGok, hBridge, hLen⟩ := hG queries
+  exact (hBridge (cm, pointSets) setsG hCI hGok).trans hLen
+
+
 
 /-- **`PrepareLogSlots` FROM EXACTLY THE TWO NAMED RESIDUALS.** The parseTrace
     block, the KZG scalar block, and the plan's eval count (`numEvals`, proved in
@@ -3606,6 +3825,21 @@ open Midfall.Tools.Done in
 open Midfall.Tools.Done in
 #assert_axioms Midfall.LoweringV3.end_to_end_of_A6_KZG
   [propext, Classical.choice, Quot.sound, sorryAx] native []
+
+#assert_axioms multiPrepare_constructIntermediateSets_ok
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms constructIntermediateSets_empty [propext, Classical.choice, Quot.sound]
+#assert_axioms pointSetsCount_forces_zero [propext, Classical.choice, Quot.sound]
+#assert_axioms MultiPrepareBlockWidth_of_pointSets
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms KzgMultiPrepareWidths_of_pointSets
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms KzgMultiPrepareWidths_of_kzgPartitionBridge
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms multiPrepare_width_empty [propext, Classical.choice, Quot.sound]
+#assert_axioms multiPrepare_width_at [propext, Classical.choice, Quot.sound]
+#assert_axioms MultiPrepareBlockWidth.eq_zero_of_empty_run
+  [propext, Classical.choice, Quot.sound]
 
 end Composition
 
