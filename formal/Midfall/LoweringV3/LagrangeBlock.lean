@@ -1075,3 +1075,60 @@ theorem lag_group6 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
     rw [hsub] at hout'
     rw [hout' a ha' hb']
     exact hout a ha hb hs
+/-- **GROUP 4 (statement 7: the denominator window).** -/
+theorem lag_group4 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g)) (hr : consts.lookup "r" = none)
+    (hL : consts.lookup "OMEGA_INV_TO_L_MPTR" = some C.aL) (haL : C.aL < 2 ^ 256)
+    (hfitD : C.D + 32 * (n + m) < 2 ^ 256)
+    (hLD : C.aL + 32 ≤ C.D ∨ C.D + 32 * (n + m) ≤ C.aL) (st0 : EvmState)
+    (hw0 : loadWord st0.memory C.aL = C.w0) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 7 1) (LagP5 C 0 0 (fun _ => 0) st0)
+      (fun _ _ V' st' o => o = .normal ∧ LagP6 C 0 0 (fun _ => 0) st0 V' st') := by
+  intro V st hg V' st' o hrun
+  obtain ⟨hrw, hsucc, hpf, hxn, hom, hx, hmp, hmpe, hmem, henv, hhalt, hout⟩ := hg
+  have hs := lag_denoms_loop (funs := funs) (consts := consts) hr k n m C.aL hL haL C.D hfitD
+    V st ⟨hmp, hmpe, (by rw [hx]; rfl), (by rw [hom]; rfl), (by rw [hrw]; rfl)⟩ V' st' o hrun
+  obtain ⟨ho, x, om, rw, hx', hom', hrw', hV', hden, houtside, henv', hhalt'⟩ := hs
+  have hxv : x = C.xw := Option.some.inj (hx'.symm.trans hx)
+  have homv : om = C.omw := Option.some.inj (hom'.symm.trans hom)
+  have hrwv : rw = C.rw := Option.some.inj (hrw'.symm.trans hrw)
+  subst hxv; subst homv; subst hrwv
+  have hw0' : loadWord st.memory C.aL = C.w0 := by rw [hmem]; exact hw0
+  refine ⟨ho, ?_⟩
+  split_conj
+  · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "r") (by decide)]
+    exact hrw
+  · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "success") (by decide)]
+    exact hsucc
+  · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr")
+      (y := "lagrange_precompile_failed") (by decide)]
+    exact hpf
+  · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "x_n") (by decide)]
+    exact hxn
+  · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "omega") (by decide)]
+    exact hom
+  · rw [hV']; exact venv_get_set_same (D := Bridge.Dialect c g) hmp
+  · rw [hV', venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "mptr_end")
+      (by decide)]
+    exact hmpe
+  · intro i hi
+    rw [hden i hi, hw0']
+    rfl
+  · rw [show loadWord st'.memory C.aL = loadWord st.memory C.aL from
+      loadWord_of_memSameOutside houtside hLD, hmem]
+    exact hw0
+  · exact henv'.trans henv
+  · exact hhalt'.trans hhalt
+  · have hlen : 32 * (n + m + 1) = 32 * (n + m) + 32 := by ring
+    intro a ha hb hs
+    have ha' : a < C.D ∨ C.D + 32 * (n + m) ≤ a := by
+      rcases ha with h | h
+      · exact Or.inl h
+      · exact Or.inr (by omega)
+    rw [houtside a ha']
+    exact hout a ha hb hs
+
+
+
+end Midfall.LoweringV3.LagrangeBlock
