@@ -3924,3 +3924,69 @@ theorem lag_stmt5_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline
         (funs := funs) (V := V) (st := st) (x := "mptr") (a := aD) h1
       exact absurd ho hne
 
+theorem exec_let_add_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x y : String} {k : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.builtin Op.add
+        [Expr.var y, Expr.lit (.number k)]))) V' st' o) :
+    ∃ v, VEnv.get V y = some v ∧ o = .normal ∧
+      V' = (x, v + BitVec.ofNat 256 k) :: V ∧ st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨a, ha, hv, hst⟩ := eval_add_var_lit_inv he
+      exact ⟨a, ha, rfl, congrArg (fun z => (x, z) :: V) hv ▸ rfl, hst⟩
+  | letHalt he =>
+      cases he with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hrest hhead =>
+              cases hrest with
+              | argsCons hrest2 hlit =>
+                  cases hrest2 with
+                  | argsNil =>
+                      obtain ⟨v, hv⟩ := eval_var_inv hhead
+                      obtain ⟨hval, hst⟩ := eval_lit_inv hlit
+                      subst hval; subst hst
+                      simp [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+      | builtinArgsHalt hargs =>
+          have hne : ∀ e ∈ [Expr.var y, Expr.lit (.number k)],
+              ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 e (.halt st1) → False := by
+            intro e he' st0 st1 hh
+            simp only [List.mem_cons, List.not_mem_nil, or_false] at he'
+            rcases he' with rfl | rfl
+            · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+            · exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh
+          exact (eval_args_halt_false hne hargs).elim
+
+theorem lag_stmt6_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 6 1 =
+      [GenAst.ylet "mptr_end" (GenAst.yop EVM.Op.add
+        [GenAst.yvar "mptr", GenAst.ylit ((n + m) * 32)])] := by
+  kernel_rfl
+
+theorem lag_stmt6_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m : Nat) (mp : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 6 1)
+      (fun V _ => VEnv.get V "mptr" = some mp)
+      (fun V st V' st' o =>
+        o = .normal ∧ st' = st ∧ V' = ("mptr_end", mp + BitVec.ofNat 256 ((n + m) * 32)) :: V) := by
+  rw [lag_stmt6_form]
+  intro V st hmp V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          obtain ⟨v, hv, ho, hV, hst⟩ := exec_let_add_var_lit_inv (c := c) (g := g)
+            (funs := funs) (V := V) (st := st) (x := "mptr_end") (y := "mptr")
+            (k := (n + m) * 32) h1
+          have hveq : v = mp := Option.some.inj (hv.symm.trans hmp)
+          subst hveq
+          exact ⟨ho, hst, hV⟩
+  | seqStop h1 hne =>
+      obtain ⟨v, hv, ho, hV, hst⟩ := exec_let_add_var_lit_inv (c := c) (g := g)
+        (funs := funs) (V := V) (st := st) (x := "mptr_end") (y := "mptr")
+        (k := (n + m) * 32) h1
+      exact absurd ho hne
+
