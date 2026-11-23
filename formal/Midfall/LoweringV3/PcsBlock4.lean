@@ -3131,4 +3131,247 @@ theorem pcsFEval_contract {funs : FunEnv (Bridge.Dialect c g)}
   [propext, Classical.choice, Quot.sound] native []
 
 
+def pcsRotPtRef (distinctRotations : List Int) (rot : Int) : String :=
+  "rot_pt_" ++ toString ((distinctRotations.findIdx? fun r => r == rot).getD 0)
+
+def pcsPointRefs (points : List Int) (distinctRotations : List Int) : List (Nat × String) :=
+  (Midfall.Generator.enumIdx points).map fun q => (q.1, pcsRotPtRef distinctRotations q.2)
+
+def pcsKs (points : List Int) (distinctRotations : List Int) (j : Nat) : List (Nat × String) :=
+  (Midfall.Generator.enumIdx points).filterMap fun q =>
+    if q.1 == j then none else some (q.1, pcsRotPtRef distinctRotations q.2)
+
+def pcsBatchInputs (m : Nat) : List String :=
+  (List.range m).map pcsDxName ++ (List.range m).map pcsLbasisName
+
+def pcsBatchName (m i : Nat) : String := (pcsBatchInputs m).getD i ""
+
+def pcsInvName (m j : Nat) : String :=
+  if j < m then "dx_inv_" ++ toString j else "lbasis_inv_" ++ toString (j - m)
+
+/-- The `else` branch of `pcsSetBlockAst`, copied verbatim. -/
+def pcsSetBodyGen (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (setEvalOffsetWords : Nat) : Block EVM.Op :=
+  let rotPtRef : Int → String := fun rot =>
+    "rot_pt_" ++ toString ((distinctRotations.findIdx? fun r => r == rot).getD 0)
+  let proofEval := GenAst.yop EVM.Op.calldataload [GenAst.yop EVM.Op.add [GenAst.yvar "Q_EVAL_CPTR",
+    GenAst.ylit (setIdx * Midfall.Generator.wordBytes)]]
+  let m := points.length
+  let dxLines := (Midfall.Generator.enumIdx points).map fun (j, point) =>
+    GenAst.ylet ("dx_" ++ toString j) (GenAstPcs.subFrom (GenAst.yvar "x3") (GenAst.yvar (rotPtRef point)))
+  let lbasisLines := (Midfall.Generator.enumIdx points).map fun (j, pointJ) =>
+    let pj := GenAst.yvar (rotPtRef pointJ)
+    let terms := (Midfall.Generator.enumIdx points).filterMap fun (k, pointK) =>
+      if k == j then none else some (GenAst.yset ("lbasis_" ++ toString j)
+        (GenAst.yop EVM.Op.mulmod [GenAst.yvar ("lbasis_" ++ toString j),
+          GenAstPcs.subFrom pj (GenAst.yvar (rotPtRef pointK)), GenAst.yvar "r"]))
+    [GenAst.ylet ("lbasis_" ++ toString j) (GenAst.ylit 1)] ++ terms
+  let batchInputs := (List.range m).map (fun j => "dx_" ++ toString j)
+    ++ (List.range m).map (fun j => "lbasis_" ++ toString j)
+  let n := batchInputs.length
+  let bpLines := [GenAst.ylet "bp_0" (GenAst.yvar (batchInputs.getD 0 ""))]
+    ++ ((Midfall.Generator.enumIdx batchInputs).drop 1).map fun (i, inp) =>
+        GenAst.ylet ("bp_" ++ toString i)
+          (GenAst.yop EVM.Op.mulmod [GenAst.yvar ("bp_" ++ toString (i - 1)), GenAst.yvar inp, GenAst.yvar "r"])
+  let invName : Nat → String := fun idx =>
+    if idx < m then "dx_inv_" ++ toString idx else "lbasis_inv_" ++ toString (idx - m)
+  let bqLines := ((List.range n).drop 1).reverse.flatMap fun i =>
+    [ GenAst.ylet (invName i) (GenAst.yop EVM.Op.mulmod [GenAst.yvar "bq", GenAst.yvar ("bp_" ++ toString (i - 1)), GenAst.yvar "r"]),
+      GenAst.yset "bq" (GenAst.yop EVM.Op.mulmod [GenAst.yvar "bq", GenAst.yvar (batchInputs.getD i ""), GenAst.yvar "r"]) ]
+  let denInvLines := [GenAst.ylet "den_inv" (GenAst.yvar (invName 0))]
+    ++ ((List.range m).drop 1).map fun j =>
+        GenAst.yset "den_inv" (GenAst.yop EVM.Op.mulmod [GenAst.yvar "den_inv", GenAst.yvar ("dx_inv_" ++ toString j),
+          GenAst.yvar "r"])
+  let termLines := (List.range m).flatMap fun j =>
+    let evJ := GenAst.yop EVM.Op.mload [GenAst.yop EVM.Op.add [GenAst.yvar "Q_EVAL_SET_MPTR",
+      GenAst.ylit ((setEvalOffsetWords + j) * Midfall.Generator.wordBytes)]]
+    [ GenAst.ylet ("term_" ++ toString j)
+        (GenAst.yop EVM.Op.mulmod [GenAst.yop EVM.Op.mulmod [evJ, GenAst.yvar ("dx_inv_" ++ toString j), GenAst.yvar "r"],
+          GenAst.yvar ("lbasis_inv_" ++ toString j), GenAst.yvar "r"]),
+      GenAst.yset "eval" (GenAstPcs.subFrom (GenAst.yvar "eval") (GenAst.yvar ("term_" ++ toString j))) ]
+  dxLines ++ lbasisLines.flatten ++ bpLines
+    ++ [ GenAst.ylet "bq" (GenAst.ycall "scalar_inv" [GenAst.yvar ("bp_" ++ toString (n - 1))]) ]
+    ++ bqLines ++ [GenAst.ylet (invName 0) (GenAst.yvar "bq")] ++ denInvLines
+    ++ [ GenAst.ylet "eval" (GenAst.yop EVM.Op.mulmod [proofEval, GenAst.yvar "den_inv", GenAst.yvar "r"]) ]
+    ++ termLines
+    ++ [ GenAst.yset "f_eval" (GenAst.yop EVM.Op.addmod [GenAst.yop EVM.Op.mulmod [GenAst.yvar "f_eval",
+          GenAst.yvar "x2", GenAst.yvar "r"], GenAst.yvar "eval", GenAst.yvar "r"]) ]
+
+def pcsGenBody (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off : Nat) : Block EVM.Op :=
+  let m := points.length
+  let xs := pcsPointRefs points distinctRotations
+  let invName := pcsInvName m
+  let n := (pcsBatchInputs m).length
+  let nm := pcsBatchName m
+  xs.map (fun q => pcsDxStmt q.1 q.2)
+    ++ (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (pcsKs points distinctRotations q.1))).flatten
+    ++ pcsBpLines n nm
+    ++ [pcsBqStmt (pcsBpName (n - 1))]
+    ++ pcsBqLines n nm invName
+    ++ [GenAst.ylet (invName 0) (GenAst.yvar "bq")]
+    ++ pcsDenInvLines m invName
+    ++ [pcsEvalStmt setIdx]
+    ++ pcsTermLines m off (fun j => invName j) (fun j => invName (m + j))
+    ++ [pcsFEvalStmt]
+
+
+theorem list_filterMap_congr {α β : Type} {l : List α} {f g : α → Option β}
+    (h : ∀ x ∈ l, f x = g x) : l.filterMap f = l.filterMap g := by
+  induction l with
+  | nil => rfl
+  | cons a l ih =>
+      simp only [List.filterMap_cons]
+      rw [h a (by simp)]
+      split <;> simp [ih (fun x hx => h x (by simp [hx]))]
+
+theorem pcsBpMap_gen (l : List String) :
+    ((Midfall.Generator.enumIdx l).drop 1).map (fun x =>
+        GenAst.ylet ("bp_" ++ toString x.1) (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar ("bp_" ++ toString (x.1 - 1)), GenAst.yvar x.2, GenAst.yvar "r"]))
+    = ((List.range l.length).drop 1).map (fun i =>
+        GenAst.ylet (pcsBpName i) (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar (pcsBpName (i - 1)), GenAst.yvar (l.getD i ""), GenAst.yvar "r"])) := by
+  unfold Midfall.Generator.enumIdx
+  apply List.ext_getElem
+  · simp only [List.length_map, List.length_drop, List.length_zip, List.length_range]
+    rw [Nat.min_self]
+  · intro j hj1 hj2
+    simp only [List.length_map, List.length_drop, List.length_zip, List.length_range,
+      Nat.min_self] at hj1
+    simp only [List.getElem_map, List.getElem_drop, List.getElem_zip, List.getElem_range,
+      pcsBpName]
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (by omega), Option.getD_some]
+
+theorem pcsBpLines_gen (batchInputs : List String) :
+    [GenAst.ylet "bp_0" (GenAst.yvar (batchInputs.getD 0 ""))]
+      ++ ((Midfall.Generator.enumIdx batchInputs).drop 1).map (fun x =>
+          GenAst.ylet ("bp_" ++ toString x.1) (GenAst.yop EVM.Op.mulmod
+            [GenAst.yvar ("bp_" ++ toString (x.1 - 1)), GenAst.yvar x.2, GenAst.yvar "r"]))
+    = pcsBpLines batchInputs.length (fun i => batchInputs.getD i "") := by
+  unfold pcsBpLines pcsBpHead pcsBpTail
+  rw [pcsBpMap_gen]
+  have h0 : (Nat.repr 0 : String) = "0" := by decide
+  simp [pcsBpName, h0]
+
+theorem pcsBqLines_gen (batchInputs : List String) (invName : Nat → String) :
+    ((List.range batchInputs.length).drop 1).reverse.flatMap (fun i =>
+      [ GenAst.ylet (invName i) (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar "bq", GenAst.yvar ("bp_" ++ toString (i - 1)), GenAst.yvar "r"]),
+        GenAst.yset "bq" (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar "bq", GenAst.yvar (batchInputs.getD i ""), GenAst.yvar "r"]) ])
+    = pcsBqLines batchInputs.length (fun i => batchInputs.getD i "") invName := rfl
+
+theorem pcsDenInvLines_gen (m : Nat) (hm : 1 ≤ m) (invName : Nat → String)
+    (hinv0 : invName 0 = "dx_inv_" ++ toString 0)
+    (hinv : ∀ j, j < m → invName j = "dx_inv_" ++ toString j) :
+    [GenAst.ylet "den_inv" (GenAst.yvar (invName 0))]
+      ++ ((List.range m).drop 1).map (fun j =>
+          GenAst.yset "den_inv" (GenAst.yop EVM.Op.mulmod
+            [GenAst.yvar "den_inv", GenAst.yvar ("dx_inv_" ++ toString j), GenAst.yvar "r"]))
+    = pcsDenInvLines m invName := by
+  unfold pcsDenInvLines pcsDenInvSetStmt
+  rw [hinv0]
+  congr 1
+  apply List.map_congr_left
+  intro j hj
+  have hjlt : j < m := by
+    have := List.mem_range.mp (List.mem_of_mem_drop hj)
+    omega
+  rw [← hinv j hjlt]
+
+theorem pcsTermLines_gen (m off : Nat) (invName : Nat → String)
+    (hinv : ∀ j, j < m → invName j = "dx_inv_" ++ toString j)
+    (hinv2 : ∀ j, j < m → invName (m + j) = "lbasis_inv_" ++ toString j) :
+    (List.range m).flatMap (fun j =>
+      [ GenAst.ylet ("term_" ++ toString j)
+          (GenAst.yop EVM.Op.mulmod
+            [GenAst.yop EVM.Op.mulmod
+                [GenAst.yop EVM.Op.mload
+                    [GenAst.yop EVM.Op.add
+                      [GenAst.yvar "Q_EVAL_SET_MPTR",
+                        GenAst.ylit ((off + j) * Midfall.Generator.wordBytes)]],
+                  GenAst.yvar ("dx_inv_" ++ toString j), GenAst.yvar "r"],
+              GenAst.yvar ("lbasis_inv_" ++ toString j), GenAst.yvar "r"]),
+        GenAst.yset "eval" (GenAstPcs.subFrom (GenAst.yvar "eval")
+          (GenAst.yvar ("term_" ++ toString j))) ])
+    = pcsTermLines m off (fun j => invName j) (fun j => invName (m + j)) := by
+  unfold pcsTermLines
+  rw [List.flatMap_def, List.flatMap_def]
+  congr 1
+  apply List.map_congr_left
+  intro j hj
+  have hjlt : j < m := List.mem_range.mp hj
+  unfold pcsTermStmt
+  rw [← hinv j hjlt, ← hinv2 j hjlt]
+
+theorem pcsDxLines_gen (points : List Int) (distinct : List Int) :
+    (Midfall.Generator.enumIdx points).map (fun x =>
+        GenAst.ylet ("dx_" ++ toString x.1)
+          (GenAstPcs.subFrom (GenAst.yvar "x3")
+            (GenAst.yvar ("rot_pt_" ++ toString
+              ((List.findIdx? (fun r => r == x.2) distinct).getD 0)))))
+    = (pcsPointRefs points distinct).map (fun q => pcsDxStmt q.1 q.2) := by
+  simp only [pcsPointRefs, pcsDxStmt, pcsRotPtRef, List.map_map]
+  apply List.map_congr_left
+  intro q hq
+  simp [pcsDxName]
+
+theorem pcsLbasisLines_gen (points : List Int) (distinct : List Int) :
+    (Midfall.Generator.enumIdx points).map (fun x =>
+        [GenAst.ylet ("lbasis_" ++ toString x.1) (GenAst.ylit 1)]
+        ++ (Midfall.Generator.enumIdx points).filterMap (fun x_1 =>
+            if x_1.1 == x.1 then none else some (GenAst.yset ("lbasis_" ++ toString x.1)
+              (GenAst.yop EVM.Op.mulmod [GenAst.yvar ("lbasis_" ++ toString x.1),
+                GenAstPcs.subFrom
+                  (GenAst.yvar ("rot_pt_" ++ toString
+                    ((List.findIdx? (fun r => r == x.2) distinct).getD 0)))
+                  (GenAst.yvar ("rot_pt_" ++ toString
+                    ((List.findIdx? (fun r => r == x_1.2) distinct).getD 0))), GenAst.yvar "r"]))))
+    = (pcsPointRefs points distinct).map (fun q =>
+        pcsLbasisGroupAst q.1 q.2 (pcsKs points distinct q.1)) := by
+  simp only [pcsPointRefs, pcsRotPtRef, List.map_map]
+  apply List.map_congr_left
+  intro q hq
+  rw [show ((fun q => pcsLbasisGroupAst q.1 q.2 (pcsKs points distinct q.1)) ∘
+      (fun q => (q.1, "rot_pt_" ++ toString
+        ((List.findIdx? (fun r => r == q.2) distinct).getD 0)))) q =
+      pcsLbasisGroupAst q.1 ("rot_pt_" ++ toString
+        ((List.findIdx? (fun r => r == q.2) distinct).getD 0))
+        (pcsKs points distinct q.1) from rfl]
+  simp only [pcsLbasisGroupAst, pcsLbasisInit, pcsLbasisStmt, pcsLbasisName,
+    pcsKs, List.cons_append, List.singleton_append]
+  rw [List.map_filterMap, List.nil_append]
+  congr 1
+  apply list_filterMap_congr
+  intro x hx
+  by_cases h : (x.1 == q.1) = true <;> simp [h, pcsRotPtRef]
+
+theorem pcsSetBodyGen_eq (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off : Nat) (hm : 1 < points.length) :
+    pcsSetBodyGen setIdx points distinctRotations off = pcsGenBody setIdx points distinctRotations off := by
+  unfold pcsSetBodyGen pcsGenBody
+  dsimp only
+  simp only [pcsBatchInputs, pcsBatchName, pcsDxName, pcsLbasisName, pcsInvName]
+  set invName : Nat → String := fun idx =>
+    if idx < points.length then "dx_inv_" ++ toString idx
+    else "lbasis_inv_" ++ toString (idx - points.length) with hinvName
+  rw [pcsDxLines_gen, pcsLbasisLines_gen,
+    pcsBpLines_gen ((List.range points.length).map (fun j => "dx_" ++ toString j)
+      ++ (List.range points.length).map (fun j => "lbasis_" ++ toString j)),
+    pcsBqLines_gen ((List.range points.length).map (fun j => "dx_" ++ toString j)
+      ++ (List.range points.length).map (fun j => "lbasis_" ++ toString j)) invName,
+    pcsDenInvLines_gen points.length (by omega) invName ?_ ?_,
+    pcsTermLines_gen points.length off invName ?_ ?_]
+  · rw [hinvName]
+    unfold pcsBatchName pcsBatchInputs pcsDxName pcsLbasisName pcsInvName pcsBpName
+    simp [pcsEvalStmt, pcsFEvalStmt, pcsBqStmt]
+  all_goals
+    first
+    | (intro j hj; simp only [hinvName]; rw [if_pos hj])
+    | (simp only [hinvName]; rw [if_pos (by omega)])
+    | (intro j hj; simp only [hinvName]
+       rw [if_neg (by omega), show points.length + j - points.length = j by omega])
+
+
 end Midfall.LoweringV3.PcsBlock4
