@@ -1917,6 +1917,343 @@ theorem fpScratchValidated_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 
     R.pv.memory.validate.isOk = true :=
   hR.supported.layout.2
 
+open Midfall.Generator.PlanNew Midfall.Generator.QuotientEvaluator
+
+theorem le_foldl_max : ∀ (xs : List Nat) (a : Nat),
+    a ≤ xs.foldl max a ∧ ∀ x ∈ xs, x ≤ xs.foldl max a
+  | [], a => ⟨Nat.le_refl a, by simp⟩
+  | b :: bs, a => by
+    obtain ⟨h1, h2⟩ := le_foldl_max bs (max a b)
+    refine ⟨Nat.le_trans (Nat.le_max_left a b) h1, ?_⟩
+    intro x hx
+    rcases List.mem_cons.mp hx with hxb | hx
+    · rw [hxb]
+      exact Nat.le_trans (Nat.le_max_right a b) h1
+    · exact h2 x hx
+
+theorem natMaximum_le_of_mem : ∀ {l : List Nat} {v : Nat}, natMaximum l = some v →
+    ∀ x ∈ l, x ≤ v
+  | [], v, h => by simp [natMaximum] at h
+  | a :: as, v, h => by
+    simp only [natMaximum, Option.some.injEq] at h
+    subst h
+    intro x hx
+    rcases List.mem_cons.mp hx with hxa | hx
+    · rw [hxa]
+      exact (le_foldl_max as a).1
+    · exact (le_foldl_max as a).2 x hx
+
+theorem staticWorkingMemorySizeForMeta_floor (meta_ : ConstraintSystemMeta) (numInstances : Nat)
+    {v : Nat} (h : staticWorkingMemorySizeForMeta meta_ numInstances = .ok v) :
+    0x1560 ≤ v := by
+  unfold staticWorkingMemorySizeForMeta at h
+  simp only [Bind.bind, Except.bind] at h
+  split at h
+  · cases h
+  · rename_i tw htw
+    cases hv : natMaximum [transcriptBufferStart + tw.words * Midfall.Generator.wordBytes,
+        pcsPairingScratchStart + staticWorkingMemorySize * Midfall.Generator.wordBytes,
+        accumulatorPairingBatchPtr + accumulatorPairingBatchHashBytes,
+        finalPairingScratchStart + pairingStaticWorkingWords * Midfall.Generator.wordBytes,
+        verifierReturnBufferStart + Midfall.Generator.wordBytes,
+        quotientReturnBufferStart + (2 + meta_.numSimpleSelectors) *
+          Midfall.Generator.wordBytes] with
+    | none => rw [hv] at h; cases h
+    | some w =>
+      rw [hv] at h
+      simp only [Except.ok.injEq] at h
+      subst h
+      have hmem : finalPairingScratchStart + pairingStaticWorkingWords *
+          Midfall.Generator.wordBytes ∈
+          [transcriptBufferStart + tw.words * Midfall.Generator.wordBytes,
+           pcsPairingScratchStart + staticWorkingMemorySize * Midfall.Generator.wordBytes,
+           accumulatorPairingBatchPtr + accumulatorPairingBatchHashBytes,
+           finalPairingScratchStart + pairingStaticWorkingWords * Midfall.Generator.wordBytes,
+           verifierReturnBufferStart + Midfall.Generator.wordBytes,
+           quotientReturnBufferStart + (2 + meta_.numSimpleSelectors) *
+             Midfall.Generator.wordBytes] := by
+        simp
+      have hle := natMaximum_le_of_mem hv _ hmem
+      have hval : finalPairingScratchStart + pairingStaticWorkingWords *
+          Midfall.Generator.wordBytes = 0x1560 := by decide
+      omega
+
+theorem new_thetaMptr (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    (config : VerifierMemoryLayoutConfig) :
+    (VerifierMemoryLayout.new meta_ vk vkMptr config).thetaMptr =
+      ptrMemory (valueFromNat
+        (alignUp (alignUp (ptrAddr vkMptr + vk.len) Midfall.Generator.wordBytes
+            + meta_.challengeIndices.length * Midfall.Generator.wordBytes)
+          Midfall.Generator.wordBytes)) := rfl
+
+theorem new_theta_ge_vk (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    (config : VerifierMemoryLayoutConfig) :
+    ptrAddr vkMptr ≤
+      ptrAddr (VerifierMemoryLayout.new meta_ vk vkMptr config).thetaMptr := by
+  rw [new_thetaMptr, MemoryPairs.ptrAddr_valueFromNat]
+  set A := ptrAddr vkMptr + vk.len
+  set B := alignUp A Midfall.Generator.wordBytes
+  set C := alignUp (B + meta_.challengeIndices.length * Midfall.Generator.wordBytes)
+    Midfall.Generator.wordBytes
+  have h1 : A ≤ B := MemoryPairs.alignUp_le A Midfall.Generator.wordBytes MemoryPairs.wordBytes_pos
+  have h2 : B ≤ C := Nat.le_trans (Nat.le_add_right B _)
+    (MemoryPairs.alignUp_le _ _ MemoryPairs.wordBytes_pos)
+  omega
+
+
+/-- `Value.asUsize` and `Value.asUsizeNat` agree on the success branch. -/
+theorem asUsizeNat_of_asUsize {v : Value} {c : Nat} (h : Value.asUsize v = .ok c) :
+    Value.asUsizeNat v = c := by
+  cases v with
+  | integer i =>
+    have h' : (if i >= 0 then i.toNat else (i + (2 : Int) ^ 64).toNat) = c := by
+      simpa [Value.asUsize] using Except.ok.inj h
+    simpa [Value.asUsizeNat] using h'
+  | identifier name off => simp [Value.asUsize] at h
+
+/-- The FLOOR invariant of the settling fold: whenever the result is fixed, its pointer's address
+    is the static working memory size computed for that result's meta. The fold settles exactly
+    when the planned size equals the current pointer's address, so this is maintained by
+    construction - no `WellFormed`, no region list. -/
+def MetaSize (numInstances : Nat) (st : MemoryPairs.MetaState) : Prop :=
+  ∀ r, st.1 = some r →
+    ∃ n, staticWorkingMemorySizeForMeta r.2.1 numInstances = .ok n ∧ ptrAddr r.1 = n
+
+theorem metaStep_metaSize {Plan : Type} (feat : Features) (env : VkBuildEnv Plan)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey)
+    (st : MemoryPairs.MetaState) (i : Nat) (st' : MemoryPairs.MetaState)
+    (h : (fun st (_ : Nat) => do
+      if st.1.isSome then Except.ok st else do
+        let vkMptr := st.2
+        let (metaOut, dat, memory) ← metaDataForVk feat env meta_ numInstances vk vkMptr
+        let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
+        let cur ← Value.asUsize vkMptr.value
+        if planned == cur then
+          Except.ok (some (vkMptr, metaOut, dat, memory), vkMptr)
+        else
+          Except.ok (none, ptrMemory (valueFromNat planned))) st i = .ok st') :
+    MetaSize numInstances st → MetaSize numInstances st' := by
+  intro hinv r hr
+  simp only at h
+  by_cases hs : st.1.isSome
+  · rw [ite_eq_left hs] at h
+    cases h
+    exact hinv r hr
+  · rw [ite_eq_right hs] at h
+    simp only [Bind.bind, Except.bind] at h
+    split at h
+    · cases h
+    · rename_i md hmd
+      split at h
+      · cases h
+      · rename_i planned hpl
+        split at h
+        · cases h
+        · rename_i cur hcur
+          split at h
+          · have hb : st' = (some (st.2, md.1, md.2.1, md.2.2), st.2) :=
+              (Except.ok.inj h).symm
+            subst hb
+            have hcase : planned = cur := eq_of_beq (by assumption)
+            have hptr : ptrAddr st.2 = cur := by
+              show Value.asUsizeNat st.2.value = cur
+              exact asUsizeNat_of_asUsize hcur
+            have hrr : r = (st.2, md.1, md.2.1, md.2.2) := (Option.some.inj hr).symm
+            subst hrr
+            refine ⟨planned, hpl, ?_⟩
+            show ptrAddr st.2 = planned
+            omega
+          · have hb : st' = (none, ptrMemory (valueFromNat planned)) :=
+              (Except.ok.inj h).symm
+            subst hb
+            exact absurd hr (by simp)
+
+/-- The combined invariant: the pointer is `Nat`-built AND its address is the planned size. -/
+def MetaOK (numInstances : Nat) (st : MemoryPairs.MetaState) : Prop :=
+  MemoryPairs.MetaShape st ∧ MetaSize numInstances st
+
+theorem metaStep_metaOK {Plan : Type} (feat : Features) (env : VkBuildEnv Plan)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey)
+    (st : MemoryPairs.MetaState) (i : Nat) (st' : MemoryPairs.MetaState)
+    (h : (fun st (_ : Nat) => do
+      if st.1.isSome then Except.ok st else do
+        let vkMptr := st.2
+        let (metaOut, dat, memory) ← metaDataForVk feat env meta_ numInstances vk vkMptr
+        let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
+        let cur ← Value.asUsize vkMptr.value
+        if planned == cur then
+          Except.ok (some (vkMptr, metaOut, dat, memory), vkMptr)
+        else
+          Except.ok (none, ptrMemory (valueFromNat planned))) st i = .ok st') :
+    MetaOK numInstances st → MetaOK numInstances st' :=
+  fun hst =>
+    ⟨MemoryPairs.metaStep_metaShape feat env meta_ numInstances vk st i st' h hst.1,
+      metaStep_metaSize feat env meta_ numInstances vk st i st' h hst.2⟩
+
+/-- `metaDataForStableStaticLayout` returns a `Nat`-built pointer whose address is the static
+    working memory size computed for the meta it returns. -/
+theorem metaDataForStableStaticLayout_size {Plan : Type} (feat : Features)
+    (env : VkBuildEnv Plan) (meta_ : ConstraintSystemMeta) (numInstances : Nat)
+    (vk : Halo2VerifyingKey) (r : Ptr × ConstraintSystemMeta × Midfall.Generator.Data × VerifierMemoryLayout)
+    (h : metaDataForStableStaticLayout feat env meta_ numInstances vk = .ok r) :
+    ∃ n, r.1 = ptrMemory (valueFromNat n) ∧
+      staticWorkingMemorySizeForMeta r.2.1 numInstances = .ok n := by
+  unfold metaDataForStableStaticLayout at h
+  simp only [Bind.bind, Except.bind] at h
+  split at h
+  · cases h
+  · rename_i start hstart
+    split at h
+    · cases h
+    · rename_i st' hst'
+      have hinv := MemoryPairs.foldlM_metaShape (P := MetaOK numInstances)
+        (step := (fun (st : MemoryPairs.MetaState) (_ : Nat) => do
+          if st.1.isSome then Except.ok st else do
+            let vkMptr := st.2
+            let (metaOut, dat, memory) ← metaDataForVk feat env meta_ numInstances vk vkMptr
+            let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
+            let cur ← Value.asUsize vkMptr.value
+            if planned == cur then
+              Except.ok (some (vkMptr, metaOut, dat, memory), vkMptr)
+            else
+              Except.ok (none, ptrMemory (valueFromNat planned))))
+        (fun a i b hab ha => metaStep_metaOK feat env meta_ numInstances vk a i b hab ha)
+        (a := (none, ptrMemory (valueFromNat start)))
+        ⟨⟨⟨start, rfl⟩, by intro r hr; cases hr⟩, by intro r hr; simp at hr⟩ st' hst'
+      cases hres : st'.1 with
+      | none => rw [hres] at h; cases h
+      | some r0 =>
+        rw [hres] at h
+        simp only [Except.ok.injEq] at h
+        subst h
+        obtain ⟨⟨⟨n, hn⟩, hlink⟩, hfloor⟩ := hinv
+        obtain ⟨m, hsize, hptr⟩ := hfloor r0 hres
+        have hm : ptrAddr r0.1 = n := by
+          rw [hlink r0 hres, hn, MemoryPairs.ptrAddr_valueFromNat]
+        have hsame : m = n := by omega
+        exact ⟨n, (hlink r0 hres).trans hn, by rw [← hsame]; exact hsize⟩
+
+/-- `newFromVk`'s plan: the memory equation AND the floor on the VK pointer, from one peel. -/
+theorem newFromVk_size {F : Type} [BEq F] (feat : Features) (field : FieldCtx F)
+    (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding) (payload : Halo2VerifyingKey)
+    (plan : LoweringPlan Unit Unit)
+    (h : newFromVk feat field cs rawMeta numInstances accEncoding payload = .ok plan) :
+    ∃ (meta_ : ConstraintSystemMeta) (vkMptr : Ptr)
+      (config : VerifierMemoryLayoutConfig) (vkBase : Nat),
+      plan.memory = VerifierMemoryLayout.new meta_ payload vkMptr config ∧
+        vkMptr = ptrMemory (valueFromNat vkBase) ∧
+        staticWorkingMemorySizeForMeta meta_ numInstances = .ok vkBase := by
+  simp only [newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨q, hq, h1⟩ := (MemoryPairs.match_ok_iff _ _).mp h
+  obtain ⟨vkBase, hvk, hsize⟩ :=
+    metaDataForStableStaticLayout_size feat (envOf field cs) rawMeta numInstances payload q hq
+  obtain ⟨proofLayout, _, h2⟩ := (MemoryPairs.match_ok_iff _ _).mp h1
+  obtain ⟨qplan, _, h3⟩ := (MemoryPairs.match_ok_iff _ _).mp h2
+  obtain ⟨build, _, h4⟩ := (MemoryPairs.match_ok_iff _ _).mp h3
+  obtain ⟨nativeWords, _, h5⟩ := (MemoryPairs.match_ok_iff _ _).mp h4
+  obtain ⟨pcsReq, _, h6⟩ := (MemoryPairs.match_ok_iff _ _).mp h5
+  obtain ⟨accTerms, _, h7⟩ := (MemoryPairs.match_ok_iff _ _).mp h6
+  obtain ⟨memory, hmem, h8⟩ := (MemoryPairs.match_ok_iff _ _).mp h7
+  obtain ⟨opModel, _, h9⟩ := (MemoryPairs.match_ok_iff _ _).mp h8
+  obtain ⟨trip, _, h10⟩ := (MemoryPairs.match_ok_iff _ _).mp h9
+  have hex : ∃ (config : VerifierMemoryLayoutConfig),
+      memory = VerifierMemoryLayout.new q.2.1 payload q.1 config := by
+    simp only [memoryLayoutFor, Bind.bind, Except.bind, envOf] at hmem
+    obtain ⟨t, _, hmem2⟩ := (MemoryPairs.match_ok_iff _ _).mp hmem
+    exact ⟨_, (Except.ok.inj hmem2).symm⟩
+  obtain ⟨config, he⟩ := hex
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (exact ⟨q.2.1, q.1, config, vkBase, he, hvk, hsize⟩)
+
+/-- The render face: from `GeneratedBy` alone, the memory is `new` and the VK pointer's address is
+    the static working memory size computed for the layout's own meta. -/
+theorem plan_size_of_generated {R : Render p G₁ G₂ Gₜ}
+    (h : Midfall.LoweringV3.GeneratedBy R) :
+    ∃ (meta_ : ConstraintSystemMeta) (vkMptr : Ptr)
+      (config : VerifierMemoryLayoutConfig) (vkBase : Nat),
+      R.pv.memory = VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config ∧
+        vkMptr = ptrMemory (valueFromNat vkBase) ∧
+        staticWorkingMemorySizeForMeta meta_ R.cfg.numInstances = .ok vkBase := by
+  obtain ⟨rawMeta, plan, hraw, hpl, hp⟩ := MemoryPairs.plan_of_generated h
+  obtain ⟨meta_, vkMptr, config, vkBase, he, hvk, hsize⟩ :=
+    newFromVk_size Features.solidity (frFieldCtx R.E.delta) R.vk.cs rawMeta
+      R.cfg.numInstances R.cfg.accumulator R.plan.vk plan hpl
+  have hpv : R.pv.memory = R.plan.memory := rfl
+  have hpvk : R.pv.vk = R.plan.vk := rfl
+  exact ⟨meta_, vkMptr, config, vkBase, by rw [hpv, hp, he, hpvk], hvk, hsize⟩
+
+end Midfall.LoweringV3
+
+namespace Midfall.LoweringV3
+
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2
+open Midfall.Lowering.Stage
+open Midfall.Generator.PlanNew Midfall.Generator.QuotientEvaluator
+
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+/-- **THE VK-POINTER FLOOR, FROM `GeneratedBy`.** The settling fold returns the pointer whose
+    address is `staticWorkingMemorySizeForMeta` at the converged meta, and that size is the maximum
+    of the six low-memory ends - one of which is `finalPairingScratchStart +
+    pairingStaticWorkingWords * wordBytes = 0x1560`. So `0x1560 <= ptrAddr vkMptr` for EVERY render,
+    with no `WellFormed` and no region list. -/
+theorem generated_vkMptr_floor (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    0x1560 ≤ ptrAddr R.pv.memory.vkMptr := by
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, hvk, hsize⟩ :=
+    plan_size_of_generated hR.generated
+  have hmemvk : R.pv.memory.vkMptr = vkMptr := by
+    rw [hmem]
+    exact MemoryPairs.new_vkMptr meta_ R.pv.vk vkMptr config
+  rw [hmemvk, hvk, MemoryPairs.ptrAddr_valueFromNat]
+  exact staticWorkingMemorySizeForMeta_floor meta_ R.cfg.numInstances hsize
+
+/-- The theta block starts at or after the VK payload (the `allocAfter` chain), so the same floor
+    holds for `thetaMptr`. -/
+theorem generated_theta_floor (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    0x1560 ≤ ptrAddr R.pv.memory.thetaMptr := by
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, -, -⟩ := plan_size_of_generated hR.generated
+  have hvk := generated_vkMptr_floor R hR
+  have htheta : ptrAddr R.pv.memory.vkMptr ≤ ptrAddr R.pv.memory.thetaMptr := by
+    rw [hmem, MemoryPairs.new_vkMptr]
+    exact new_theta_ge_vk meta_ R.pv.vk vkMptr config
+  omega
+
+/-- The finalPairing scratch sits at the fixed low-memory constant. -/
+theorem generated_finalPairingScratchMptr (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.pv.memory.finalPairingScratchMptr = finalPairingScratchStart := by
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, -, -⟩ := plan_size_of_generated hR.generated
+  rw [hmem]
+  rfl
+
+/-- **`FpScratchSeparated` AT EVERY RENDER.** Both windows are above the whole low phase block: the
+    vk pointer's floor is `0x1560`, which is exactly `finalPairingScratchStart + pairingStaticWorkingWords *
+    wordBytes`, and the theta block starts at or after the vk payload. This is the layout fact the
+    finalPairing clean arm needs, proved with no new clause. -/
+theorem fpScratchSeparated_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    FpScratchSeparated R.pv := by
+  have hfp := generated_finalPairingScratchMptr R hR
+  have htheta := generated_theta_floor R hR
+  have hvk := generated_vkMptr_floor R hR
+  have hlen : Midfall.Generator.pairingStaticWorkingWords * Midfall.Generator.wordBytes =
+      0x320 := by decide
+  have hstart : finalPairingScratchStart = 0x1240 := by decide
+  simp only [FpScratchSeparated, hfp, hlen, hstart]
+  constructor
+  · right
+    omega
+  · right
+    right
+    omega
+
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
     answering at the four precompile addresses, and the block's all-runs row to classify the
