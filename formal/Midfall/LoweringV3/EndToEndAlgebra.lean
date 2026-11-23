@@ -26,6 +26,7 @@
   `expectedPermZEvals := 3 * numPermutationZs - 1` agrees.
 -/
 import Midfall.LoweringV3.EndToEnd
+import Midfall.LoweringV3.KzgQueryMap
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -4150,6 +4151,62 @@ theorem KzgMultiPrepareWidths_of_kzgPartitionBridge
   obtain ⟨queriesG, setsG, hGok, hBridge, hLen⟩ := hG inst trace alg queries hlin
   exact (hBridge (cm, pointSets) setsG hCI hGok).trans hLen
 
+/-- **THE QUERY-MAP FORM OF THE PARTITION BRIDGE.** This is
+    `KzgPartitionBridge` discharged from the per-index verifier↔generator query
+    map proved in `Midfall.LoweringV3.KzgQueryMap`: the two
+    `constructIntermediateSets` implementations are run in lockstep, their
+    first-occurrence point indices agree, and the two canonical sorted forms
+    (`natSort`, `btreeSetFromList`) agree on the duplicate-free lists, so the
+    point-set counts are equal. -/
+theorem KzgPartitionBridge_of_queryMap
+    (queriesV : Array (VerifierQuery (Fr p) G₁))
+    (queriesG : List Midfall.Generator.Query)
+    (qm : @KzgQueryMapData (Fr p) G₁ _
+      (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queriesV queriesG) :
+    KzgPartitionBridge (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ) queriesV queriesG := by
+  intro setsV setsG hV hG
+  letI : BEq qm.K := qm.beqK
+  letI : LawfulBEq qm.K := qm.lawfulK
+  exact constructIntermediateSets_pointSets_size_eq_of_queryMap
+    (eqC := kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ))
+    (fk := qm.fk) (ck := qm.ck) (gk := qm.gk)
+    qm.hCommEq qm.hGCommEq qm.hPointEq
+    queriesV queriesG qm.L qm.hVlist qm.hGlist
+    qm.hpairP qm.hpairC (cm := setsV.1) (pointSets := setsV.2) setsG hV hG
+
+/-- **`KzgMultiPrepareWidths` FROM THE PER-LINEARIZE QUERY MAP.** This is the
+    final reduction: for each query vector `linearize` produces, a query-map
+    datum plus the generator's point-set count gives the `multiPrepare` width
+    block. The concrete construction of the datum (the `linearize` ↔
+    `Generator.Query` slot/rotation correspondence, with D-GATE5 `x ≠ 0` and
+    D-GATE6 rotation-distinctness supplying the injectivity) is the remaining
+    input. -/
+theorem KzgMultiPrepareWidths_of_queryMap
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hMap : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
+      (alg : Verifier.AlgebraRead (Fr p) G₁)
+      (queries : Array (VerifierQuery (Fr p) G₁)),
+      Verifier.linearize (p := p) (delta := R.E.delta) R.vk
+        (adviceCommitments := trace.adviceCommitments)
+        (committedInstances := if Features.solidity.committedInstances then
+          #[#[(1 : G₁)]] else arrayReplicate (#[#[inst.toList.toArray]]).size
+            (#[] : Array G₁))
+        (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+        (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg
+        = .ok queries →
+      ∃ (queriesG : List Midfall.Generator.Query)
+        (setsG : Midfall.Generator.IntermediateSets)
+        (qm : @KzgQueryMapData (Fr p) G₁ _
+          (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries queriesG),
+        Midfall.Generator.constructIntermediateSetsImpl queriesG = .ok setsG ∧
+        setsG.pointSets.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numPointSets) :
+    KzgMultiPrepareWidths R := by
+  refine KzgMultiPrepareWidths_of_kzgPartitionBridge R ?_
+  intro inst trace alg queries hlin
+  obtain ⟨queriesG, setsG, qm, hGok, hLen⟩ := hMap inst trace alg queries hlin
+  exact ⟨queriesG, setsG, hGok, KzgPartitionBridge_of_queryMap queries queriesG qm, hLen⟩
+
 /-- **`PrepareLogSlots` FROM EXACTLY THE TWO NAMED RESIDUALS.** The parseTrace
     block, the KZG scalar block, and the plan's eval count (`numEvals`, proved in
     this file) are the whole of the bridge; nothing else is assumed. -/
@@ -4311,6 +4368,18 @@ open Midfall.Tools.Done in
 #assert_axioms KzgMultiPrepareWidths_of_pointSets
   [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgMultiPrepareWidths_of_kzgPartitionBridge
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms KzgPartitionBridge_of_queryMap
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms KzgMultiPrepareWidths_of_queryMap
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms constructIntermediateSets_pointSets_size_eq_of_queryMap
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms pass1_step1_sim
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms numPointSets_eq_of_queries_pointSets_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms constructIntermediateSetsImpl_pointSets_length
   [propext, Classical.choice, Quot.sound]
 #assert_axioms multiPrepare_width_empty [propext, Classical.choice, Quot.sound]
 #assert_axioms multiPrepare_width_at [propext, Classical.choice, Quot.sound]
