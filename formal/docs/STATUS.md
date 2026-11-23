@@ -346,19 +346,23 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
   (`commitmentG1Count < 2 ^ 66`, `proofEnd < 2 ^ 80`, hence `< 2 ^ 256`). The F1 concrete-count
   witness is `Instances/CertMeasure.f1CountsOk_true`, a `native_decide` on the raw meta, the
   payload length and the proof-end bound.
-  **Residual (CERT.6/D4), stated exactly.** `prog_programFits` itself is still OPEN. Its
-  `staticWorkingSetFits` half still consumes the final `VerifierMemoryLayoutConfig`
-  (`quotientStateWords`, `quotientStackWords`, `accMsmTerms` and the four `PcsMemoryRequirements`
-  fields), which are sized from the quotient IDENTITY PLAN and the emitted build
-  (`quotientProgramPlan` -> `buildQuotientProgramItems` -> `memoryRequirements`); their sizes are
-  not bounded by the CS count budget alone (a quotient-builder size lemma is needed), and
-  `quotientProgramFits` needs the same build/plan lengths. The separate input clause the residual needs is therefore a QUOTIENT-BUILD sizing
-  bound, not another count bound. `batchInvertScratchFits` is the one remaining count-adjacent
-  piece: `batchInvertScratchMptr` IS `selectorAccMptr`, and the `generated` clause gives the payload
-  floor (`generated_vkMptr_floor` + `0x1560`); the missing standalone lemma is the four-step
-  arena-chain extraction from `VerifierMemoryLayout.new` (`Totality.lean` already carries the
-  same steps inside `hp_selector`, not as an exported lemma). No `ValidV3`, row, bundle or root
-  hypothesis was added, and `SupportedInput` was strengthened.
+  **Residual (CERT.6/D4), stated exactly.** `prog_programFits` itself is still OPEN, but its
+  `batchInvertScratchFits` conjunct is now PROVED
+  (`Midfall.Generator.Certified.batchInvertScratchFits_of_generated`, from the exported
+  `new_selectorAccMptr_ge` four-step arena chain and `generated_vkMptr_floor` + `0x1560`), and the
+  quotient program's byte size is proved (`build_bytes_size_le`:
+  `build.bytes.size ≤ 32 * vk.quotientProgramWords`, from `vkCarriesBuild` and the
+  `PackedProgramCodec` word count). The remaining blocker is `build.maxStack ≤ build.bytes.size`:
+  it is NOT a state-level builder fact (`pushStackAcct` emits no byte; on `builderDefault` it gives
+  `maxStack = 1`, `bytes.length = 0`), and `finish` takes `maxStack` from the PRE-compaction stream
+  while `build.bytes` is the COMPACTED stream. The Rust's QVM:1217-1222 asserts the validator's
+  max stack against the compacted program; `finishValidatorLeg` is exactly the unported validator.
+  Closing `staticWorkingSetFits` (and the stack half of `quotientProgramFits`) therefore needs a
+  port of that validator plus compaction-preservation, or an input clause bounding
+  `build.maxStack`. The PCS-config half is sized from `memoryRequirements` (`rotPointsWords`,
+  `x1PowersWords`, `qEvalSetWords`, `qEvalSourceTableWords`, `qComTraceMsm`, `finalMsm`) and needs
+  the corresponding quotient-build count bounds. No `ValidV3`, row, bundle or root hypothesis was
+  added, and `SupportedInput` was strengthened.
 
 ### `block_live` assembly architecture (critical)
 
