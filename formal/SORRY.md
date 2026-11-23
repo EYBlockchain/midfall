@@ -40,11 +40,6 @@ comments but not string literals. The environment scan needs no exemption.
 
 | declaration | module | kind | status | cone | statement | removed by |
 | Midfall.Generator.Certified.env_negLagranges | Midfall.Generator.Certified | theorem | OPEN | - | `b0cfe1fd7ad3a1fe` | V3 CERT.6 - ART builder from the plan meta; meta = ConstraintSystemMeta.new |
-| Midfall.Generator.Certified.payload_comms | Midfall.Generator.Certified | theorem | OPEN | - | `7f86bf73bd42d399` | V3 CERT.7 - generate_base_vk mapM; untouched by the reservation loop, plus the G1 codec law |
-| Midfall.Generator.Certified.payload_g1Base | Midfall.Generator.Certified | theorem | OPEN | - | `170e05851cf399ab` | V3 CERT.7 - slot 11 written from P.g1 plus the G1 codec law |
-| Midfall.Generator.Certified.payload_g2Base | Midfall.Generator.Certified | theorem | OPEN | - | `51b4369467745f38` | V3 CERT.7 - vk.rs:180 plus the G2 codec law |
-| Midfall.Generator.Certified.payload_header | Midfall.Generator.Certified | theorem | OPEN | - | `59c9d0eb95a32759` | V3 CERT.6 - VkHeaderBuilder slots (vk.rs:211-222); sizeBound makes the Nat-to-word write exact |
-| Midfall.Generator.Certified.payload_negSG2 | Midfall.Generator.Certified | theorem | OPEN | - | `794516b4c5a8ca09` | V3 CERT.7 - slot 23 written from s_g2^-1 plus the G2 codec law |
 | Midfall.Generator.Certified.prog_callsResolved | Midfall.Generator.Certified | theorem | OPEN | - | `e754e48eb935790e` | V3 CERT.5 - call-site lemma per emitter plus the helper signature table |
 | Midfall.Generator.Certified.prog_closed | Midfall.Generator.Certified | theorem | OPEN | - | `4d4e1b3f8d88ecd5` | V3 CERT.5 - from constsDeclared/constTable plus the inlineContractConstants free-name lemma |
 | Midfall.Generator.Certified.prog_codegenStruct | Midfall.Generator.Certified | theorem | OPEN | - | `d29d03ed48643742` | V3 CERT.2 - route A: the emitted tree is the generator text (today false until WP-G1 is certified) |
@@ -130,7 +125,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.LoweringV3.TranscriptRows.tp_poison | Midfall.LoweringV3.TranscriptRows | theorem | OPEN | - | `c90122ac9c6f46ca` | V3 ROW.TP.9 (WP A6) - the poisoned boundary always reverts on success = 0 (TranscriptRows.lean) |
 | Midfall.LoweringV3.block_live | Midfall.LoweringV3.Totality | theorem | OPEN | ROOT | `00ef506aee060881` | V3 TOT.1 (WP A12) - per-block existence from a boundary a run can actually be at (LivePre, Totality.lean); leaves TOT.1.b-h, one per block (evidence GeneratorRows.lean:1335) |
 | Midfall.LoweringV3.fp_blockProgS | Midfall.LoweringV3.Rows | theorem | OPEN | ROOT | `9068fbdec8b90c17` | V3 ROW.FP (WP A11) - the finalPairing progress row (Rows.lean); evidence GeneratorRows.lean:1083 |
-| Midfall.LoweringV3.fp_blockSim | Midfall.LoweringV3.Rows | theorem | OPEN | ROOT | `8b448cce89348f6a` | V3 ROW.FP (WP A11) - the finalPairing simulation row (Rows.lean); children ec_pairing_sem, fp_pairing_algebra, fp_poison; evidence GeneratorRows.lean:1077 |
 | Midfall.LoweringV3.lag_blockProgS | Midfall.LoweringV3.Rows | theorem | OPEN | ROOT | `058350ca1fe5bc23` | V3 T3.9 (WP A4) - the lagrange progress row, the only reader of CompleteSide (Rows.lean); evidence GeneratorRows.lean:628 |
 | Midfall.LoweringV3.lag_blockSim | Midfall.LoweringV3.Rows | theorem | OPEN | ROOT | `8747ef4852d79700` | V3 T3.9 (WP A4) - the lagrange simulation row (Rows.lean); children loops a-e, HLP.1.b, lag_agrees, lag_poison; evidence GeneratorRows.lean:621 |
 | Midfall.LoweringV3.pcs_blockProgS | Midfall.LoweringV3.Rows | theorem | OPEN | ROOT | `d8237b277e31e5fe` | V3 ROW.PCS (WP A10) - the pcs progress row; decode half is ROW.PCS decode_exists (Rows.lean); evidence GeneratorRows.lean:1019 |
