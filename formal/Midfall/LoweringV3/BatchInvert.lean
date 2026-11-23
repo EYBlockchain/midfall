@@ -1008,6 +1008,19 @@ theorem bwdEnv_get_ret (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
         venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "ret") (by decide)]
       exact ih
 
+theorem bwdEnv_get_pf (mem : Nat → UInt8) (a s k : Nat) (rw invAll : U256)
+    (V : VEnv (Bridge.Dialect c g)) (j : Nat) :
+    VEnv.get (bwdEnv mem a s k rw invAll V j) "precompile_failed" =
+      VEnv.get V "precompile_failed" := by
+  induction j with
+  | zero => rfl
+  | succ j ih =>
+      simp only [bwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "precompile_failed") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "precompile_failed") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "all_inv") (y := "precompile_failed") (by decide)]
+      exact ih
+
 /-- `wMulmodAt` is commutative at a non-zero modulus. -/
 theorem wMulmodAt_comm {r a b : U256} (hr : r ≠ 0) :
     wMulmodAt a b r = wMulmodAt b a r := by
@@ -1199,7 +1212,7 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         (∀ i, i ≤ k - 3 → loadWord st.memory (s + 32 * i) = fwdProd st.memory a rw (i + 1)) ∧
         (∀ i, i < k → (loadWord st.memory (a + 32 * i)).toNat < rw.toNat) ∧
         wMulmodAt invAll (fwdProd st.memory a rw (k - 1)) rw = 1)
-      (fun _ st V' st' o => o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+      (fun V st V' st' o => o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
         VEnv.get V' "mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
         (∃ ai, VEnv.get V' "all_inv" = some ai ∧
           wMulmodAt ai (fwdProd st.memory a rw 1) rw = 1) ∧
@@ -1211,7 +1224,9 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
         (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat) ∧
         VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
         VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
-        VEnv.get V' "r" = some rw) := by
+        VEnv.get V' "r" = some rw ∧
+        VEnv.get V' "ret" = VEnv.get V "ret" ∧
+        VEnv.get V' "precompile_failed" = VEnv.get V "precompile_failed") := by
   rw [bi_backward_loop_form]
   simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
     GenAst.yexpr]
@@ -1238,7 +1253,9 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
       (∀ i, i < k → (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat) ∧
       VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a) ∧
       VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
-      VEnv.get V' "r" = some rw
+      VEnv.get V' "r" = some rw ∧
+      VEnv.get V' "ret" = VEnv.get V "ret" ∧
+      VEnv.get V' "precompile_failed" = VEnv.get V "precompile_failed"
   change Midfall.Yul.WpTac.AllRuns funs V st
     [Stmt.forLoop []
       (Expr.builtin Op.lt [Expr.var "second_mptr", Expr.var "mptr"])
@@ -1321,7 +1338,7 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
           simp [restore, hl]
         rw [hres]
         dsimp only [Q]
-        refine ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        refine ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
         · -- mptr
           clear hs hsk hdisj' hgpm0 hdisj hgpm
           rw [bwdEnv_get_mptr st.memory a s k rw invAll V hmptr0 (k - 2)]
@@ -1363,6 +1380,10 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
           rw [bwdEnv_get_second_mptr st.memory a s k rw invAll V (BitVec.ofNat 256 (a + 32)) hsecond (k - 2)]
         · -- r
           rw [bwdEnv_get_r st.memory a s k rw invAll V hr (k - 2)]
+        · -- ret
+          rw [bwdEnv_get_ret st.memory a s k rw invAll V (k - 2)]
+        · -- precompile_failed
+          rw [bwdEnv_get_pf st.memory a s k rw invAll V (k - 2)]
       · -- iteration: j < k-2
         intro hguard
         have h0 : b2w ((BitVec.ofNat 256 (a + 32)).ult (bwdMptr a k j)) ≠ (0 : U256) := hguard
@@ -2878,6 +2899,7 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms bwdEnv_get_r [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_first_mptr [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdEnv_get_ret [propext, Classical.choice, Quot.sound]
+#assert_axioms bwdEnv_get_pf [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdMem_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms bwdMem_scratch [propext, Classical.choice, Quot.sound]
 #assert_axioms loadWord_bwdMem_untouched [propext, Classical.choice, Quot.sound]
