@@ -3720,6 +3720,26 @@ theorem block_live_pcs (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) 
 #assert_axioms Midfall.LoweringV3.block_live_pcs
   [propext, Classical.choice, Quot.sound] native []
 
+/-- **A PROGRESS ROW GIVES THE BLOCK'S LIVENESS**, for every block whose entry boundary is
+    `StageInv` (all but `.finalPairing`/`.traceReturn`; those two enter at `Mid .pcs`/`Mid .pairing`
+    and have their own arms). The progress row is `StmtsTotal` over `StageInv`; its normal exit lands
+    at the next boundary, and at `.pcs` that boundary is `Mid` (so inject `Or.inl`). This is the
+    packer the TP/lagrange/quotient/PCS arms use. -/
+theorem block_live_of_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (H : Hash) (vkAddr : U256) (cd : Bytes) (q : Partial)
+    (hq1 : q ≠ .finalPairing) (hq2 : q ≠ .traceReturn)
+    (hprog : BlockProgS R q H vkAddr product cd) :
+    BlockLive R q H vkAddr product cd := by
+  intro V st hpre
+  have hpre' : StageInv R H vkAddr cd q.pre V st := by
+    cases q <;> simp_all [LivePre, Partial.pre]
+  obtain ⟨V', st', o, hrun, hpost⟩ := hprog.1 V st hpre'
+  refine ⟨V', st', o, hrun, ?_⟩
+  cases q <;> simp_all [exitProgAt, LivePre, Mid, MidAt, Partial.pre, Checkpoint.next]
+
+#assert_axioms Midfall.LoweringV3.block_live_of_blockProgS
+  [propext, Classical.choice, Quot.sound] native []
+
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
     answering at the four precompile addresses, and the block's all-runs row to classify the
