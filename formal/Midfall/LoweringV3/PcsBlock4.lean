@@ -437,6 +437,22 @@ theorem b1_eval_addmod_mulmod_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
                     rfl
                   · rw [hstmul, hstev, hstr]
 
+theorem copyReturn_outside (mem : Nat → UInt8) (dst size : Nat) (bytes : List UInt8)
+    (a : Nat) (h : a < dst ∨ dst + size ≤ a) :
+    copyReturn mem dst size bytes a = mem a := by
+  unfold copyReturn
+  rw [if_neg]
+  rintro ⟨h1, h2⟩
+  have hmin : min size bytes.length ≤ size := Nat.min_le_left _ _
+  omega
+
+theorem finishCall_memory_outside {kind : EVM.CallKind} {st : EvmState} {resp : CallResponse}
+    (io is oo os a : Nat) (h : a < oo ∨ oo + os ≤ a) :
+    (finishCall kind st resp io is oo os).memory a = st.memory a := by
+  unfold finishCall
+  dsimp
+  exact copyReturn_outside st.memory oo os resp.returndata a h
+
 theorem b1_eval_mload_add_var_lit_halt {funs : FunEnv (Bridge.Dialect c g)}
     {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {q : String} {off : Nat}
     {st' : EvmState}
@@ -678,6 +694,11 @@ theorem b1_exec_yset_f_eval {funs : FunEnv (Bridge.Dialect c g)}
       subst hval; subst hst
       exact ⟨rfl, fv, x2v, evv, rv, hf, hx2, hev, hr, by simp [VEnv.setMany], rfl⟩
   | assignHalt he => exact (b1_eval_addmod_mulmod_vars_halt he).elim
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
+  [propext, Classical.choice, Quot.sound] native []
 
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_eval_mload_add_var_lit_halt
   [propext, Classical.choice, Quot.sound] native []
