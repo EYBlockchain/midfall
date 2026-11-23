@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `b5fc2579` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
+**As of:** `41a19a71` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
 PlanMeta later re-pinned the closure at **5252 declarations / digest `fa2cfd35f9d64826`**; a final
 full gate is owed on the current tree. Current report: root **11 / sound 5**, register
 **94 rows / 11 ROOT / 21 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
@@ -330,7 +330,9 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
 - A11: `runsAllP_fixed_fold` and `readFixedEvals` proved; the remaining `readAlgebra` blocks are
   logup/permutation/advice/instance/minRot/lIS, then the parseTrace cover.
 - A5: `fromConstraintSystem_pcsQueries`, `perProofQueries_parts`, the permutationZ upstream
-  reordering and the per-block query spines are proved; upstream z-slice + `hclass` freshness remain.
+  reordering, the upstream z-slice, `KzgQueryMapData.ofPairQueries`, and the quotient
+  freshness/`hclass` classification are proved; the per-pair instantiation and concrete render
+  freshness are the remaining datum inputs.
 - A4: `LagrangeBlock` vocabulary + statement-4 contract; per-phase representation and group-4
   denominator-loop proof.
 - A5: `bi_front`, `bi_back_tail`, prelude main, and **`batch_invert_summary` PROVED** (with the
