@@ -751,27 +751,8 @@ theorem decodeCalldata_hend_of_some {G₁ : Type} (L : ProofCalldataLayout)
   rw [decodeCalldata_none_of_layout_skew L numInstances c H cd] at h
   cases h
 
-/-- EXACT in both modes (D7, and P-12's measurement of the templates): trailing bytes
-    revert, non-canonical words revert, and an accepted G1 block is the canonical
-    encoding of its point, so a decoded calldata is byte-for-byte the calldataOf of
-    what it decoded to. The R-25 malleability lives in decodeAcc, which is not in this
-    path at all - that is why accumulator mode needs no exception here.
-
-    hypotheses: hc : eipRoundtrip is the decoder-first law that turns "the decoder
-    accepted these bytes" into "these are the encoder's bytes for that point".
-
-    P-MC-CALLDATA RESTORED THIS STATEMENT. It used to carry
-    `hend : L.proofEnd = L.proofCptr + L.proofLen` as a binder, which PLAN section H
-    does not: 'decodeCalldata' guards on exactly that equation, so a successful decode
-    already implies it ('decodeCalldata_hend_of_some'). The hypothesis was a weakening
-    of the sketched claim, and the sketched form is what stands here now.
-    PROOF OBLIGATION, registered in SORRY.md (M5-8). -/
-theorem calldata_canonical {G₁ : Type} (L : ProofCalldataLayout) (numInstances : Nat)
-    (c : G1Codec G₁) (hc : c.eipRoundtrip)
-    (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (inst : Array Word256)
-    (h : decodeCalldata (p := p) L numInstances c cd = some (ms, inst)) :
-    cd = calldataOf c ms inst.toList := by
-  sorry
+-- calldata_canonical lives in the CalldataByteLemmas section below (it needs the
+-- slot-walk byte lemma `decodeSlots_encode`).
 
 /-! The wire-level repack/decode agreement, D8's first half.
 
@@ -2578,6 +2559,193 @@ theorem sum_map_const {α : Type} (l : List α) (c : Nat) :
   induction l with
   | nil => rfl
   | cons a t ih => simp [ih, Nat.mul_succ, Nat.add_comm, Nat.mul_comm]
+
+set_option maxHeartbeats 3000000 in
+theorem flatten_blocks_generic (w : Nat) (a b c d e f : List Nat) (L : List (List Nat)) :
+    (([(4, a), (32, b), (32, c), (32, d), (w, e), (32, f)] ++
+      L.map (fun x => (32, x))).map Prod.snd).flatten =
+      a ++ (b ++ (c ++ (d ++ (e ++ (f ++ L.flatten))))) := by
+  simp only [List.map_append, List.map_cons, List.map_nil, List.flatten_append,
+    List.flatten_cons, List.flatten_nil]
+  simp only [List.append_nil, List.map_map, Function.comp_def, List.append_assoc]
+  rw [show (fun x : List Nat => x) = id from rfl, List.map_id]
+
+/-- EXACT in both modes (D7, and P-12's measurement of the templates): trailing bytes
+    revert, non-canonical words revert, and an accepted G1 block is the canonical
+    encoding of its point, so a decoded calldata is byte-for-byte the calldataOf of
+    what it decoded to. The R-25 malleability lives in decodeAcc, which is not in this
+    path at all - that is why accumulator mode needs no exception here.
+
+    hypotheses: hc : eipRoundtrip is the decoder-first law that turns "the decoder
+    accepted these bytes" into "these are the encoder's bytes for that point".
+
+    P-MC-CALLDATA RESTORED THIS STATEMENT. It used to carry
+    `hend : L.proofEnd = L.proofCptr + L.proofLen` as a binder, which PLAN section H
+    does not: 'decodeCalldata' guards on exactly that equation, so a successful decode
+    already implies it ('decodeCalldata_hend_of_some'). The hypothesis was a weakening
+    of the sketched claim, and the sketched form is what stands here now.
+    PROVED here by the tile assembly: `decodeCalldata_facts` gives the envelope,
+    `decodeSlots_encode` gives the proof region byte-for-byte, `word_take_eq` gives
+    every length/instance word, and `eq_flatten_of_blocks` glues the tiles back to
+    `bytesToNats cd = S ++ W0 ++ W1 ++ W2 ++ PN ++ Wn ++ IN`, which is exactly the
+    `calldataOf` list. No `Totality` import and no row/root hypothesis. -/
+theorem calldata_canonical {G₁ : Type} (L : ProofCalldataLayout) (numInstances : Nat)
+    (c : G1Codec G₁) (hc : c.eipRoundtrip)
+    (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (inst : Array Word256)
+    (h : decodeCalldata (p := p) L numInstances c cd = some (ms, inst)) :
+    cd = calldataOf c ms inst.toList := by
+  obtain ⟨hsel, hptr, hend, hw4, hw24, hw44, hwcnt, hsz, hslots, hinst⟩ :=
+    decodeCalldata_facts L numInstances c cd ms inst h
+  have hcptr : L.proofCptr = 100 := by rw [hptr]; decide
+  have hpend : L.proofEnd = 100 + L.proofLen := by rw [hend, hcptr]
+  let P := encodeContractProof c ms
+  obtain ⟨hPtake, hPcur⟩ := decodeSlots_encode c hc cd
+    (RepackedProofLayoutPlan.fromProofLayout L).slots L.proofCptr ms L.proofEnd hslots
+    (by rw [hsz]; omega)
+  have hPsize : P.size = L.proofLen := by
+    have hPsize' : (encodeContractProof c ms).size = L.proofLen := by
+      rw [hcptr] at hPcur
+      omega
+    exact hPsize'
+  let instL := (List.range numInstances).map (fun i => cdWord cd (L.proofEnd + 32 + 32 * i))
+  have hinstL : inst.toList = instL := by
+    rw [hinst]
+  have hninst : instL.length = numInstances := by simp [instL]
+  have hidx24 : L.proofEnd - 4 = 0x40 + 0x20 + P.size := by omega
+  let S := bytesToNats Midfall.Generator.fnSigVerifyProof
+  let W0 := toU256BeBytes 0x40
+  let W1 := toU256BeBytes (0x40 + 0x20 + P.size)
+  let W2 := toU256BeBytes P.size
+  let PN := bytesToNats P
+  let Wn := toU256BeBytes instL.length
+  let IN := instL.flatMap (fun w => toU256BeBytes w.toNat)
+  have hS : S.length = 4 := by
+    dsimp [S]; rw [bytesToNats_length]; decide
+  have hW0 : W0.length = 32 := toU256BeBytes_length _
+  have hW1 : W1.length = 32 := toU256BeBytes_length _
+  have hW2 : W2.length = 32 := toU256BeBytes_length _
+  have hPN : PN.length = P.size := bytesToNats_length _
+  have hWn : Wn.length = 32 := toU256BeBytes_length _
+  -- reads
+  have hselT : ((bytesToNats cd).drop 0).take 4 = S := by
+    rw [← bytesToNats_bytesTake (by rw [hsz]; omega), hsel]
+    simp [S, Option.getD_some]
+  have h4T : ((bytesToNats cd).drop 4).take 32 = W0 := by
+    rw [word_take_eq (by rw [hsz]; omega), hw4]
+  have h24T : ((bytesToNats cd).drop 0x24).take 32 = W1 := by
+    rw [word_take_eq (by rw [hsz]; omega), hw24, hidx24]
+  have h44T : ((bytesToNats cd).drop 0x44).take 32 = W2 := by
+    rw [word_take_eq (by rw [hsz]; omega), hw44,
+      show L.proofLen = P.size from hPsize.symm]
+  have hwalkBound : L.proofCptr + P.size ≤ cd.size := by
+    rw [← hPcur]; rw [hsz]; omega
+  have hwalkT : ((bytesToNats cd).drop L.proofCptr).take P.size = PN := by
+    rw [← bytesToNats_bytesTake hwalkBound, hPtake]
+    rfl
+  have hcntT : ((bytesToNats cd).drop L.proofEnd).take 32 = Wn := by
+    rw [word_take_eq (by rw [hsz]; omega), hwcnt,
+      show numInstances = instL.length from hninst.symm]
+  have hinstT : ∀ (i : Nat) (hi : i < instL.length),
+      ((bytesToNats cd).drop (L.proofEnd + 32 + 32 * i)).take 32 =
+        toU256BeBytes (instL.get ⟨i, hi⟩).toNat := by
+    intro i hi
+    rw [word_take_eq (by rw [hsz]; omega)]
+    simp [instL, List.getElem_map, List.getElem_range]
+  -- blocks
+  let instBytes : List (List Nat) := instL.map (fun w => toU256BeBytes w.toNat)
+  let instBlocks : List (Nat × List Nat) := instBytes.map (fun b => (32, b))
+  let blocks : List (Nat × List Nat) :=
+    [(4, S), (32, W0), (32, W1), (32, W2), (P.size, PN), (32, Wn)] ++ instBlocks
+  have hb1 : BlocksOk (bytesToNats cd) 0 [(4, S)] :=
+    blocksOk_single _ 0 4 S hselT hS
+  have hb2 : BlocksOk (bytesToNats cd) 4 [(32, W0)] :=
+    blocksOk_single _ 4 32 W0 h4T hW0
+  have hb3 : BlocksOk (bytesToNats cd) 36 [(32, W1)] :=
+    blocksOk_single _ 36 32 W1 h24T hW1
+  have hb4 : BlocksOk (bytesToNats cd) 68 [(32, W2)] :=
+    blocksOk_single _ 68 32 W2 h44T hW2
+  have hb5 : BlocksOk (bytesToNats cd) 100 [(P.size, PN)] := by
+    have h := blocksOk_single (bytesToNats cd) L.proofCptr P.size PN hwalkT hPN
+    simpa [hcptr] using h
+  have hb6 : BlocksOk (bytesToNats cd) L.proofEnd [(32, Wn)] :=
+    blocksOk_single _ L.proofEnd 32 Wn hcntT hWn
+  have hbI : BlocksOk (bytesToNats cd) (L.proofEnd + 32) instBlocks := by
+    dsimp [instBlocks]
+    apply blocksOk_map_width32
+    · intro b hb
+      obtain ⟨w, _, rfl⟩ := List.mem_map.mp hb
+      exact toU256BeBytes_length _
+    · intro i hi
+      have hi' : i < instL.length := by simpa [instBytes] using hi
+      have h := hinstT i hi'
+      simpa [instBytes, List.getElem_map] using h
+  have hb12 := blocksOk_append (bytesToNats cd) [(4, S)] [(32, W0)] 0 hb1
+    (by simpa using hb2)
+  have hb123 := blocksOk_append (bytesToNats cd) ([(4, S)] ++ [(32, W0)]) [(32, W1)] 0 hb12
+    (by simpa using hb3)
+  have hb1234 := blocksOk_append (bytesToNats cd) ([(4, S)] ++ [(32, W0)] ++ [(32, W1)])
+    [(32, W2)] 0 hb123 (by simpa using hb4)
+  have hb12345 := blocksOk_append (bytesToNats cd)
+    ([(4, S)] ++ [(32, W0)] ++ [(32, W1)] ++ [(32, W2)]) [(P.size, PN)] 0 hb1234
+    (by simpa using hb5)
+  have hb123456 := blocksOk_append (bytesToNats cd)
+    ([(4, S)] ++ [(32, W0)] ++ [(32, W1)] ++ [(32, W2)] ++ [(P.size, PN)]) [(32, Wn)] 0
+    hb12345
+    (by
+      have hp : (0 + (([(4, S)] ++ [(32, W0)] ++ [(32, W1)] ++ [(32, W2)] ++
+          [(P.size, PN)]).map Prod.fst).sum) = L.proofEnd := by
+        simp [hS, hW0, hW1, hW2, hPN]
+        omega
+      rw [hp]; exact hb6)
+  have hbAll : BlocksOk (bytesToNats cd) 0 blocks := by
+    have hb7 := blocksOk_append (bytesToNats cd)
+      ([(4, S), (32, W0), (32, W1), (32, W2), (P.size, PN), (32, Wn)]) instBlocks 0
+      hb123456
+      (by
+        have hp : (0 + (([(4, S), (32, W0), (32, W1), (32, W2), (P.size, PN),
+            (32, Wn)]).map Prod.fst).sum) = L.proofEnd + 32 := by
+          simp [hS, hW0, hW1, hW2, hPN, hWn]
+          omega
+        rw [hp]; exact hbI)
+    simpa [blocks, List.append_assoc] using hb7
+  -- size of the whole list
+  have hsum : (blocks.map Prod.fst).sum = (bytesToNats cd).length := by
+    have hinstSum :
+        (instL.map (Prod.fst ∘ (fun b => (32, b)) ∘
+          fun w => toU256BeBytes w.toNat)).sum = 32 * instL.length := by
+      have hmap : (instL.map (Prod.fst ∘ (fun b => (32, b)) ∘
+          fun w => toU256BeBytes w.toNat)) = instL.map (fun _ => 32) := by
+        apply List.map_congr_left
+        intro w _
+        rfl
+      rw [hmap, sum_map_const]
+    have h1 : (blocks.map Prod.fst).sum =
+        4 + (32 + (32 + (32 + (P.size + (32 + 32 * instL.length))))) := by
+      simp only [blocks, instBlocks, instBytes, List.map_append, List.map_cons,
+        List.map_nil, List.sum_append, List.sum_cons, List.sum_nil, hS, hW0, hW1, hW2,
+        hPN, hWn, toU256BeBytes_length, List.map_map, Function.comp_apply, Prod.fst]
+      rw [hinstSum]
+      omega
+    rw [h1, bytesToNats_length, hsz, hninst, hpend, hPsize]
+    omega
+  have hnat : bytesToNats cd =
+      S ++ (W0 ++ (W1 ++ (W2 ++ (PN ++ (Wn ++ IN))))) := by
+    have hflat := eq_flatten_of_blocks (bytesToNats cd) blocks hbAll hsum
+    have hfl : (blocks.map Prod.snd).flatten =
+        S ++ (W0 ++ (W1 ++ (W2 ++ (PN ++ (Wn ++ IN))))) := by
+      change (([(4, S), (32, W0), (32, W1), (32, W2), (P.size, PN), (32, Wn)] ++
+        instBytes.map (fun x => (32, x))).map Prod.snd).flatten =
+        S ++ (W0 ++ (W1 ++ (W2 ++ (PN ++ (Wn ++ instBytes.flatten)))))
+      exact flatten_blocks_generic P.size S W0 W1 W2 PN Wn instBytes
+    rw [hflat, hfl]
+
+  have hcalldata : calldataOf c ms instL =
+      bytesFromNats (S ++ (W0 ++ (W1 ++ (W2 ++ (PN ++ (Wn ++ IN)))))) := by
+    rw [calldataOf_eq]
+    apply congrArg bytesFromNats
+    dsimp only [S, W0, W1, W2, PN, Wn, IN, P]
+    exact (assoc7 _ _ _ _ _ _ _).symm
+  rw [← bytesFromNats_bytesToNats cd, hnat, ← hcalldata, hinstL]
 
 end CalldataByteLemmas
 
