@@ -413,6 +413,60 @@ def VerifierMemoryLayout.new (meta_ : ConstraintSystemMeta) (vk : Halo2Verifying
     traceU256Mptr := traceU256Mptr,
     pcs := config.pcs }
 
+/-! ## The data bases: what `Data.new` reads off a layout (CERT.1)
+
+  `Data::new` (ENC:302-553) binds exactly ten pointer fields of its `VerifierMemoryLayout`
+  argument before it starts filling its record (ENC:309-367): `vk_mptr`,
+  `challenge_mptr`, `theta_mptr`, `reversed_evals_mptr`, `comms_mptr_base`, and the five
+  category bases derived from `comms_mptr_base` (`lookup_m`, `perm_z`, `lookup_helper`,
+  `lookup_z`, `trashcan`). Everything else `Data` computes is either metadata arithmetic
+  or one of the three fixed addresses the caller passes through
+  (`G1_IDENTITY_MPTR`, `INSTANCE_EVAL_MPTR`, `QUOTIENT_MPTR`).
+
+  The CERT.1 fact is that those ten fields are stable under the two differences between
+  `meta_data_for_vk`'s INTERMEDIATE layout (`vk.rs:512-514`, built from `meta1` with
+  `num_point_sets = 0` and the default config) and the FINAL layout the plan carries
+  (`plan.rs:259-270`, built from `meta2 = meta1.set_num_point_sets n` with the
+  quotient/PCS config). `VerifierMemoryLayout::new` computes all ten from
+  `(vk_mptr, vk.len, challenge_indices.length, num_evals, the commitment census)`, none of
+  which `num_point_sets` changes; the configuration enters only through regions that are
+  either fixed-start phase scratch (`transcript_buffer`, `pcs_pairing_static_working`, ...)
+  or allocated after the commitment run, so the ten bases do not move either.
+  `new_dataBases_setNumPointSets` states exactly that; its consumer is
+  `Midfall.LoweringV3.MemoryPairs.planMeta_of_generated` (and through it `v3_planMeta`). -/
+
+/-- The ten fields `Data.new` reads off its layout argument (ENC:309-367). Two layouts with
+    `SameDataBases` feed `Data.new` the same binding table, whatever else they contain. -/
+def SameDataBases (a b : VerifierMemoryLayout) : Prop :=
+  a.vkMptr = b.vkMptr ∧ a.challengeMptr = b.challengeMptr ∧
+  a.thetaMptr = b.thetaMptr ∧ a.reversedEvalsMptr = b.reversedEvalsMptr ∧
+  a.commsMptrBase = b.commsMptrBase ∧
+  a.lookupMCommsMptrBase = b.lookupMCommsMptrBase ∧
+  a.permZCommsMptrBase = b.permZCommsMptrBase ∧
+  a.lookupHelperCommsMptrBase = b.lookupHelperCommsMptrBase ∧
+  a.lookupZCommsMptrBase = b.lookupZCommsMptrBase ∧
+  a.trashcanCommsMptrBase = b.trashcanCommsMptrBase
+
+/-- Two layouts that agree on the ten data bases give `Data.new` the same result. PROVED by
+    rewriting the ten projections in the constructor's body: every other `memory` read in
+    `Data.new` is one of these ten (ENC:309-367). -/
+theorem Data.new_congr {meta_ : ConstraintSystemMeta} {vk : Halo2VerifyingKey}
+    {a b : VerifierMemoryLayout} (h : SameDataBases a b) :
+    Data.new meta_ vk a = Data.new meta_ vk b := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10⟩ := h
+  simp only [Data.new, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10]
+
+/-- **THE STABILITY LEMMA.** Incrementing `num_point_sets` only (the step
+    `meta_data_for_vk` takes between its second and third layout, VK:519-522), and swapping
+    the default config for the plan's quotient/PCS config (`plan.rs:259-270`), leaves all
+    ten data bases unchanged. Both sides are the concrete constructor, and each of the ten
+    fields reduces to the same closed form. PROVED. -/
+theorem new_dataBases_setNumPointSets (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey)
+    (vkMptr : Ptr) (n : Nat) (cfg₁ cfg₂ : VerifierMemoryLayoutConfig) :
+    SameDataBases (VerifierMemoryLayout.new meta_ vk vkMptr cfg₁)
+      (VerifierMemoryLayout.new (meta_.setNumPointSets n) vk vkMptr cfg₂) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> rfl
+
 end Midfall.Generator
 
 
