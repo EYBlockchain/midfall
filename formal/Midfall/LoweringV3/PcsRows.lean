@@ -3178,6 +3178,15 @@ def b1Back (rots : List Int) (minRot : Int) : Block EVM.Op :=
 def b1All (rots : List Int) (maxRot minRot : Int) : Block EVM.Op :=
   b1Head rots ++ b1Fwd rots maxRot ++ b1Back rots minRot
 
+/-- `pcsBlock1Ast` at `trace = false` is the three named pieces: head, forward walk, back walk
+    (the trace serialiser arm is dead at the slice's flag). -/
+theorem pcsBlock1Ast_eq (rots : List Int) (maxRot minRot : Int)
+    (ps : List (List Int)) :
+    GenAstPcs.pcsBlock1Ast rots maxRot minRot false ps = b1All rots maxRot minRot := by
+  simp only [GenAstPcs.pcsBlock1Ast, b1All, b1Head, b1Fwd, b1Back, b1WalkL, b1Store,
+    GenAstPcs.walkStep, GenAstPcs.mstoreAdd]
+  split_ifs <;> simp_all
+
 theorem b1_reset_contract {funs : FunEnv (Bridge.Dialect c g)} (xv : U256) :
     StmtsContractAll (D := Bridge.Dialect c g) funs
       [GenAst.yset "x_pow_of_omega" (GenAst.yvar "x")]
