@@ -302,11 +302,124 @@ theorem prog_constTable (hg : Generates gi o) (hs : SupportedInput gi) :
       Midfall.LoweringV3.expectedConsts (renderOf gi o).pv (renderOf gi o).model) = true := by
   sorry -- CERT.6 (with CERT.3)
 
+/-- The names of `expectedConsts`, independent of the option values. -/
+def expectedConstsNames (vk quot acc : Bool) : List String :=
+  (if vk then ["EXPECTED_VK_PAYLOAD_LENGTH",
+      "EXPECTED_VK_LENGTH",
+      "EXPECTED_VK_CODEHASH_WORD"] else []) ++
+  (if quot then ["EXPECTED_QUOTIENT_LENGTH",
+      "EXPECTED_QUOTIENT_CODEHASH_WORD"] else []) ++
+  ["PROOF_LEN_CPTR",
+      "PROOF_CPTR",
+      "NUM_INSTANCE_CPTR",
+      "INSTANCE_CPTR",
+      "TRANSCRIPT_MPTR",
+      "RETURN_MPTR",
+      "VK_MPTR",
+      "VK_DIGEST_MPTR",
+      "NUM_INSTANCES_MPTR",
+      "K_MPTR",
+      "N_INV_MPTR",
+      "OMEGA_MPTR",
+      "OMEGA_INV_MPTR",
+      "OMEGA_INV_TO_L_MPTR",
+      "HAS_ACCUMULATOR_MPTR",
+      "ACC_OFFSET_MPTR",
+      "NUM_ACC_LIMBS_MPTR",
+      "NUM_ACC_LIMB_BITS_MPTR",
+      "G1_BASE_MPTR",
+      "G2_BASE_MPTR",
+      "NEG_S_G2_BASE_MPTR",
+      "CHALLENGE_MPTR",
+      "THETA_MPTR",
+      "BETA_MPTR",
+      "GAMMA_MPTR",
+      "TRASH_CHALLENGE_MPTR",
+      "Y_MPTR",
+      "X_MPTR",
+      "X1_MPTR",
+      "X2_MPTR",
+      "X3_MPTR",
+      "X4_MPTR",
+      "F_COM_MPTR",
+      "PI_MPTR",
+      "ACC_LHS_MPTR",
+      "ACC_RHS_MPTR",
+      "X_N_MPTR",
+      "X_N_MINUS_1_INV_MPTR",
+      "L_LAST_MPTR",
+      "L_BLIND_MPTR",
+      "L_0_MPTR",
+      "INSTANCE_EVAL_MPTR",
+      "QUOTIENT_EVAL_MPTR",
+      "QUOTIENT_MPTR",
+      "F_EVAL_MPTR",
+      "V_MPTR",
+      "FINAL_COM_MPTR",
+      "PAIRING_LHS_MPTR",
+      "PAIRING_RHS_MPTR",
+      "ROT_POINTS_MPTR",
+      "X1_POWERS_MPTR",
+      "Q_COM_MPTR",
+      "Q_EVAL_SET_MPTR",
+      "Q_EVAL_CPTR_MPTR",
+      "G1_IDENTITY_MPTR",
+      "REVERSED_EVALS_MPTR",
+      "SELECTOR_ACC_MPTR",
+      "QUOTIENT_RETURN_MPTR",
+      "BATCH_INV_SCRATCH_MPTR",
+      "LAGRANGE_DENOMS_MPTR",
+      "TRACE_U256_MPTR",
+      "ADVICE_COMMS_MPTR_BASE",
+      "LOOKUP_M_COMMS_MPTR_BASE",
+      "PERM_Z_COMMS_MPTR_BASE",
+      "LOOKUP_HELPER_COMMS_MPTR_BASE",
+      "LOOKUP_Z_COMMS_MPTR_BASE",
+      "TRASHCAN_COMMS_MPTR_BASE",
+      "QUOTIENT_LIMB_COMMS_MPTR_BASE",
+      "G1ADD_GAS",
+      "G1MSM_GAS_1PAIR",
+      "PAIRING_GAS_2PAIR",
+      "MODEXP_GAS",
+      "G1MSM_GAS_SMOKE"] ++
+  (if acc then ["ACC_RHS_MSM_GAS"] else []) ++
+  ["ERR_BAD_CALLDATA_SHAPE",
+      "ERR_VK_MISMATCH",
+      "ERR_NON_CANONICAL_SCALAR",
+      "ERR_BAD_POINT_ENCODING",
+      "ERR_PRECOMPILE_FAILED",
+      "ERR_PROOF_REJECTED",
+      "ERR_QUOTIENT_PROGRAM_INVALID",
+      "ERR_MEMORY_LAYOUT_VIOLATED",
+      "FR_MODULUS",
+      "BLS_P_HI",
+      "BLS_P_MINUS_ONE_LO",
+      "BLS_P_MINUS_ONE_PACKED_0",
+      "BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG",
+      "BLS_P_MINUS_ONE_PACKED_1"]
+
+/-- `expectedConsts`'s names are `expectedConstsNames` at the model's option flags. PROVED. -/
+theorem expectedConsts_names_eq (pv : PlanView) (m : Model) :
+    (Midfall.LoweringV3.expectedConsts pv m).map Prod.fst =
+      expectedConstsNames m.expectedVkCodehash.isSome
+        (m.quotientExternal.isSome && m.expectedQuotientCodehash.isSome)
+        m.expectedHasAccumulator := by
+  unfold Midfall.LoweringV3.expectedConsts expectedConstsNames
+  cases h1 : m.expectedVkCodehash <;> cases h2 : m.quotientExternal <;>
+    cases h3 : m.expectedQuotientCodehash <;> cases h4 : m.expectedHasAccumulator <;> rfl
+
 /-- P2d. No constant name twice. -/
 theorem prog_constNodup (hg : Generates gi o) (hs : SupportedInput gi) :
     decide (((Midfall.LoweringV3.expectedConsts (renderOf gi o).pv
       (renderOf gi o).model).map Prod.fst).Nodup) = true := by
-  sorry -- CERT.6
+  rw [expectedConsts_names_eq]
+  cases h1 : (renderOf gi o).model.expectedVkCodehash <;>
+    cases h2 : (renderOf gi o).model.quotientExternal <;>
+    cases h3 : (renderOf gi o).model.expectedQuotientCodehash <;>
+    cases h4 : (renderOf gi o).model.expectedHasAccumulator <;>
+    simp only [Option.isSome_some, Option.isSome_none, Bool.and_true, Bool.and_false,
+      Bool.true_and, Bool.false_and, if_true, if_false] <;>
+    decide
 
 /-- P2e. Every name the program reads is a declared constant (or a wrapper local). -/
 theorem prog_constsDeclared (hg : Generates gi o) (hs : SupportedInput gi) :
