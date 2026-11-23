@@ -3505,4 +3505,128 @@ theorem pcsExec_names {funs : FunEnv (Bridge.Dialect c g)} {ss : Block EVM.Op}
       · exact absurd ho hne
 
 
+structure PcsGenNames (m : Nat) (xs : List (Nat × String))
+    (ks : Nat → List (Nat × String)) : Prop where
+  dxX3 : ∀ q ∈ xs, pcsDxName q.1 ≠ "x3"
+  dxR : ∀ q ∈ xs, pcsDxName q.1 ≠ "r"
+  dxRot : ∀ q ∈ xs, ∀ r ∈ xs, q.2 ≠ pcsDxName r.1
+  dxIdx : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1
+  dxDist : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1 → pcsDxName q.1 ≠ pcsDxName r.1
+  lbR : ∀ q ∈ xs, pcsLbasisName q.1 ≠ "r"
+  lbPt : ∀ q ∈ xs, pcsLbasisName q.1 ≠ q.2
+  lbKs : ∀ q ∈ xs, ∀ k ∈ ks q.1, pcsLbasisName q.1 ≠ k.2
+  lbRot : ∀ q ∈ xs, ∀ r ∈ xs, pcsLbasisName q.1 ≠ r.2
+  lbRot2 : ∀ q ∈ xs, ∀ r ∈ xs, ∀ k ∈ ks r.1, pcsLbasisName q.1 ≠ k.2
+  lbDist : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1 → pcsLbasisName q.1 ≠ pcsLbasisName r.1
+  lbIdx : ∀ q ∈ xs, ∀ r ∈ xs, q.1 ≠ r.1
+  lbDx : ∀ q ∈ xs, ∀ r ∈ xs, pcsLbasisName q.1 ≠ pcsDxName r.1
+  bpR : ∀ i < (pcsBatchInputs m).length, pcsBpName i ≠ "r"
+  bpIn : ∀ i < (pcsBatchInputs m).length, ∀ j < (pcsBatchInputs m).length,
+    pcsBpName i ≠ pcsBatchName m j
+  bpDist : ∀ i < (pcsBatchInputs m).length, ∀ j < (pcsBatchInputs m).length,
+    i ≠ j → pcsBpName i ≠ pcsBpName j
+  bqR : "bq" ≠ "r"
+  invBq : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → pcsInvName m i ≠ "bq"
+  invPrev : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length →
+    pcsInvName m i ≠ pcsBpName (i - 1)
+  invInp : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length →
+    pcsInvName m i ≠ pcsBatchName m i
+  invR : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → pcsInvName m i ≠ "r"
+  bqBp : ∀ i < (pcsBatchInputs m).length, pcsBpName i ≠ "bq"
+  bqInp : ∀ i < (pcsBatchInputs m).length, pcsBatchName m i ≠ "bq"
+  invBp : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → ∀ j < (pcsBatchInputs m).length,
+    pcsBpName j ≠ pcsInvName m i
+  invInp2 : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → ∀ j < (pcsBatchInputs m).length,
+    pcsBatchName m j ≠ pcsInvName m i
+  rInv : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length → "r" ≠ pcsInvName m i
+  invDist : ∀ i, 1 ≤ i → i < (pcsBatchInputs m).length →
+    ∀ j, 1 ≤ j → j < (pcsBatchInputs m).length → i ≠ j → pcsInvName m i ≠ pcsInvName m j
+  invX2 : ∀ i, pcsInvName m i ≠ "x2"
+  invF : ∀ i, pcsInvName m i ≠ "f_eval"
+  invQ : ∀ i, pcsInvName m i ≠ "Q_EVAL_CPTR"
+  bqBpName : ∀ i < (pcsBatchInputs m).length, "bq" ≠ pcsBpName i
+  denInv : ∀ j < m, "den_inv" ≠ pcsInvName m j
+  denR : "den_inv" ≠ "r"
+  termEval : ∀ j < m, ("term_" ++ toString j) ≠ "eval"
+  termR : ∀ j < m, ("term_" ++ toString j) ≠ "r"
+  termQ : ∀ j < m, ("term_" ++ toString j) ≠ "Q_EVAL_SET_MPTR"
+  termDx : ∀ j < m, ∀ k < m, ("term_" ++ toString j) ≠ pcsInvName m k
+  termLb : ∀ j < m, ∀ k < m, ("term_" ++ toString j) ≠ pcsInvName m (m + k)
+  termDist : ∀ i < m, ∀ j < m, i ≠ j → ("term_" ++ toString i) ≠ ("term_" ++ toString j)
+  dxEval : ∀ k < m, pcsInvName m k ≠ "eval"
+  lbEval : ∀ k < m, pcsInvName m (m + k) ≠ "eval"
+  dxTerm : ∀ k < m, ∀ j < m, pcsInvName m k ≠ ("term_" ++ toString j)
+  lbTerm : ∀ k < m, ∀ j < m, pcsInvName m (m + k) ≠ ("term_" ++ toString j)
+  rEval : "r" ≠ "eval"
+  rTerm : ∀ j < m, "r" ≠ ("term_" ++ toString j)
+  qEval : "Q_EVAL_SET_MPTR" ≠ "eval"
+  qTerm : ∀ j < m, "Q_EVAL_SET_MPTR" ≠ ("term_" ++ toString j)
+
+def pcsGenBatchVal (rv x3v : U256) (p : Nat → U256) (ks : Nat → List (Nat × String))
+    (m i : Nat) : U256 :=
+  if i < m then wAddmodAt x3v (rv - p i) rv
+  else pcsLbasisVal rv (p (i - m)) p (ks (i - m))
+
+def pcsGenFEval (rv x2v fev cval : U256) (ev : Nat → U256) (a : Nat → U256) (m : Nat) : U256 :=
+  wAddmodAt (wMulmodAt fev x2v rv)
+    (pcsEvalAcc rv ev (fun j => SIInv (a j)) (fun j => SIInv (a (m + j))) m
+      (wMulmodAt cval (pcsDenInvVal rv (fun j => SIInv (a j)) m) rv)) rv
+
+theorem pcsBatchInputs_length (m : Nat) : (pcsBatchInputs m).length = 2 * m := by
+  simp only [pcsBatchInputs, List.length_append, List.length_map, List.length_range]
+  omega
+
+theorem pcsBatchName_dx (m i : Nat) (hi : i < m) : pcsBatchName m i = pcsDxName i := by
+  unfold pcsBatchName pcsBatchInputs
+  rw [List.getD_eq_getElem?_getD]
+  rw [List.getElem?_append_left]
+  · simp [List.getElem?_map, List.getElem?_range, hi, pcsDxName]
+  · simp only [List.length_map, List.length_range]; exact hi
+
+theorem pcsBatchName_lb (m j : Nat) (hj : j < m) :
+    pcsBatchName m (m + j) = pcsLbasisName j := by
+  unfold pcsBatchName pcsBatchInputs
+  rw [List.getD_eq_getElem?_getD]
+  rw [List.getElem?_append_right]
+  · simp only [List.length_map, List.length_range]
+    rw [show m + j - m = j by omega]
+    simp [List.getElem?_map, List.getElem?_range, hj, pcsLbasisName]
+  · simp only [List.length_map, List.length_range]; omega
+
+
+theorem pcsPointRefs_mem (points : List Int) (distinct : List Int) {i : Nat}
+    (hi : i < points.length) :
+    (i, pcsRotPtRef distinct (points.get ⟨i, hi⟩)) ∈ pcsPointRefs points distinct := by
+  unfold pcsPointRefs pcsRotPtRef
+  apply List.mem_map.mpr
+  have hi' : i < (Midfall.Generator.enumIdx points).length := by
+    simp [Midfall.Generator.enumIdx]; exact hi
+  refine ⟨(Midfall.Generator.enumIdx points)[i]'hi', List.getElem_mem (l := Midfall.Generator.enumIdx points) hi', ?_⟩
+  simp [Midfall.Generator.enumIdx]
+
+
+theorem pcsStmtsContractAll_append_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {ss1 ss2 : Block EVM.Op}
+    {pre : VEnv (Bridge.Dialect c g) → EvmState → Prop}
+    {mid : VEnv (Bridge.Dialect c g) → EvmState → Prop}
+    {post : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Outcome → Prop}
+    (h1 : StmtsContractAll (D := Bridge.Dialect c g) funs ss1 pre
+      (fun V st V' st' o => (o = .normal ∧ mid V' st') ∨
+        (o = .halt ∧ post V st V' st' o)))
+    (h2 : ∀ V st, pre V st → StmtsContractAll (D := Bridge.Dialect c g) funs ss2 mid
+      (fun _ _ V' st' o => post V st V' st' o)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (ss1 ++ ss2) pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1run, h2run⟩ | ⟨h1run, hne⟩
+  · rcases h1 V st hpre V1 st1 .normal h1run with ⟨_, hmid⟩ | ⟨hh, _⟩
+    · exact h2 V st hpre V1 st1 hmid V' st' o h2run
+    · cases hh
+  · rcases h1 V st hpre V' st' o h1run with ⟨hh, _⟩ | ⟨_, hpost⟩
+    · exact absurd hh hne
+    · exact hpost
+
+
+
 end Midfall.LoweringV3.PcsBlock4
