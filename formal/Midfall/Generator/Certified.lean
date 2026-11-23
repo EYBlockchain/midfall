@@ -1136,6 +1136,43 @@ theorem generateVk_getD_lt {feat : Features} {env : VkBuildEnv QuotientProgramPl
     · cases h
   · cases h
 
+/-- The base VK's constants survive `generateVk` in number as well as in value. PROVED. -/
+theorem generateVk_prefix_length {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {codecs : VkPointCodecs G₁ G₂} {inputs : VerifierBuildInputs p G₁ G₂}
+    {payload : Halo2VerifyingKey}
+    (h : generateVk feat env codecs inputs = .ok payload)
+    (vk0 : Halo2VerifyingKey) (hbase : generateBaseVk codecs inputs = .ok vk0) :
+    vk0.constants.length ≤ payload.constants.length := by
+  simp only [generateVk] at h
+  obtain ⟨vk0', hbase', h⟩ := cert_except_bind_ok h
+  have hvk : vk0' = vk0 := Except.ok.inj (hbase'.symm.trans hbase)
+  subst hvk
+  obtain ⟨st, hfold, hfin⟩ := cert_except_bind_ok h
+  have hst : vk0'.constants.length ≤ st.vk.constants.length :=
+    foldlM_reserve_ge (List.range 8) feat env inputs vk0'.constants.length
+      { vk := vk0', quotientConstWords := 0, quotientProgramWords := 0, build := none } st
+      hfold (le_refl _)
+  have hfin' := generateVkFinalize_ge hfin
+  omega
+
+/-- A header slot below 31 reads the same from the payload as from the header constants. PROVED. -/
+theorem generateVk_payload_getD {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {codecs : VkPointCodecs G₁ G₂} {inputs : VerifierBuildInputs p G₁ G₂}
+    {payload : Halo2VerifyingKey}
+    (hgenvk : generateVk feat env codecs inputs = .ok payload)
+    (vk0 : Halo2VerifyingKey) (hbase : generateBaseVk codecs inputs = .ok vk0)
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    {g1Words g2Words negSG2Words : List Word256} {constants : List (String × Word256)}
+    (hconst : vk0.constants = constants)
+    (hhdr : generateBaseVkHeader inputs pre g1Words g2Words negSG2Words = .ok constants)
+    (i : Nat) (hi : i < 31) (d : String × Word256) :
+    payload.constants.getD i d = constants.getD i d := by
+  have hlen : vk0.constants.length = 31 := by
+    rw [hconst]
+    exact generateBaseVkHeader_length hhdr
+  rw [← hconst]
+  exact generateVk_getD_lt hgenvk vk0 hbase i (by omega) d
+
 /-- An eight-element list is eight named elements. PROVED. -/
 private theorem cert_length_eq_eight {α : Type} {l : List α} :
     l.length = 8 ↔ ∃ a b c d e f g h, l = [a,b,c,d,e,f,g,h] := by
@@ -1398,6 +1435,23 @@ theorem generateBaseVkBody_parts {codecs : VkPointCodecs G₁ G₂}
   cases h
   exact ⟨g1Words, g2Words, negSG2Words, constants, fixedComms, permComms,
     henc, hhdr, hfix, hperm, rfl, rfl, rfl⟩
+
+/-- `generateBaseVkEncodings` exposes the three encoder calls. PROVED. -/
+theorem generateBaseVkEncodings_parts {codecs : VkPointCodecs G₁ G₂}
+    {inputs : VerifierBuildInputs p G₁ G₂}
+    {g1Words g2Words negSG2Words : List Word256}
+    (h : generateBaseVkEncodings codecs inputs = .ok (g1Words, g2Words, negSG2Words)) :
+    g1ToU256s (codecs.g1Repr (P.g₁)) = .ok g1Words ∧
+    g2ToU256s (codecs.g2Repr inputs.params.g2) = .ok g2Words ∧
+    g2ToU256s (codecs.g2Repr inputs.params.sG2⁻¹) = .ok negSG2Words := by
+  simp only [generateBaseVkEncodings] at h
+  split at h
+  · obtain ⟨g1', h1, h⟩ := cert_except_bind_ok h
+    obtain ⟨g2', h2, h⟩ := cert_except_bind_ok h
+    obtain ⟨neg', h3, h⟩ := cert_except_bind_ok h
+    cases h
+    exact ⟨h1, h2, h3⟩
+  · cases h
 
 /-- `generateBaseVkPrefix` returns the five field elements its five `feToU256` calls built. PROVED. -/
 theorem generateBaseVkPrefix_components {inputs : VerifierBuildInputs p G₁ G₂}
@@ -1669,24 +1723,329 @@ theorem env_vkDigest (hg : Generates gi o) (hs : SupportedInput gi) :
 theorem payload_g1Base (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.Lowering.vkG1Words (renderOf gi o).pv Midfall.Lowering.vkG1BaseSlot =
       gi.E.g1.toEip (AdmissiblePairing.g₁ (G₂ := G₂) (Gₜ := Gₜ)) := by
-  sorry -- CERT.7
+  obtain ⟨_m0, payload, _hraw, hgenvk, _hfp, h4⟩ := generate_spec hg
+  have hvk : o.out.plan.vk = payload := plan_vk_of_generateAll h4
+  obtain ⟨vk0, hbase⟩ := generateVk_base hgenvk
+  obtain ⟨pre, _hpre, hbody⟩ := generateBaseVk_parts hbase
+  obtain ⟨g1W, g2W, negW, consts, _fixedC, _permC, henc, hhdr, _hfix, _hperm, hconst,
+    _hfixEq, _hpermEq⟩ := generateBaseVkBody_parts hbody
+  obtain ⟨henc1, _henc2, _henc3⟩ := generateBaseVkEncodings_parts henc
+  obtain ⟨ws, hws, hwsLen, hwsFold⟩ := hs.g1Codec (P.g₁)
+  have hg1eq : g1W = ws := Except.ok.inj (henc1.symm.trans hws)
+  have hpv : (renderOf gi o).pv.vk = payload := by
+    change o.out.plan.vk = payload
+    exact hvk
+  have hlen : 11 + 4 ≤ (renderOf gi o).pv.vk.constants.length := by
+    have hlen31 : vk0.constants.length = 31 := by
+      rw [hconst]; exact generateBaseVkHeader_length hhdr
+    have hpreLen : vk0.constants.length ≤ payload.constants.length :=
+      generateVk_prefix_length hgenvk vk0 hbase
+    rw [hpv]
+    omega
+  have hget : ∀ j, j < 4 → (payload.constants.getD (11 + j) ("", 0)).2 = ws.getD j 0 := by
+    intro j hj
+    have hpay := generateVk_payload_getD hgenvk vk0 hbase hconst hhdr (11 + j)
+      (by omega) ("", 0)
+    have hh := generateBaseVkHeader_g1Base_get hhdr (by rw [hg1eq]; exact hwsLen) j hj
+    have hh2 : (consts.getD (11 + j) ("", 0)).2 = g1W.getD j 0 := by
+      have := congrArg Prod.snd hh
+      rwa [g1Base_word] at this
+    rw [hpay, hh2, hg1eq]
+  have hbytes := vkHeaderBytes_eq_words (PV := (renderOf gi o).pv) (i := 11) (n := 4)
+    (ws := ws) hlen hwsLen (by
+      intro j hj
+      rw [hpv]
+      exact hget j hj)
+  change Midfall.Lowering.vkHeaderBytes (renderOf gi o).pv 11 4 =
+    gi.E.g1.toEip (AdmissiblePairing.g₁ (G₂ := G₂) (Gₜ := Gₜ))
+  rw [hbytes]
+  exact hwsFold
 
 theorem payload_g2Base (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.Lowering.vkG2Words (renderOf gi o).pv Midfall.Lowering.vkG2BaseSlot =
       gi.encG2 (AdmissiblePairing.g₂ (G₁ := G₁) (Gₜ := Gₜ)) := by
-  sorry -- CERT.7
+  obtain ⟨m0, payload, _hraw, hgenvk, _hfp, h4⟩ := generate_spec hg
+  have hvk : o.out.plan.vk = payload := plan_vk_of_generateAll h4
+  obtain ⟨vk0, hbase⟩ := generateVk_base hgenvk
+  obtain ⟨pre, _hpre, hbody⟩ := generateBaseVk_parts hbase
+  obtain ⟨g1W, g2W, negW, consts, _fixedC, _permC, henc, hhdr, _hfix, _hperm, hconst,
+    _hfixEq, _hpermEq⟩ := generateBaseVkBody_parts hbody
+  obtain ⟨_henc1, henc2, _henc3⟩ := generateBaseVkEncodings_parts henc
+  have hg2 : (buildInputsOf gi m0).params.g2 = P.g₂ :=
+    beq_iff_eq.mp (generateBaseVk_g2_check hbase)
+  have henc2' : g2ToU256s (gi.codecs.g2Repr (P.g₂)) = .ok g2W := by
+    rw [← hg2]
+    exact henc2
+  obtain ⟨ws, hws, hwsLen, hwsFold⟩ := hs.g2Codec (P.g₂)
+  have hg2eq : g2W = ws := Except.ok.inj (henc2'.symm.trans hws)
+  have hpv : (renderOf gi o).pv.vk = payload := by
+    change o.out.plan.vk = payload
+    exact hvk
+  have hlen : 15 + 8 ≤ (renderOf gi o).pv.vk.constants.length := by
+    have hlen31 : vk0.constants.length = 31 := by
+      rw [hconst]; exact generateBaseVkHeader_length hhdr
+    have hpreLen : vk0.constants.length ≤ payload.constants.length :=
+      generateVk_prefix_length hgenvk vk0 hbase
+    rw [hpv]
+    omega
+  have hget : ∀ j, j < 8 → (payload.constants.getD (15 + j) ("", 0)).2 = ws.getD j 0 := by
+    intro j hj
+    have hpay := generateVk_payload_getD hgenvk vk0 hbase hconst hhdr (15 + j)
+      (by omega) ("", 0)
+    have hh := generateBaseVkHeader_g2Base_get hhdr (by rw [hg2eq]; exact hwsLen) j hj
+    have hh2 : (consts.getD (15 + j) ("", 0)).2 = g2W.getD j 0 := by
+      have := congrArg Prod.snd hh
+      rwa [g2Base_word] at this
+    rw [hpay, hh2, hg2eq]
+  have hbytes := vkHeaderBytes_eq_words (PV := (renderOf gi o).pv) (i := 15) (n := 8)
+    (ws := ws) hlen hwsLen (by
+      intro j hj
+      rw [hpv]
+      exact hget j hj)
+  change Midfall.Lowering.vkHeaderBytes (renderOf gi o).pv 15 8 =
+    gi.encG2 (AdmissiblePairing.g₂ (G₁ := G₁) (Gₜ := Gₜ))
+  rw [hbytes]
+  exact hwsFold
 
 theorem payload_negSG2 (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.Lowering.vkG2Words (renderOf gi o).pv Midfall.Lowering.vkNegSG2BaseSlot =
       gi.encG2 (renderOf gi o).sG2gen⁻¹ := by
-  sorry -- CERT.7
+  obtain ⟨m0, payload, _hraw, hgenvk, _hfp, h4⟩ := generate_spec hg
+  have hvk : o.out.plan.vk = payload := plan_vk_of_generateAll h4
+  obtain ⟨vk0, hbase⟩ := generateVk_base hgenvk
+  obtain ⟨pre, _hpre, hbody⟩ := generateBaseVk_parts hbase
+  obtain ⟨g1W, g2W, negW, consts, _fixedC, _permC, henc, hhdr, _hfix, _hperm, hconst,
+    _hfixEq, _hpermEq⟩ := generateBaseVkBody_parts hbody
+  obtain ⟨_henc1, _henc2, henc3⟩ := generateBaseVkEncodings_parts henc
+  obtain ⟨ws, hws, hwsLen, hwsFold⟩ := hs.g2Codec (gi.srs.sG2⁻¹)
+  have hnegeq : negW = ws := Except.ok.inj (henc3.symm.trans hws)
+  have hpv : (renderOf gi o).pv.vk = payload := by
+    change o.out.plan.vk = payload
+    exact hvk
+  have hlen : 23 + 8 ≤ (renderOf gi o).pv.vk.constants.length := by
+    have hlen31 : vk0.constants.length = 31 := by
+      rw [hconst]; exact generateBaseVkHeader_length hhdr
+    have hpreLen : vk0.constants.length ≤ payload.constants.length :=
+      generateVk_prefix_length hgenvk vk0 hbase
+    rw [hpv]
+    omega
+  have hget : ∀ j, j < 8 → (payload.constants.getD (23 + j) ("", 0)).2 = ws.getD j 0 := by
+    intro j hj
+    have hpay := generateVk_payload_getD hgenvk vk0 hbase hconst hhdr (23 + j)
+      (by omega) ("", 0)
+    have hh := generateBaseVkHeader_negSG2_get hhdr (by rw [hnegeq]; exact hwsLen) j hj
+    have hh2 : (consts.getD (23 + j) ("", 0)).2 = negW.getD j 0 := by
+      have := congrArg Prod.snd hh
+      rwa [negSG2Base_word] at this
+    rw [hpay, hh2, hnegeq]
+  have hbytes := vkHeaderBytes_eq_words (PV := (renderOf gi o).pv) (i := 23) (n := 8)
+    (ws := ws) hlen hwsLen (by
+      intro j hj
+      rw [hpv]
+      exact hget j hj)
+  change Midfall.Lowering.vkHeaderBytes (renderOf gi o).pv 23 8 =
+    gi.encG2 (gi.srs.sG2⁻¹)
+  rw [hbytes]
+  exact hwsFold
+
+/-- The reservation step touches only the constants and the quotient reservations. PROVED. -/
+theorem reserveStep_comms {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {inputs : VerifierBuildInputs p G₁ G₂} {headerWords : Nat}
+    {st st' : VkReservationState} {x : Nat}
+    (h : reserveStep feat env inputs headerWords st x = .ok st') :
+    st'.vk.fixedComms = st.vk.fixedComms ∧
+      st'.vk.permutationComms = st.vk.permutationComms := by
+  unfold reserveStep at h
+  by_cases hb : st.build.isSome
+  · simp only [hb, if_true] at h
+    cases h
+    exact ⟨rfl, rfl⟩
+  · simp only [hb, if_false, Bool.false_eq_true] at h
+    obtain ⟨_m, _, h⟩ := cert_except_bind_ok h
+    obtain ⟨_c, _, h⟩ := cert_except_bind_ok h
+    split at h <;> cases h <;> exact ⟨rfl, rfl⟩
+
+theorem foldlM_reserve_comms (l : List Nat) {feat : Features}
+    {env : VkBuildEnv QuotientProgramPlan} {inputs : VerifierBuildInputs p G₁ G₂}
+    {headerWords : Nat} (init st : VkReservationState)
+    (h : l.foldlM (reserveStep feat env inputs headerWords) init = .ok st) :
+    st.vk.fixedComms = init.vk.fixedComms ∧
+      st.vk.permutationComms = init.vk.permutationComms := by
+  induction l generalizing init with
+  | nil =>
+      change Except.ok init = Except.ok st at h
+      cases h
+      exact ⟨rfl, rfl⟩
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : reserveStep feat env inputs headerWords init x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          obtain ⟨ihf, ihp⟩ := ih s1 h
+          obtain ⟨hsf, hsp⟩ := reserveStep_comms hs
+          exact ⟨ihf.trans hsf, ihp.trans hsp⟩
+
+/-- A constant write-back step leaves both commitment vectors alone. PROVED. -/
+theorem fillConstStep_comms (offset : Nat) (vk vk' : Halo2VerifyingKey)
+    (pair : Word256 × Nat) (h : fillConstStep offset vk pair = .ok vk') :
+    vk'.fixedComms = vk.fixedComms ∧
+      vk'.permutationComms = vk.permutationComms := by
+  unfold fillConstStep at h
+  obtain ⟨value, i⟩ := pair
+  obtain ⟨cs, _hcs, h⟩ := cert_except_bind_ok h
+  cases h
+  exact ⟨rfl, rfl⟩
+
+/-- A program write-back step leaves both commitment vectors alone. PROVED. -/
+theorem fillProgramStep_comms (offset : Nat) (vk vk' : Halo2VerifyingKey)
+    (pair : Word256 × Nat) (h : fillProgramStep offset vk pair = .ok vk') :
+    vk'.fixedComms = vk.fixedComms ∧
+      vk'.permutationComms = vk.permutationComms := by
+  unfold fillProgramStep at h
+  obtain ⟨value, i⟩ := pair
+  obtain ⟨cs, _hcs, h⟩ := cert_except_bind_ok h
+  cases h
+  exact ⟨rfl, rfl⟩
+
+theorem foldlM_fillConst_comms (l : List (Word256 × Nat)) {offset : Nat}
+    (init st : Halo2VerifyingKey)
+    (h : l.foldlM (fillConstStep offset) init = .ok st) :
+    st.fixedComms = init.fixedComms ∧
+      st.permutationComms = init.permutationComms := by
+  induction l generalizing init with
+  | nil =>
+      change Except.ok init = Except.ok st at h
+      cases h
+      exact ⟨rfl, rfl⟩
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : fillConstStep offset init x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          obtain ⟨ihf, ihp⟩ := ih s1 h
+          obtain ⟨hsf, hsp⟩ := fillConstStep_comms offset init s1 x hs
+          exact ⟨ihf.trans hsf, ihp.trans hsp⟩
+
+theorem foldlM_fillProgram_comms (l : List (Word256 × Nat)) {offset : Nat}
+    (init st : Halo2VerifyingKey)
+    (h : l.foldlM (fillProgramStep offset) init = .ok st) :
+    st.fixedComms = init.fixedComms ∧
+      st.permutationComms = init.permutationComms := by
+  induction l generalizing init with
+  | nil =>
+      change Except.ok init = Except.ok st at h
+      cases h
+      exact ⟨rfl, rfl⟩
+  | cons x xs ih =>
+      simp only [List.foldlM_cons] at h
+      cases hs : fillProgramStep offset init x with
+      | error e => simp only [hs] at h; cases h
+      | ok s1 =>
+          simp only [hs] at h
+          obtain ⟨ihf, ihp⟩ := ih s1 h
+          obtain ⟨hsf, hsp⟩ := fillProgramStep_comms offset init s1 x hs
+          exact ⟨ihf.trans hsf, ihp.trans hsp⟩
+
+/-- `generateVk` leaves the base VK's two commitment vectors unchanged. PROVED. -/
+theorem generateVk_comms {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {codecs : VkPointCodecs G₁ G₂} {inputs : VerifierBuildInputs p G₁ G₂}
+    {payload : Halo2VerifyingKey}
+    (h : generateVk feat env codecs inputs = .ok payload)
+    (vk0 : Halo2VerifyingKey) (hbase : generateBaseVk codecs inputs = .ok vk0) :
+    payload.fixedComms = vk0.fixedComms ∧
+      payload.permutationComms = vk0.permutationComms := by
+  simp only [generateVk] at h
+  obtain ⟨vk0', hbase', h⟩ := cert_except_bind_ok h
+  have hvk : vk0' = vk0 := Except.ok.inj (hbase'.symm.trans hbase)
+  subst hvk
+  obtain ⟨st, hfold, hfin⟩ := cert_except_bind_ok h
+  obtain ⟨hsf, hsp⟩ := foldlM_reserve_comms (List.range 8)
+    { vk := vk0', quotientConstWords := 0, quotientProgramWords := 0, build := none } st hfold
+  simp only [generateVkFinalize] at hfin
+  obtain ⟨lc, _hlc, hfill⟩ := cert_except_bind_ok hfin
+  simp only [generateVkFillAndFinal] at hfill
+  obtain ⟨vkFilled, hfill1, h⟩ := cert_except_bind_ok hfill
+  obtain ⟨vkFilled2, hfill2, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fm, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fp, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fb, _, h⟩ := cert_except_bind_ok h
+  split at h
+  · split at h
+    · obtain ⟨_u, _, h⟩ := cert_except_bind_ok h
+      cases h
+      obtain ⟨h1f, h1p⟩ := foldlM_fillConst_comms lc.qbuild.consts.zipIdx st.vk vkFilled hfill1
+      obtain ⟨h2f, h2p⟩ := foldlM_fillProgram_comms lc.chunks.zipIdx vkFilled vkFilled2 hfill2
+      exact ⟨h2f.trans (h1f.trans hsf), h2p.trans (h1p.trans hsp)⟩
+    · cases h
+  · cases h
+
+/-- `Bytes.empty` is `ByteArray.mk #[]`, so the core left-identity lemma applies under
+    that spelling. PROVED. -/
+private theorem cert_bytes_empty_append (x : Bytes) : (ByteArray.mk #[] : Bytes) ++ x = x := by
+  change ByteArray.empty ++ x = x
+  exact ByteArray.empty_append
+
+/-- A four-word EIP G1 image is the left fold of its words. PROVED. -/
+theorem g1WordsBytes_eq_fold (a b c d : Word256) :
+    Midfall.LoweringV2.g1WordsBytes { xHi := a, xLo := b, yHi := c, yLo := d } =
+      [a, b, c, d].foldl (init := Bytes.empty)
+        (fun acc w => ByteArray.append acc (wordToBytesBE w)) := by
+  simp [Midfall.LoweringV2.g1WordsBytes, Bytes.empty, List.foldl, cert_bytes_empty_append]
+
+/-- The generator's G1 commitment mapM produces the EIP images of its inputs, by the codec
+    law. PROVED. -/
+theorem mapM_g1WordsBytes {E : VerifierEnv p G₁ G₂ Gₜ} {codecs : VkPointCodecs G₁ G₂}
+    {l : List G₁} {ws : List Midfall.Generator.G1Words}
+    (h : l.mapM (fun g => g1ToU256s (codecs.g1Repr g) >>= vkG1WordsOf) = .ok ws)
+    (hcodec : ∀ Q : G₁, ∃ w : List Word256,
+      g1ToU256s (codecs.g1Repr Q) = .ok w ∧ w.length = 4 ∧
+      w.foldl (init := Bytes.empty) (fun acc w => ByteArray.append acc (wordToBytesBE w)) =
+        E.g1.toEip Q) :
+    ws.map Midfall.LoweringV2.g1WordsBytes = l.map E.g1.toEip := by
+  induction l generalizing ws with
+  | nil =>
+      simp only [List.mapM_nil] at h
+      cases h
+      rfl
+  | cons g gs ih =>
+      rw [List.mapM_cons] at h
+      obtain ⟨w0, h0, h⟩ := cert_except_bind_ok h
+      obtain ⟨w, hw, hw1⟩ := cert_except_bind_ok h0
+      obtain ⟨ws', hrest, h⟩ := cert_except_bind_ok h
+      cases h
+      obtain ⟨wc, hwc, hwclen, hwcfold⟩ := hcodec g
+      have hweq : w = wc := Except.ok.inj (hw.symm.trans hwc)
+      subst hweq
+      obtain ⟨a, b, c, d, rfl⟩ := List.length_eq_four.mp hwclen
+      simp only [vkG1WordsOf] at hw1
+      have hw0 : w0 = { xHi := a, xLo := b, yHi := c, yLo := d } :=
+        (Except.ok.inj hw1).symm
+      subst hw0
+      rw [List.map_cons, List.map_cons, g1WordsBytes_eq_fold, hwcfold, ih hrest]
 
 theorem payload_comms (hg : Generates gi o) (hs : SupportedInput gi) :
     (renderOf gi o).plan.vk.fixedComms.map Midfall.LoweringV2.g1WordsBytes =
       gi.vk.fixedCommitments.toList.map gi.E.g1.toEip ∧
     (renderOf gi o).plan.vk.permutationComms.map Midfall.LoweringV2.g1WordsBytes =
       gi.vk.permutation.commitments.toList.map gi.E.g1.toEip := by
-  sorry -- CERT.7
+  obtain ⟨m0, payload, _hraw, hgenvk, _hfp, h4⟩ := generate_spec hg
+  have hvk : o.out.plan.vk = payload := plan_vk_of_generateAll h4
+  obtain ⟨vk0, hbase⟩ := generateVk_base hgenvk
+  obtain ⟨pre, _hpre, hbody⟩ := generateBaseVk_parts hbase
+  obtain ⟨g1W, g2W, negW, consts, fixedC, permC, henc, hhdr, hfix, hperm, hconst,
+    hfixEq, hpermEq⟩ := generateBaseVkBody_parts hbody
+  obtain ⟨hvkf, hvkp⟩ := generateVk_comms hgenvk vk0 hbase
+  have hpv : (renderOf gi o).plan.vk.fixedComms = payload.fixedComms :=
+    congrArg Halo2VerifyingKey.fixedComms hvk
+  have hpvp : (renderOf gi o).plan.vk.permutationComms = payload.permutationComms :=
+    congrArg Halo2VerifyingKey.permutationComms hvk
+  constructor
+  · rw [hpv, hvkf, hfixEq]
+    exact mapM_g1WordsBytes hfix hs.g1Codec
+  · rw [hpvp, hvkp, hpermEq]
+    exact mapM_g1WordsBytes hperm hs.g1Codec
 
 /-! ### S: the one scope clause that mentions the plan -/
 
