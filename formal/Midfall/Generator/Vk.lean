@@ -1666,33 +1666,35 @@ theorem listSetMut_length {α : Type} (xs : List α) (i : Nat) (v : α) (site : 
     omega
   · cases h
 
-theorem fillConstStep_ge (offset : Nat) (vk vk' : Halo2VerifyingKey) (pair : Word256 × Nat)
-    (h : fillConstStep offset vk pair = .ok vk') (hge : 11 ≤ vk.constants.length) :
-    11 ≤ vk'.constants.length := by
+theorem fillConstStep_ge (H : Nat) (offset : Nat) (vk vk' : Halo2VerifyingKey)
+    (pair : Word256 × Nat)
+    (h : fillConstStep offset vk pair = .ok vk') (hge : H ≤ vk.constants.length) :
+    H ≤ vk'.constants.length := by
   unfold fillConstStep at h
   obtain ⟨value, i⟩ := pair
   obtain ⟨cs, hcs, h⟩ := reserve_except_bind_ok h
   cases h
-  change 11 ≤ cs.length
+  change H ≤ cs.length
   have := listSetMut_length vk.constants (offset + i) (("quotient_const", value) : String × Word256)
     "proofs/solidity-verifier/src/lowering/vk.rs:444" cs hcs
   omega
 
-theorem fillProgramStep_ge (offset : Nat) (vk vk' : Halo2VerifyingKey) (pair : Word256 × Nat)
-    (h : fillProgramStep offset vk pair = .ok vk') (hge : 11 ≤ vk.constants.length) :
-    11 ≤ vk'.constants.length := by
+theorem fillProgramStep_ge (H : Nat) (offset : Nat) (vk vk' : Halo2VerifyingKey)
+    (pair : Word256 × Nat)
+    (h : fillProgramStep offset vk pair = .ok vk') (hge : H ≤ vk.constants.length) :
+    H ≤ vk'.constants.length := by
   unfold fillProgramStep at h
   obtain ⟨value, i⟩ := pair
   obtain ⟨cs, hcs, h⟩ := reserve_except_bind_ok h
   cases h
-  change 11 ≤ cs.length
+  change H ≤ cs.length
   have := listSetMut_length vk.constants (offset + i) (("quotient_program", value) : String × Word256)
     "proofs/solidity-verifier/src/lowering/vk.rs:447" cs hcs
   omega
-theorem foldlM_fillConst_ge (l : List (Word256 × Nat)) (offset : Nat)
+theorem foldlM_fillConst_ge (H : Nat) (l : List (Word256 × Nat)) (offset : Nat)
     (init st : Halo2VerifyingKey)
     (h : l.foldlM (fillConstStep offset) init = .ok st)
-    (hge : 11 ≤ init.constants.length) : 11 ≤ st.constants.length := by
+    (hge : H ≤ init.constants.length) : H ≤ st.constants.length := by
   induction l generalizing init with
   | nil =>
       change Except.ok init = Except.ok st at h
@@ -1705,12 +1707,12 @@ theorem foldlM_fillConst_ge (l : List (Word256 × Nat)) (offset : Nat)
       | error e => simp only [hs] at h; cases h
       | ok s1 =>
           simp only [hs] at h
-          exact ih s1 h (fillConstStep_ge offset init s1 x hs hge)
+          exact ih s1 h (fillConstStep_ge H offset init s1 x hs hge)
 
-theorem foldlM_fillProgram_ge (l : List (Word256 × Nat)) (offset : Nat)
+theorem foldlM_fillProgram_ge (H : Nat) (l : List (Word256 × Nat)) (offset : Nat)
     (init st : Halo2VerifyingKey)
     (h : l.foldlM (fillProgramStep offset) init = .ok st)
-    (hge : 11 ≤ init.constants.length) : 11 ≤ st.constants.length := by
+    (hge : H ≤ init.constants.length) : H ≤ st.constants.length := by
   induction l generalizing init with
   | nil =>
       change Except.ok init = Except.ok st at h
@@ -1723,7 +1725,7 @@ theorem foldlM_fillProgram_ge (l : List (Word256 × Nat)) (offset : Nat)
       | error e => simp only [hs] at h; cases h
       | ok s1 =>
           simp only [hs] at h
-          exact ih s1 h (fillProgramStep_ge offset init s1 x hs hge)
+          exact ih s1 h (fillProgramStep_ge H offset init s1 x hs hge)
 
 /-- rust: VK:353-472 (VerifierBuildInputs::generate_vk) @formal-baseline.
     HAZARD 5 lives at VK:434-437: the assert that the quotient const table did not
@@ -1731,9 +1733,15 @@ theorem foldlM_fillProgram_ge (l : List (Word256 × Nat)) (offset : Nat)
     PLAN 9.5's Supported has no field for the invariant - that is a
     statement-surface question for the orchestrator and is reported, not invented
     here. -/
-def generateVkFinalize (feat : Features) (env : VkBuildEnv Plan)
-    (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
-    (st : VkReservationState) : Except Fault Halo2VerifyingKey := do
+structure VkLayoutChecked where
+  qbuild : VkQuotientBuild
+  constOffset : Nat
+  programOffset : Nat
+  chunks : List Word256
+
+def generateVkLayoutChecks (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat) (st : VkReservationState) :
+    Except Fault VkLayoutChecked := do
   -- VK:395-399
   let quotientProgramBuild ← match st.build with
     | some b => Except.ok b
@@ -1769,6 +1777,18 @@ def generateVkFinalize (feat : Features) (env : VkBuildEnv Plan)
   -- VK:438-441
   unless (quotientProgramChunks.length ≤ st.quotientProgramWords) do
     throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:438")
+  let out : VkLayoutChecked :=
+    { qbuild := quotientProgramBuild, constOffset := quotientConstOffsetWords,
+      programOffset := quotientProgramOffsetWords, chunks := quotientProgramChunks }
+  pure out
+
+def generateVkFillAndFinal (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (st : VkReservationState)
+    (lc : VkLayoutChecked) : Except Fault Halo2VerifyingKey := do
+  let quotientProgramBuild := lc.qbuild
+  let quotientConstOffsetWords := lc.constOffset
+  let quotientProgramOffsetWords := lc.programOffset
+  let quotientProgramChunks := lc.chunks
   -- VK:443-448: the two write-back loops. vk.constants[i] = .. is a direct index,
   -- so an out-of-range write is a panic in both profiles (rule R4) even though the
   -- two asserts above make it unreachable.
@@ -1795,6 +1815,12 @@ def generateVkFinalize (feat : Features) (env : VkBuildEnv Plan)
       quotientProgramWords := st.quotientProgramWords }
   unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:470" (vkFinal.validatePayloadLayout)
   Except.ok vkFinal
+
+def generateVkFinalize (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (headerWords : Nat)
+    (st : VkReservationState) : Except Fault Halo2VerifyingKey := do
+  let lc ← generateVkLayoutChecks feat env inputs headerWords st
+  generateVkFillAndFinal feat env inputs st lc
 
 def generateVk (feat : Features) (env : VkBuildEnv Plan)
     (codecs : VkPointCodecs G₁ G₂) (inputs : VerifierBuildInputs p G₁ G₂) :

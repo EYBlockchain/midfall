@@ -776,9 +776,62 @@ theorem generateBaseVk_constants_length {codecs : VkPointCodecs G₁ G₂}
   obtain ⟨pre, _, h⟩ := cert_except_bind_ok h
   exact generateBaseVkBody_constants_length h
 
+theorem generateVkFillAndFinal_ge {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {inputs : VerifierBuildInputs p G₁ G₂} {st : VkReservationState}
+    {lc : VkLayoutChecked} {payload : Halo2VerifyingKey}
+    (h : generateVkFillAndFinal feat env inputs st lc = .ok payload) :
+    st.vk.constants.length ≤ payload.constants.length := by
+  simp only [generateVkFillAndFinal] at h
+  obtain ⟨vkFilled, hfill1, h⟩ := cert_except_bind_ok h
+  obtain ⟨vkFilled2, hfill2, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fm, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fp, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨_fb, _, h⟩ := cert_except_bind_ok h
+  split at h
+  · split at h
+    · obtain ⟨_u, _, h⟩ := cert_except_bind_ok h
+      have h1 : st.vk.constants.length ≤ vkFilled.constants.length :=
+        foldlM_fillConst_ge _ _ _ _ _ hfill1 (le_refl _)
+      have h2 : vkFilled.constants.length ≤ vkFilled2.constants.length :=
+        foldlM_fillProgram_ge _ _ _ _ _ hfill2 (le_refl _)
+      have hrec := Except.ok.inj (ε := Fault) (by simpa using h)
+      have hcp : vkFilled2.constants = payload.constants := by
+        simpa using congrArg (fun x => x.constants) hrec
+      rw [← hcp]
+      omega
+    · cases h
+  · cases h
+
+theorem generateVkFinalize_ge {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {inputs : VerifierBuildInputs p G₁ G₂} {headerWords : Nat} {st : VkReservationState}
+    {payload : Halo2VerifyingKey}
+    (h : generateVkFinalize feat env inputs headerWords st = .ok payload) :
+    st.vk.constants.length ≤ payload.constants.length := by
+  simp only [generateVkFinalize] at h
+  obtain ⟨lc, _, h⟩ := cert_except_bind_ok h
+  exact generateVkFillAndFinal_ge h
+
+theorem generateVk_constants_length {feat : Features} {env : VkBuildEnv QuotientProgramPlan}
+    {codecs : VkPointCodecs G₁ G₂} {inputs : VerifierBuildInputs p G₁ G₂}
+    {payload : Halo2VerifyingKey}
+    (h : generateVk feat env codecs inputs = .ok payload) : 11 ≤ payload.constants.length := by
+  simp only [generateVk] at h
+  obtain ⟨vk0, hbase, h⟩ := cert_except_bind_ok h
+  have h0 : 11 ≤ vk0.constants.length := generateBaseVk_constants_length hbase
+  obtain ⟨st, hfold, h⟩ := cert_except_bind_ok h
+  have hst : vk0.constants.length ≤ st.vk.constants.length :=
+    foldlM_reserve_ge _ _ _ _ _ _ _ hfold (le_refl _)
+  have hfin := generateVkFinalize_ge h
+  omega
+
 theorem payload_constantsLength (hg : Generates gi o) (hs : SupportedInput gi) :
     11 ≤ (renderOf gi o).pv.vk.constants.length := by
-  sorry -- CERT.7
+  obtain ⟨_m0, payload, _hraw, hgenvk, _hfp, h4⟩ := generate_spec hg
+  have hv : o.out.plan.vk = payload := plan_vk_of_generateAll h4
+  have hlen := generateVk_constants_length hgenvk
+  change 11 ≤ o.out.plan.vk.constants.length
+  rw [hv]
+  exact hlen
 
 /-! ### S: the one scope clause that mentions the plan -/
 

@@ -41,7 +41,6 @@ comments but not string literals. The environment scan needs no exemption.
 | declaration | module | kind | status | cone | statement | removed by |
 | Midfall.Generator.Certified.env_negLagranges | Midfall.Generator.Certified | theorem | OPEN | - | `b0cfe1fd7ad3a1fe` | V3 CERT.6 - ART builder from the plan meta; meta = ConstraintSystemMeta.new |
 | Midfall.Generator.Certified.payload_comms | Midfall.Generator.Certified | theorem | OPEN | - | `7f86bf73bd42d399` | V3 CERT.7 - generate_base_vk mapM; untouched by the reservation loop, plus the G1 codec law |
-| Midfall.Generator.Certified.payload_constantsLength | Midfall.Generator.Certified | theorem | OPEN | - | `6398a0dcef7f3b8e` | V3 CERT.7 - D-GATE1 PayloadAgrees.constantsLength: generate_base_vk writes the 11 header constants |
 | Midfall.Generator.Certified.payload_g1Base | Midfall.Generator.Certified | theorem | OPEN | - | `170e05851cf399ab` | V3 CERT.7 - slot 11 written from P.g1 plus the G1 codec law |
 | Midfall.Generator.Certified.payload_g2Base | Midfall.Generator.Certified | theorem | OPEN | - | `51b4369467745f38` | V3 CERT.7 - vk.rs:180 plus the G2 codec law |
 | Midfall.Generator.Certified.payload_header | Midfall.Generator.Certified | theorem | OPEN | - | `59c9d0eb95a32759` | V3 CERT.6 - VkHeaderBuilder slots (vk.rs:211-222); sizeBound makes the Nat-to-word write exact |
