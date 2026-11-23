@@ -2988,6 +2988,43 @@ theorem tp_events_slots (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
   · right
     trivial
 
+set_option maxRecDepth 100000 in
+/-- **THE WALK'S RANGE CHECK, PURE.** A coordinate whose high word is below `2^128`
+    and whose `(hi, lo)` split passes `common_uncompressed_g1`'s range check is
+    below `pBase`: `hi * 2^256 + lo + 1 = pBase` (the contract's `BLS_P_HI |
+    BLS_P_MINUS_ONE_LO` split) and `lo` is a proper 256-bit residue. This is the
+    arithmetic `g1WordsOk` needs from the helper's two `shr 128` guards and two
+    coordinate checks; it takes the `(hi, lo)` split as a hypothesis so no numeral
+    is computed here. -/
+theorem coordLt_pBase (xh xl hi lo : Nat) (hxlw : xl < 2 ^ 256)
+    (hkey : hi * 2 ^ 256 + lo + 1 = Midfall.Assumptions.pBase)
+    (hx : xh < hi ∨ (xh = hi ∧ xl ≤ lo)) :
+    xh * 2 ^ 256 + xl < Midfall.Assumptions.pBase := by
+  rcases hx with hx | ⟨hx, hxl⟩ <;> omega
+
+set_option maxRecDepth 100000 in
+/-- **`g1WordsOk` FROM THE HELPER'S GUARDS.** The four calldata words, the two
+    high-word fits and the two `(hi, lo)` range checks imply the `g1WordsOk` gate
+    `common_uncompressed_g1` enforces. `cdWord` is the four-word read; the caller
+    supplies the words and the split identity. -/
+theorem g1WordsOk_of_checks (cd : Bytes) (cptr : Nat) (xh xl yh yl hi lo : Nat)
+    (h1 : (cdWord cd cptr).toNat = xh) (h2 : (cdWord cd (cptr + 32)).toNat = xl)
+    (h3 : (cdWord cd (cptr + 64)).toNat = yh) (h4 : (cdWord cd (cptr + 96)).toNat = yl)
+    (hxh : xh < 2 ^ 128) (hyh : yh < 2 ^ 128)
+    (hxlw : xl < 2 ^ 256) (hylw : yl < 2 ^ 256)
+    (hkey : hi * 2 ^ 256 + lo + 1 = Midfall.Assumptions.pBase)
+    (hx : xh < hi ∨ (xh = hi ∧ xl ≤ lo))
+    (hy : yh < hi ∨ (yh = hi ∧ yl ≤ lo)) :
+    g1WordsOk cd cptr = true := by
+  have hxp := coordLt_pBase xh xl hi lo hxlw hkey hx
+  have hyp := coordLt_pBase yh yl hi lo hylw hkey hy
+  unfold g1WordsOk
+  dsimp only
+  rw [h1, h2, h3, h4]
+  all_goals
+    simp only [Bool.and_eq_true, decide_eq_true_eq]
+    exact ⟨⟨⟨hxh, hyh⟩, hxp⟩, hyp⟩
+
 /-- **THE WALK LOOP (all runs), ONE LEMMA FOR SIX SECTIONS.** Bound = `j`, the section's frame
     count. Every run reverts (a frame fails the range check), or ends normally having absorbed the
     `j` frames, copied them to the walk window, and advanced the three cursors; every frame passed
