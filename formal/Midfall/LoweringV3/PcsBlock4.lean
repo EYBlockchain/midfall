@@ -1361,6 +1361,134 @@ theorem pcsLbasisGroup_contract {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisGroup_contract
   [propext, Classical.choice, Quot.sound] native []
 
+/-- The statement list of one `lbasis` group. -/
+def pcsLbasisGroupAst (j : Nat) (ptj : String) (ks : List (Nat × String)) : Block EVM.Op :=
+  pcsLbasisInit j :: ks.map (fun k => pcsLbasisStmt j ptj k.2)
+
+set_option maxHeartbeats 1200000 in
+/-- **THE `lbasisLines` FOLD.** All groups of a general set arm run normal; every `lbasis_j` ends
+    at `pcsLbasisVal`, every other name is untouched and the state is unchanged. Each group's
+    name is fresh and the groups' names are pairwise distinct. -/
+theorem pcsLbasisLines_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (gs : List (Nat × String)) (ks : Nat → List (Nat × String)) (rv : U256)
+    (p : Nat → U256)
+    (hrNe : ∀ g ∈ gs, pcsLbasisName g.1 ≠ "r")
+    (hptNe : ∀ g ∈ gs, pcsLbasisName g.1 ≠ g.2)
+    (hnameNe : ∀ g ∈ gs, ∀ k ∈ ks g.1, pcsLbasisName g.1 ≠ k.2)
+    (hrotNe : ∀ g ∈ gs, ∀ g' ∈ gs, pcsLbasisName g.1 ≠ g'.2)
+    (hrotNe2 : ∀ g ∈ gs, ∀ g' ∈ gs, ∀ k ∈ ks g'.1, pcsLbasisName g.1 ≠ k.2)
+    (hdist : ∀ g ∈ gs, ∀ g' ∈ gs, g.1 ≠ g'.1 →
+      pcsLbasisName g.1 ≠ pcsLbasisName g'.1)
+    (hidx : ∀ g ∈ gs, ∀ g' ∈ gs, g.1 ≠ g'.1) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      ((gs.map (fun g => pcsLbasisGroupAst g.1 g.2 (ks g.1))).flatten)
+      (fun V st => VEnv.get V "r" = some rv ∧
+        (∀ g ∈ gs, VEnv.get V g.2 = some (p g.1)) ∧
+        (∀ g ∈ gs, ∀ k ∈ ks g.1, VEnv.get V k.2 = some (p k.1)) ∧
+        (∀ g ∈ gs, VEnv.get V (pcsLbasisName g.1) = none))
+      (fun V st V' st' o => o = .normal ∧
+        (∀ g ∈ gs, VEnv.get V' (pcsLbasisName g.1) =
+          some (pcsLbasisVal rv (p g.1) p (ks g.1))) ∧
+        (∀ y, (∀ g ∈ gs, y ≠ pcsLbasisName g.1) → VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  induction gs with
+  | nil =>
+      intro V st hpre V' st' o hrun
+      cases hrun
+      obtain ⟨hrv, hpt, hks, hfresh⟩ := hpre
+      exact ⟨rfl, (fun g hg => absurd hg (by simp)), (fun y _ => rfl), rfl⟩
+  | cons gp rest ih =>
+      intro V st hpre V' st' o hrun
+      obtain ⟨hrv, hpt, hks, hfresh⟩ := hpre
+      rw [List.map_cons, List.flatten_cons] at hrun
+      rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+          ⟨V1, st1, hhead, htail⟩ | ⟨hhead, hne⟩
+      · have hgrp := pcsLbasisGroup_contract (c := c) (g := g) (funs := funs)
+          gp.1 gp.2 (ks gp.1) (p gp.1) rv p
+          (fun k hk => hnameNe gp (by simp) k hk)
+          (hptNe gp (by simp)) (hrNe gp (by simp))
+          V st ⟨by rw [hfresh gp (by simp)]; rfl, hpt gp (by simp), hrv,
+            hks gp (by simp)⟩ V1 st1 .normal hhead
+        obtain ⟨ho, hV1, hout1, hst1⟩ := hgrp
+        rw [hV1] at htail
+        rw [hst1] at htail
+        have hrNe' : ∀ g' ∈ rest, pcsLbasisName g'.1 ≠ "r" :=
+          fun g' hg' => hrNe g' (List.mem_cons_of_mem _ hg')
+        have hptNe' : ∀ g' ∈ rest, pcsLbasisName g'.1 ≠ g'.2 :=
+          fun g' hg' => hptNe g' (List.mem_cons_of_mem _ hg')
+        have hnameNe' : ∀ g' ∈ rest, ∀ k ∈ ks g'.1, pcsLbasisName g'.1 ≠ k.2 :=
+          fun g' hg' => hnameNe g' (List.mem_cons_of_mem _ hg')
+        have hrotNe' : ∀ g' ∈ rest, ∀ g'' ∈ rest, pcsLbasisName g'.1 ≠ g''.2 :=
+          fun g' hg' g'' hg'' => hrotNe g' (List.mem_cons_of_mem _ hg')
+            g'' (List.mem_cons_of_mem _ hg'')
+        have hrotNe2' : ∀ g' ∈ rest, ∀ g'' ∈ rest, ∀ k ∈ ks g''.1,
+            pcsLbasisName g'.1 ≠ k.2 :=
+          fun g' hg' g'' hg'' => hrotNe2 g' (List.mem_cons_of_mem _ hg')
+            g'' (List.mem_cons_of_mem _ hg'')
+        have hdist' : ∀ g' ∈ rest, ∀ g'' ∈ rest, g'.1 ≠ g''.1 →
+            pcsLbasisName g'.1 ≠ pcsLbasisName g''.1 :=
+          fun g' hg' g'' hg'' => hdist g' (List.mem_cons_of_mem _ hg')
+            g'' (List.mem_cons_of_mem _ hg'')
+        have hidx' : ∀ g' ∈ rest, ∀ g'' ∈ rest, g'.1 ≠ g''.1 :=
+          fun g' hg' g'' hg'' => hidx g' (List.mem_cons_of_mem _ hg')
+            g'' (List.mem_cons_of_mem _ hg'')
+        have hrv' : VEnv.get ((pcsLbasisName gp.1, pcsLbasisVal rv (p gp.1) p (ks gp.1)) :: V)
+            "r" = some rv := by
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1) (y := "r")
+            (v := _) (fun h => hrNe gp (by simp) h.symm)]
+          exact hrv
+        have hpt' : ∀ g' ∈ rest, VEnv.get
+            ((pcsLbasisName gp.1, pcsLbasisVal rv (p gp.1) p (ks gp.1)) :: V) g'.2 =
+            some (p g'.1) := by
+          intro g' hg'
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1) (y := g'.2)
+            (v := _) (hrotNe gp (by simp) g' (List.mem_cons_of_mem _ hg')).symm]
+          exact hpt g' (List.mem_cons_of_mem _ hg')
+        have hks' : ∀ g' ∈ rest, ∀ k ∈ ks g'.1, VEnv.get
+            ((pcsLbasisName gp.1, pcsLbasisVal rv (p gp.1) p (ks gp.1)) :: V) k.2 =
+            some (p k.1) := by
+          intro g' hg' k hk
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1) (y := k.2)
+            (v := _) (hrotNe2 gp (by simp) g' (List.mem_cons_of_mem _ hg') k hk).symm]
+          exact hks g' (List.mem_cons_of_mem _ hg') k hk
+        have hfresh' : ∀ g' ∈ rest, VEnv.get
+            ((pcsLbasisName gp.1, pcsLbasisVal rv (p gp.1) p (ks gp.1)) :: V)
+            (pcsLbasisName g'.1) = none := by
+          intro g' hg'
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1)
+            (y := pcsLbasisName g'.1) (v := _)
+            (hdist gp (by simp) g' (List.mem_cons_of_mem _ hg')
+              (hidx gp (by simp) g' (List.mem_cons_of_mem _ hg'))).symm]
+          exact hfresh g' (List.mem_cons_of_mem _ hg')
+        obtain ⟨ho2, hlook2, hout2, hst2⟩ :=
+          ih hrNe' hptNe' hnameNe' hrotNe' hrotNe2' hdist' hidx'
+            _ _ ⟨hrv', hpt', hks', hfresh'⟩ V' st' o htail
+        refine ⟨ho2, ?_, ?_, hst2⟩
+        · intro g' hg'
+          rcases List.mem_cons.mp hg' with hg | hg'
+          · cases hg
+            rw [hout2 (pcsLbasisName gp.1) (fun s hs =>
+              hdist gp (by simp) s (List.mem_cons_of_mem _ hs)
+                (hidx gp (by simp) s (List.mem_cons_of_mem _ hs)))]
+            rw [venv_get_cons_self (D := Bridge.Dialect c g)]
+          · exact hlook2 g' hg'
+        · intro y hy
+          rw [hout2 y (fun g' hg' => hy g' (List.mem_cons_of_mem _ hg'))]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsLbasisName gp.1) (y := y)
+            (v := _) (hy gp (by simp))]
+      · obtain ⟨ho, _, _, _, _⟩ :=
+          pcsLbasisGroup_contract (c := c) (g := g) (funs := funs)
+            gp.1 gp.2 (ks gp.1) (p gp.1) rv p
+            (fun k hk => hnameNe gp (by simp) k hk)
+            (hptNe gp (by simp)) (hrNe gp (by simp))
+            V st ⟨by rw [hfresh gp (by simp)]; rfl, hpt gp (by simp), hrv,
+              hks gp (by simp)⟩ V' st' o hhead
+        exact absurd ho hne
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisGroupAst [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsLbasisLines_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
