@@ -650,6 +650,10 @@ ENV_CLAUSES = [
     # both rest on it. Unpinned until the coverage rule parsed it.
     ("ChallengesGood", "xNotRoot",
      ["S.alg.x ^ vk.domain.n \u2260 1"], ["\u2227 True", "\u2228 True"]),
+    # D-GATE5: the second clause, added with the KZG partition repair. Without this pin
+    # the field could be deleted or gutted with every gate green.
+    ("ChallengesGood", "xNonzero",
+     ["S.alg.x \u2260 0"], ["\u2227 True", "\u2228 True"]),
     ("VkSlotsAgree", "g1BaseWords",
      ["vkG1Words PV vkG1BaseSlot = E.g1.toEip P.g\u2081"],
      ["= True", "Bytes.empty"]),
