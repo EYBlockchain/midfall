@@ -571,4 +571,94 @@ theorem readAlgebra {G₁ : Type}
 
 end PresWidthSeq
 
+namespace PresWidthSeq
+
+/-! ## 3. `multiPrepare`: the three `kzg/mod.rs` phases
+
+    `phaseA` (dummy queries + two challenges + the intermediate-set build)
+    reads nothing when the fewer-point-sets branch is off; `phaseB` reads one
+    `g1` and one `fr` per q-eval set; `phaseC` reads one `g1`. The q-eval-set
+    count is `a.qEvalSets.size`, linked below to `constructIntermediateSets`'
+    point-set count. -/
+
+section MultiPrepareWidths
+
+variable {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+/-- `phaseA` reads nothing when the dummy-query feature is off. -/
+theorem phaseA_noDummies (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (queries : Array (VerifierQuery (Fr p) G₁))
+    (hNoDummies : ¬ (feat.outerFewerPointSets && fewerPointSetsRuntime)) :
+    PresWidthSeq [] (phaseA (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat
+      fewerPointSetsRuntime queries) := by
+  unfold phaseA
+  dsimp only
+  split
+  · rename_i hd
+    exact absurd hd hNoDummies
+  · refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.pure queries) (fun _ => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.squeezeChallenge (p := p))
+      (fun _ => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.squeezeChallenge (p := p))
+      (fun _ => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun _ => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun _ => ?_)
+    exact PresWidthSeq.pure _
+
+/-- `phaseB` reads the `f_com` point, then one scalar per q-eval set. -/
+theorem phaseB_width (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (a : MultiPrepare.PhaseA (Fr p) G₁) :
+    PresWidthSeq ([(hashableG1 g1).width] ++
+      List.replicate a.qEvalSets.size (hashableFr (p := p)).width)
+      (phaseB g1 fc feat a) := by
+  have hmain : PresWidthSeq
+      ([(hashableG1 g1).width] ++
+        (List.replicate a.qEvalSets.size (hashableFr (p := p)).width ++ []))
+      (phaseB g1 fc feat a) := by
+    unfold phaseB
+    dsimp only
+    refine PresWidthSeq.bind (ws1 := [(hashableG1 g1).width])
+      (PresWidthSeq.read (hashableG1 g1)) (fun _ => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.squeezeChallenge (p := p))
+      (fun _ => ?_)
+    refine PresWidthSeq.bind (ws1 := List.replicate a.qEvalSets.size
+      (hashableFr (p := p)).width) ?_ (fun _ => ?_)
+    · rw [show List.replicate a.qEvalSets.size (hashableFr (p := p)).width
+          = ((List.range a.qEvalSets.size).map (fun _ => List.replicate 1
+              (hashableFr (p := p)).width)).flatten by
+        rw [AlgebraWidths.flatten_map_replicate_const, List.length_range, Nat.mul_one]]
+      refine PresWidthSeq.listMapM (List.range a.qEvalSets.size)
+        (wf := fun _ => [(hashableFr (p := p)).width]) ?_
+      intro _
+      exact PresWidthSeq.read (hashableFr (p := p))
+    · refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun _ => ?_)
+      exact PresWidthSeq.pure _
+  simpa [List.append_nil] using hmain
+
+/-- `phaseC` reads the `π` point and nothing else. -/
+theorem phaseC_width (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (a : MultiPrepare.PhaseA (Fr p) G₁) (b : MultiPrepare.PhaseB (Fr p) G₁) :
+    PresWidthSeq ([(hashableG1 g1).width])
+      (phaseC (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat a b) := by
+  have hmain : PresWidthSeq ([(hashableG1 g1).width] ++ [])
+      (phaseC (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat a b) := by
+    unfold phaseC
+    dsimp only
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.squeezeChallenge (p := p))
+      (fun _ => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun _ => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun _ => ?_)
+    refine PresWidthSeq.bind (ws1 := [(hashableG1 g1).width])
+      (PresWidthSeq.read (hashableG1 g1)) (fun _ => ?_)
+    exact PresWidthSeq.pure _
+  simpa using hmain
+
+end MultiPrepareWidths
+
+end PresWidthSeq
+
 end Midfall.LoweringV3
