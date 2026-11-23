@@ -152,6 +152,78 @@ theorem queryFromPlan_committedInstance_rotation (q : QueryKey) (meta_ : Constra
   repeat (first | split at h | cases h | rfl)
 
 
+theorem queryFromPlan_permutationZ_rotation (set : Nat) (kind : PermutationZEval)
+    (meta_ : ConstraintSystemMeta) (data : Data) (q' : Query)
+    (h : queryFromPlan (.permutationZ set kind) meta_ data = .ok q') :
+    q'.rotation = (PcsQuerySource.permutationZ set kind).rotation meta_.rotationLast := by
+  unfold queryFromPlan at h
+  cases kind
+  · obtain ⟨z, _hz, h1⟩ := except_bind_ok h
+    cases z with
+    | mk zCur rest =>
+      obtain ⟨zNext, zLast⟩ := rest
+      obtain ⟨re, hre, h2⟩ := except_bind_ok h1
+      obtain ⟨comm, _hcomm, h3⟩ := except_bind_ok h2
+      cases h3
+      change Except.ok (0, zCur) = Except.ok re at hre
+      cases Except.ok.inj hre
+      rfl
+  · obtain ⟨z, _hz, h1⟩ := except_bind_ok h
+    cases z with
+    | mk zCur rest =>
+      obtain ⟨zNext, zLast⟩ := rest
+      obtain ⟨re, hre, h2⟩ := except_bind_ok h1
+      obtain ⟨comm, _hcomm, h3⟩ := except_bind_ok h2
+      cases h3
+      change Except.ok (1, zNext) = Except.ok re at hre
+      cases Except.ok.inj hre
+      rfl
+  · obtain ⟨z, _hz, h1⟩ := except_bind_ok h
+    cases z with
+    | mk zCur rest =>
+      obtain ⟨zNext, zLast⟩ := rest
+      cases hz : zLast with
+      | none =>
+          rw [hz] at h1
+          cases h1
+      | some e =>
+          rw [hz] at h1
+          obtain ⟨re, hre, h2⟩ := except_bind_ok h1
+          obtain ⟨comm, _hcomm, h3⟩ := except_bind_ok h2
+          cases h3
+          change Except.ok (meta_.rotationLast, e) = Except.ok re at hre
+          cases Except.ok.inj hre
+          rfl
+
+theorem queryFromPlan_lookupAccumulator_rotation (lookup : Nat) (rotation : Int)
+    (meta_ : ConstraintSystemMeta) (data : Data) (q' : Query)
+    (h : queryFromPlan (.lookupAccumulator lookup rotation) meta_ data = .ok q') :
+    q'.rotation = rotation := by
+  unfold queryFromPlan at h
+  obtain ⟨z, _hz, h1⟩ := except_bind_ok h
+  cases z with
+  | mk m rest =>
+    obtain ⟨hs, zz⟩ := rest
+    obtain ⟨zEval, zNextEval⟩ := zz
+    by_cases hr0 : rotation = 0
+    · subst hr0
+      obtain ⟨eval, heval, h2⟩ := except_bind_ok h1
+      obtain ⟨comm, _hcomm, h3⟩ := except_bind_ok h2
+      cases h3
+      change Except.ok zEval = Except.ok eval at heval
+      cases Except.ok.inj heval
+      rfl
+    · by_cases hr1 : rotation = 1
+      · subst hr1
+        obtain ⟨eval, heval, h2⟩ := except_bind_ok h1
+        obtain ⟨comm, _hcomm, h3⟩ := except_bind_ok h2
+        cases h3
+        change Except.ok zNextEval = Except.ok eval at heval
+        cases Except.ok.inj heval
+        rfl
+      · simp [hr0, hr1] at h1
+        cases h1
+
 theorem queryFromPlan_linearization (meta_ : ConstraintSystemMeta) (data : Data) :
     queryFromPlan .linearization meta_ data =
       .ok (Query.new data.computedQuotientComm 0 data.computedQuotientEval) := rfl

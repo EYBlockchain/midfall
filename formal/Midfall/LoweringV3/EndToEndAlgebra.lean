@@ -4530,6 +4530,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms queryFromPlan_permutationCommon_rotation
   [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_permutationZ_rotation
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_lookupAccumulator_rotation
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms PcsQuerySource.rotation_linearization
   [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgQueryMapData.ofRotations
