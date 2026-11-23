@@ -2248,6 +2248,100 @@ theorem exec_mstore_add_var_inv_val {funs : FunEnv (Bridge.Dialect c g)}
                 (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) haddr).elim
 
 
+theorem eval_mulmod_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y z : String} {vals : List U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod [Expr.var x, Expr.var y, Expr.var z]) (.vals vals st')) :
+    ∃ xv yv zv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧ VEnv.get V z = some zv ∧
+      vals = [Midfall.LoweringV3.QuotientRows.wMulmodAt xv yv zv] ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hx with
+      | var hgx =>
+          cases hrest with
+          | argsCons hrest2 hy =>
+              cases hy with
+              | var hgy =>
+                  cases hrest2 with
+                  | argsCons hnil hz =>
+                      cases hnil with
+                      | argsNil =>
+                          cases hz with
+                          | var hgz =>
+                              simp only [builtinWithExternal, stepOp, ter] at hbi
+                              cases hbi
+                              exact ⟨_, _, _, hgx, hgy, hgz, rfl, rfl⟩
+
+theorem eval_mulmod_vars_no_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y z : String}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod [Expr.var x, Expr.var y, Expr.var z]) (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hx =>
+          cases hrest with
+          | argsCons hrest2 hy =>
+              cases hrest2 with
+              | argsCons hnil hz =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact eval_args_halt_false (es := [Expr.var x, Expr.var y, Expr.var z]) (by
+        intro e he st0 st1 hh
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh
+        · exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) hargs
+
+theorem exec_assign_mulmod_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x y z : String} {xv yv zv : U256}
+    (hx : VEnv.get V x = some xv) (hy : VEnv.get V y = some yv)
+    (hz : VEnv.get V z = some zv)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.assign [x] (Expr.builtin Op.mulmod [Expr.var x, Expr.var y, Expr.var z]))
+      V' st' o) :
+    o = .normal ∧ V' = VEnv.set V x (Midfall.LoweringV3.QuotientRows.wMulmodAt xv yv zv) ∧
+      st' = st := by
+  cases h with
+  | assignVal he hlen =>
+      obtain ⟨xv', yv', zv', hgx, hgy, hgz, hvals, hst⟩ := eval_mulmod_vars_inv he
+      rw [hx] at hgx; injection hgx with h1; subst h1
+      rw [hy] at hgy; injection hgy with h2; subst h2
+      rw [hz] at hgz; injection hgz with h3; subst h3
+      subst hvals hst
+      refine ⟨rfl, ?_, rfl⟩
+      simp only [VEnv.setMany]
+      rfl
+  | assignHalt he => exact (eval_mulmod_vars_no_halt he).elim
+
+theorem exec_guard_ret0_iszero_var_false {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x : String} {rv : U256}
+    (hget : VEnv.get V x = some rv) (hne0 : rv ≠ 0)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin Op.iszero [Expr.var x])
+        [Stmt.assign ["ret"] (Expr.lit (Literal.number 0)), Stmt.leave]) V' st' o) :
+    o = .normal ∧ V' = V ∧ st' = st := by
+  refine exec_guard_ret0_false ?_ ?_ ?_ h
+  · intro st0 cv hc
+    obtain ⟨vv, hvv, hst, hcv⟩ := eval_iszero_var_inv hc
+    rw [hget] at hvv
+    injection hvv with hv
+    subst hv
+    rw [hcv, b2w_eq_false_of_ne hne0]
+  · intro st0 cv hc
+    obtain ⟨-, -, hst, -⟩ := eval_iszero_var_inv hc
+    exact hst
+  · intro st0 hc
+    exact eval_iszero_var_no_halt hc
+
+
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
@@ -2283,6 +2377,10 @@ theorem exec_mstore_add_var_inv_val {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms ofNat_add_ofNat_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_bridge_stores_form [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_mstore_add_var_inv_val [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_mulmod_vars_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_mulmod_vars_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_assign_mulmod_vars_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_ret0_iszero_var_false [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
