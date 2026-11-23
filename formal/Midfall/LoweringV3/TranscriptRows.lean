@@ -3145,6 +3145,309 @@ theorem readAlgebra_rotBounds_zero (vk : VerifyingKey (Fr p) G₁)
       if r < st.1 then (r, st.2) else if r > st.2 then (st.1, r) else st) = (0, 0) :=
   rotBounds_zero _ (fun q hq => hf.instanceRotZero q hq)
 
+theorem runsAll_logupEval (E : VerifierEnv p G₁ G₂ Gₜ) (cm : Logup.Committed G₁)
+    (qs : List (Fr p)) (hlen : qs.length = cm.helperPolys.size + 3) :
+    RunsAll E (Logup.Committed.evaluate (p := p) cm)
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+  unfold Logup.Committed.evaluate
+  obtain ⟨q0, rest, rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; omega)
+  have hrest : rest.length = cm.helperPolys.size + 2 := by simp at hlen; omega
+  set nb := cm.helperPolys.size with hnb
+  have htake : (rest.take nb).length = nb := by rw [List.length_take]; omega
+  have hdrop : (rest.drop nb).length = 2 := by rw [List.length_drop]; omega
+  obtain ⟨q1, q2', hq2⟩ := List.exists_cons_of_length_pos (by rw [hdrop]; omega)
+  have hq2' : q2'.length = 1 := by
+    rw [hq2, List.length_cons] at hdrop; omega
+  obtain ⟨q2, hq2''⟩ := List.length_eq_one_iff.mp hq2'
+  rw [hq2''] at hq2
+  have hsplit : rest.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) =
+      (rest.take nb).map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        ((rest.drop nb).map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+    rw [← List.map_append, List.take_append_drop]
+  have hgrp := runsAll_tmReadN_fr E nb (rest.take nb) htake
+  have htail : ∀ m : Fr p, RunsAll E
+      (tmReadN (hashableFr (p := p)) nb >>= fun helperEvals =>
+        Midfall.Halo2.tmRead (hashableFr (p := p)) >>= fun accumulatorEval =>
+          Midfall.Halo2.tmRead (hashableFr (p := p)) >>= fun accumulatorNextEval =>
+            (pure ({ committed := cm, evaluated :=
+              { multiplicitiesEval := m, helperEvals := helperEvals,
+                accumulatorEval := accumulatorEval,
+                accumulatorNextEval := accumulatorNextEval } } :
+              Logup.Evaluated (Fr p) G₁)))
+      (rest.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+    intro m
+    rw [hsplit, hq2]
+    simp only [List.map_cons, List.map_nil]
+    refine RunsAll.bind E (ms₁ := (rest.take nb).map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+      (ms₂ := [Msg.fr q1, Msg.fr q2]) ?_ ?_
+    · convert hgrp using 2
+    · intro helperEvals
+      refine RunsAll.bind E (ms₁ := ([Msg.fr q1] : List (Msg (Fr p) G₁))) (ms₂ := [Msg.fr q2]) ?_ ?_
+      · exact runsAll_read_fr E q1
+      · intro accumulatorEval
+        refine RunsAll.bind E (ms₁ := ([Msg.fr q2] : List (Msg (Fr p) G₁))) (ms₂ := []) ?_ ?_
+        · exact runsAll_read_fr E q2
+        · intro accumulatorNextEval
+          exact RunsAll.pure E _
+  have hb := RunsAll.bind E (ms₁ := ([Msg.fr q0] : List (Msg (Fr p) G₁)))
+    (ms₂ := rest.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) (runsAll_read_fr E q0)
+    (fun m => htail m)
+  simpa only [List.map_cons, List.map_nil, List.singleton_append] using hb
+
+theorem RunsAll.toRunsAllP (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type}
+    {m : TranscriptM α} {ms : List (Msg (Fr p) G₁)} (h : RunsAll E m ms) :
+    RunsAllP E m ms (fun _ => True) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨a, t', hrun, hbuf', hpos'⟩ := h t pref rest hbuf hpos hp henc hwidth
+  exact ⟨a, t', hrun, hbuf', hpos', trivial⟩
+
+theorem runsAllP_fold_forIn_yield (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} :
+    ∀ (xs : List α) (f : α → β → TranscriptM (ForInStep β))
+      (msOf : α → List (Msg (Fr p) G₁)),
+      (∀ a ∈ xs, ∀ b, RunsAllP E (f a b) (msOf a)
+        (fun step => ∃ b', step = ForInStep.yield b')) →
+      ∀ (init : β),
+        RunsAll E (xs.foldlM (fun b a =>
+          match b with
+          | ForInStep.yield b => f a b
+          | ForInStep.done b => (pure (ForInStep.done b) : TranscriptM (ForInStep β)))
+          (ForInStep.yield init))
+          (xs.flatMap msOf) := by
+  intro xs
+  induction xs with
+  | nil =>
+      intro f msOf hf init
+      simpa only [List.foldlM_nil, List.flatMap_nil] using RunsAll.pure E (ForInStep.yield init)
+  | cons a as ih =>
+      intro f msOf hf init
+      rw [List.foldlM_cons, List.flatMap_cons]
+      have hf' : ∀ a' ∈ as, ∀ b, RunsAllP E (f a' b) (msOf a')
+          (fun step => ∃ b', step = ForInStep.yield b') :=
+        fun a' ha' => hf a' (by simp [ha'])
+      have hb : RunsAllP E (List.foldlM
+          (fun b a =>
+            match b with
+            | ForInStep.yield b => f a b
+            | ForInStep.done b => pure (ForInStep.done b))
+          (ForInStep.yield init) (a :: as)) (msOf a ++ as.flatMap msOf) (fun _ => True) :=
+        RunsAllP.bind E (ms₁ := msOf a) (ms₂ := as.flatMap msOf) (hf a (by simp) init)
+          (fun step hstep => by
+            obtain ⟨b', rfl⟩ := hstep
+            exact RunsAll.toRunsAllP E (ih f msOf hf' b'))
+      exact hb.toRunsAll
+
+theorem runsAll_forIn_yield (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    (xs : List α) (init : β) (f : α → β → TranscriptM (ForInStep β))
+    (msOf : α → List (Msg (Fr p) G₁))
+    (hf : ∀ a ∈ xs, ∀ b, RunsAllP E (f a b) (msOf a)
+      (fun step => ∃ b', step = ForInStep.yield b')) :
+    RunsAll E (forIn xs init f) (xs.flatMap msOf) := by
+  rw [List.forIn_eq_foldlM]
+  exact runsAll_fmap E (runsAllP_fold_forIn_yield E xs f msOf hf init)
+
+
+
+def permSeg {α : Type} (l : List α) (n i : Nat) : List α :=
+  (l.drop (3 * i)).take (if i < n - 1 then 3 else 2)
+
+theorem permSeg_succ {α : Type} (l : List α) (m j : Nat) :
+    permSeg l (Nat.succ (Nat.succ m)) (Nat.succ j) =
+      permSeg (l.drop 3) (Nat.succ m) j := by
+  unfold permSeg
+  have hdrop : l.drop (3 * Nat.succ j) = (l.drop 3).drop (3 * j) := by
+    rw [List.drop_drop]
+    congr 1
+    omega
+  rw [hdrop]
+  by_cases hj : j < Nat.succ m - 1
+  · rw [if_pos hj, if_pos (by omega)]
+  · rw [if_neg hj, if_neg (by omega)]
+
+theorem flatMap_permSeg {α : Type} :
+    ∀ (n : Nat) (l : List α), l.length = 3 * n - 1 →
+      (List.range n).flatMap (permSeg l n) = l := by
+  intro n
+  induction n with
+  | zero =>
+      intro l hlen
+      have hl : l = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hl
+      rfl
+  | succ n ih =>
+      intro l hlen
+      cases n with
+      | zero =>
+          have hlen2 : l.length = 2 := by simpa using hlen
+          rw [List.range_one, List.flatMap_cons, List.flatMap_nil, List.append_nil]
+          show List.take (if (0 : Nat) < 1 - 1 then 3 else 2) l = l
+          rw [if_neg (by omega), List.take_of_length_le (by omega)]
+      | succ m =>
+          rw [List.range_succ_eq_map, List.flatMap_cons]
+          show List.take (if (0 : Nat) < Nat.succ (Nat.succ m) - 1 then 3 else 2) l ++
+            (List.map Nat.succ (List.range (Nat.succ m))).flatMap
+              (permSeg l (Nat.succ (Nat.succ m))) = l
+          rw [if_pos (by omega), List.flatMap_map]
+          have hcongr : (List.range (Nat.succ m)).flatMap
+                (fun j => permSeg l (Nat.succ (Nat.succ m)) (Nat.succ j)) =
+              (List.range (Nat.succ m)).flatMap (permSeg (l.drop 3) (Nat.succ m)) := by
+            apply List.flatMap_congr
+            intro j _
+            exact permSeg_succ l m j
+          rw [hcongr]
+          have hdrop : (l.drop 3).length = 3 * Nat.succ m - 1 := by
+            rw [List.length_drop]
+            omega
+          rw [ih (l.drop 3) hdrop]
+          rw [List.take_append_drop]
+
+
+
+theorem runsAll_permutationEval (E : VerifierEnv p G₁ G₂ Gₜ)
+    (coms : Permutation.Committed G₁) (qs : List (Fr p))
+    (hlen : qs.length = 3 * coms.permutationProductCommitments.size - 1) :
+    RunsAll E (Permutation.Committed.evaluate (p := p) coms)
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+  unfold Permutation.Committed.evaluate
+  set k := coms.permutationProductCommitments.size with hk
+  dsimp only
+  let msOf : Nat → List (Msg (Fr p) G₁) :=
+    fun i => (permSeg qs k i).map (fun q => (Msg.fr q : Msg (Fr p) G₁))
+  have hseg : ∀ i < k, (permSeg qs k i).length = (if i < k - 1 then 3 else 2) := by
+    intro i hi
+    unfold permSeg
+    rw [List.length_take, List.length_drop]
+    by_cases h : i < k - 1
+    · rw [if_pos h]
+      rw [Nat.min_eq_left]
+      omega
+    · rw [if_neg h]
+      have hik : i = k - 1 := by omega
+      rw [hik]
+      rw [Nat.min_eq_right]
+      · omega
+      · omega
+  have hbody : ∀ i ∈ List.range k, ∀ s : Array (Permutation.SetEvaluated (Fr p)),
+      RunsAllP E (do
+        let permutationProductEval ← tmRead (hashableFr (p := p))
+        let permutationProductNextEval ← tmRead (hashableFr (p := p))
+        if i < k - 1 then do
+          let e ← tmRead (hashableFr (p := p))
+          let permutationProductLastEval ← pure (some e)
+          pure (ForInStep.yield (s.push
+            { permutationProductEval := permutationProductEval,
+              permutationProductNextEval := permutationProductNextEval,
+              permutationProductLastEval := permutationProductLastEval }))
+        else do
+          let permutationProductLastEval ← pure none
+          pure (ForInStep.yield (s.push
+            { permutationProductEval := permutationProductEval,
+              permutationProductNextEval := permutationProductNextEval,
+              permutationProductLastEval := permutationProductLastEval })))
+        (msOf i) (fun step => ∃ b', step = ForInStep.yield b') := by
+    intro i hi s
+    have hik : i < k := List.mem_range.mp hi
+    by_cases h : i < k - 1
+    · have h3 : (permSeg qs k i).length = 3 := by
+        rw [hseg i hik, if_pos h]
+      obtain ⟨a, b, c, hseg3⟩ := List.length_eq_three.mp h3
+      dsimp only [msOf]
+      rw [hseg3]
+      simp only [List.map_cons, List.map_nil]
+      simp only [if_pos h]
+      simp only [pure_bind]
+      refine RunsAllP.bind E (ms₁ := ([Msg.fr a] : List (Msg (Fr p) G₁)))
+        (ms₂ := [Msg.fr b, Msg.fr c]) (RunsAll.toRunsAllP E (runsAll_read_fr E a)) ?_
+      intro ppe _
+      refine RunsAllP.bind E (ms₁ := ([Msg.fr b] : List (Msg (Fr p) G₁)))
+        (ms₂ := [Msg.fr c]) (RunsAll.toRunsAllP E (runsAll_read_fr E b)) ?_
+      intro ppn _
+      refine RunsAllP.bind E (ms₁ := ([Msg.fr c] : List (Msg (Fr p) G₁)))
+        (ms₂ := []) (RunsAll.toRunsAllP E (runsAll_read_fr E c)) ?_
+      intro e _
+      exact RunsAllP.pure E _ _ ⟨_, rfl⟩
+    · have h2 : (permSeg qs k i).length = 2 := by
+        rw [hseg i hik, if_neg h]
+      obtain ⟨a, b, hseg2⟩ := List.length_eq_two.mp h2
+      dsimp only [msOf]
+      rw [hseg2]
+      simp only [List.map_cons, List.map_nil]
+      simp only [if_neg h]
+      simp only [pure_bind]
+      refine RunsAllP.bind E (ms₁ := ([Msg.fr a] : List (Msg (Fr p) G₁)))
+        (ms₂ := [Msg.fr b]) (RunsAll.toRunsAllP E (runsAll_read_fr E a)) ?_
+      intro ppe _
+      refine RunsAllP.bind E (ms₁ := ([Msg.fr b] : List (Msg (Fr p) G₁)))
+        (ms₂ := []) (RunsAll.toRunsAllP E (runsAll_read_fr E b)) ?_
+      intro ppn _
+      exact RunsAllP.pure E _ _ ⟨_, rfl⟩
+  have hloop : RunsAll E
+      (forIn (List.range k) (#[] : Array (Permutation.SetEvaluated (Fr p)))
+        (fun i __s => do
+          let permutationProductEval ← tmRead (hashableFr (p := p))
+          let permutationProductNextEval ← tmRead (hashableFr (p := p))
+          if i < k - 1 then do
+            let e ← tmRead (hashableFr (p := p))
+            let permutationProductLastEval ← pure (some e)
+            pure (ForInStep.yield (__s.push
+              { permutationProductEval := permutationProductEval,
+                permutationProductNextEval := permutationProductNextEval,
+                permutationProductLastEval := permutationProductLastEval }))
+          else do
+            let permutationProductLastEval ← pure none
+            pure (ForInStep.yield (__s.push
+              { permutationProductEval := permutationProductEval,
+                permutationProductNextEval := permutationProductNextEval,
+                permutationProductLastEval := permutationProductLastEval }))))
+      ((List.range k).flatMap msOf) :=
+    runsAll_forIn_yield E (List.range k) _ _ msOf hbody
+  have hb := RunsAll.bind E (ms₁ := (List.range k).flatMap msOf) (ms₂ := []) hloop
+    (fun s => RunsAll.pure E ({ coms := coms, sets := s } : Permutation.Evaluated (Fr p) G₁))
+  rw [List.append_nil] at hb
+  rw [show ((List.range k).flatMap msOf) = qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) from by
+    rw [← List.map_flatMap, flatMap_permSeg k qs (by simpa using hlen)]] at hb
+  exact hb
+
+
+
+theorem runsAll_readAlgebraAdviceEvals (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) :
+    ∀ (numProofs : Nat) (qs : List (Fr p)),
+      qs.length = numProofs * vk.cs.adviceQueries.size →
+      RunsAll E ((List.range numProofs).mapM (fun _ =>
+        tmReadN (hashableFr (p := p)) vk.cs.adviceQueries.size))
+        (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+  intro numProofs
+  induction numProofs with
+  | zero =>
+      intro qs hlen
+      have h0 : qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst h0
+      simpa only [List.range_zero, List.mapM_nil, List.map_nil] using
+        RunsAll.pure E ([] : List (Array (Fr p)))
+  | succ n ih =>
+      intro qs hlen
+      set sz := vk.cs.adviceQueries.size with hsz
+      have hlen' : qs.length = sz + n * sz := by
+        rw [hlen]; rw [Nat.succ_mul]; omega
+      have htake : (qs.take sz).length = sz := by rw [List.length_take]; omega
+      have hdrop : (qs.drop sz).length = n * sz := by rw [List.length_drop]; omega
+      have hsplit : qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) =
+          (qs.take sz).map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (qs.drop sz).map (fun q => (Msg.fr q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [hsplit, List.range_succ_eq_map, List.mapM_cons, List.mapM_map]
+      have hcomp : ((fun _ => tmReadN (hashableFr (p := p)) sz) ∘ Nat.succ) =
+          (fun _ => tmReadN (hashableFr (p := p)) sz) := rfl
+      rw [hcomp]
+      refine RunsAll.bind E (ms₁ := (qs.take sz).map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (qs.drop sz).map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (runsAll_tmReadN_fr E sz (qs.take sz) htake) ?_
+      intro head
+      have hb := RunsAll.bind E (ms₁ := (qs.drop sz).map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := []) (ih (qs.drop sz) hdrop) (fun tail => RunsAll.pure E (head :: tail))
+      rw [List.append_nil] at hb
+      exact hb
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -5188,6 +5491,15 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashEval [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.rotBounds_zero [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.readAlgebra_rotBounds_zero [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_logupEval [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAll.toRunsAllP [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_fold_forIn_yield [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_forIn_yield [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.permSeg [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.permSeg_succ [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.flatMap_permSeg [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_permutationEval [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebraAdviceEvals [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
