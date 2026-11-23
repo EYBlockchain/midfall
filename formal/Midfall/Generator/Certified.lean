@@ -3370,6 +3370,82 @@ theorem divCeil32_le_succ (a : Nat) : Midfall.Generator.QuotientFoldCompute.divC
   have h : a + 31 ≤ 32 * (a + 1) := by nlinarith
   exact Nat.div_le_of_le_mul h
 
+set_option maxHeartbeats 2000000 in
+/-- The G1 census fits the proof payload: `totalG1Count * 128 ≤ proofLen`. -/
+theorem fromProtocol_totalG1Count_le_proofLen {meta_ : ConstraintSystemMeta}
+    {cptr : Nat} {L : ProofCalldataLayout}
+    (hL : ProofCalldataLayout.fromProtocol meta_.protocol cptr meta_.numEvals
+      meta_.numPointSets = .ok L) :
+    L.totalG1Count * 128 ≤ L.proofLen := by
+  have hf := fromProtocol_fCom_itemCount hL
+  have hp := fromProtocol_pi_itemCount hL
+  have hpen := proofLen_eq_repackedLen_at meta_.protocol cptr meta_.numEvals
+    meta_.numPointSets L hL
+  have hfacts := tp_fromProtocol_at cptr hL
+  have htotal : L.totalG1Count = L.commitmentG1Count + 2 := by
+    simp only [ProofCalldataLayout.totalG1Count, hf, hp]
+  have hrep : L.proofLen = 128 * L.commitmentG1Count + 32 * meta_.numEvals
+      + 128 + 32 * meta_.numPointSets + 128 := by
+    rw [hpen.1]
+    change (RepackedProofLayoutPlan.fromProofLayout L).prefixG1Count * Midfall.Generator.g1Bytes
+        + (RepackedProofLayoutPlan.fromProofLayout L).numEvals * Midfall.Generator.wordBytes
+        + Midfall.Generator.g1Bytes
+        + (RepackedProofLayoutPlan.fromProofLayout L).numPointSets * Midfall.Generator.wordBytes
+        + Midfall.Generator.g1Bytes = _
+    rw [sum_commitmentReadGroups]
+    change L.commitmentG1Count * Midfall.Generator.g1Bytes
+        + L.evals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes
+        + L.qEvals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes = _
+    rw [hfacts.evals, hfacts.qEvals]
+    have hg1 : Midfall.Generator.g1Bytes = 128 := rfl
+    have hw : Midfall.Generator.wordBytes = 32 := rfl
+    rw [hg1, hw]
+    ring
+  rw [htotal, hrep]
+  omega
+
+set_option maxHeartbeats 2000000 in
+/-- The quotient/evals/qEvals byte lengths fit the proof length. -/
+theorem fromProtocol_byteLens_le_proofLen {meta_ : ConstraintSystemMeta}
+    {cptr : Nat} {L : ProofCalldataLayout}
+    (hL : ProofCalldataLayout.fromProtocol meta_.protocol cptr meta_.numEvals
+      meta_.numPointSets = .ok L) :
+    L.quotientLimbs.byteLen + L.evals.byteLen + L.qEvals.byteLen ≤ L.proofLen := by
+  have hpen := proofLen_eq_repackedLen_at meta_.protocol cptr meta_.numEvals
+    meta_.numPointSets L hL
+  have hfacts := tp_fromProtocol_at cptr hL
+  have hrep : L.proofLen = 128 * L.commitmentG1Count + 32 * meta_.numEvals
+      + 128 + 32 * meta_.numPointSets + 128 := by
+    rw [hpen.1]
+    change (RepackedProofLayoutPlan.fromProofLayout L).prefixG1Count * Midfall.Generator.g1Bytes
+        + (RepackedProofLayoutPlan.fromProofLayout L).numEvals * Midfall.Generator.wordBytes
+        + Midfall.Generator.g1Bytes
+        + (RepackedProofLayoutPlan.fromProofLayout L).numPointSets * Midfall.Generator.wordBytes
+        + Midfall.Generator.g1Bytes = _
+    rw [sum_commitmentReadGroups]
+    change L.commitmentG1Count * Midfall.Generator.g1Bytes
+        + L.evals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes
+        + L.qEvals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes = _
+    rw [hfacts.evals, hfacts.qEvals]
+    have hg1 : Midfall.Generator.g1Bytes = 128 := rfl
+    have hw : Midfall.Generator.wordBytes = 32 := rfl
+    rw [hg1, hw]
+    ring
+  have hq : L.quotientLimbs.byteLen ≤ 128 * L.commitmentG1Count := by
+    rw [hfacts.quotientByte, ← hfacts.quotient]
+    have hle : L.quotientLimbs.itemCount ≤ L.commitmentG1Count := by
+      simp only [ProofCalldataLayout.commitmentG1Count, ProofCalldataLayout.nonQuotientG1Count]
+      omega
+    calc L.quotientLimbs.itemCount * 128 ≤ L.commitmentG1Count * 128 :=
+          Nat.mul_le_mul_right 128 hle
+      _ = 128 * L.commitmentG1Count := Nat.mul_comm _ _
+  have he : L.evals.byteLen = 32 * meta_.numEvals := by
+    rw [hfacts.evalsByte, show Midfall.Generator.wordBytes = 32 from rfl, Nat.mul_comm]
+  have hq2 : L.qEvals.byteLen = 32 * meta_.numPointSets := by
+    rw [hfacts.qEvalsByte, show Midfall.Generator.wordBytes = 32 from rfl, Nat.mul_comm]
+  rw [hrep, hq2, he]
+  nlinarith
+
 set_option maxRecDepth 100000 in
 set_option maxHeartbeats 2000000 in
 /-- A `fromProofLayout` transcript has fewer than `2 ^ 90` words once the advice prefix, G1
@@ -3410,6 +3486,23 @@ theorem fromProofLayout_words_lt (proof : ProofCalldataLayout) (numInstances : N
   change Midfall.Generator.QuotientFoldCompute.divCeil
     (max (max initial evalR) totalR) 32 < 2 ^ 83
   omega
+
+theorem foldl_max_le (l : List Nat) (a B : Nat) (ha : a ≤ B)
+    (h : ∀ x ∈ l, x ≤ B) : l.foldl (fun a b => max a b) a ≤ B := by
+  induction l generalizing a with
+  | nil => simpa using ha
+  | cons x xs ih =>
+      simp only [List.foldl_cons]
+      exact ih (max a x) (max_le ha (h x (by simp))) (fun y hy => h y (by simp [hy]))
+
+theorem natMaximum_le_of_forall_le {l : List Nat} {v B : Nat}
+    (hv : natMaximum l = some v) (h : ∀ x ∈ l, x ≤ B) : v ≤ B := by
+  cases l with
+  | nil => simp [natMaximum] at hv
+  | cons x xs =>
+      simp only [natMaximum, Option.some.injEq] at hv
+      subst hv
+      exact foldl_max_le xs x B (h x (by simp)) (fun y hy => h y (by simp [hy]))
 
 /-- The render's proof layout length bound, from the count clause. -/
 theorem plan_proofLen_lt {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut}
