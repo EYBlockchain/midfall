@@ -992,6 +992,95 @@ private theorem finishFold_length (ws : List (Nat × Option (String × Word256))
               simp only [List.length_append, List.length_cons, List.length_nil] at hl ⊢
               omega
 
+private theorem finishFold_eq (ws : List (Nat × Option (String × Word256)))
+    (xs : List (String × Word256)) (l : List (String × Word256))
+    (h : ws.foldl finishStep (.ok xs) = .ok l) :
+    l = xs ++ (ws.map (fun p => p.2)).filterMap id := by
+  induction ws generalizing xs l with
+  | nil =>
+      simp only [List.foldl_nil, Except.ok.injEq] at h
+      subst h
+      simp
+  | cons p ps ih =>
+      cases p with
+      | mk word value =>
+          cases value with
+          | none => simp [finishStep, finishFold_error] at h
+          | some v =>
+              simp only [finishStep, List.foldl_cons] at h
+              have := ih (xs ++ [v]) l h
+              simpa [List.append_assoc] using this
+
+private theorem finishFold_all (ws : List (Nat × Option (String × Word256)))
+    (xs : List (String × Word256)) (l : List (String × Word256))
+    (h : ws.foldl finishStep (.ok xs) = .ok l) :
+    ws.all (fun p => p.2.isSome) = true := by
+  induction ws generalizing xs l with
+  | nil => rfl
+  | cons p ps ih =>
+      cases p with
+      | mk word value =>
+          cases value with
+          | none => simp [finishStep, finishFold_error] at h
+          | some v =>
+              simp only [finishStep, List.foldl_cons] at h
+              simpa using ih (xs ++ [v]) l h
+
+private theorem filterMap_id_get? (ws : List (Option (String × Word256)))
+    (hall : ws.all (fun o => o.isSome) = true) (i : Nat)
+    {v : String × Word256} (hv : ws[i]? = some (some v)) :
+    (ws.filterMap id)[i]? = some v := by
+  induction ws generalizing i with
+  | nil => simp at hv
+  | cons w ws ih =>
+      cases w with
+      | none => simp at hall
+      | some v0 =>
+          cases i with
+          | zero =>
+              simpa using hv
+          | succ i =>
+              simp only [List.filterMap_cons, List.getElem?_cons_succ] at hv ⊢
+              have hall' : ws.all (fun o => o.isSome) = true := by simpa using hall
+              exact ih hall' i hv
+
+private theorem zip_range_get? {α : Type} (l : List α) {n i : Nat} (hi : i < n) :
+    (List.zip (List.range n) l)[i]? = l[i]?.map (fun v => (i, v)) := by
+  rw [show List.zip (List.range n) l =
+    List.zipWith Prod.mk (List.range n) l from rfl]
+  rw [List.getElem?_zipWith, List.getElem?_range hi]
+  cases l[i]? <;> rfl
+
+/-- **A SUCCESSFUL `finish` PRESERVES EACH WRITTEN SLOT.** The value half of the
+    `VkHeaderBuilder` spec the payload leaves need. PROVED. -/
+theorem VkHeaderBuilder.finish_get? (b : VkHeaderBuilder) (l : List (String × Word256))
+    (h : b.finish = .ok l) (i : Nat) {v : String × Word256}
+    (hi : i < b.words.length) (hv : b.words[i]? = some (some v)) :
+    l[i]? = some v := by
+  unfold VkHeaderBuilder.finish at h
+  let ws := (List.range b.words.length).zip b.words
+  have h' : ws.foldl finishStep (.ok []) = .ok l := by
+    unfold ws
+    unfold finishStep
+    exact h
+  have heq := finishFold_eq ws [] l h'
+  have hall := finishFold_all ws [] l h'
+  obtain ⟨w, hw⟩ := List.getElem?_eq_some_iff.mp hv
+  have hws : ws[i]? = some (i, some v) := by
+    unfold ws
+    rw [zip_range_get? b.words hi]
+    rw [hv]
+    rfl
+  have hall' : (ws.map (fun p => p.2)).all (fun o => o.isSome) = true := by
+    simpa using hall
+  have hmapget : (ws.map (fun p => p.2))[i]? = some (some v) := by
+    rw [List.getElem?_map]
+    rw [hws]
+    rfl
+  have hfilter := filterMap_id_get? (ws.map (fun p => p.2)) hall' i hmapget
+  rw [heq]
+  simpa using hfilter
+
 /-- **A SUCCESSFUL `finish` RETURNS ONE WORD PER HEADER SLOT.** The length half of the
     `VkHeaderBuilder` spec the payload leaves need. PROVED. -/
 theorem VkHeaderBuilder.finish_length (b : VkHeaderBuilder) (l : List (String × Word256))
