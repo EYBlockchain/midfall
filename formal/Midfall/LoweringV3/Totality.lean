@@ -21,6 +21,8 @@
   dissolution RECON.2 applied to the row bundles.
 -/
 import Midfall.LoweringV3.Statements
+import Midfall.LoweringV3.TranscriptRows
+import Midfall.LoweringV3.QuotientRows
 import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV2.Stages
 import Midfall.LoweringV2.Blocks.TraceReturn
@@ -3968,6 +3970,22 @@ theorem block_live_of_blockProgS (R : Render p G₁ G₂ Gₜ) (product : Pairin
 
 #assert_axioms Midfall.LoweringV3.block_live_of_blockProgS
   [propext, Classical.choice, Quot.sound] native []
+
+/-- The `.transcriptParser` arm, from the module's progress row (when it lands). -/
+theorem block_live_transcriptParser_of_prog (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (hprog : BlockProgS R Partial.transcriptParser H vkAddr product cd) :
+    BlockLive R Partial.transcriptParser H vkAddr product cd :=
+  block_live_of_blockProgS R product H vkAddr cd Partial.transcriptParser
+    (by decide) (by decide) hprog
+
+/-- The `.quotientLin` arm, from the module's progress row (when it lands). -/
+theorem block_live_quotientLin_of_prog (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (hprog : BlockProgS R Partial.quotientLin H vkAddr product cd) :
+    BlockLive R Partial.quotientLin H vkAddr product cd :=
+  block_live_of_blockProgS R product H vkAddr cd Partial.quotientLin
+    (by decide) (by decide) hprog
 
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
