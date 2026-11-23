@@ -1273,6 +1273,129 @@ theorem prepareWith_eq_verifierPrepare (E : VerifierEnv p G₁ G₂ Gₜ) (F : F
         (committed.map (fun r => r.toArray)).toArray
         (inst.map (fun row => (row.map (fun col => col.toArray)).toArray)).toArray := rfl
 
+/-- The quotient-commitment count `readAlgebra` reads: `1` under
+    outer-single-h-commitment, `getQuotientPolyDegree` otherwise. -/
+def readAlgebraQuotientCount {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (feat : Features) (vk : VerifyingKey (Fr p) G₁) : Nat :=
+  if feat.outerSingleHCommitment then 1 else vk.domain.getQuotientPolyDegree
+
+/-- The scalar-evaluation count `readAlgebra` reads, as a reusable function:
+    committed-instance queries (per row), advice (per proof), fixed evals,
+    permutation-common evals, `3k-1` per permutation set, `chunks+3` per lookup,
+    `1` per trashcan. -/
+def readAlgebraEvalCount {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : VerifyingKey (Fr p) G₁)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p)))) : Nat :=
+  instances.size *
+      (vk.cs.instanceQueries.toList.filter (fun q => q.1.index < nbCommitted)).length
+    + numProofs * vk.cs.adviceQueries.size
+    + (vk.cs.numFixedColumns - vk.cs.numSimpleSelectors)
+    + vk.permutation.commitments.size
+    + (permutations.toList.map
+        (fun pc => 3 * pc.permutationProductCommitments.size - 1)).sum
+    + (lookups.toList.map
+        (fun row => (row.toList.map (fun l => l.helperPolys.size + 3)).sum)).sum
+    + (trashcans.toList.map (fun row => row.size)).sum
+
+/-- `readAlgebraWidths` is one `g1` block and one `fr` block. -/
+theorem readAlgebraWidths_eq {G₁ : Type} (g1 : G1Codec G₁) (feat : Features)
+    (vk : VerifyingKey (Fr p) G₁)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p)))) :
+    readAlgebraWidths g1 feat vk permutations lookups trashcans nbCommitted numProofs instances
+      = List.replicate (readAlgebraQuotientCount feat vk) (hashableG1 g1).width
+        ++ List.replicate
+            (readAlgebraEvalCount vk permutations lookups trashcans nbCommitted numProofs
+              instances) (hashableFr (p := p)).width := rfl
+
+/-- The three-block mapping: one `g1` block, one `fr` block, the `[g1]`
+    separator, one `fr` block, `[g1]`. -/
+theorem map_width_slots2 (g1 : G1Codec G₁) (nNonQuot nEval nPS : Nat) :
+    (List.replicate nNonQuot (hashableG1 g1).width ++
+      List.replicate nEval (hashableFr (p := p)).width ++
+      [(hashableG1 g1).width] ++
+      List.replicate nPS (hashableFr (p := p)).width ++
+      [(hashableG1 g1).width]).map
+        (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                  else Midfall.Lowering.WireSlot.fr)
+      = List.replicate nNonQuot Midfall.Lowering.WireSlot.g1 ++
+        List.replicate nEval Midfall.Lowering.WireSlot.fr ++
+        [Midfall.Lowering.WireSlot.g1] ++
+        List.replicate nPS Midfall.Lowering.WireSlot.fr ++
+        [Midfall.Lowering.WireSlot.g1] := by
+  simp only [List.map_append, List.map_replicate, List.map_cons, List.map_nil,
+    hashableG1_width, hashableFr_width]
+  simp [Midfall.g1CompressedWidth]
+
+/-- The three-block plan-slot identity. -/
+theorem slots_eq_blocks2 (plan : Midfall.Generator.RepackedProofLayoutPlan)
+    (nNonQuot nEval nPS : Nat)
+    (h1 : plan.prefixG1Count = nNonQuot)
+    (h2 : plan.numEvals = nEval) (h3 : plan.numPointSets = nPS) :
+    List.replicate nNonQuot Midfall.Lowering.WireSlot.g1 ++
+      List.replicate nEval Midfall.Lowering.WireSlot.fr ++
+      [Midfall.Lowering.WireSlot.g1] ++
+      List.replicate nPS Midfall.Lowering.WireSlot.fr ++
+      [Midfall.Lowering.WireSlot.g1]
+      = plan.slots := by
+  unfold Midfall.Generator.RepackedProofLayoutPlan.slots
+  rw [← h1, ← h2, ← h3]
+
+/-- **The `hSlots` count identity, proved from the per-trace counts.** The
+    concrete `readAlgebraWidths` of the trace is `readAlgebraQuotientCount`
+    `g1`s plus `readAlgebraEvalCount` `fr`s; the three count equalities turn
+    the composed block list into the plan's `slots`. This is independent of
+    A6's `parseTrace` widths and of the KZG partition bridge. -/
+theorem prepareSlots_of_counts (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
+    (nParse n : Nat)
+    (h1 : nParse + readAlgebraQuotientCount Features.solidity R.vk
+      = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).prefixG1Count)
+    (h2 : readAlgebraEvalCount R.vk trace.permutations trace.lookups trace.trashcans
+        1 1 #[#[inst.toList.toArray]]
+      = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numEvals)
+    (h3 : n = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numPointSets) :
+    (List.replicate nParse (hashableG1 R.E.g1).width
+      ++ (readAlgebraWidths R.E.g1 Features.solidity R.vk trace.permutations
+            trace.lookups trace.trashcans 1 1 #[#[inst.toList.toArray]]
+          ++ ([(hashableG1 R.E.g1).width]
+              ++ List.replicate n (hashableFr (p := p)).width
+              ++ [(hashableG1 R.E.g1).width]))).map
+        (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                  else Midfall.Lowering.WireSlot.fr)
+      = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).slots := by
+  have hwidth :
+      (List.replicate nParse (hashableG1 R.E.g1).width
+        ++ (readAlgebraWidths R.E.g1 Features.solidity R.vk trace.permutations
+              trace.lookups trace.trashcans 1 1 #[#[inst.toList.toArray]]
+            ++ ([(hashableG1 R.E.g1).width]
+                ++ List.replicate n (hashableFr (p := p)).width
+                ++ [(hashableG1 R.E.g1).width])))
+      = (List.replicate (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+            R.plan.proofLayout).prefixG1Count (hashableG1 R.E.g1).width
+          ++ List.replicate (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+              R.plan.proofLayout).numEvals (hashableFr (p := p)).width
+          ++ [(hashableG1 R.E.g1).width]
+          ++ List.replicate (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+              R.plan.proofLayout).numPointSets (hashableFr (p := p)).width
+          ++ [(hashableG1 R.E.g1).width]) := by
+    rw [readAlgebraWidths_eq]
+    simp only [← List.append_assoc, List.replicate_append_replicate]
+    rw [h1, h2, h3]
+  rw [hwidth]
+  rw [map_width_slots2]
+  exact slots_eq_blocks2 (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+    R.plan.proofLayout) _ _ _ rfl rfl rfl
+
 /-- **`PrepareLogSlots` from the exact parts.** `hParse` is A6's `parseTrace`
     schedule (the commitment prefix), `hMulti` is the KZG point-set count
     residual, and `hSlots` is the plan-slot identity with the protocol counts
@@ -1329,6 +1452,34 @@ theorem PrepareLogSlots_of_parts (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ
   rw [hinit]
   simp only [List.nil_append]
   exact hSlots inst trace
+
+/-- **`PrepareLogSlots` from the exact parts and the per-trace counts.** This is
+    `PrepareLogSlots_of_parts` with its `hSlots` premise decomposed into the
+    three protocol counts, each a separate residual: A6's `parseTrace` g1 count
+    (`hParse`, `h1`), the plan's `numEvals` (`h2`), and the KZG point-set count
+    (`hMulti`, `h3`). -/
+theorem PrepareLogSlots_of_counts (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (nParse n : Nat)
+    (hParse : ∀ (inst : Array (Fr p)),
+      ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
+    (hMulti : MultiPrepareBlockWidth R.E.g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) n)
+    (hCounts : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
+      nParse + readAlgebraQuotientCount Features.solidity R.vk
+        = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+            R.plan.proofLayout).prefixG1Count
+      ∧ readAlgebraEvalCount R.vk trace.permutations trace.lookups trace.trashcans
+          1 1 #[#[inst.toList.toArray]]
+        = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+            R.plan.proofLayout).numEvals
+      ∧ n = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+            R.plan.proofLayout).numPointSets) :
+    PrepareLogSlots R := by
+  refine PrepareLogSlots_of_parts R nParse n hParse hMulti ?_
+  intro inst trace
+  exact prepareSlots_of_counts R inst trace nParse n
+    (hCounts inst trace).1 (hCounts inst trace).2.1 (hCounts inst trace).2.2
 
 end Composition
 
