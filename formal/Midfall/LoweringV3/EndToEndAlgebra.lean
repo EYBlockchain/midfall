@@ -4618,6 +4618,14 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms collectQueries_fixed_point
   [propext, Classical.choice, Quot.sound]
+#assert_axioms adviceQueryFn_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms instanceQueryFn_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms adviceBlock_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms instanceBlock_point
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
