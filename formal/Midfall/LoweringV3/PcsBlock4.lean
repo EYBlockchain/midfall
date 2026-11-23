@@ -24,6 +24,7 @@ theorem scalarInv_call_contract_var {g : ExternalGas} (product : PairingProduct)
     (hrets : decl.rets = ["inv"])
     (hn : BitVec.ofNat 256 n = BitVec.ofNat 256 Midfall.Yul.blsR)
     (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
     (hfail : lookupFun cenv "fail" = some (failFDecl, cenv')) :
     ∀ (V : VEnv (Bridge.Dialect (permissive (callsOf product)) g)) (st : EvmState)
       (r : EResult (Bridge.Dialect (permissive (callsOf product)) g)),
@@ -31,11 +32,12 @@ theorem scalarInv_call_contract_var {g : ExternalGas} (product : PairingProduct)
       0 < xv.toNat → xv.toNat < Midfall.Yul.blsR →
       EvalExpr (Bridge.Dialect (permissive (callsOf product)) g) funs V st
         (Expr.call "scalar_inv" [Expr.var arg]) r →
-      (∃ st', r = .vals [SIInv xv] st') ∨
+      (∃ st', r = .vals [SIInv xv] st' ∧ MemSameOutside st st' scratch 192 ∧
+        st'.env = st.env) ∨
         (∃ st', r = .halt st' ∧ Midfall.LoweringV2.Reverted st') := by
   intro V st r harg hx0 hxR he
   have hbodyC := bodyLit_contract (product := product) (funs := cenv) (cenv := cenv')
-    scratch n gasN selN selP xv hn hscratch hfail
+    scratch n gasN selN selP xv hn hscratch hscratch256 hfail
   -- the body pre on the callee env for the argument value
   have hcalleePre : ∀ v : U256, v = xv →
       (fun (V : VEnv (Bridge.Dialect (permissive (callsOf product)) g)) _ =>
@@ -73,13 +75,12 @@ theorem scalarInv_call_contract_var {g : ExternalGas} (product : PairingProduct)
                       have hbodyC' := bodyLit_contract (product := product)
                         (funs := hoist (Bridge.Dialect (permissive (callsOf product)) g)
                           (scalarBodyLit scratch n gasN selN selP) :: cenv) (cenv := cenv')
-                        scratch n gasN selN selP xv hn hscratch hfail'
+                        scratch n gasN selN selP xv hn hscratch hscratch256 hfail'
                       have hpost := hbodyC' _ _ (hcalleePre _ hxv) _ _ _ hstmts
-                      rcases hpost with ⟨hon, hVb, hget⟩ | ⟨hoh, hrev⟩
-                      · exact Or.inl ⟨_, by
-                          rw [hVb]
-                          simp [VEnv.set, restore, VEnv.get, List.find?, bindZeros]
-                          rfl⟩
+                      rcases hpost with ⟨hon, hVb, hget, hout, houtenv⟩ | ⟨hoh, hrev⟩
+                      · refine Or.inl ⟨_, ?_, hout, houtenv⟩
+                        rw [hVb]
+                        simp [VEnv.set, restore, VEnv.get, List.find?, bindZeros]
                       · rcases ho with hn | hl
                         · cases hn; cases hoh
                         · cases hl; cases hoh
@@ -107,7 +108,7 @@ theorem scalarInv_call_contract_var {g : ExternalGas} (product : PairingProduct)
                       have hbodyC' := bodyLit_contract (product := product)
                         (funs := hoist (Bridge.Dialect (permissive (callsOf product)) g)
                           (scalarBodyLit scratch n gasN selN selP) :: cenv) (cenv := cenv')
-                        scratch n gasN selN selP xv hn hscratch hfail'
+                        scratch n gasN selN selP xv hn hscratch hscratch256 hfail'
                       have hpost := hbodyC' _ _ (hcalleePre _ hxv) _ _ _ hstmts
                       simp only [SIPost] at hpost
                       rcases hpost with ⟨hon, hinv⟩ | ⟨hoh, hrev⟩
@@ -129,6 +130,7 @@ theorem b3_exec_ylet_scalar_inv_var {g : ExternalGas} (product : PairingProduct)
     (hrets : decl.rets = ["inv"])
     (hn : BitVec.ofNat 256 n = BitVec.ofNat 256 Midfall.Yul.blsR)
     (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
     (hfail : lookupFun cenv "fail" = some (failFDecl, cenv')) :
     ∀ (arg x : String) (V : VEnv (Bridge.Dialect (permissive (callsOf product)) g))
       (st : EvmState) (V' : VEnv (Bridge.Dialect (permissive (callsOf product)) g))
@@ -137,26 +139,28 @@ theorem b3_exec_ylet_scalar_inv_var {g : ExternalGas} (product : PairingProduct)
       0 < xv.toNat → xv.toNat < Midfall.Yul.blsR →
       ExecStmt (Bridge.Dialect (permissive (callsOf product)) g) funs V st
         (GenAst.ylet x (GenAst.ycall "scalar_inv" [GenAst.yvar arg])) V' st' o →
-      (o = .normal ∧ V' = (x, SIInv xv) :: V) ∨
+      (o = .normal ∧ V' = (x, SIInv xv) :: V ∧ MemSameOutside st st' scratch 192 ∧
+        st'.env = st.env) ∨
         (o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
   intro arg x V st V' st' o harg hx0 hxR hrun
   cases hrun with
   | letVal he hlen =>
       have hc := scalarInv_call_contract_var (product := product) (arg := arg)
         (funs := funs) (decl := decl) (cenv := cenv) (cenv' := cenv')
-        scratch n gasN selN selP xv hlook hbody hparams hrets hn hscratch hfail
+        scratch n gasN selN selP xv hlook hbody hparams hrets hn hscratch hscratch256 hfail
         V st _ harg hx0 hxR he
-      rcases hc with ⟨st1, hev⟩ | ⟨st1, heh, hrev⟩
+      rcases hc with ⟨st1, hev, hout, houtenv⟩ | ⟨st1, heh, hrev⟩
       · injection hev with hvals hst
         rw [hvals]
-        simp [VEnv.setMany]
+        exact Or.inl ⟨rfl, by simp [VEnv.setMany], by simpa [hst] using hout,
+          by simpa [hst] using houtenv⟩
       · exact absurd heh (by simp)
   | letHalt he =>
       have hc := scalarInv_call_contract_var (product := product) (arg := arg)
         (funs := funs) (decl := decl) (cenv := cenv) (cenv' := cenv')
-        scratch n gasN selN selP xv hlook hbody hparams hrets hn hscratch hfail
+        scratch n gasN selN selP xv hlook hbody hparams hrets hn hscratch hscratch256 hfail
         V st _ harg hx0 hxR he
-      rcases hc with ⟨st1, hev⟩ | ⟨st1, heh, hrev⟩
+      rcases hc with ⟨st1, hev, _, _⟩ | ⟨st1, heh, hrev⟩
       · exact absurd hev (by simp)
       · injection heh with hst
         subst hst
@@ -439,19 +443,13 @@ theorem b1_eval_addmod_mulmod_vars_inv {funs : FunEnv (Bridge.Dialect c g)}
 
 theorem copyReturn_outside (mem : Nat → UInt8) (dst size : Nat) (bytes : List UInt8)
     (a : Nat) (h : a < dst ∨ dst + size ≤ a) :
-    copyReturn mem dst size bytes a = mem a := by
-  unfold copyReturn
-  rw [if_neg]
-  rintro ⟨h1, h2⟩
-  have hmin : min size bytes.length ≤ size := Nat.min_le_left _ _
-  omega
+    copyReturn mem dst size bytes a = mem a :=
+  ScalarInvSummary.copyReturn_outside mem dst size bytes a h
 
 theorem finishCall_memory_outside {kind : EVM.CallKind} {st : EvmState} {resp : CallResponse}
     (io is oo os a : Nat) (h : a < oo ∨ oo + os ≤ a) :
-    (finishCall kind st resp io is oo os).memory a = st.memory a := by
-  unfold finishCall
-  dsimp
-  exact copyReturn_outside st.memory oo os resp.returndata a h
+    (finishCall kind st resp io is oo os).memory a = st.memory a :=
+  ScalarInvSummary.finishCall_memory_outside io is oo os a h
 
 theorem b1_eval_mload_add_var_lit_halt {funs : FunEnv (Bridge.Dialect c g)}
     {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {q : String} {off : Nat}
