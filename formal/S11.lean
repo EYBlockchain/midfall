@@ -1,0 +1,14 @@
+import Midfall.LoweringV3.EndToEnd
+#check @List.countP_getElem?
+#check @List.countP_eq_countP_map
+#check @List.countP_map_get
+#check @List.countP_attach
+#check @List.getElem?_eq_getElem
+#check @List.range_succ
+#check @List.countP_append
+#check @List.filterMap_eq_filter
+#check @List.length_filterMap
+#check @List.filterMap_eq_map
+#check @List.countP_eq_length_filter
+#check @List.countP_id
+#check @List.countP_map
