@@ -469,60 +469,64 @@ def LagP13 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg const
 
 def LagP14 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
     (ret pf : U256) (inv : Nat → U256) (st0 : EvmState)
-    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop :=
+    (mem0 mem : Nat → UInt8) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop :=
       VEnv.get V "success" = some ret ∧
     VEnv.get V "lagrange_precompile_failed" = some pf ∧
     VEnv.get V "omega" = some C.omw ∧
     VEnv.get V "x_n" = some (wPow2 C.rw k C.xw) ∧
-    VEnv.get V "x_n_minus_1_inv" = some (loadWord st.memory (C.D + 32 * (n + m))) ∧
-    VEnv.get V "l_last" = some (loadWord st.memory C.D) ∧
+    VEnv.get V "x_n_minus_1_inv" = some (loadWord mem0 (C.D + 32 * (n + m))) ∧
+    VEnv.get V "l_last" = some (loadWord mem0 C.D) ∧
     VEnv.get V "l_blind" =
-      some (wSum C.rw (fun i => loadWord st.memory (C.D + 64 + 32 * i)) (m - 2)
-        (loadWord st.memory (C.D + 32))) ∧
-    VEnv.get V "l_0" = some (loadWord st.memory (C.D + 32 * m)) ∧
+      some (wSum C.rw (fun i => loadWord mem0 (C.D + 64 + 32 * i)) (m - 2)
+        (loadWord mem0 (C.D + 32))) ∧
+    VEnv.get V "l_0" = some (loadWord mem0 (C.D + 32 * m)) ∧
     VEnv.get V "instance_eval" =
-      some (wSum C.rw (fun j => wMulmodAt (loadWord st.memory (C.D + 32 * m + 32 * j))
+      some (wSum C.rw (fun j => wMulmodAt (loadWord mem0 (C.D + 32 * m + 32 * j))
         (cdWord cd (C.aI + 32 * j)) C.rw) n 0) ∧
     (C.succ = 0 → ret = 0 ∧ pf = 0) ∧
     (ret ≠ 0 →
       (∀ i, i < n + m →
-        loadWord st.memory (C.D + 32 * i) =
+        loadWord mem0 (C.D + 32 * i) =
           wMulmodAt (wMulmodAt (wAddmodAt (wPow2 C.rw k C.xw) (C.rw - 1) C.rw) C.nInv C.rw)
             (wMulmodAt (inv i) (omegaPows C.rw C.omw C.w0 i) C.rw) C.rw) ∧
       (∀ i, i < n + m →
         wMulmodAt (inv i) (lagDen C.rw C.xw C.omw C.w0 i) C.rw = 1 ∧
         (inv i).toNat < C.rw.toNat) ∧
-      loadWord st.memory (C.D + 32 * (n + m)) = inv (n + m)) ∧
+      loadWord mem0 (C.D + 32 * (n + m)) = inv (n + m)) ∧
+    st.memory = mem ∧
+    (∀ x, C.D ≤ x → x + 32 ≤ C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
     st.env = st0.env ∧ st.halted = st0.halted ∧
     MemSameOut st0.memory st C.D (32 * (n + m + 1)) C.s (32 * (n + m + 1) + 0xc0)
       (lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE)
 
 def LagP15 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
     (ret pf : U256) (inv : Nat → U256) (st0 : EvmState)
-    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop :=
+    (mem0 mem : Nat → UInt8) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop :=
       VEnv.get V "success" = some ret ∧
     VEnv.get V "lagrange_precompile_failed" = some pf ∧
     VEnv.get V "omega" = some C.omw ∧
-    loadWord st.memory C.aXN = wPow2 C.rw k C.xw ∧
-    loadWord st.memory C.aXN1 = loadWord st.memory (C.D + 32 * (n + m)) ∧
-    loadWord st.memory C.aLL = loadWord st.memory C.D ∧
-    loadWord st.memory C.aLB =
-      wSum C.rw (fun i => loadWord st.memory (C.D + 64 + 32 * i)) (m - 2)
-        (loadWord st.memory (C.D + 32)) ∧
-    loadWord st.memory C.aL0 = loadWord st.memory (C.D + 32 * m) ∧
-    loadWord st.memory C.aIE =
-      wSum C.rw (fun j => wMulmodAt (loadWord st.memory (C.D + 32 * m + 32 * j))
+    loadWord mem C.aXN = wPow2 C.rw k C.xw ∧
+    loadWord mem C.aXN1 = loadWord mem (C.D + 32 * (n + m)) ∧
+    loadWord mem C.aLL = loadWord mem C.D ∧
+    loadWord mem C.aLB =
+      wSum C.rw (fun i => loadWord mem (C.D + 64 + 32 * i)) (m - 2)
+        (loadWord mem (C.D + 32)) ∧
+    loadWord mem C.aL0 = loadWord mem (C.D + 32 * m) ∧
+    loadWord mem C.aIE =
+      wSum C.rw (fun j => wMulmodAt (loadWord mem (C.D + 32 * m + 32 * j))
         (cdWord cd (C.aI + 32 * j)) C.rw) n 0 ∧
     (C.succ = 0 → ret = 0 ∧ pf = 0) ∧
     (ret ≠ 0 →
       (∀ i, i < n + m →
-        loadWord st.memory (C.D + 32 * i) =
+        loadWord mem0 (C.D + 32 * i) =
           wMulmodAt (wMulmodAt (wAddmodAt (wPow2 C.rw k C.xw) (C.rw - 1) C.rw) C.nInv C.rw)
             (wMulmodAt (inv i) (omegaPows C.rw C.omw C.w0 i) C.rw) C.rw) ∧
       (∀ i, i < n + m →
         wMulmodAt (inv i) (lagDen C.rw C.xw C.omw C.w0 i) C.rw = 1 ∧
         (inv i).toNat < C.rw.toNat) ∧
-      loadWord st.memory (C.D + 32 * (n + m)) = inv (n + m)) ∧
+      loadWord mem0 (C.D + 32 * (n + m)) = inv (n + m)) ∧
+    st.memory = mem ∧
+    (∀ x, C.D ≤ x → x + 32 ≤ C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
     st.env = st0.env ∧ st.halted = st0.halted ∧
     MemSameOut st0.memory st C.D (32 * (n + m + 1)) C.s (32 * (n + m + 1) + 0xc0)
       (lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE)
@@ -1668,8 +1672,8 @@ theorem lag_step19 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
     (ret pf : U256) (inv : Nat → U256) (st0 : EvmState) :
     StmtsContractAll (D := Bridge.Dialect c g) funs
       (seg (lagInner consts k n m) 19 1) (LagP13 C ret pf inv st0)
-      (fun _ st V' st' o => o = .normal ∧ (LagP13 C ret pf inv st0 V' st' ∧
-        VEnv.get V' "x_n_minus_1_inv" = some (loadWord st.memory (C.D + 32 * (n + m))))) := by
+      (fun _ _ V' st' o => o = .normal ∧ (LagP13 C ret pf inv st0 V' st' ∧
+        VEnv.get V' "x_n_minus_1_inv" = some (loadWord st'.memory (C.D + 32 * (n + m))))) := by
   intro V st hg V' st' o hrun
   obtain ⟨hsucc, hpf, hom, hxn, hie, hlb, hlicp, hmpe, hszero, hinv, henv, hhalt, hout⟩ := hg
   obtain ⟨ho, hst, hV⟩ := lag_stmt19_contract (funs := funs) (consts := consts) (k := k) (n := n)
@@ -1712,9 +1716,9 @@ theorem lag_step20 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
       (seg (lagInner consts k n m) 20 1)
       (fun V st => LagP13 C ret pf inv st0 V st ∧
         VEnv.get V "x_n_minus_1_inv" = some (loadWord st.memory (C.D + 32 * (n + m))))
-      (fun _ st V' st' o => o = .normal ∧ (LagP13 C ret pf inv st0 V' st' ∧
-        VEnv.get V' "x_n_minus_1_inv" = some (loadWord st.memory (C.D + 32 * (n + m))) ∧
-        VEnv.get V' "l_last" = some (loadWord st.memory C.D))) := by
+      (fun _ _ V' st' o => o = .normal ∧ (LagP13 C ret pf inv st0 V' st' ∧
+        VEnv.get V' "x_n_minus_1_inv" = some (loadWord st'.memory (C.D + 32 * (n + m))) ∧
+        VEnv.get V' "l_last" = some (loadWord st'.memory C.D))) := by
   intro V st hg V' st' o hrun
   obtain ⟨hLG, hxi⟩ := hg
   obtain ⟨ho, hst, hV⟩ := lag_stmt20_contract (funs := funs) (consts := consts) (k := k) (n := n)
@@ -1759,14 +1763,15 @@ theorem lag_step21 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
       (fun V st => LagP13 C ret pf inv st0 V st ∧
         VEnv.get V "x_n_minus_1_inv" = some (loadWord st.memory (C.D + 32 * (n + m))) ∧
         VEnv.get V "l_last" = some (loadWord st.memory C.D))
-      (fun _ st V' st' o => o = .normal ∧ LagP14 C ret pf inv st0 V' st') := by
+      (fun _ st V' st' o => o = .normal ∧
+        ∃ mem0 mem, LagP14 C ret pf inv st0 mem0 mem V' st') := by
   intro V st hg V' st' o hrun
   obtain ⟨hLG, hxi, hll⟩ := hg
   obtain ⟨ho, hst, hV⟩ := lag_stmt21_contract (funs := funs) (consts := consts) (k := k) (n := n)
     (m := m) (aD := C.D) hD haD hm32 haDm V st trivial V' st' o hrun
   obtain ⟨hsucc, hpf, hom, hxn, hie, hlb, hlicp, hmpe, hszero, hinv, henv, hhalt, hout⟩ := hLG
   rw [hst]
-  refine ⟨ho, ?_⟩
+  refine ⟨ho, st.memory, st.memory, ?_⟩
   split_conj
   · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_0")
       (y := "success") (by decide)]; exact hsucc
@@ -1788,8 +1793,35 @@ theorem lag_step21 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
       (y := "instance_eval") (by decide)]; exact hie
   · exact hszero
   · exact hinv
+  · rfl
+  · intro x h1 h2; rfl
   · exact henv
   · exact hhalt
   · exact hout
+
+
+set_option maxHeartbeats 2000000 in
+/-- **GROUP 12 (statements 19-21).** -/
+theorem lag_group12 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect c g))
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D) (haD : C.D < 2 ^ 256)
+    (hfitD : C.D + 32 * (n + m) < 2 ^ 256)
+    (hm32 : m * 32 < 2 ^ 256) (haDm : C.D + m * 32 < 2 ^ 256)
+    (ret pf : U256) (inv : Nat → U256) (st0 : EvmState) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (lagInner consts k n m) 19 3) (LagP13 C ret pf inv st0)
+      (fun _ _ V' st' o => o = .normal ∧
+        ∃ mem0 mem, LagP14 C ret pf inv st0 mem0 mem V' st') := by
+  have hsplit : seg (lagInner consts k n m) 19 3 =
+      seg (lagInner consts k n m) 19 1 ++ (seg (lagInner consts k n m) 20 1 ++
+        seg (lagInner consts k n m) 21 1) := by
+    rw [show (3 : Nat) = 1 + 2 from rfl, seg_split, show (2 : Nat) = 1 + 1 from rfl, seg_split]
+  rw [hsplit]
+  refine StmtsContractAll.append_normal
+    (lag_step19 (consts := consts) (k := k) (n := n) (m := m) C funs hfitD ret pf inv st0)
+    (fun _ _ _ => StmtsContractAll.append_normal
+      (lag_step20 (consts := consts) (k := k) (n := n) (m := m) C funs hD haD ret pf inv st0)
+      (fun _ _ _ => lag_step21 (consts := consts) (k := k) (n := n) (m := m) C funs hD haD
+        hm32 haDm ret pf inv st0))
 
 end Midfall.LoweringV3.LagrangeBlock
