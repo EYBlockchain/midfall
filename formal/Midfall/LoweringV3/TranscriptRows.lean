@@ -2142,6 +2142,121 @@ theorem runsAll_parseTraceLookupCommitments (E : VerifierEnv p G₁ G₂ Gₜ)
   rw [parseTraceLookupCommitments]
   exact runsAll_lookupCommitments_rows E rows.toList #[] Qs hlen
 
+/-- The per-proof advice read of `parseTrace`: one `tmReadN` group of the phase's column count. -/
+def parseTraceAdviceProofRead (E : VerifierEnv p G₁ G₂ Gₜ)
+    (cols : List Nat) (st1 : List (List (Nat × G₁))) :
+    TranscriptM (List (List (Nat × G₁))) :=
+  (List.range 1).foldlM (init := st1) fun acc k => do
+    let reads ← tmReadN (hashableG1 E.g1) cols.length;
+    pure ((acc.take k) ++
+          [((acc[k]?.getD []) ++ (List.zip cols reads.toList))] ++
+          (acc.drop (k + 1)))
+
+/-- The advice-phase read: one group of `cols.length` G1 points. -/
+theorem runsAll_parseTraceAdviceProofRead (E : VerifierEnv p G₁ G₂ Gₜ)
+    (cols : List Nat) (st1 : List (List (Nat × G₁)))
+    (Qs : List G₁) (hlen : Qs.length = cols.length) :
+    RunsAll E (parseTraceAdviceProofRead E cols st1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  rw [parseTraceAdviceProofRead]
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil]
+  have hb1 := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+    (runsAll_tmReadN_g1 E cols.length Qs hlen)
+    (fun reads => RunsAll.pure E ((st1.take 0) ++
+      [((st1[0]?.getD []) ++ (List.zip cols reads.toList))] ++
+      (st1.drop (0 + 1))))
+  rw [List.append_nil] at hb1
+  have hb2 := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+    hb1 (fun init => RunsAll.pure E init)
+  rw [List.append_nil] at hb2
+  exact hb2
+
+/-- The phase body of `parseTrace`'s advice loop, with `cols` bound to the named `phaseCols`. -/
+def parseTraceAdvicePhase (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁) :
+    (List (List (Nat × G₁)) × List (Nat × Fr p)) → Phase →
+      TranscriptM (List (List (Nat × G₁)) × List (Nat × Fr p)) :=
+  fun st ph => do
+    let cols := phaseCols vk.cs ph
+    let adv ← parseTraceAdviceProofRead E cols st.1
+    let chalIdxPhase := List.zip (List.range vk.cs.numChallenges)
+      vk.cs.challengePhase.toList
+    let chals ← chalIdxPhase.foldlM (init := st.2) fun acc e =>
+      if e.2.val == ph.val then do
+        let c ← tmSqueezeChallenge
+        pure (acc ++ [(e.1, c)])
+      else pure acc
+    pure (adv, chals)
+
+/-- The whole advice-phase fold of `parseTrace`, one proof. -/
+def parseTraceAdvicePhases (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁) :
+    TranscriptM (List (List (Nat × G₁)) × List (Nat × Fr p)) :=
+  vk.cs.phases.foldlM
+    (init := ((List.range 1).map (fun _ => ([] : List (Nat × G₁))),
+              ([] : List (Nat × Fr p))))
+    (parseTraceAdvicePhase E vk)
+
+/-- Under `singlePhase` the challenge arm of the phase body is the empty fold. -/
+theorem runsAll_parseTraceAdvicePhase (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0)
+    (st : List (List (Nat × G₁)) × List (Nat × Fr p)) (ph : Phase)
+    (Qs : List G₁) (hlen : Qs.length = (phaseCols vk.cs ph).length) :
+    RunsAll E (parseTraceAdvicePhase E vk st ph)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  rw [parseTraceAdvicePhase]
+  rw [hsp]
+  simp only [List.range_zero, List.zip_nil_left, List.foldlM_nil]
+  have hb := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+    (runsAll_parseTraceAdviceProofRead E (phaseCols vk.cs ph) st.1 Qs hlen)
+    (fun adv => RunsAll.pure E (adv, st.2))
+  rw [List.append_nil] at hb
+  exact hb
+
+/-- The advice-phase fold: each phase contributes one G1 group of its column count. -/
+theorem runsAll_parseTraceAdvicePhases (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0) :
+    ∀ (phs : List Phase) (acc : List (List (Nat × G₁)) × List (Nat × Fr p))
+      (Qs : List G₁),
+      Qs.length = (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum →
+      RunsAll E (phs.foldlM (parseTraceAdvicePhase E vk) acc)
+        (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  intro phs
+  induction phs with
+  | nil =>
+      intro acc Qs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      simpa only [List.foldlM_nil, List.map_nil] using RunsAll.pure E acc
+  | cons ph phs ih =>
+      intro acc Qs hlen
+      have hsum : Qs.length = (phaseCols vk.cs ph).length +
+          (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum := by
+        simpa only [List.map_cons, List.sum_cons] using hlen
+      set n := (phaseCols vk.cs ph).length with hn
+      have hlen1 : (Qs.take n).length = n := by rw [List.length_take]; omega
+      have hlen2 : (Qs.drop n).length =
+          (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum := by
+        rw [List.length_drop, hsum]; omega
+      have hsplit : Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.foldlM_cons, hsplit]
+      have hb := RunsAll.bind E (ms₁ := (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (ms₂ := (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (runsAll_parseTraceAdvicePhase E vk hsp acc ph (Qs.take n) (by rw [hlen1, hn]))
+        (fun st' => ih st' (Qs.drop n) hlen2)
+      exact hb
+
+/-- **THE ADVICE-PHASE RUN.** At the deployed profile the advice loop reads one G1 group per phase,
+    its length the phase's column count. -/
+theorem runsAll_parseTraceAdvicePhases_one (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0)
+    (Qs : List G₁)
+    (hlen : Qs.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum) :
+    RunsAll E (parseTraceAdvicePhases E vk)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) :=
+  runsAll_parseTraceAdvicePhases E vk hsp vk.cs.phases _ Qs hlen
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -4027,6 +4142,10 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupCommitments_row [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupCommitments_rows [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupCommitments [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceAdviceProofRead [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceAdvicePhase [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceAdvicePhases [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceAdvicePhases_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_at [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_of_algebraRun [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_at [propext, Classical.choice, Quot.sound] native []
