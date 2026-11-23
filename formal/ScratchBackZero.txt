@@ -1,0 +1,45 @@
+/-- The backward loop with a ONE-word remainder (`k = 2`): the guard `second_mptr < mptr` is
+    `ofNat (a+32) < ofNat (a+32)`, false, so the loop runs zero times and is the identity. -/
+theorem bi_backward_loop_zero (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (a : Nat) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 29 1)
+      (fun V _ =>
+        VEnv.get V "mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+        VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)))
+      (fun _ st V' st' o => o = .normal ∧ V' = V ∧ st' = st) := by
+  rw [bi_backward_loop_form]
+  simp only [GenAst.yfor, GenAst.ylit, GenAst.yvar, GenAst.yop]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hmptr, hsecond⟩ := hpre
+  have hcv0 : ∀ {cv : U256} {st1 : EvmState},
+      EvalExpr (Bridge.Dialect c g) funs V st
+        (Expr.builtin Op.lt [Expr.var "second_mptr", Expr.var "mptr"]) (.vals [cv] st1) →
+      cv = (0 : U256) := by
+    intro cv st1 hcond
+    obtain ⟨xv, yv, hx, hy, hcv, -⟩ := Midfall.LoweringV3.LagrangeRows.eval_lt_vars_inv hcond
+    rw [hsecond] at hx
+    rw [hmptr] at hy
+    injection hx with hx'
+    injection hy with hy'
+    subst hx' hy'
+    rw [hcv]
+    rw [ofNat_ult_ofNat_false (a + 32) (a + 32) (by omega) (by omega)]
+    rfl
+  cases hrun with
+  | forLoop hinit hloop =>
+      cases hinit with
+      | seqNil =>
+          cases hloop with
+          | loopDone hcond hz =>
+              obtain ⟨-, -, -, -, -, hst1⟩ :=
+                Midfall.LoweringV3.LagrangeRows.eval_lt_vars_inv hcond
+              refine ⟨rfl, ?_, ?_⟩
+              · simp [restore]
+              · rw [hst1]
+          | loopCondHalt hcond => exact (eval_lt_halt_false hcond).elim
+          | loopStep hcond hne _ _ _ _ => exact absurd (hcv0 hcond) hne
+          | loopPostHalt hcond hne _ _ _ _ => exact absurd (hcv0 hcond) hne
+          | loopBreak hcond hne _ _ => exact absurd (hcv0 hcond) hne
+          | loopLeave hcond hne _ _ => exact absurd (hcv0 hcond) hne
+          | loopBodyHalt hcond hne _ _ => exact absurd (hcv0 hcond) hne

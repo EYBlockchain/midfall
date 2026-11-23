@@ -3553,6 +3553,356 @@ theorem bi_prelude_single (consts : Inline.Consts) (product : PairingProduct) (g
     exact absurd ho1 hne1
 
 
+/-- `blsR` as a `U256` (the helper's `r` argument in this lane). -/
+abbrev BlsR : U256 := BitVec.ofNat 256 Midfall.Yul.blsR
+
+/-! ## The general front of the helper: statements 10-28
+
+  The forward loop (`seg 10 1`), the bridge (`seg 11 10`) and the staticcall walk
+  (`seg 21 8`) composed. The front is `seg 10 19` (10-28), i.e. ONE statement more than the
+  plan's "seg 10 18": statement 28 (`gp_mptr -= 32`) is the last statement of the already-proved
+  `bi_staticcall_walk` (`seg 21 8`), so pulling it out would duplicate that walk. -/
+
+/-- Read a word below the 192-byte `mxMem` frame. -/
+theorem loadWord_mxMem_below (M : Nat → UInt8) (p q : Nat) (x : U256) (h : q + 32 ≤ p) :
+    loadWord (mxMem M p x) q = loadWord M q := by
+  refine Midfall.Yul.Word.loadWord_congr _ _ _ (fun i _ => ?_)
+  exact mxMem_outside M p x (q + i) (Or.inl (by omega))
+
+/-- Read a word above the whole 192-byte `mxMem` frame. -/
+theorem loadWord_mxMem_outside (M : Nat → UInt8) (p q : Nat) (x : U256) (h : p + 192 ≤ q) :
+    loadWord (mxMem M p x) q = loadWord M q := by
+  refine Midfall.Yul.Word.loadWord_congr _ _ _ (fun i _ => ?_)
+  exact mxMem_outside M p x (q + i) (Or.inr (by omega))
+
+/-- Read a word below `p` through a `copyReturn` landing at `p` over an `mxMem` frame. -/
+theorem loadWord_copyReturn_mxMem_below (M : Nat → UInt8) (p q : Nat) (x : U256)
+    (rd : List UInt8) (h : q + 32 ≤ p) :
+    loadWord (copyReturn (mxMem M p x) p 32 rd) q = loadWord M q := by
+  rw [show loadWord (copyReturn (mxMem M p x) p 32 rd) q = loadWord (mxMem M p x) q from by
+    refine Midfall.Yul.Word.loadWord_congr _ _ _ (fun i _ => ?_)
+    exact copyReturn_outside' (mxMem M p x) p 32 rd (q + i) (Or.inl (by omega))]
+  exact loadWord_mxMem_below M p q x h
+
+/-- Read a word above the whole frame (192-byte input and the 32-byte return landing). -/
+theorem loadWord_copyReturn_mxMem_above (M : Nat → UInt8) (p q : Nat) (x : U256)
+    (rd : List UInt8) (h : p + 192 ≤ q) :
+    loadWord (copyReturn (mxMem M p x) p 32 rd) q = loadWord M q := by
+  rw [show loadWord (copyReturn (mxMem M p x) p 32 rd) q = loadWord (mxMem M p x) q from by
+    refine Midfall.Yul.Word.loadWord_congr _ _ _ (fun i _ => ?_)
+    exact copyReturn_outside' (mxMem M p x) p 32 rd (q + i) (Or.inr (by
+      have hmin := Nat.min_le_left 32 rd.length
+      omega))]
+  exact loadWord_mxMem_outside M p q x h
+
+/-- The front's pre: the state at the start of statement 10 (the prelude's post). -/
+structure FrontPre (M : Nat → UInt8) (a e s : Nat) (succ : U256)
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop where
+  hmptr : VEnv.get V "mptr" = some (BitVec.ofNat 256 (a + 32))
+  hmend : VEnv.get V "mptr_end" = some (BitVec.ofNat 256 e)
+  hgpm : VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 s)
+  hgp : VEnv.get V "gp" = some (loadWord st.memory a)
+  hr : VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR)
+  hmstart : VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a)
+  hret : VEnv.get V "ret" = some succ
+  hpf : VEnv.get V "precompile_failed" = some 0
+  hmem : st.memory = M
+  hw0 : (loadWord M a).toNat < Midfall.Yul.blsR
+
+/-- The front's rejection arm: `leave` with `ret = 0`, the frame intact outside the batch and
+    the whole scratch window `[s, s + 32k + 192)`. -/
+def FrontFail (_a k s : Nat) (st st' : EvmState) (V' : VEnv (Bridge.Dialect c g))
+    (o : Outcome) : Prop :=
+  o = .leave ∧ VEnv.get V' "ret" = some 0 ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+    MemSameOutside st st' s (32 * k + 192)
+
+/-- The front's success arm: the state after statement 28, ready for the backward pass
+    (`fmem` is the forward loop's scratch memory). -/
+structure FwdSucc (M : Nat → UInt8) (fmem : Nat → UInt8) (a k s : Nat) (x : U256)
+    (st : EvmState) (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome) : Prop where
+  hok : o = .normal
+  hmptr : VEnv.get V' "mptr" = some (BitVec.ofNat 256 (a + 32 * (k - 1)))
+  hgpm : VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 (s + 32 * (k - 2) - 32))
+  hall : VEnv.get V' "all_inv" =
+    some (BitVec.ofNat 256 ((x.toNat : ZMod Midfall.Yul.blsR)⁻¹).val)
+  hfirst : VEnv.get V' "first_mptr" = some (BitVec.ofNat 256 a)
+  hsecond : VEnv.get V' "second_mptr" = some (BitVec.ofNat 256 (a + 32))
+  hmstart : VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a)
+  hr : VEnv.get V' "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR)
+  hgp : VEnv.get V' "gp" = some x
+  hret : VEnv.get V' "ret" = some 1
+  hpf : VEnv.get V' "precompile_failed" = some 0
+  henv : st'.env = st.env
+  hhalt : st'.halted = st.halted
+  hx : x = fwdProd M a (BitVec.ofNat 256 Midfall.Yul.blsR) (k - 1)
+  hcanon : ∀ i, i < k → (loadWord M (a + 32 * i)).toNat < Midfall.Yul.blsR
+  hmem : st'.memory = copyReturn (mxMem fmem (s + 32 * (k - 2)) x) (s + 32 * (k - 2)) 32
+    (bytesNatBE ((x.toNat : ZMod Midfall.Yul.blsR)⁻¹).val 32).data.toList
+  hfmem : ∀ q, (q < s ∨ s + 32 * k + 192 ≤ q) → fmem q = M q
+  hscratch : ∀ i, i < k - 2 → loadWord fmem (s + 32 * i) =
+    fwdProd M a (BitVec.ofNat 256 Midfall.Yul.blsR) (i + 1)
+
+/-- The general front, statements 10-28: forward loop, bridge, staticcall walk. The loop's
+    `MemSameOutside` supplies the last batch word as the bridge's `x_last`; `fwdProd_last` turns
+    the bridge's product into `P (k-1)`; the walk's honest answer is the inverse of that. -/
+theorem bi_front (consts : Inline.Consts) (product : PairingProduct) (g : ExternalGas)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (gas : Nat) (hgas : consts.lookup "MODEXP_GAS" = some gas)
+    (succ : U256) (a e s k : Nat) (M : Nat → UInt8)
+    (hk : e - a = 32 * k) (hae : a + 64 ≤ e) (hal : (e - a) % 32 = 0)
+    (he : e < 2 ^ 256) (hs : s + (e - a) < 2 ^ 256)
+    (hs192 : s + (e - a) + 192 < 2 ^ 256)
+    (hdisj : e ≤ s ∨ s + (e - a) ≤ a)
+    (hdisj192 : e ≤ s ∨ s + (e - a) + 192 ≤ a)
+    (hsp : 32 ≤ s) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 10 19)
+      (FrontPre (c := permissive (callsOf product)) (g := g) M a e s succ)
+      (fun V st V' st' o => FrontFail a k s st st' V' o ∨
+        ∃ x fmem, FwdSucc (c := permissive (callsOf product)) (g := g) M fmem a k s x
+          st V' st' o) := by
+  have hsplitList : ((helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 10).take 19 =
+      ((helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 10).take 1 ++
+        (((helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 11).take 10 ++
+          ((helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 21).take 8) := by
+    rw [show (19 : Nat) = 1 + 18 by norm_num, List.take_add]
+    rw [show ((helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 10).drop 1 =
+        (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 11 by
+      rw [List.drop_drop]]
+    rw [show (18 : Nat) = 10 + 8 by norm_num, List.take_add]
+    rw [show ((helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 11).drop 10 =
+        (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt).drop 21 by
+      rw [List.drop_drop]]
+  have hsplit : seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 10 19 =
+      seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 10 1 ++
+        (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10 ++
+          seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 21 8) := by
+    simpa only [seg] using hsplitList
+  rw [hsplit]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hmptr, hmend, hgpm, hgp, hr, hmstart, hret, hpf, hmem, hw0⟩ := hpre
+  have hkdef : (e - a) / 32 = k := by
+    rw [hk, Nat.mul_comm 32 k]
+    exact Nat.mul_div_left k (by norm_num)
+  have hk2 : 2 ≤ k := by omega
+  have heq : e = a + 32 * k := by omega
+  have ha32 : a + 32 < 2 ^ 256 := by omega
+  have hloopPre : VEnv.get V "mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+      VEnv.get V "mptr_end" = some (BitVec.ofNat 256 e) ∧
+      VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 s) ∧
+      VEnv.get V "gp" = some (loadWord st.memory a) ∧
+      VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+      VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+      (VEnv.get V "ret").isSome ∧ (VEnv.get V "precompile_failed").isSome ∧
+      (loadWord st.memory a).toNat < (BitVec.ofNat 256 Midfall.Yul.blsR).toNat :=
+    ⟨hmptr, hmend, hgpm, hgp, hr, hmstart, by rw [hret]; rfl, by rw [hpf]; rfl, by
+      rw [hmem, BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide : Midfall.Yul.blsR < 2 ^ 256)]
+      exact hw0⟩
+  rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrun with
+    ⟨V1, st1, hloop, hrest⟩ | ⟨hloop, hne⟩
+  · have hl := bi_forward_loop (consts := consts) (c := permissive (callsOf product)) (g := g)
+      funs (rw := BlsR) (a := a) (e := e) (s := s) hae hal he hs hdisj
+      V st hloopPre V1 st1 .normal hloop
+    rcases hl with ⟨ho, -, -⟩ | ⟨ho1, henv1, hhalt1, hret1, hpf1, hmstart1, hr1, hout1,
+      hmptr1, hgpm1, hcanon1, P, hP0, hPstep, hgp1⟩
+    · exact absurd ho (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+    · have hPeq : ∀ j, j ≤ k - 2 → P j = fwdProd M a BlsR j := by
+        intro j hj
+        induction j with
+        | zero => rw [hP0, hmem]; rfl
+        | succ j ih =>
+            have hrec := hPstep j (by omega)
+            rw [hrec.1, ih (by omega), fwdProd_succ, hmem]
+      have hmptr1' : VEnv.get V1 "mptr" = some (BitVec.ofNat 256 (a + 32 * (k - 1))) := by
+        rw [hmptr1, show e - 32 = a + 32 * (k - 1) by omega]
+      have hgpm1' : VEnv.get V1 "gp_mptr" = some (BitVec.ofNat 256 (s + 32 * (k - 2))) := by
+        rw [hgpm1, show s + (e - a - 64) = s + 32 * (k - 2) by omega]
+      have hgp1' : VEnv.get V1 "gp" = some (fwdProd M a BlsR (k - 2)) := by
+        rw [hgp1, show (e - a) / 32 - 2 = k - 2 by rw [hkdef]]
+        exact congrArg some (hPeq (k - 2) (by omega))
+      have hcanon1' : ∀ i, a + 32 * i + 32 < e → (loadWord M (a + 32 * i)).toNat <
+          Midfall.Yul.blsR := by
+        intro i hi
+        rw [← hmem]
+        exact hcanon1 i hi
+      have hqout : a + 32 * (k - 1) < s ∨ s + (e - a - 64) ≤ a + 32 * (k - 1) := by
+        rcases hdisj with h | h
+        · left; omega
+        · right; omega
+      have hloadlast : loadWord st1.memory (a + 32 * (k - 1)) =
+          loadWord M (a + 32 * (k - 1)) := by
+        rw [← hmem]
+        refine Midfall.Yul.Word.loadWord_congr _ _ _ (fun i _ => ?_)
+        exact hout1 (a + 32 * (k - 1) + i) (by rcases hqout with h | h <;> omega)
+      have hpbr : s + 32 * (k - 2) + 192 < 2 ^ 256 := by omega
+      have hmpbr : a + 32 * (k - 1) < 2 ^ 256 := by omega
+      have hbrpre : VEnv.get V1 "mptr" = some (BitVec.ofNat 256 (a + 32 * (k - 1))) ∧
+          VEnv.get V1 "gp" = some (fwdProd M a BlsR (k - 2)) ∧
+          VEnv.get V1 "gp_mptr" = some (BitVec.ofNat 256 (s + 32 * (k - 2))) ∧
+          VEnv.get V1 "mptr_start" = some (BitVec.ofNat 256 a) ∧
+          VEnv.get V1 "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+          (VEnv.get V1 "ret").isSome ∧ (VEnv.get V1 "precompile_failed").isSome ∧
+          loadWord st1.memory (a + 32 * (k - 1)) =
+            loadWord M (a + 32 * (k - 1)) :=
+        ⟨hmptr1', hgp1', hgpm1', hmstart1, hr1, hret1, hpf1, hloadlast⟩
+      rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g)
+        hrest with ⟨V2, st2, hbrun, hwalk⟩ | ⟨hbrun, hne2⟩
+      · have hb := bi_bridge_full (c := permissive (callsOf product)) (g := g)
+          (consts := consts) funs (p := s + 32 * (k - 2)) (a := a)
+          (mp := a + 32 * (k - 1)) (gv := fwdProd M a BlsR (k - 2))
+          (x_last := loadWord M (a + 32 * (k - 1))) hpbr hmpbr
+          V1 st1 hbrpre V2 st2 .normal hbrun
+        rcases hb with hrej | hs
+        · exact absurd hrej.hok (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+        · have hxEq : Midfall.LoweringV3.QuotientRows.wMulmodAt (fwdProd M a BlsR (k - 2))
+              (loadWord M (a + 32 * (k - 1))) BlsR = fwdProd M a BlsR (k - 1) :=
+            (fwdProd_last M a k BlsR hk2).symm
+          have hgp2 : VEnv.get V2 "gp" = some (fwdProd M a BlsR (k - 1)) := by
+            rw [hs.hgp, hxEq]
+          have hmem2 : st2.memory = mxMem st1.memory (s + 32 * (k - 2))
+              (fwdProd M a BlsR (k - 1)) := by
+            rw [hs.hmem, hxEq]
+          have hp32 : 32 ≤ s + 32 * (k - 2) := by omega
+          have hp_lt : s + 32 * (k - 2) < 2 ^ 256 := by omega
+          have hxne : fwdProd M a BlsR (k - 1) ≠ 0 := hxEq ▸ hs.hgp_ne
+          have hxpos : 0 < (fwdProd M a BlsR (k - 1)).toNat := by
+            apply Nat.pos_of_ne_zero
+            intro hz
+            exact hxne (BitVec.eq_of_toNat_eq (by rw [hz]; rfl))
+          have hxr : (fwdProd M a BlsR (k - 1)).toNat < Midfall.Yul.blsR :=
+            hxEq ▸ hs.hgp_canon
+          have hw := bi_staticcall_walk (consts := consts) (product := product) (g := g)
+            funs gas hgas (mem := st1.memory) (p := s + 32 * (k - 2)) (a := a)
+            (mp := a + 32 * (k - 1)) (x := fwdProd M a BlsR (k - 1))
+            hp_lt hp32 ha32 hxpos hxr V2 st2
+            ⟨hs.hgp_mptr, hgp2, hs.hmstart, hs.hmptr, hs.hr, hs.hret_some,
+              hs.hpf_some, hmem2⟩ V' st' o hwalk
+          rcases hw with hsucc | hfail
+          · refine Or.inr ⟨fwdProd M a BlsR (k - 1), st1.memory, ?_⟩
+            refine ⟨hsucc.hok, ?_, hsucc.hgp_mptr, hsucc.hall, hsucc.hfirst, hsucc.hsecond,
+              hsucc.hmptr_start, hsucc.hr, hsucc.hgp, hsucc.hret, hsucc.hpf, ?_, ?_, rfl,
+              ?_, hsucc.hmem, ?_, ?_⟩
+            · -- mptr
+              exact hsucc.hmptr
+            · -- env
+              rw [hsucc.henv, hs.henv, henv1]
+            · -- halted
+              rw [hsucc.hhalt, hs.hhalt, hhalt1]
+            · -- canonical
+              intro i hi
+              by_cases hik : i = k - 1
+              · subst hik
+                exact hs.hx_canon
+              · exact hcanon1' i (by omega)
+            · -- fmem outside
+              intro q hq
+              simpa [hmem] using hout1 q (by rcases hq with h | h <;> omega)
+            · -- forward scratch values
+              intro i hi
+              have hstep := hPstep i (by omega)
+              rw [hstep.2, hPeq (i + 1) (by omega)]
+          · refine Or.inl ⟨hfail.hok, hfail.hret, ?_, ?_, ?_⟩
+            · rw [hfail.henv, hs.henv, henv1]
+            · rw [hfail.hhalt, hs.hhalt, hhalt1]
+            · intro q hq
+              obtain ⟨rd, hrd⟩ := hfail.hmem
+              rw [hrd]
+              have houtc : q < s + 32 * (k - 2) ∨ s + 32 * (k - 2) + 192 ≤ q := by
+                rcases hq with h | h <;> omega
+              rcases houtc with hq1 | hq1
+              · rw [copyReturn_outside' (mxMem st1.memory (s + 32 * (k - 2))
+                    (fwdProd M a BlsR (k - 1))) (s + 32 * (k - 2)) 32 rd q (Or.inl hq1)]
+                exact (mxMem_outside st1.memory (s + 32 * (k - 2))
+                  (fwdProd M a BlsR (k - 1)) q (Or.inl hq1)).trans
+                  (hout1 q (by rcases hq with h | h <;> omega))
+              · rw [copyReturn_outside' (mxMem st1.memory (s + 32 * (k - 2))
+                    (fwdProd M a BlsR (k - 1))) (s + 32 * (k - 2)) 32 rd q (Or.inr (by
+                      have hmin := Nat.min_le_left 32 rd.length
+                      omega))]
+                exact (mxMem_outside st1.memory (s + 32 * (k - 2))
+                  (fwdProd M a BlsR (k - 1)) q (Or.inr hq1)).trans
+                  (hout1 q (by rcases hq with h | h <;> omega))
+      · have hb := bi_bridge_full (c := permissive (callsOf product)) (g := g)
+          (consts := consts) funs (p := s + 32 * (k - 2)) (a := a)
+          (mp := a + 32 * (k - 1)) (gv := fwdProd M a BlsR (k - 2))
+          (x_last := loadWord M (a + 32 * (k - 1))) hpbr hmpbr
+          V1 st1 hbrpre V' st' o hbrun
+        rcases hb with hrej | hs
+        · refine Or.inl ⟨hrej.hok, hrej.hret, ?_, ?_, ?_⟩
+          · rw [hrej.henv, henv1]
+          · rw [hrej.hhalt, hhalt1]
+          · intro q hq
+            rw [hrej.hmem]
+            exact hout1 q (by rcases hq with h | h <;> omega)
+        · exact absurd hs.hok hne2
+  · have hl := bi_forward_loop (consts := consts) (c := permissive (callsOf product)) (g := g)
+      funs (rw := BlsR) (a := a) (e := e) (s := s) hae hal he hs hdisj
+      V st hloopPre V' st' o hloop
+    rcases hl with ⟨hok, hret0, henv, hhalt, hout⟩ | ⟨ho, -⟩
+    · refine Or.inl ⟨hok, hret0, henv, hhalt, ?_⟩
+      intro q hq
+      exact hout q (by rcases hq with h | h <;> omega)
+    · exact absurd ho hne
+
+/-- The backward loop with a ONE-word remainder (`k = 2`): the guard `second_mptr < mptr` is
+    `ofNat (a+32) < ofNat (a+32)`, false, so the loop runs zero times and is the identity. -/
+theorem bi_backward_loop_zero (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (a : Nat) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 29 1)
+      (fun V _ =>
+        VEnv.get V "mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
+        VEnv.get V "second_mptr" = some (BitVec.ofNat 256 (a + 32)))
+      (fun V st V' st' o => o = .normal ∧ V' = V ∧ st' = st) := by
+  rw [bi_backward_loop_form]
+  simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
+    GenAst.yexpr]
+  intro V st hpre
+  obtain ⟨hmptr, hsecond⟩ := hpre
+  let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
+    fun V' st' o => o = .normal ∧ V' = V ∧ st' = st
+  change Midfall.Yul.WpTac.AllRuns funs V st
+    [Stmt.forLoop []
+      (Expr.builtin Op.lt [Expr.var "second_mptr", Expr.var "mptr"])
+      []
+      [ Stmt.letDecl ["inv"] (some (Expr.builtin Op.mulmod
+          [Expr.var "all_inv", Expr.builtin Op.mload [Expr.var "gp_mptr"], Expr.var "r"]))
+      , Stmt.assign ["all_inv"] (Expr.builtin Op.mulmod
+          [Expr.var "all_inv", Expr.builtin Op.mload [Expr.var "mptr"], Expr.var "r"])
+      , Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var "mptr", Expr.var "inv"])
+      , Stmt.assign ["mptr"] (Expr.builtin Op.sub
+          [Expr.var "mptr", Expr.lit (Literal.number 0x20)])
+      , Stmt.assign ["gp_mptr"] (Expr.builtin Op.sub
+          [Expr.var "gp_mptr", Expr.lit (Literal.number 0x20)]) ]] Q
+  refine Midfall.Yul.LoopRule.allRuns_for_cons_wp (Bridge.Dialect c g)
+    (Midfall.Yul.WpBridge.Bopen c g) (Midfall.Yul.WpBridge.Cnone _)
+    (Midfall.Yul.WpBridge.Bopen_sound c g) (Midfall.Yul.WpBridge.Cnone_sound _)
+    (n := 40) (fun V' st' => V' = V ∧ st' = st) ?hinit ?hstep
+  · exact ⟨rfl, rfl⟩
+  · intro Vi sti hInv
+    obtain ⟨rfl, rfl⟩ := hInv
+    unfold Midfall.Yul.LoopRule.wpIter
+    simp only [Midfall.Yul.Wp.wpE, Midfall.Yul.Wp.wpA, Midfall.Yul.WpBridge.Bopen,
+      stepOp, bin, ter, un, hmptr, hsecond]
+    refine ⟨?gFalse, ?gTrue⟩
+    · intro hguard
+      refine ⟨?allRuns⟩
+      intro V' st' o hrun
+      cases hrun with
+      | seqNil => exact ⟨rfl, by simp [restore], rfl⟩
+    · intro hguard
+      exact absurd (show b2w ((BitVec.ofNat 256 (a + 32)).ult
+          (BitVec.ofNat 256 (a + 32))) = (0 : U256) from by
+        rw [show (BitVec.ofNat 256 (a + 32)).ult (BitVec.ofNat 256 (a + 32)) = false from by
+          rw [BitVec.ult]
+          exact decide_eq_false (Nat.lt_irrefl _)]
+        rfl) hguard
+
+#assert_axioms loadWord_mxMem_below [propext, Classical.choice, Quot.sound]
+#assert_axioms loadWord_mxMem_outside [propext, Classical.choice, Quot.sound]
+#assert_axioms loadWord_copyReturn_mxMem_below [propext, Classical.choice, Quot.sound]
+#assert_axioms loadWord_copyReturn_mxMem_above [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_front [propext, Classical.choice, Quot.sound]
 #assert_axioms shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms foldl_shift_or_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bytesToNatBE_readBytes [propext, Classical.choice, Quot.sound]
