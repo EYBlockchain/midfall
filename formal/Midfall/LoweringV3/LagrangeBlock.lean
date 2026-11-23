@@ -1440,4 +1440,27 @@ theorem lag_group9 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
       VEnv.get V "l_blind" = some (loadWord st.memory (C.D + 32))) h14
     (fun _ _ _ => h15)
 
+
+/-- **THE CONSTANT-TABLE PIN FOR THE BATCH-INVERT SCRATCH.** `expectedConsts` carries the plan
+field (`Statements.lean:2947`), and `programOkB` makes the render's table the data table. -/
+theorem consts_lookup_BATCH_INV_SCRATCH_MPTR {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    R.consts.lookup "BATCH_INV_SCRATCH_MPTR" = some R.pv.memory.batchInvertScratchMptr := by
+  show (Midfall.LoweringV2.constTableOf R.model).lookup "BATCH_INV_SCRATCH_MPTR" =
+    some R.pv.memory.batchInvertScratchMptr
+  rw [lookup_expectedConsts_of_programOkB (programOkB_of_valid hR)]
+  cases h1 : R.model.expectedVkCodehash <;> cases h2 : R.model.quotientExternal <;>
+    cases h3 : R.model.expectedQuotientCodehash <;> cases h4 : R.model.expectedHasAccumulator <;>
+      simp [expectedConsts, h1, h2, h3, h4, List.lookup]
+
+/-- **D-GATE9 AT THE LAG BLOCK: `hsp : 32 ≤ C.s` IS A PROJECTION, NOT A PREMISE.** Given the
+    constant-table lookup the block contract already takes, the scratch pointer is at least the
+    EVM scratch region, by `batchInvertScratchFits_of_valid`. -/
+theorem lagScratchFits {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) {s : Nat}
+    (hS : R.consts.lookup "BATCH_INV_SCRATCH_MPTR" = some s) : 32 ≤ s := by
+  rw [consts_lookup_BATCH_INV_SCRATCH_MPTR hR] at hS
+  have h := Midfall.LoweringV3.batchInvertScratchFits_of_valid hR
+  simp only [Midfall.LoweringV3.batchInvertScratchFits] at h
+  have hs : R.pv.memory.batchInvertScratchMptr = s := Option.some.inj hS
+  rw [← hs]; exact h
+
 end Midfall.LoweringV3.LagrangeBlock
