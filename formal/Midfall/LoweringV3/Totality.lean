@@ -27,6 +27,7 @@ import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.LoweringV3.FpConsts
 import Midfall.LoweringV3.VkClean
+import Midfall.LoweringV3.FpBody
 import Midfall.Lowering.FrameWalk
 import Midfall.Tools.ConeSorries
 import Midfall.Tools.Done
