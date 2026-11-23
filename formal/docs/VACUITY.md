@@ -58,9 +58,9 @@ to that scan. That is the central gap this report records.
 | `lowering_equivalenceV3_of_rows` | `LoweringV3/Composition.lean:260` | `hR : ValidV3 R`, `SimRowsV3`, `ProgRowsV3` | **CONDITIONAL** | proved glue; the two bundles below are the missing inhabitancy. |
 | `sim_rows` | `LoweringV3/Rows.lean:254` | `ValidV3`, `G1CodecHeadlineLaws`, `Eip2537.Holds`, `SoundSide` | **CONDITIONAL** | proved glue over 7 rows; `BlockSim` leaves (see §2). W12 family witness is the named gap, not a term. |
 | `prog_rows` | `LoweringV3/Rows.lean:268` | `ValidV3`, codec, `Holds`, `LeanAccepts`, `CompleteSide` | **CONDITIONAL** | same; 7 `BlockProgS` leaves. |
-| `twoOutcomesV3_of_valid` | `LoweringV3/Composition.lean:206` | `ValidV3` | **CONDITIONAL** (F1 **VACUOUS**) | proved from `NoWriters` + `ExitDiscipline`; `twoOutcomes_hypotheses_together` (`Composition.lean:318`) is a toy witness, not a render witness. |
-| `rejectsV3_of_sims` | `LoweringV3/Composition.lean:223` | `ValidV3`, `SimRowsV3` | **CONDITIONAL** | glue proved; depends on `prefix_simV3` and the rows. |
-| `completeV3_of_progs` | `LoweringV3/Composition.lean:246` | `ValidV3`, `ProgRowsV3` | **CONDITIONAL** | glue proved; depends on `prefix_progV3` and the rows. |
+| `twoOutcomesV3_of_valid` | `LoweringV3/Composition.lean:192` | `ValidV3` | **CONDITIONAL** (F1 **VACUOUS**) | proved from `NoWriters` + `ExitDiscipline`; `twoOutcomes_hypotheses_together` (`Composition.lean:318`) is a toy witness, not a render witness. |
+| `rejectsV3_of_sims` | `LoweringV3/Composition.lean:205` | `ValidV3`, `SimRowsV3` | **CONDITIONAL** | glue proved; depends on `prefix_simV3` and the rows. |
+| `completeV3_of_progs` | `LoweringV3/Composition.lean:226` | `ValidV3`, `ProgRowsV3` | **CONDITIONAL** | glue proved; depends on `prefix_progV3` and the rows. |
 | `totalV3_correct` | `LoweringV3/Totality.lean:1028` | `ValidV3` | **CONDITIONAL** | proved from `prefix_live` and four `block_live` leaves; no `ValidV3` witness. |
 
 **Root at F1.** `f1_ValidV3_false` (`Instances/VacuityWitnesses.lean`) proves
@@ -100,8 +100,8 @@ status.
 | `fp_blockProgS` | `LoweringV3/Rows.lean:177` | same + acceptance | sorry | same | **CONDITIONAL** |
 | `q_blockSim` | `LoweringV3/QuotientRows.lean:236` | `ValidV3`, codec, `Holds`, `SoundSide` | sorry | no `StageInv .quotient` term | **CONDITIONAL** |
 | `q_blockProgS` | `LoweringV3/QuotientRows.lean:249` | `ValidV3`, codec, `Holds`, `LeanAccepts`, `CompleteSide` | sorry | same | **CONDITIONAL** |
-| `tr_blockSim` | `LoweringV3/Rows.lean:191` | no `ValidV3`; only R/H/addr/g/cd | **PROVED** (`tr_sound_clean_noarm`) | pre is `StageInv .pairing`; no term | **CONDITIONAL** |
-| `tr_blockProgS` | `LoweringV3/Rows.lean:207` | `ValidV3`, H, addr, cd | **PROVED** (`tr_blockProgress` + `returnMptr_of_valid`) | same | **CONDITIONAL** |
+| `tr_blockSim` | `LoweringV3/Rows.lean:207` | no `ValidV3`; only R/H/addr/g/cd | **PROVED** (`tr_sound_clean_noarm`) | pre is `StageInv .pairing`; no term | **CONDITIONAL** |
+| `tr_blockProgS` | `LoweringV3/Rows.lean:229` | `ValidV3`, H, addr, cd | **PROVED** (`tr_blockProgress` + `returnMptr_of_valid`) | same | **CONDITIONAL** |
 
 `qlin_split_loop` (`LoweringV3/QuotientRows.lean:296`) has a concrete pre (k, x, r locals) and a
 proved base case (`qlin_split_loop_witness_base_case`, `:618`); its pre is **INHABITED** and its
@@ -176,6 +176,16 @@ a second row-shape whose inhabitancy is not covered by `InvFixture`.
 | `calldataOfV3` returns `.ok` on some data | `LoweringV3/Statements.lean:141` | **INHABITED** | `calldataOfV3_witness_ok` (`Statements.lean:169`, KAT) at the toy `katPlan`/`toyCodec`. |
 | `DeploymentV2 poseidonRender f1W keccak256 0` | `LoweringV2/Statements.lean:1119` | **INHABITED** | new `f1_deploymentV2`. |
 | `EntryFrameV3 poseidonRender f1W f1Lyt keccak256 fnSigVerifyProof st` | `LoweringV3/Statements.lean:3703` | **INHABITED** | new `f1_entryFrameV3`, via `entryFrame_inhabitedV3` and `poseidonValid_transcriptMptr`. |
+
+The two `ValidV3`-blocker facts are also positive theorems, not prose:
+
+| fact | file:line | status | evidence |
+|---|---|---|---|
+| `f1_plan_isNotTheGeneratorsPlan` | `Instances/ValidV3InhabitationF1.lean:315` | **INHABITED** | `genFilledOut.plan ≠ poseidonRender.plan`; the generator's `numPointSets = 3` against the raw `0`. It shows a payload-only repair cannot close `generated`. |
+| `poseidonValid_decidableHalf` | `Instances/PoseidonValid.lean:782` | **INHABITED** | the five decidable clauses plus the eight scalar payload fields at F1; the remaining blockers are named in its conclusion, not hidden. |
+| `poseidonValid_payload_scalars` | `Instances/PoseidonValid.lean:695` | **INHABITED** | 8 of 14 `PayloadAgrees` fields; `poseidonValid_payload_scalars_are_fields` (`:741`) ties them to the structure. |
+| `g1CodecZ.ofCompressed? = none` | `Instances/CurveSurface.lean` (`g1CodecZ_laws` vicinity) | **INHABITED** | `rfl`/`simp [g1CodecZ]`; the reason the compressed half is a placeholder and the headline law fails. |
+| `withCompressed_lawsV3` | `LoweringV3/Statements.lean:104` | **INHABITED** | the generic positive witness: any frozen-law codec plus an injective 48-byte map satisfies all eight V3 laws. |
 
 **The two frame facts are real.** `f1_deploymentV2` and `f1_entryFrameV3` are standard-three plus
 the D-P36a constants and the F1 native axioms named at the foot of
@@ -262,12 +272,12 @@ opaque-list leaves (`lag_agrees_lBlind` `:3477`). Remaining inhabitancy problems
 | statement | file:line | status | evidence |
 |---|---|---|---|
 | `runBody_mono` | `LoweringV3/Statements.lean:3824` | **CONDITIONAL** | sorry; the statement is not vacuous: the identity call relation and any run inhabit its `hcc`/`h`, but no proof. Owner A2/ST.13. |
-| `BodyTotal` | `LoweringV3/Statements.lean:3803` | **CONDITIONAL** | `GasTotal` is inhabited (`gasTotal_ofFun`, `:3792`), but no `BodyTotal` term at a render. |
+| `BodyTotal` | `LoweringV3/Statements.lean:3803` | **CONDITIONAL** | `GasTotal` is inhabited (`gasTotal_ofFun`, `:3794`), but no `BodyTotal` term at a render. |
 | `TotalV3` | `LoweringV3/Statements.lean:3917` | **CONDITIONAL** | inherited from `ValidV3`/`EntryFrameV3`/`hcodec`; `totalV3_correct` is only conditional on `ValidV3`. |
-| `SoundSide` | `LoweringV2/Statements.lean:1177` | **CONDITIONAL** | `soundSide_of_leanAccepts` (`LoweringV3/Statements.lean:3949`) gives it from `LeanAccepts`; at F1 `LeanAccepts` is false because `ofCompressed? = none`, so the only F1 route is the vacuous "no decode" one. |
+| `SoundSide` | `LoweringV2/Statements.lean:1177` | **CONDITIONAL** | `soundSide_of_leanAccepts` (`LoweringV3/Statements.lean:3946`) gives it from `LeanAccepts`; at F1 `LeanAccepts` is false because `ofCompressed? = none`, so the only F1 route is the vacuous "no decode" one. |
 | `CompleteSide` | `LoweringV2/Statements.lean:1186` | **CONDITIONAL** | no witness; `ChallengesGood` is its only live clause. |
 | `GasFree` | `LoweringV3/Statements.lean:3164` | **CONDITIONAL** | `gasFree_of_valid` (`Totality.lean:756`) proves it from `ValidV3`; no `ValidV3` witness. At F1 the `CertMeasure` report is a KAT, not a theorem. |
-| `GasTotal` | `LoweringV3/Statements.lean:3792` | **INHABITED** | `gasTotal_ofFun` (`:3795`) and `gasTotal_any`; `not_gasTotal_none` is the falsifier. |
+| `GasTotal` | `LoweringV3/Statements.lean:3792` | **INHABITED** | `gasTotal_ofFun` (`:3794`) and `gasTotal_any`; `not_gasTotal_none` is the falsifier. |
 
 ---
 
@@ -290,6 +300,14 @@ reads those files but does not claim their 42 leaves are proved.
 | `v3_planMeta` | `Certified.lean:388` | **CONDITIONAL** | CERT.1 suspect: final vs intermediate memory layout; `PlanMetaStable` is a candidate clause, not an edit; owner CERT.1/CERT.4. |
 | `v3_cdBound` | `Certified.lean:423` | **CONDITIONAL** | CERT.1 suspect: no generator check bounds `proofEnd`; `CdBoundCandidate` is a candidate output clause; owner CERT.1/CERT.6. |
 | `Done` | evidence `T7.lean:756`; **no V3 `Done` in tree** | **VACUOUS at F1** (the evidence shape) / **UNKNOWN** (V3) | `not_done_today` (`T7.lean:766`) refutes `Done` because `valid : poseidonRender.Valid` is `poseidonRender_notValid`; `not_done_today'` (`:813`) refutes it independently through `artifact.whole`. A V3 `Done` must use `ValidV3`, and `f1_ValidV3_false` gives the same refutation; landing it without changing `Done` would be a vacuous definition, not a witness. Owner DG.4/D2. |
+
+**CERT.1 probes.** `CertProbes.planMeta_of_stable` and `cdBoundB_of_candidate` are
+**INHABITED** conditional lemmas: they show the candidate clauses are sufficient, not that the
+candidate clauses hold. `PlanMetaStable` and `CdBoundCandidate` are **CONDITIONAL** statements
+with no term. `CertMeasure.report` is a `#eval` measurement (not a gate, and it has no `-- expect`
+annotation); its output is evidence only, not a theorem. The two CERT.1 suspects
+(`v3_planMeta`, `v3_cdBound`) remain **CONDITIONAL** and are the exact reason `generator_certified`
+cannot yet be non-vacuous.
 
 **The exact D2 question.** `SupportedInput` is *not known to be inhabited at F1*, and `generate` is
 *not known to return `.ok` on any real key*. The code sets `SupportedInput`'s field list, but the
