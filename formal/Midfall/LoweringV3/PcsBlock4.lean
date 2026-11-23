@@ -4445,4 +4445,167 @@ theorem pcsGenTail_contract {funs : FunEnv (Bridge.Dialect c g)}
       V st ⟨hcptrV, by simpa [den] using hdenV, hr⟩ V' st' o hevrun).1 hne
 
 
+theorem pcsEvalAcc_congr (rv : U256) (ev1 ev2 dxinv lbinv : Nat → U256) (m : Nat)
+    (h : ∀ j, j < m → ev1 j = ev2 j) :
+    ∀ k, k ≤ m → ∀ acc,
+      pcsEvalAcc rv ev1 dxinv lbinv k acc = pcsEvalAcc rv ev2 dxinv lbinv k acc
+  | 0, _, acc => rfl
+  | k + 1, hk, acc => by
+      rw [pcsEvalAcc, pcsEvalAcc,
+        pcsEvalAcc_congr rv ev1 ev2 dxinv lbinv m h k (by omega) acc,
+        h k (by omega)]
+
+set_option maxHeartbeats 16000000 in
+theorem pcsGenBody_contract {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off scratch hbls gasN selN selP : Nat)
+    (p a : Nat → U256) (x3v rv x2v fev cptr qep : U256)
+    (hm : 1 < points.length)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch hbls gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hnbls : BitVec.ofNat 256 hbls = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some
+      ((failFDecl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)), cenv'))
+    (hnames : PcsGenNames points.length (pcsPointRefs points distinctRotations)
+      (pcsKs points distinctRotations))
+    (hainlt : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat < blsR)
+    (hain0 : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat ≠ 0)
+    (hvalDx : ∀ i, i < points.length → a i = wAddmodAt x3v (rv - p i) rv)
+    (hvalLb : ∀ j, j < points.length →
+      a (points.length + j) = pcsLbasisVal rv (p j) p (pcsKs points distinctRotations j))
+    (hks_sub : ∀ g ∈ pcsPointRefs points distinctRotations,
+      ∀ k ∈ pcsKs points distinctRotations g.1, k ∈ pcsPointRefs points distinctRotations)
+    (hinv0Dist : ∀ j, 1 ≤ j → j < (pcsBatchInputs points.length).length →
+      pcsInvName points.length 0 ≠ pcsInvName points.length j)
+    (hinvEvalAll : ∀ i, pcsInvName points.length i ≠ "eval")
+    (hinvQSetAll : ∀ i, pcsInvName points.length i ≠ "Q_EVAL_SET_MPTR")
+    (hinvR0 : pcsInvName points.length 0 ≠ "r")
+    (htermF : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "f_eval")
+    (htermX2 : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "x2")
+    (hdenInvAll : ∀ i, i < (pcsBatchInputs points.length).length →
+      "den_inv" ≠ pcsInvName points.length i)
+    (hrv : rv = BitVec.ofNat 256 blsR)
+    (hcptr : cptr.toNat + setIdx * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hqep : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hdisj : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes ≤ scratch ∨
+      scratch + 192 ≤ qep.toNat + off * Midfall.Generator.wordBytes) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (pcsGenBody setIdx points distinctRotations off)
+      (PcsGPre (c := permissive (callsOf product)) (g := g)
+        x3v rv x2v fev cptr qep p (pcsPointRefs points distinctRotations)
+        (pcsBatchInputs points.length).length)
+      (PcsGPost (c := permissive (callsOf product)) (g := g)
+        rv x2v fev a points.length setIdx cptr.toNat off scratch qep) := by
+  let xs := pcsPointRefs points distinctRotations
+  let ks := pcsKs points distinctRotations
+  let invName := pcsInvName points.length
+  let n := (pcsBatchInputs points.length).length
+  let nm := pcsBatchName points.length
+  let pre0 := PcsGPre (c := permissive (callsOf product)) (g := g)
+    x3v rv x2v fev cptr qep p xs n
+  let dxL := xs.map (fun q => pcsDxStmt q.1 q.2)
+  let lbL := (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten
+  let bpL := pcsBpLines n nm
+  let bqCall := [pcsBqStmt (pcsBpName (n - 1))]
+  let bqL := pcsBqLines n nm invName
+  let inv0 := [GenAst.ylet (invName 0) (GenAst.yvar "bq")]
+  let denL := pcsDenInvLines points.length invName
+  let evalL := [pcsEvalStmt setIdx]
+  let termL := pcsTermLines points.length off (fun j => invName j) (fun j => invName (points.length + j))
+  let feL := [pcsFEvalStmt]
+  have hbodyEq : pcsGenBody setIdx points distinctRotations off =
+      ((dxL ++ lbL) ++ bpL) ++ (bqCall ++ bqL ++ inv0 ++ denL) ++ (evalL ++ termL ++ feL) := by
+    simp [pcsGenBody, dxL, lbL, bpL, bqCall, bqL, inv0, denL, evalL, termL, feL,
+      xs, ks, invName, n, nm, List.append_assoc]
+  intro V st hpre V' st' o hrun
+  rw [hbodyEq, List.append_assoc] at hrun
+  have hpfxC := pcsGenPrefix_contract (c := permissive (callsOf product)) (g := g)
+    (funs := funs) points distinctRotations xs ks n nm p a x3v rv x2v fev cptr qep
+    hm rfl rfl rfl rfl hnames hvalDx hvalLb hks_sub
+  have hbatchFn := pcsGenBatch_contract (g := g) (product := product) (funs := funs)
+    (decl := decl) (cenv := cenv) (cenv' := cenv')
+    points distinctRotations xs ks n nm invName a rv x2v fev cptr qep
+    scratch gasN selN selP hbls hm rfl rfl rfl rfl hlook hbody hparams hrets hnbls
+    hscratch hscratch256 hfail hnames
+    (fun i hi => hainlt i hi)
+    (fun i hi => hain0 i hi)
+    hinv0Dist hinvR0 hnames.invX2 hnames.invF hnames.invQ hrv
+    (fun i => hinvQSetAll i) (fun i => hinvEvalAll i)
+    (fun i hi => hdenInvAll i hi)
+  rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrun with
+      ⟨V1, st1, hpfx, hrest⟩ | ⟨hpfx, hne⟩
+  · obtain ⟨ho1, hp3, hst1⟩ := hpfxC V st hpre V1 st1 .normal hpfx
+    rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrest with
+        ⟨V2, st2, hbatch, htail⟩ | ⟨hbatch, hne2⟩
+    · -- batch
+      have hbatchC := hbatchFn V1 st1 hp3 V2 st2 .normal
+        (by simpa [bqCall, bqL, inv0, denL, List.append_assoc] using hbatch)
+      rcases hbatchC with ⟨ho2, hp4, hfr2, henv2⟩ | ⟨ho2, hrev2⟩
+      · -- tail
+        have htailC := pcsGenTail_contract (c := permissive (callsOf product)) (g := g)
+          (funs := funs) setIdx points.length off n scratch a invName rv x2v fev cptr qep
+          (by omega) (by simp [n, pcsBatchInputs_length]) hcptr hqep
+          (fun i => hinvEvalAll i) hnames.invX2 hnames.invF hnames.invQ
+          (fun i => hinvQSetAll i)
+          hnames.termEval hnames.termR hnames.termQ htermF htermX2
+          (fun j hj k hk => hnames.termDx j hj k hk)
+          (fun j hj k hk => hnames.termLb j hj k hk)
+          hnames.termDist hnames.dxEval hnames.lbEval hnames.dxTerm hnames.lbTerm
+          hnames.rEval hnames.rTerm hnames.qEval hnames.qTerm
+          V2 st2 hp4 V' st' o (by simpa [evalL, termL, feL, List.append_assoc] using htail)
+        rcases htailC with ⟨ho3, hfget, hfr3, henv3⟩ | ⟨ho3, hrev3⟩
+        have hfr12 : MemSameOutside st st2 scratch 192 := by
+          rw [← hst1]; exact hfr2
+        have henv12 : st2.env = st.env := by rw [henv2, hst1]
+        have hload (j : Nat) (hj : j < points.length) :
+            loadWord st2.memory
+              (qep.toNat + (off + j) * Midfall.Generator.wordBytes) =
+            loadWord st.memory
+              (qep.toNat + (off + j) * Midfall.Generator.wordBytes) := by
+          have hwb : Midfall.Generator.wordBytes = 32 := rfl
+          rw [hwb]
+          have hdisj' := hdisj
+          rw [hwb] at hdisj'
+          apply loadWord_eq_of_memSameOutside hfr12
+          have hstep : (off + j + 1) * 32 ≤ (off + points.length) * 32 :=
+            Nat.mul_le_mul_right 32 (by omega)
+          have hstep' : (off + j) * 32 + 32 = (off + j + 1) * 32 := by ring
+          have hbase : (off + 0) * 32 ≤ (off + j) * 32 :=
+            Nat.mul_le_mul_right 32 (by omega)
+          rcases hdisj' with h1 | h2
+          · left; omega
+          · right; omega
+        refine Or.inl ⟨ho3, ?_, ?_, ?_⟩
+        · rw [hfget]
+          congr 1
+          unfold pcsGenFEval
+          rw [henv12]
+          congr 1
+          exact pcsEvalAcc_congr rv
+            (fun j => loadWord st2.memory
+              (qep.toNat + (off + j) * Midfall.Generator.wordBytes))
+            (fun j => loadWord st.memory
+              (qep.toNat + (off + j) * Midfall.Generator.wordBytes))
+            (fun j => SIInv (a j)) (fun j => SIInv (a (points.length + j)))
+            points.length hload points.length le_rfl _
+        · exact pcsMemSameOutside_trans hfr12 hfr3
+        · rw [henv3, henv12]
+        · exact Or.inr ⟨ho3, hrev3⟩
+      · exfalso; cases ho2
+    · -- batch halted
+      have hbatchC := hbatchFn V1 st1 hp3 V' st' o
+        (by simpa [bqCall, bqL, inv0, denL, List.append_assoc] using hbatch)
+      rcases hbatchC with ⟨ho2, _⟩ | ⟨ho2, hrev2⟩
+      · exact absurd ho2 hne2
+      · exact Or.inr ⟨ho2, hrev2⟩
+  · exact absurd (hpfxC V st hpre V' st' o hpfx).1 hne
+
+
 end Midfall.LoweringV3.PcsBlock4
