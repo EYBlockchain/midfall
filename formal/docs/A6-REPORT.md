@@ -125,6 +125,7 @@ alone; D1 and A6 need the same schedule walk, tracked once at widths and once at
 | `readG1Groups` | read a list of homogeneous G1 groups in order |
 | **`runsAll_readG1Groups`** | **loop flattening**: `counts.sum = Qs.length` gives `RunsAll (readG1Groups counts) (Qs.map Msg.g1)`; the advice/lookup/perm/trash loops are instances of this once their counts are read off `tpEvents` |
 | `readFrGroups` / **`runsAll_readFrGroups`** | the scalar twin: `counts.sum = Qs.length` gives `RunsAll (readFrGroups counts) (Qs.map Msg.fr)`; the eval-block loops are instances |
+| **`runsAll_readG1Groups_append`** | concatenating count lists composes the group reader: `RunsAll (readG1Groups (c₁ ++ c₂)) (Qs₁.map g1 ++ Qs₂.map g1)` |
 
 This is the consumption/cursor counterpart of D1's `PresWidthSeq` (which has no closure layer yet).
 The residual is exactly the loop walk: each parser loop's `foldlM`/`mapM` must be flattened into

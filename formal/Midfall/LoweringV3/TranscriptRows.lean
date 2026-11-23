@@ -1396,6 +1396,43 @@ def readFrGroups (E : VerifierEnv p G₁ G₂ Gₜ) : List Nat → TranscriptM U
   | [] => pure ()
   | n :: ns => (tmReadN (hashableFr (p := p)) n) >>= fun _ => readFrGroups E ns
 
+/-- Concatenating group-count lists composes the group reader. -/
+theorem runsAll_readG1Groups_append (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (counts₁ counts₂ : List Nat) (Qs₁ Qs₂ : List G₁),
+      Qs₁.length = counts₁.sum → Qs₂.length = counts₂.sum →
+      RunsAll E (readG1Groups E (counts₁ ++ counts₂))
+        (Qs₁.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          Qs₂.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  intro counts₁
+  induction counts₁ with
+  | nil =>
+      intro counts₂ Qs₁ Qs₂ h₁ h₂
+      have hQs : Qs₁ = [] := List.eq_nil_of_length_eq_zero (by simpa using h₁)
+      subst hQs
+      simpa only [List.nil_append, List.map_nil, List.nil_append] using
+        runsAll_readG1Groups E counts₂ Qs₂ h₂
+  | cons n ns ih =>
+      intro counts₂ Qs₁ Qs₂ h₁ h₂
+      have hle : n ≤ Qs₁.length := by rw [h₁, List.sum_cons]; omega
+      have hlen₁ : (Qs₁.take n).length = n := by rw [List.length_take]; omega
+      have hlen₂ : (Qs₁.drop n).length = ns.sum := by
+        rw [List.length_drop, h₁, List.sum_cons]; omega
+      have hsplit : Qs₁.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          (Qs₁.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs₁.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.cons_append, readG1Groups, hsplit]
+      simp only [List.map_append, List.append_assoc]
+      refine RunsAll.bind E ?_ ?_
+      · intro t pref rest hbuf hpos hp henc hwidth
+        rw [← ByteArray.append_assoc] at hbuf
+        obtain ⟨arr, t', hrun, hpos', hbuf'⟩ :=
+          tmReadN_g1_wire E n t pref (Qs₁.take n) rest hlen₁ hbuf hpos hp henc hwidth
+        refine ⟨arr, t', hrun, hbuf', ?_⟩
+        simpa only [List.map_map, Function.comp_def] using hpos'
+      · intro _
+        exact ih counts₂ (Qs₁.drop n) Qs₂ hlen₂ h₂
+
 theorem runsAll_readFrGroups (E : VerifierEnv p G₁ G₂ Gₜ) :
     ∀ (counts : List Nat) (Qs : List (Fr p)),
       Qs.length = counts.sum →
