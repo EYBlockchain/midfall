@@ -2856,6 +2856,173 @@ theorem trashFold_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁
   rw [AlgebraWidths.flatten_map_replicate_const, List.length_range] at h
   exact h
 
+/-- A row's commitment-pass width from the chunking data. -/
+theorem commitRowSum_eq {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (row : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+    (cl : List (LogupChunkedArgument (Fr p)))
+    (h : row.toList.map (fun x => x.2.numChunks) = cl.map LogupChunkedArgument.numChunks) :
+    (row.toList.map (fun x => x.2.numChunks + 1)).sum
+      = (cl.map (fun c => c.numChunks + 1)).sum := by
+  have := congrArg (fun l => (l.map (fun n => n + 1)).sum) h
+  simpa [List.map_map, Function.comp_def] using this
+
+/-- The advice-commitment scatter fold reads nothing. -/
+theorem advPairsFold_width {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : VerifyingKey (Fr p) G₁) (pairs : List (List (Nat × G₁))) :
+    PresWidthSeq [] (pairs.foldlM (init := #[]) fun (acc : Array (Array G₁))
+      (row : List (Nat × G₁)) => do
+        let placed ← StateT.lift (scatterIndexed vk.cs.numAdviceColumns row
+          "proofs/src/plonk/verifier.rs:118")
+        pure (acc.push placed)) := by
+  have h := PresWidthSeq.listFoldlM
+    (f := fun (acc : Array (Array G₁)) (row : List (Nat × G₁)) => do
+      let placed ← StateT.lift (scatterIndexed vk.cs.numAdviceColumns row
+        "proofs/src/plonk/verifier.rs:118")
+      pure (acc.push placed))
+    (wf := fun _ => [])
+    (fun acc row => PresWidthSeq.bind_pure (PresWidthSeq.lift _) _) pairs #[]
+  simpa [AlgebraWidths.flatten_map_nil] using h
+
+/-- A `throw` has no successful run. -/
+theorem throw_run_ne {α : Type} (f : Fault) (t : Transcript) (b : α × Transcript) :
+    (MonadExcept.throw f : TranscriptM α).run t ≠ .ok b := by
+  intro h
+  change (Except.error f : Except Fault (α × Transcript)) = .ok b at h
+  cases h
+
+/-- A throwing program has any width sequence (it has no successful run). -/
+theorem PresWidthSeq.throwFault' {α : Type} (ws : List Nat) (f : Fault) :
+    PresWidthSeq ws (MonadExcept.throw f : TranscriptM α) := by
+  intro t t' a h
+  change (Except.error f : Except Fault (α × Transcript)) = .ok (a, t') at h
+  cases h
+
+/-- **THE `parseTrace` WIDTH WALK.** At the deployed profile (one committed
+    instance, one proof row) every read `parseTrace` performs appends one `g1`
+    width, and the whole run appends `parseTraceReadCount` of them, in order:
+    advice columns, multiplicities, permutation products, lookup commitments,
+    trashcans. Absorbs (`tmCommon`) and squeezes do not log. This is the proved
+    width half of `ParseTraceSchedule`; the count identification against
+    `prefixG1Count` is `parseTraceSchedule_of_prefixG1Count`. -/
+theorem parseTrace_widths {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁) (x : G₁) (row : Array (Fr p))
+    {tr : VerifierTrace (Fr p) G₁} {t t' : Transcript}
+    (h : (parseTrace g1 Features.solidity vk #[#[x]] #[#[row]]).run t = .ok (tr, t')) :
+    t'.log.toList.map (fun r => r.1) = t.log.toList.map (fun r => r.1) ++
+      List.replicate (parseTraceReadCount vk) (hashableG1 g1).width := by
+  unfold parseTrace at h
+  rw [StateT_run_let] at h
+  simp only [Features.solidity, if_true] at h
+  by_cases hc1 : ((#[#[x]] : Array (Array G₁)).isEmpty = true)
+  · simp at hc1
+  rw [if_neg hc1] at h
+  by_cases hc2 : (((#[#[x]] : Array (Array G₁)).toList.any
+    fun r => r.size ≠ (Option.map (fun r => r.size)
+      ((#[#[x]] : Array (Array G₁))[0]?)).getD 0) = true)
+  · simp at hc2
+  rw [if_neg hc2] at h
+  by_cases hc3 : ((((#[#[x]] : Array (Array G₁)).toList.zip
+    ([#[row]] : List (Array (Array (Fr p))))).any
+      fun q => q.1.size + q.2.size ≠ vk.cs.numInstanceColumns) = true)
+  · rw [if_pos hc3] at h
+    obtain ⟨a1, t1, hbad, _⟩ := PresWidthSeq.run_bind_ok h
+    exact absurd hbad (throw_run_ne _ _ _)
+  rw [if_neg hc3] at h
+  have hsize : (#[#[row]] : Array (Array (Array (Fr p)))).size = 1 := rfl
+  -- peel the fifteen binds
+  obtain ⟨_, t1, h1, h2⟩ := PresWidthSeq.run_bind_ok h
+  obtain ⟨_, t2, hAbs1, h3⟩ := PresWidthSeq.run_bind_ok h2
+  obtain ⟨_, t3, hAbs2, h4⟩ := PresWidthSeq.run_bind_ok h3
+  obtain ⟨advPairs, t4, hPhase, h5⟩ := PresWidthSeq.run_bind_ok h4
+  obtain ⟨_, t5, hAdv, h6⟩ := PresWidthSeq.run_bind_ok h5
+  obtain ⟨_, t6, hChal, h7⟩ := PresWidthSeq.run_bind_ok h6
+  obtain ⟨_, t7, hTheta, h8⟩ := PresWidthSeq.run_bind_ok h7
+  obtain ⟨lm, t8, hMul, h9⟩ := PresWidthSeq.run_bind_ok h8
+  obtain ⟨_, t9, hBeta, h10⟩ := PresWidthSeq.run_bind_ok h9
+  obtain ⟨_, t10, hGamma, h11⟩ := PresWidthSeq.run_bind_ok h10
+  obtain ⟨_, t11, hPerm, h12⟩ := PresWidthSeq.run_bind_ok h11
+  obtain ⟨lks, t12, hLks, h13⟩ := PresWidthSeq.run_bind_ok h12
+  obtain ⟨_, t13, hTrChal, h14⟩ := PresWidthSeq.run_bind_ok h13
+  obtain ⟨_, t14, hTrash, h15⟩ := PresWidthSeq.run_bind_ok h14
+  obtain ⟨_, t15, hY, h16⟩ := PresWidthSeq.run_bind_ok h15
+  have ht' : t15 = t' := (Prod.mk.inj (Except.ok.inj h16)).2
+  -- the per-step log equations
+  have e1 : t1.log.toList.map (fun r => r.1)
+      = t.log.toList.map (fun r => r.1) ++ [] :=
+    PresWidthSeq.common _ _ t t1 _ h1
+  have e2 : t2.log.toList.map (fun r => r.1)
+      = t1.log.toList.map (fun r => r.1) ++ [] :=
+    absorbCommitted_width _ _ t1 t2 _ hAbs1
+  have e3 : t3.log.toList.map (fun r => r.1)
+      = t2.log.toList.map (fun r => r.1) ++ [] :=
+    absorbInst_width _ t2 t3 _ hAbs2
+  have e4 : t4.log.toList.map (fun r => r.1)
+      = t3.log.toList.map (fun r => r.1) ++
+        List.replicate (adviceReadCount vk.cs 1) (hashableG1 g1).width :=
+    phaseFold_width g1 vk 1 _ t3 t4 _ hPhase
+  have e5 : t5.log.toList.map (fun r => r.1)
+      = t4.log.toList.map (fun r => r.1) ++ [] :=
+    advPairsFold_width vk advPairs.1 t4 t5 _ hAdv
+  have e6 : t6.log.toList.map (fun r => r.1)
+      = t5.log.toList.map (fun r => r.1) ++ [] :=
+    PresWidthSeq.lift _ t5 t6 _ hChal
+  have e7 : t7.log.toList.map (fun r => r.1)
+      = t6.log.toList.map (fun r => r.1) ++ [] :=
+    PresWidthSeq.squeezeChallenge (p := p) t6 t7 _ hTheta
+  have e8 : t8.log.toList.map (fun r => r.1)
+      = t7.log.toList.map (fun r => r.1) ++
+        List.replicate vk.cs.lookups.toList.length (hashableG1 g1).width := by
+    simpa using multFold_width g1 vk 1 _ t7 t8 _ hMul
+  have e9 : t9.log.toList.map (fun r => r.1)
+      = t8.log.toList.map (fun r => r.1) ++ [] :=
+    PresWidthSeq.squeezeChallenge (p := p) t8 t9 _ hBeta
+  have e10 : t10.log.toList.map (fun r => r.1)
+      = t9.log.toList.map (fun r => r.1) ++ [] :=
+    PresWidthSeq.squeezeChallenge (p := p) t9 t10 _ hGamma
+  have e11 : t11.log.toList.map (fun r => r.1)
+      = t10.log.toList.map (fun r => r.1) ++
+        List.replicate (Permutation.numChunksOf vk.cs.permutation.columns.size
+          (vk.csDegree - 2)) (hashableG1 g1).width := by
+    simpa using permFold_width g1 vk 1 _ t10 t11 _ hPerm
+  -- the multiplicity rows: one row, chunking fixed by `lookupMultiplicities_shape`
+  have hlmSize : lm.toList.length = 1 := by
+    have := foldlM_push_size (List.range 1) (fun (_ : Nat) => multRow g1 vk)
+      #[] lm t7 t8 (by simpa [multFold, multRow, hsize] using hMul)
+    simpa using this
+  have hshape := lookupMultiplicities_shape vk.cs.lookups.toList vk.csDegree 1
+    (hashableG1 g1) lm t7 t8 (by simpa [multFold, multRow, hsize] using hMul)
+  have hc : ∀ row ∈ lm.toList,
+      (row.toList.map (fun x => x.2.numChunks + 1)).sum
+        = lookupCommitReadCount vk.csDegree vk.cs.lookups.toList := by
+    intro row hrow
+    obtain ⟨cl, hcl, hrowcl⟩ := hshape row hrow
+    rw [lookupCommitReadCount]
+    simp only [hcl, Option.getD_some]
+    exact commitRowSum_eq row cl hrowcl
+  have e12 : t12.log.toList.map (fun r => r.1)
+      = t11.log.toList.map (fun r => r.1) ++
+        List.replicate (lm.toList.length *
+          lookupCommitReadCount vk.csDegree vk.cs.lookups.toList)
+          (hashableG1 g1).width :=
+    commitRows_width_const g1 lm.toList _ hc t11 t12 _ hLks
+  have e13 : t13.log.toList.map (fun r => r.1)
+      = t12.log.toList.map (fun r => r.1) ++ [] :=
+    PresWidthSeq.squeezeChallenge (p := p) t12 t13 _ hTrChal
+  have e14 : t14.log.toList.map (fun r => r.1)
+      = t13.log.toList.map (fun r => r.1) ++
+        List.replicate vk.cs.trashcans.size (hashableG1 g1).width := by
+    simpa using trashFold_width g1 vk 1 _ t13 t14 _ hTrash
+  have e15 : t'.log.toList.map (fun r => r.1)
+      = t14.log.toList.map (fun r => r.1) ++ [] := by
+    rw [← ht']
+    exact PresWidthSeq.squeezeChallenge (p := p) t14 t15 _ hY
+  rw [hlmSize, Nat.one_mul] at e12
+  rw [e15, e14, e13, e12, e11, e10, e9, e8, e7, e6, e5, e4, e3, e2, e1]
+  -- collapse the concatenation of `replicate`s into the single total count
+  unfold parseTraceReadCount
+  simp only [List.nil_append, List.append_nil, List.append_assoc,
+    List.replicate_append_replicate, Array.length_toList]
+
 theorem map_add_three_map {α : Type} (l : List α) (f : α → Nat) :
     (l.map f).map (fun x => x + 3) = l.map (fun x => f x + 3) := by
   induction l with
