@@ -3085,6 +3085,65 @@ theorem b3_exec_seed {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dial
       obtain ⟨hv, hmem, henv, hhalt⟩ := b3_eval_wordExpr he
       exact ⟨rfl, _, hv, rfl, hmem, henv, hhalt⟩
   | letHalt he => exact (b3_eval_wordExpr_halt he).elim
+
+/-! ### Block 3: the persist statement and ∃-form value variants -/
+
+theorem b1_eval_var_vals {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : Ident} {av : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.var x) (.vals [av] st')) :
+    ∃ av', VEnv.get V x = some av' ∧ st' = st := by
+  cases h with
+  | var hget => exact ⟨_, hget, rfl⟩
+
+theorem b3_eval_x1Pow_vals {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} (i : Nat) {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (GenAstPcs.x1Pow i) (.vals [cv] st')) :
+    ∃ pv xv, VEnv.get V "X1_POWERS_MPTR" = some pv ∧
+      xv = loadWord st.memory (pv + BitVec.ofNat 256 (i * 32)).toNat ∧
+      st' = touchMemory st (pv + BitVec.ofNat 256 (i * 32)).toNat 32 := by
+  obtain ⟨pv, hpv, hxv, hsth⟩ := b3_eval_x1Pow (c := c) (g := g) i h
+  exact ⟨pv, _, hpv, hxv, hsth⟩
+
+theorem b3_eval_wordExpr_vals {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {w : Midfall.Generator.Word}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (GenAstPcs.wordExpr w) (.vals [cv] st')) :
+    ∃ v, b3word st V w = some v ∧ st'.memory = st.memory ∧ st'.env = st.env ∧
+      st'.halted = st.halted := by
+  obtain ⟨hwv, hwm, hwe, hwh⟩ := b3_eval_wordExpr (c := c) (g := g) h
+  exact ⟨_, hwv, hwm, hwe, hwh⟩
+
+/-- The persist statement of block 3: `mstore(add(Q_EVAL_SET_MPTR, (off+k)*32), q_eval_set_k)`. -/
+theorem b3_exec_persist {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (k off R : Nat) (hR : R < 2 ^ 256) (hoff : (off + k) * 32 < 2 ^ 256)
+    (hsum : R + (off + k) * 32 < 2 ^ 256)
+    (hbase : VEnv.get V "Q_EVAL_SET_MPTR" = some (BitVec.ofNat 256 R))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAstPcs.mstoreAdd "Q_EVAL_SET_MPTR" ((off + k) * Midfall.Generator.wordBytes)
+        (GenAst.yvar ("q_eval_set_" ++ toString k)))
+      V' st' o) :
+    o = .normal ∧ V' = V ∧ ∃ v, VEnv.get V ("q_eval_set_" ++ toString k) = some v ∧
+      st'.memory = storeWord st.memory (R + (off + k) * 32) v ∧
+      st'.env = st.env ∧ st'.halted = st.halted := by
+  obtain ⟨ho, hV, pv, vv, hpv, hvv, hmem, henv, hhalt⟩ :=
+    b1_exec_mstore_add_var (p := "Q_EVAL_SET_MPTR")
+      (val := "q_eval_set_" ++ toString k) (off := (off + k) * Midfall.Generator.wordBytes) h
+  refine ⟨ho, hV, vv, hvv, ?_, henv, hhalt⟩
+  rw [hbase] at hpv
+  have hpv' : pv = BitVec.ofNat 256 R := (Option.some.inj hpv).symm
+  rw [hpv'] at hmem
+  rw [show Midfall.Generator.wordBytes = 32 from rfl] at hmem
+  rw [hmem, b1_addr_toNat hR hoff hsum]
+#assert_axioms Midfall.LoweringV3.PcsRows.b1_eval_var_vals
+  [propext, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow_vals
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_wordExpr_vals
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_exec_persist
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_x1Pow_halt
