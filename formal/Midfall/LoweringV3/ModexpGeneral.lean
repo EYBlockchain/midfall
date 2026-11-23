@@ -2037,7 +2037,7 @@ structure BridgeReject (st st' : EvmState) (V' : VEnv (Bridge.Dialect c g)) (o :
   henv : st'.env = st.env
   hhalt : st'.halted = st.halted
 
-structure BridgeHeadSucc (p a : Nat) (gv x_last : U256) (st st' : EvmState)
+structure BridgeHeadSucc (p a mp : Nat) (gv x_last : U256) (st st' : EvmState)
     (V' : VEnv (Bridge.Dialect c g)) (o : Outcome) : Prop where
   hok : o = .normal
   hgp : VEnv.get V' "gp" = some (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
@@ -2048,6 +2048,7 @@ structure BridgeHeadSucc (p a : Nat) (gv x_last : U256) (st st' : EvmState)
     (BitVec.ofNat 256 Midfall.Yul.blsR) ≠ 0
   hgp_mptr : VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p)
   hmstart : VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a)
+  hmptr : VEnv.get V' "mptr" = some (BitVec.ofNat 256 mp)
   hr : VEnv.get V' "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR)
   hret_some : (VEnv.get V' "ret").isSome
   hpf_some : (VEnv.get V' "precompile_failed").isSome
@@ -2071,7 +2072,7 @@ theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dial
         loadWord st.memory mp = x_last)
       (fun _ st V' st' o =>
         BridgeReject st st' V' o ∨
-        BridgeHeadSucc p a gv x_last st st' V' o) := by
+        BridgeHeadSucc p a mp gv x_last st st' V' o) := by
   rw [bi_bridge_head_form]
   intro V st hpre V' st' o hrun
   obtain ⟨hmptr, hg, hgp_mptr, hmstart, hr, hret, hpf, hload⟩ := hpre
@@ -2146,6 +2147,10 @@ theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dial
                     Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "mptr_start") (by decide)]
                   exact hmstart,
                 by
+                  rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "mptr") (by decide),
+                    Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "mptr") (by decide)]
+                  exact hmptr,
+                by
                   rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "r") (by decide)]
                   exact hgetr,
                 by
@@ -2204,7 +2209,7 @@ theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dial
   · obtain ⟨-, -, -, -, ho1, -, -⟩ := exec_let_mload_var_inv (x := "x_last") (y := "mptr") h1
     exact absurd ho1 hne1
 
-structure BridgeSucc (p a : Nat) (gp' x_last : U256) (st st' : EvmState)
+structure BridgeSucc (p a mp : Nat) (gp' x_last : U256) (st st' : EvmState)
     (V' : VEnv (Bridge.Dialect c g)) (o : Outcome) : Prop where
   hok : o = .normal
   hgp : VEnv.get V' "gp" = some gp'
@@ -2212,6 +2217,7 @@ structure BridgeSucc (p a : Nat) (gp' x_last : U256) (st st' : EvmState)
   hgp_ne : gp' ≠ 0
   hgp_mptr : VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p)
   hmstart : VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a)
+  hmptr : VEnv.get V' "mptr" = some (BitVec.ofNat 256 mp)
   hr : VEnv.get V' "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR)
   hret_some : (VEnv.get V' "ret").isSome
   hpf_some : (VEnv.get V' "precompile_failed").isSome
@@ -2236,7 +2242,7 @@ theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c
         loadWord st.memory mp = x_last)
       (fun _ st V' st' o =>
         BridgeReject st st' V' o ∨
-        BridgeSucc p a (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
+        BridgeSucc p a mp (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
           (BitVec.ofNat 256 Midfall.Yul.blsR)) x_last st st' V' o) := by
   have hsplit : seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10 =
       seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 4 ++
@@ -2254,12 +2260,13 @@ theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c
           (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
             (BitVec.ofNat 256 Midfall.Yul.blsR)) hp
           V1 st1 ⟨hs.hgp_mptr, hs.hgp, hs.hr⟩ V' st' o hstores
-      refine Or.inr ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      refine Or.inr ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
       · rw [hV']; exact hs.hgp
       · exact hs.hgp_canon
       · exact hs.hgp_ne
       · rw [hV']; exact hs.hgp_mptr
       · rw [hV']; exact hs.hmstart
+      · rw [hV']; exact hs.hmptr
       · rw [hV']; exact hs.hr
       · rw [hV']; exact hs.hret_some
       · rw [hV']; exact hs.hpf_some
