@@ -1764,14 +1764,14 @@ theorem lag_step21 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
         VEnv.get V "x_n_minus_1_inv" = some (loadWord st.memory (C.D + 32 * (n + m))) ∧
         VEnv.get V "l_last" = some (loadWord st.memory C.D))
       (fun _ st V' st' o => o = .normal ∧
-        ∃ mem0 mem, LagP14 C ret pf inv st0 mem0 mem V' st') := by
+        ∃ mem, LagP14 C ret pf inv st0 mem mem V' st') := by
   intro V st hg V' st' o hrun
   obtain ⟨hLG, hxi, hll⟩ := hg
   obtain ⟨ho, hst, hV⟩ := lag_stmt21_contract (funs := funs) (consts := consts) (k := k) (n := n)
     (m := m) (aD := C.D) hD haD hm32 haDm V st trivial V' st' o hrun
   obtain ⟨hsucc, hpf, hom, hxn, hie, hlb, hlicp, hmpe, hszero, hinv, henv, hhalt, hout⟩ := hLG
   rw [hst]
-  refine ⟨ho, st.memory, st.memory, ?_⟩
+  refine ⟨ho, st.memory, ?_⟩
   split_conj
   · rw [hV, venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "l_0")
       (y := "success") (by decide)]; exact hsucc
@@ -1811,7 +1811,7 @@ theorem lag_group12 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : Lag
     StmtsContractAll (D := Bridge.Dialect c g) funs
       (seg (lagInner consts k n m) 19 3) (LagP13 C ret pf inv st0)
       (fun _ _ V' st' o => o = .normal ∧
-        ∃ mem0 mem, LagP14 C ret pf inv st0 mem0 mem V' st') := by
+        ∃ mem, LagP14 C ret pf inv st0 mem mem V' st') := by
   have hsplit : seg (lagInner consts k n m) 19 3 =
       seg (lagInner consts k n m) 19 1 ++ (seg (lagInner consts k n m) 20 1 ++
         seg (lagInner consts k n m) 21 1) := by
