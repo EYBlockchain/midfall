@@ -1160,4 +1160,168 @@ theorem ecPairing_call_contract {g : ExternalGas} (product : PairingProduct)
 #assert_axioms Midfall.LoweringV2.Blocks.EcPairing.ecPairing_call_contract
   [propext, Classical.choice, Quot.sound] native []
 
+/-- **THE `ec_pairing` CALL AT THE SLICE'S LITERAL POINTERS.** The slice passes
+    `Expr.var "success"` and the two `fpVal` sites, which the const lookups make
+    `Expr.lit (.number …)`; this is the same inversion as `ecPairing_call_contract`
+    with the two `Step.var` heads replaced by `Step.lit`. -/
+theorem ecPairing_call_contract_lits {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (scratch g2 neg gas errPre errProof rhsNat lhsNat : Nat)
+    (LA GB LB GN : Bytes)
+    (hlook : lookupFun funs "ec_pairing" = some (decl, cenv))
+    (hbody : decl.body = ecPairingBodyLit scratch g2 neg gas 0x0f 768 32 errPre errProof)
+    (hparams : decl.params = ["success", "lhs_mptr", "rhs_mptr"])
+    (hrets : decl.rets = ["ret"])
+    (hfail : lookupFun cenv "fail" =
+      some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv'))
+    (hsrc1 : ∀ st, bytesAt st (BitVec.ofNat 256 rhsNat).toNat 128 = LA)
+    (hsrc2 : ∀ st, bytesAt st (g2 % 2^256) 256 = GB)
+    (hsrc3 : ∀ st, bytesAt st (BitVec.ofNat 256 lhsNat).toNat 128 = LB)
+    (hsrc4 : ∀ st, bytesAt st (neg % 2^256) 256 = GN)
+    (hdisj1 : (scratch % 2^256) + 768 ≤ (BitVec.ofNat 256 rhsNat).toNat ∨
+      (BitVec.ofNat 256 rhsNat).toNat + 128 ≤ (scratch % 2^256))
+    (hdisj2 : (scratch % 2^256) + 768 ≤ (g2 % 2^256) ∨ (g2 % 2^256) + 256 ≤ (scratch % 2^256))
+    (hdisj3 : (scratch % 2^256) + 768 ≤ (BitVec.ofNat 256 lhsNat).toNat ∨
+      (BitVec.ofNat 256 lhsNat).toNat + 128 ≤ (scratch % 2^256))
+    (hdisj4 : (scratch % 2^256) + 768 ≤ (neg % 2^256) ∨ (neg % 2^256) + 256 ≤ (scratch % 2^256))
+    (hg2 : g2 < 2^256) (hneg : neg < 2^256) (hscratchWin : scratch + 768 < 2^256) :
+    ∀ (V : VEnv (Bridge.Dialect (permissive (callsOf product)) g)) (st : EvmState)
+      (r : EResult (Bridge.Dialect (permissive (callsOf product)) g)),
+      VEnv.get V "success" = some (1 : U256) →
+      EvalExpr (Bridge.Dialect (permissive (callsOf product)) g) funs V st
+        (Expr.call "ec_pairing"
+          [Expr.var "success", Expr.lit (.number rhsNat), Expr.lit (.number lhsNat)]) r →
+      (∃ st', r = .vals [1] st' ∧
+        (∀ x, x < (scratch % 2^256) ∨ (scratch % 2^256) + 768 ≤ x →
+          st'.memory x = st.memory x) ∧
+        product (pairingFrame [(LA, GB), (LB, GN)]) = true) ∨
+      (∃ st', r = .halt st' ∧ Reverted st') := by
+  intro V st r hsucc he
+  have hhoist : hoist (Bridge.Dialect (permissive (callsOf product)) g)
+      (ecPairingBodyLit scratch g2 neg gas 0x0f 768 32 errPre errProof) = [] := rfl
+  have hfail' : lookupFun (hoist (Bridge.Dialect (permissive (callsOf product)) g)
+      (ecPairingBodyLit scratch g2 neg gas 0x0f 768 32 errPre errProof) :: cenv) "fail" =
+      some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv') := by
+    rw [hhoist]; simpa [lookupFun] using hfail
+  cases he with
+  | callOk hargs hlook' hlen hbodyrun ho =>
+      cases hargs with
+      | argsCons hrest hhead3 =>
+        cases hrest with
+        | argsCons hrest2 hhead2 =>
+          cases hrest2 with
+          | argsCons hrest3 hhead1 =>
+            cases hrest3 with
+            | argsNil =>
+              cases hhead1 with
+              | lit =>
+                cases hhead2 with
+                | lit =>
+                  cases hhead3 with
+                  | var hget3 =>
+                    rename_i v3
+                    have hv3 : v3 = 1 :=
+                      (Option.some.inj (by rw [hsucc] at hget3; exact hget3)).symm
+                    rw [hlook] at hlook'
+                    cases hlook'
+                    rw [hparams] at hlen
+                    rw [hparams, hrets, hbody] at hbodyrun
+                    cases hbodyrun with
+                    | block hstmts =>
+                      rw [hv3] at hstmts
+                      simp only [Bridge.Dialect, YulSemantics.EVM.litValue] at hstmts
+                      have hbodyC := ecPairingBodyLit_product_runs
+                        (c := permissive (callsOf product))
+                        (funs := hoist (Bridge.Dialect (permissive (callsOf product)) g)
+                          (ecPairingBodyLit scratch g2 neg gas 0x0f 768 32 errPre errProof) :: cenv)
+                        (st := st) (hfail := ⟨cenv', hfail'⟩) (product := product)
+                        (LA := LA) (GB := GB) (LB := LB) (GN := GN)
+                        (lhsW := BitVec.ofNat 256 rhsNat)
+                        (rhsW := BitVec.ofNat 256 lhsNat) (scratch := scratch)
+                        (g2 := g2) (neg := neg) (gas := gas)
+                        (errPre := errPre) (errProof := errProof)
+                        (hsrc1 := hsrc1 st) (hsrc2 := hsrc2 st) (hsrc3 := hsrc3 st)
+                        (hsrc4 := hsrc4 st) (hdisj1 := hdisj1) (hdisj2 := hdisj2)
+                        (hdisj3 := hdisj3) (hdisj4 := hdisj4) (hg2 := hg2)
+                        (hneg := hneg) (hscratchWin := hscratchWin)
+                      have hpost := hbodyC _ _ _ (by exact hstmts)
+                      have hpost' := hpost.elim
+                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, hpres, hprod⟩
+                      · rcases ho with hn | hl
+                        · exact absurd (hn.symm.trans hon) (by decide)
+                        · exact absurd (hl.symm.trans hon) (by decide)
+                      · have houter : (["success", "lhs_mptr", "rhs_mptr"].zip
+                            [1, BitVec.ofNat 256 rhsNat, BitVec.ofNat 256 lhsNat] ++
+                            bindZeros (Bridge.Dialect (permissive (callsOf product)) g) ["ret"]) =
+                            [("success", (1 : U256)), ("lhs_mptr", BitVec.ofNat 256 rhsNat),
+                              ("rhs_mptr", BitVec.ofNat 256 lhsNat),
+                              ("ret", (Bridge.Dialect (permissive (callsOf product)) g).zero)] := by
+                          simp [bindZeros]
+                        refine Or.inl ⟨_, ?_, hpres, hprod⟩
+                        simp only [Bridge.Dialect, YulSemantics.EVM.litValue]
+                        rw [hrets, hv3, houter]
+                        simp only [List.map_cons, List.map_nil]
+                        rw [hret]
+                        rfl
+  | callHalt hargs hlook' hlen hbodyrun =>
+      cases hargs with
+      | argsCons hrest hhead3 =>
+        cases hrest with
+        | argsCons hrest2 hhead2 =>
+          cases hrest2 with
+          | argsCons hrest3 hhead1 =>
+            cases hrest3 with
+            | argsNil =>
+              cases hhead1 with
+              | lit =>
+                cases hhead2 with
+                | lit =>
+                  cases hhead3 with
+                  | var hget3 =>
+                    rename_i v3
+                    have hv3 : v3 = 1 :=
+                      (Option.some.inj (by rw [hsucc] at hget3; exact hget3)).symm
+                    rw [hlook] at hlook'
+                    cases hlook'
+                    rw [hparams] at hlen
+                    rw [hparams, hrets, hbody] at hbodyrun
+                    cases hbodyrun with
+                    | block hstmts =>
+                      rw [hv3] at hstmts
+                      simp only [Bridge.Dialect, YulSemantics.EVM.litValue] at hstmts
+                      have hbodyC := ecPairingBodyLit_product_runs
+                        (c := permissive (callsOf product))
+                        (funs := hoist (Bridge.Dialect (permissive (callsOf product)) g)
+                          (ecPairingBodyLit scratch g2 neg gas 0x0f 768 32 errPre errProof) :: cenv)
+                        (st := st) (hfail := ⟨cenv', hfail'⟩) (product := product)
+                        (LA := LA) (GB := GB) (LB := LB) (GN := GN)
+                        (lhsW := BitVec.ofNat 256 rhsNat)
+                        (rhsW := BitVec.ofNat 256 lhsNat) (scratch := scratch)
+                        (g2 := g2) (neg := neg) (gas := gas)
+                        (errPre := errPre) (errProof := errProof)
+                        (hsrc1 := hsrc1 st) (hsrc2 := hsrc2 st) (hsrc3 := hsrc3 st)
+                        (hsrc4 := hsrc4 st) (hdisj1 := hdisj1) (hdisj2 := hdisj2)
+                        (hdisj3 := hdisj3) (hdisj4 := hdisj4) (hg2 := hg2)
+                        (hneg := hneg) (hscratchWin := hscratchWin)
+                      have hpost := hbodyC _ _ _ (by exact hstmts)
+                      have hpost' := hpost.elim
+                      rcases hpost' with ⟨hon, hrevBody⟩ | ⟨hoh, hret, hpres, hprod⟩
+                      · exact Or.inr ⟨_, rfl, hrevBody⟩
+                      · exact absurd hoh (by decide)
+  | callArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h1 =>
+          cases h1 with
+          | argsRestHalt h2 =>
+              cases h2 with
+              | argsRestHalt h3 => cases h3
+              | argsHeadHalt _ hhead => cases hhead
+          | argsHeadHalt _ hhead => cases hhead
+      | argsHeadHalt _ hhead => cases hhead
+
+#assert_axioms Midfall.LoweringV2.Blocks.EcPairing.ecPairing_call_contract_lits
+  [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV2.Blocks.EcPairing
