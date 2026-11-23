@@ -1513,6 +1513,12 @@ theorem instanceShape_range {p : Nat} [Fact (Nat.Prime p)] (inst : Array (Fr p))
     List.range (instanceShape inst).size = [0] := by
   simp [instanceShape]
 
+/-- The parser's phase column filter: advice columns whose phase is `ph`, in index order. -/
+def phaseCols {p : Nat} [Fact (Nat.Prime p)] (cs : Midfall.Halo2.ConstraintSystem (Fr p))
+    (ph : Midfall.Halo2.Phase) : List Nat :=
+  (List.range cs.numAdviceColumns).filterMap fun i =>
+    if (cs.adviceColumnPhase[i]?.map (fun q => q.val)) == some ph.val then some i else none
+
 /-- The advice-phase segment of the parser schedule: one G1 group per user phase. -/
 def seqAdvice (userPhases : List UserPhase) : List (WireSlot × Nat) :=
   userPhases.map (fun ph => (WireSlot.g1, ph.adviceBytes / 128))
