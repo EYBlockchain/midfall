@@ -824,6 +824,215 @@ theorem generateVk_constants_length {feat : Features} {env : VkBuildEnv Quotient
   have hfin := generateVkFinalize_ge h
   omega
 
+/-- Slots 0–10 of the generated base VK header. PROVED. -/
+theorem generateBaseVkHeader_slots {inputs : VerifierBuildInputs p G₁ G₂}
+    {pre : Word256 × Word256 × Word256 × Word256 × Word256}
+    {g1Words g2Words negSG2Words : List Word256}
+    {constants : List (String × Word256)}
+    (h : generateBaseVkHeader inputs pre g1Words g2Words negSG2Words = .ok constants) :
+    constants.getD 0 ("", 0) = ("vk_digest", pre.1) ∧
+    constants.getD 1 ("", 0) = ("num_instances", (BitVec.ofNat 256 inputs.numInstances)) ∧
+    constants.getD 2 ("", 0) = ("k", (BitVec.ofNat 256 inputs.vk.domain.k)) ∧
+    constants.getD 3 ("", 0) = ("n_inv", pre.2.1) ∧
+    constants.getD 4 ("", 0) = ("omega", pre.2.2.1) ∧
+    constants.getD 5 ("", 0) = ("omega_inv", pre.2.2.2.1) ∧
+    constants.getD 6 ("", 0) = ("omega_inv_to_l", pre.2.2.2.2) ∧
+    constants.getD 7 ("", 0) = ("has_accumulator", (BitVec.ofNat 256 (if inputs.accEncoding.isSome then 1 else 0))) ∧
+    constants.getD 8 ("", 0) = ("acc_offset", (match inputs.accEncoding with | some e => BitVec.ofNat 256 e.offset | none => 0)) ∧
+    constants.getD 9 ("", 0) = ("num_acc_limbs", (match inputs.accEncoding with | some e => BitVec.ofNat 256 e.numLimbs | none => 0)) ∧
+    constants.getD 10 ("", 0) = ("num_acc_limb_bits", (match inputs.accEncoding with | some e => BitVec.ofNat 256 e.numLimbBits | none => 0)) := by
+  simp only [generateBaseVkHeader] at h
+  obtain ⟨h1, hb1, h⟩ := cert_except_bind_ok h
+  obtain ⟨h2, hb2, h⟩ := cert_except_bind_ok h
+  obtain ⟨h3, hb3, h⟩ := cert_except_bind_ok h
+  obtain ⟨h4, hb4, h⟩ := cert_except_bind_ok h
+  obtain ⟨h5, hb5, h⟩ := cert_except_bind_ok h
+  obtain ⟨h6, hb6, h⟩ := cert_except_bind_ok h
+  obtain ⟨h7, hb7, h⟩ := cert_except_bind_ok h
+  obtain ⟨h8, hb8, h⟩ := cert_except_bind_ok h
+  obtain ⟨h9, hb9, h⟩ := cert_except_bind_ok h
+  obtain ⟨h10, hb10, h⟩ := cert_except_bind_ok h
+  obtain ⟨h11, hb11, h⟩ := cert_except_bind_ok h
+  obtain ⟨h12, hb12, h⟩ := cert_except_bind_ok h
+  obtain ⟨h13, hb13, h⟩ := cert_except_bind_ok h
+  obtain ⟨h14, hb14, h⟩ := cert_except_bind_ok h
+  have l1 : h1.words.length = VkHeaderLayout.builder.words.length :=
+    headerScalarInsert_length _ _ _ _ _ _ hb1
+  have l2 : h2.words.length = h1.words.length := headerScalarInsert_length _ _ _ _ _ _ hb2
+  have l3 : h3.words.length = h2.words.length := headerScalarInsert_length _ _ _ _ _ _ hb3
+  have l4 : h4.words.length = h3.words.length := headerScalarInsert_length _ _ _ _ _ _ hb4
+  have l5 : h5.words.length = h4.words.length := headerScalarInsert_length _ _ _ _ _ _ hb5
+  have l6 : h6.words.length = h5.words.length := headerScalarInsert_length _ _ _ _ _ _ hb6
+  have l7 : h7.words.length = h6.words.length := headerScalarInsert_length _ _ _ _ _ _ hb7
+  have l8 : h8.words.length = h7.words.length := headerScalarInsert_length _ _ _ _ _ _ hb8
+  have l9 : h9.words.length = h8.words.length := headerScalarInsert_length _ _ _ _ _ _ hb9
+  have l10 : h10.words.length = h9.words.length := headerScalarInsert_length _ _ _ _ _ _ hb10
+  have l11 : h11.words.length = h10.words.length := headerScalarInsert_length _ _ _ _ _ _ hb11
+  have l12 : h12.words.length = h11.words.length := headerG1Insert_length _ _ _ _ _ _ hb12
+  have l13 : h13.words.length = h12.words.length := headerG2Insert_length _ _ _ _ _ _ hb13
+  have l14 : h14.words.length = h13.words.length := headerG2Insert_length _ _ _ _ _ _ hb14
+  have hlen14 : h14.words.length = 31 := by
+    rw [l14, l13, l12, l11, l10, l9, l8, l7, l6, l5, l4, l3, l2, l1]
+    decide
+  have hconst : unwrapAt "proofs/solidity-verifier/src/lowering/vk.rs:264" h14.finish =
+      .ok constants := h
+
+  have s0 : constants.getD 0 ("", 0) = ("vk_digest", pre.1) := by
+    have hw : h14.words[0]? = some (some ("vk_digest", pre.1)) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 0 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 0 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 0 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 0 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb10 0 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb9 0 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb8 0 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb7 0 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb6 0 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb5 0 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb4 0 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb3 0 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb2 0 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb1
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 0 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s1 : constants.getD 1 ("", 0) = ("num_instances", (BitVec.ofNat 256 inputs.numInstances)) := by
+    have hw : h14.words[1]? = some (some ("num_instances", (BitVec.ofNat 256 inputs.numInstances))) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 1 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 1 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 1 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 1 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb10 1 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb9 1 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb8 1 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb7 1 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb6 1 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb5 1 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb4 1 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb3 1 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb2
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 1 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s2 : constants.getD 2 ("", 0) = ("k", (BitVec.ofNat 256 inputs.vk.domain.k)) := by
+    have hw : h14.words[2]? = some (some ("k", (BitVec.ofNat 256 inputs.vk.domain.k))) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 2 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 2 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 2 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 2 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb10 2 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb9 2 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb8 2 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb7 2 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb6 2 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb5 2 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb4 2 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb3
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 2 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s3 : constants.getD 3 ("", 0) = ("n_inv", pre.2.1) := by
+    have hw : h14.words[3]? = some (some ("n_inv", pre.2.1)) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 3 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 3 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 3 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 3 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb10 3 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb9 3 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb8 3 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb7 3 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb6 3 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb5 3 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb4
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 3 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s4 : constants.getD 4 ("", 0) = ("omega", pre.2.2.1) := by
+    have hw : h14.words[4]? = some (some ("omega", pre.2.2.1)) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 4 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 4 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 4 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 4 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb10 4 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb9 4 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb8 4 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb7 4 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb6 4 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb5
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 4 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s5 : constants.getD 5 ("", 0) = ("omega_inv", pre.2.2.2.1) := by
+    have hw : h14.words[5]? = some (some ("omega_inv", pre.2.2.2.1)) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 5 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 5 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 5 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 5 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb10 5 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb9 5 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb8 5 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb7 5 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb6
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 5 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s6 : constants.getD 6 ("", 0) = ("omega_inv_to_l", pre.2.2.2.2) := by
+    have hw : h14.words[6]? = some (some ("omega_inv_to_l", pre.2.2.2.2)) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 6 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 6 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 6 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 6 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb10 6 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb9 6 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb8 6 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb7
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 6 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s7 : constants.getD 7 ("", 0) = ("has_accumulator", (BitVec.ofNat 256 (if inputs.accEncoding.isSome then 1 else 0))) := by
+    have hw : h14.words[7]? = some (some ("has_accumulator", (BitVec.ofNat 256 (if inputs.accEncoding.isSome then 1 else 0)))) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 7 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 7 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 7 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 7 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb10 7 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb9 7 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb8
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 7 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s8 : constants.getD 8 ("", 0) = ("acc_offset", (match inputs.accEncoding with | some e => BitVec.ofNat 256 e.offset | none => 0)) := by
+    have hw : h14.words[8]? = some (some ("acc_offset", (match inputs.accEncoding with | some e => BitVec.ofNat 256 e.offset | none => 0))) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 8 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 8 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 8 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 8 (by decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb10 8 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb9
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 8 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s9 : constants.getD 9 ("", 0) = ("num_acc_limbs", (match inputs.accEncoding with | some e => BitVec.ofNat 256 e.numLimbs | none => 0)) := by
+    have hw : h14.words[9]? = some (some ("num_acc_limbs", (match inputs.accEncoding with | some e => BitVec.ofNat 256 e.numLimbs | none => 0))) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 9 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 9 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 9 (by left; decide)]
+      rw [headerScalarInsert_frame _ _ _ _ _ _ hb11 9 (by decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb10
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 9 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  have s10 : constants.getD 10 ("", 0) = ("num_acc_limb_bits", (match inputs.accEncoding with | some e => BitVec.ofNat 256 e.numLimbBits | none => 0)) := by
+    have hw : h14.words[10]? = some (some ("num_acc_limb_bits", (match inputs.accEncoding with | some e => BitVec.ofNat 256 e.numLimbBits | none => 0))) := by
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb14 10 (by left; decide)]
+      rw [headerG2Insert_frame _ _ _ _ _ _ hb13 10 (by left; decide)]
+      rw [headerG1Insert_frame _ _ _ _ _ _ hb12 10 (by left; decide)]
+      exact headerScalarInsert_get _ _ _ _ _ _ hb11
+    have hget := VkHeaderBuilder.finish_get? h14 constants (Midfall.Generator.unwrapAt_ok hconst) 10 (by omega) hw
+    rw [List.getD_eq_getElem?_getD, hget]
+    rfl
+  exact ⟨s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10⟩
+
 theorem payload_constantsLength (hg : Generates gi o) (hs : SupportedInput gi) :
     11 ≤ (renderOf gi o).pv.vk.constants.length := by
   obtain ⟨_m0, payload, _hraw, hgenvk, _hfp, h4⟩ := generate_spec hg
