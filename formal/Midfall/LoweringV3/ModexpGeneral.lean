@@ -2025,6 +2025,219 @@ theorem bi_bridge_head_form (consts : Inline.Consts) :
           [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave]] := by
   kernel_rfl
 
+structure BridgeReject (st st' : EvmState) (V' : VEnv (Bridge.Dialect c g)) (o : Outcome) : Prop where
+  hok : o = .leave
+  hret : VEnv.get V' "ret" = some 0
+  hmem : st'.memory = st.memory
+  henv : st'.env = st.env
+  hhalt : st'.halted = st.halted
+
+structure BridgeHeadSucc (p a : Nat) (gv x_last : U256) (st st' : EvmState)
+    (V' : VEnv (Bridge.Dialect c g)) (o : Outcome) : Prop where
+  hok : o = .normal
+  hgp : VEnv.get V' "gp" = some (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
+    (BitVec.ofNat 256 Midfall.Yul.blsR))
+  hgp_mptr : VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p)
+  hmstart : VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a)
+  hr : VEnv.get V' "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR)
+  hret_some : (VEnv.get V' "ret").isSome
+  hpf_some : (VEnv.get V' "precompile_failed").isSome
+  hmem : st'.memory = st.memory
+  henv : st'.env = st.env
+  hhalt : st'.halted = st.halted
+
+theorem bi_bridge_head_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (p a mp : Nat) (gv x_last : U256) (hmp : mp < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 4)
+      (fun V st =>
+        VEnv.get V "mptr" = some (BitVec.ofNat 256 mp) ∧
+        VEnv.get V "gp" = some gv ∧
+        VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p) ∧
+        VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+        (VEnv.get V "ret").isSome ∧
+        (VEnv.get V "precompile_failed").isSome ∧
+        loadWord st.memory mp = x_last)
+      (fun _ st V' st' o =>
+        BridgeReject st st' V' o ∨
+        BridgeHeadSucc p a gv x_last st st' V' o) := by
+  rw [bi_bridge_head_form]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hmptr, hg, hgp_mptr, hmstart, hr, hret, hpf, hload⟩ := hpre
+  have hmp_toNat : (BitVec.ofNat 256 mp).toNat = mp := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hmp]
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨p11, v11, hget11, hv11, -, hV1, hst1⟩ :=
+      exec_let_mload_var_inv (x := "x_last") (y := "mptr") h1
+    rw [hmptr] at hget11
+    injection hget11 with hp11
+    subst hp11
+    rw [hmp_toNat, hload] at hv11
+    subst hV1
+    have hgetxl : VEnv.get (("x_last", v11) :: V) "x_last" = some v11 := rfl
+    have hgetr : VEnv.get (("x_last", v11) :: V) "r" =
+        some (BitVec.ofNat 256 Midfall.Yul.blsR) := by
+      rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "r") (by decide)]
+      exact hr
+    obtain ⟨rv0, hrv0⟩ := Option.isSome_iff_exists.mp hret
+    have hret1 : VEnv.get (("x_last", v11) :: V) "ret" = some rv0 := by
+      rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "ret") (by decide)]
+      exact hrv0
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
+      ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · have h2c := exec_guard_iszero_lt_reject (funs := funs)
+        (x := "x_last") (y := "r") hgetxl hgetr h2
+      by_cases hlt : v11.ult (BitVec.ofNat 256 Midfall.Yul.blsR) = true
+      · obtain ⟨-, hV2, hst2⟩ := h2c.1 hlt
+        subst hV2
+        have hgetg : VEnv.get (("x_last", v11) :: V) "gp" = some gv := by
+          rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "gp") (by decide)]
+          exact hg
+        rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest2 with
+          ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
+        · have h3c := exec_assign_mulmod_vars_inv (x := "gp") (y := "x_last") (z := "r")
+            hgetg hgetxl hgetr h3
+          obtain ⟨-, hV3, hst3⟩ := h3c
+          subst hV3
+          have hgetgp : VEnv.get (VEnv.set (("x_last", v11) :: V) "gp"
+              (Midfall.LoweringV3.QuotientRows.wMulmodAt gv v11
+                (BitVec.ofNat 256 Midfall.Yul.blsR))) "gp" =
+              some (Midfall.LoweringV3.QuotientRows.wMulmodAt gv v11
+                (BitVec.ofNat 256 Midfall.Yul.blsR)) :=
+            Midfall.LoweringV3.LagrangeRows.venv_get_set_same (D := Bridge.Dialect c g) hgetg
+          rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest3 with
+            ⟨V4, st4, h4, hrest4⟩ | ⟨h4, hne4⟩
+          · have h4c := exec_guard_iszero_reject (funs := funs) (x := "gp") hgetgp h4
+            by_cases hgp0 : Midfall.LoweringV3.QuotientRows.wMulmodAt gv v11
+                (BitVec.ofNat 256 Midfall.Yul.blsR) = 0
+            · obtain ⟨ho4, -, -⟩ := h4c.2 hgp0
+              exact absurd ho4 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+            · obtain ⟨-, hV4, hst4⟩ := h4c.1 hgp0
+              subst hV4
+              cases hrest4
+              rw [← hv11]
+              exact Or.inr ⟨rfl, hgetgp, by
+                  rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "gp_mptr") (by decide),
+                    Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "gp_mptr") (by decide)]
+                  exact hgp_mptr,
+                by
+                  rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "mptr_start") (by decide),
+                    Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "mptr_start") (by decide)]
+                  exact hmstart,
+                by
+                  rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "r") (by decide)]
+                  exact hgetr,
+                by
+                  rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "ret") (by decide),
+                    Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "ret") (by decide)]
+                  exact hret,
+                by
+                  rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "precompile_failed") (by decide),
+                    Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x_last") (y := "precompile_failed") (by decide)]
+                  exact hpf,
+                by rw [hst4, hst3, hst2, hst1]; rfl,
+                by rw [hst4, hst3, hst2, hst1]; rfl,
+                by rw [hst4, hst3, hst2, hst1]; rfl⟩
+          · have h4c := exec_guard_iszero_reject (funs := funs) (x := "gp") hgetgp h4
+            by_cases hgp0 : Midfall.LoweringV3.QuotientRows.wMulmodAt gv v11
+                (BitVec.ofNat 256 Midfall.Yul.blsR) = 0
+            · obtain ⟨ho4, hV4, hst4⟩ := h4c.2 hgp0
+              subst hV4 hst4
+              refine Or.inl ⟨ho4, ?_, ?_, ?_, ?_⟩
+              · exact Midfall.LoweringV3.LagrangeRows.venv_get_set_same (D := Bridge.Dialect c g)
+                  ((Midfall.LoweringV3.LagrangeRows.venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "ret") (by decide)).trans hret1)
+              · rw [hst3, hst2, hst1]; rfl
+              · rw [hst3, hst2, hst1]; rfl
+              · rw [hst3, hst2, hst1]; rfl
+            · obtain ⟨ho4, -, -⟩ := h4c.1 hgp0
+              exact absurd ho4 hne4
+        · obtain ⟨ho3, -, -⟩ := exec_assign_mulmod_vars_inv (x := "gp") (y := "x_last") (z := "r")
+            hgetg hgetxl hgetr h3
+          exact absurd ho3 hne3
+      · have hltf : v11.ult (BitVec.ofNat 256 Midfall.Yul.blsR) = false := by
+          cases h : v11.ult (BitVec.ofNat 256 Midfall.Yul.blsR) <;> simp_all
+        obtain ⟨ho2, -, -⟩ := h2c.2 hltf
+        exact absurd ho2 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+    · have h2c := exec_guard_iszero_lt_reject (funs := funs)
+        (x := "x_last") (y := "r") hgetxl hgetr h2
+      by_cases hlt : v11.ult (BitVec.ofNat 256 Midfall.Yul.blsR) = true
+      · obtain ⟨ho2, -, -⟩ := h2c.1 hlt
+        exact absurd ho2 hne2
+      · have hltf : v11.ult (BitVec.ofNat 256 Midfall.Yul.blsR) = false := by
+          cases h : v11.ult (BitVec.ofNat 256 Midfall.Yul.blsR) <;> simp_all
+        obtain ⟨ho2, hV2, hst2⟩ := h2c.2 hltf
+        subst hV2 hst2
+        refine Or.inl ⟨ho2, ?_, ?_, ?_, ?_⟩
+        · rw [Midfall.LoweringV3.LagrangeRows.venv_get_set_same (D := Bridge.Dialect c g) hret1]
+        · rw [hst1]; rfl
+        · rw [hst1]; rfl
+        · rw [hst1]; rfl
+  · obtain ⟨-, -, -, -, ho1, -, -⟩ := exec_let_mload_var_inv (x := "x_last") (y := "mptr") h1
+    exact absurd ho1 hne1
+
+structure BridgeSucc (p a : Nat) (gp' : U256) (st st' : EvmState)
+    (V' : VEnv (Bridge.Dialect c g)) (o : Outcome) : Prop where
+  hok : o = .normal
+  hgp : VEnv.get V' "gp" = some gp'
+  hgp_mptr : VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 p)
+  hmstart : VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a)
+  hr : VEnv.get V' "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR)
+  hret_some : (VEnv.get V' "ret").isSome
+  hpf_some : (VEnv.get V' "precompile_failed").isSome
+  hmem : st'.memory = mxMem st.memory p gp'
+
+theorem bi_bridge_full (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (p a mp : Nat) (gv x_last : U256)
+    (hp : p + 192 < 2 ^ 256) (hmp : mp < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10)
+      (fun V st =>
+        VEnv.get V "mptr" = some (BitVec.ofNat 256 mp) ∧
+        VEnv.get V "gp" = some gv ∧
+        VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 p) ∧
+        VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "r" = some (BitVec.ofNat 256 Midfall.Yul.blsR) ∧
+        (VEnv.get V "ret").isSome ∧
+        (VEnv.get V "precompile_failed").isSome ∧
+        loadWord st.memory mp = x_last)
+      (fun _ st V' st' o =>
+        BridgeReject st st' V' o ∨
+        BridgeSucc p a (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
+          (BitVec.ofNat 256 Midfall.Yul.blsR)) st st' V' o) := by
+  have hsplit : seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10 =
+      seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 4 ++
+        seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 15 6 := by
+    rw [bi_bridge_form, bi_bridge_head_form, bi_bridge_stores_form]
+  rw [hsplit]
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv hrun with ⟨V1, st1, hhead, hstores⟩ | ⟨hhead, hne⟩
+  · have hh := bi_bridge_head_full (c := c) (g := g) consts funs p a mp gv x_last hmp
+      V st hpre V1 st1 .normal hhead
+    rcases hh with hrej | hs
+    · exact absurd hrej.hok (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+    · obtain ⟨ho, hV', hmem⟩ :=
+        bi_bridge_stores (c := c) (g := g) (consts := consts) funs p
+          (Midfall.LoweringV3.QuotientRows.wMulmodAt gv x_last
+            (BitVec.ofNat 256 Midfall.Yul.blsR)) hp
+          V1 st1 ⟨hs.hgp_mptr, hs.hgp, hs.hr⟩ V' st' o hstores
+      refine Or.inr ⟨ho, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hV']; exact hs.hgp
+      · rw [hV']; exact hs.hgp_mptr
+      · rw [hV']; exact hs.hmstart
+      · rw [hV']; exact hs.hr
+      · rw [hV']; exact hs.hret_some
+      · rw [hV']; exact hs.hpf_some
+      · rw [hmem, hs.hmem]
+  · have hh := bi_bridge_head_full (c := c) (g := g) consts funs p a mp gv x_last hmp
+      V st hpre V' st' o hhead
+    rcases hh with hrej | hs
+    · exact Or.inl hrej
+    · exact absurd hs.hok hne
+
+
+
 theorem bi_bridge_head (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
     (p a mp : Nat) (gv x_last : U256) (hmp : mp < 2 ^ 256)
     (hprime : Nat.Prime Midfall.Yul.blsR)
@@ -3342,6 +3555,8 @@ theorem readBytes_six (mem : Nat → UInt8) (p : Nat) (w0 w1 w2 w3 w4 w5 : U256)
 #assert_axioms bi_bridge_head_form [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_bridge_head [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_bridge_contract [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_head_full [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_full [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_var_body [propext, Classical.choice, Quot.sound]
 #assert_axioms mxMem_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms copyReturn_outside' [propext, Classical.choice, Quot.sound]
