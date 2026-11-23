@@ -2275,6 +2275,75 @@ theorem parseTrace_shapes {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
         exact ⟨by simpa using hpermSz, hpermProp, hlksSize, hlksShape,
           by simpa using htrsSz, htrsMap⟩
 
+theorem map_add_three_map {α : Type} (l : List α) (f : α → Nat) :
+    (l.map f).map (fun x => x + 3) = l.map (fun x => f x + 3) := by
+  induction l with
+  | nil => rfl
+  | cons a as ih => simp [ih]
+
+/-- The lookup eval count implied by the chunking: `nbChunks + 3` per lookup. -/
+def lookupEvalCount {F : Type} (deg : Nat) (lookups : List (LogupBatchedArgument F)) : Nat :=
+  (((chunkedOf deg lookups).getD []).map (fun c => c.numChunks + 3)).sum
+
+theorem lookupEvalCount_eq {F : Type} (deg : Nat) (lookups : List (LogupBatchedArgument F))
+    (cl : List (LogupChunkedArgument F)) (h : chunkedOf deg lookups = some cl) :
+    lookupEvalCount deg lookups = (cl.map (fun c => c.numChunks + 3)).sum := by
+  simp [lookupEvalCount, h]
+
+/-- **The per-argument eval count of a parsed trace.** For the deployed profile
+    (committed instances on, one proof, one committed instance row), the
+    verifier's eval count is the seven-group sum: committed-instance queries,
+    advice queries, the fixed (non-simple-selector) queries, permutation-common
+    evals, `3 k - 1` for the product sets, `nbChunks + 3` per lookup, and one
+    trash eval per trashcan. -/
+theorem readAlgebraEvalCount_parseTrace {G₁ : Type} (g1 : G1Codec G₁)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (xc : G₁) (inst : Array (Fr p))
+    {t : Transcript} {tr : VerifierTrace (Fr p) G₁} {t' : Transcript}
+    (h : (parseTrace g1 Features.solidity vk #[#[xc]] #[#[inst.toList.toArray]]).run t
+      = .ok (tr, t')) :
+    readAlgebraEvalCount vk tr.permutations tr.lookups tr.trashcans 1 1
+        #[#[inst.toList.toArray]]
+      = (vk.cs.instanceQueries.toList.filter (fun q => q.1.index < 1)).length
+        + vk.cs.adviceQueries.size
+        + (vk.cs.numFixedColumns - vk.cs.numSimpleSelectors)
+        + vk.permutation.commitments.size
+        + (3 * Permutation.numChunksOf vk.cs.permutation.columns.size
+            (vk.csDegree - 2) - 1)
+        + lookupEvalCount vk.csDegree vk.cs.lookups.toList
+        + vk.cs.trashcans.size := by
+  obtain ⟨hpermN, hpermP, hlksN, hlksShape, htrsN, htrsMap⟩ :=
+    parseTrace_shapes g1 Features.solidity vk #[#[xc]] #[#[inst.toList.toArray]] h
+  have hpermN' : tr.permutations.size = 1 := by simpa using hpermN
+  have hlksN' : tr.lookups.size = 1 := by simpa using hlksN
+  have htrsN' : tr.trashcans.size = 1 := by simpa using htrsN
+  have hone : (#[#[inst.toList.toArray]] : Array (Array (Array (Fr p)))).size = 1 := rfl
+  unfold readAlgebraEvalCount
+  rw [hone]
+  simp only [Nat.one_mul, List.length_singleton]
+  -- permutations: one product set
+  obtain ⟨pc, hpc⟩ := Array.size_eq_one_iff.mp hpermN'
+  rw [hpc] at hpermP ⊢
+  rw [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil]
+  rw [hpermP pc (by simp)]
+  -- lookups: one row
+  obtain ⟨row, hrow⟩ := Array.size_eq_one_iff.mp hlksN'
+  rw [hrow] at hlksShape ⊢
+  obtain ⟨cl, hcl, hclmap⟩ := hlksShape row (by simp)
+  have hrowmap : row.toList.map (fun l => l.helperPolys.size + 3)
+      = cl.map (fun c => c.numChunks + 3) := by
+    conv_rhs => rw [← map_add_three_map]
+    rw [← hclmap]
+    rw [map_add_three_map]
+  rw [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, hrowmap]
+  rw [lookupEvalCount_eq vk.csDegree vk.cs.lookups.toList cl hcl]
+  -- trashcans: one row
+  obtain ⟨rowT, hrowT⟩ := Array.size_eq_one_iff.mp htrsN'
+  rw [hrowT] at htrsMap ⊢
+  rw [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil]
+  rw [htrsMap rowT (by simp)]
+  omega
+
 end Composition
 
 end Midfall.LoweringV3
