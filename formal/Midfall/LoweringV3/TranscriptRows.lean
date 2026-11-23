@@ -1652,6 +1652,22 @@ theorem runsAll_readGroupSeq_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs
     runsAll_readGroupSeq E [(WireSlot.g1, n)]
       [Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))] hmatch
 
+/-- `RunsAll` is invariant under pointwise-equal runs. -/
+theorem RunsAll.congr (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} {m n : TranscriptM α}
+    {ms : List (Msg (Fr p) G₁)} (h : ∀ t, m.run t = n.run t) (hm : RunsAll E m ms) :
+    RunsAll E n ms := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨a, t', hrun, hbuf', hpos'⟩ := hm t pref rest hbuf hpos hp henc hwidth
+  exact ⟨a, t', ((h t).symm).trans hrun, hbuf', hpos'⟩
+
+/-- The `foldlM` over schedules reads exactly the flattened schedule. -/
+theorem runsAll_readGroupSeq_foldlM (E : VerifierEnv p G₁ G₂ Gₜ)
+    (l : List (List (WireSlot × Nat))) (groups : List (List (Msg (Fr p) G₁)))
+    (hm : GroupsMatch (p := p) (G₁ := G₁) l.flatten groups) :
+    RunsAll E (l.foldlM (fun _ g => readGroupSeq E g) ()) groups.flatten :=
+  RunsAll.congr E (fun t => readGroupSeq_flatMap_run E l t)
+    (runsAll_readGroupSeq E l.flatten groups hm)
+
 /-- `transcriptOf` starts at cursor 0 with exactly `wireMsgs` in the buffer. -/
 theorem transcriptOf_buffer {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
