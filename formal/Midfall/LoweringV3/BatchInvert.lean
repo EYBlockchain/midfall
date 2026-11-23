@@ -191,6 +191,50 @@ theorem BatchInvertPost_succ {V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState
     intro i hi
     exact ⟨(hcanon i hi).1, (hcanon i hi).2, (hinv i hi).1, (hinv i hi).2⟩
 
+/-- The `ret ≠ 0` arm at an arbitrary non-zero `ret` (the empty-batch exit leaves the caller's
+    `succ`, not `1`). -/
+theorem BatchInvertPost_succ_any {V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (succ rw retv : U256) (a e s : Nat) (hsucc : succ ≠ 0) (hretne : retv ≠ 0)
+    (hret : VEnv.get V' "ret" = some retv)
+    (hpf : VEnv.get V' "precompile_failed" = some 0)
+    (henv : st'.env = st.env) (hhalt : st'.halted = st.halted)
+    (hout : ∀ x, (x < a ∨ e ≤ x) → (x < s ∨ s + (e - a) + 0xc0 ≤ x) →
+      st'.memory x = st.memory x)
+    (hcanon : ∀ i, a + 32 * i < e →
+      (loadWord st.memory (a + 32 * i)).toNat < rw.toNat ∧
+      loadWord st.memory (a + 32 * i) ≠ 0)
+    (hinv : ∀ i, a + 32 * i < e →
+      (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat ∧
+      wMulmodAt (loadWord st'.memory (a + 32 * i)) (loadWord st.memory (a + 32 * i)) rw = 1) :
+    BatchInvertPost (c := c) (g := g) st succ a e s rw V' st' := by
+  refine ⟨retv, 0, hret, hpf, henv, hhalt, hout, ?_, ?_, ?_⟩
+  · intro hs
+    exact absurd hs hsucc
+  · intro hpfne
+    exact absurd hpfne (by simp)
+  · intro _
+    refine ⟨rfl, ?_⟩
+    intro i hi
+    exact ⟨(hcanon i hi).1, (hcanon i hi).2, (hinv i hi).1, (hinv i hi).2⟩
+
+/-- The `succ = 0` head exit: `ret = 0`, `precompile_failed = 0`, memory untouched. -/
+theorem BatchInvertPost_head0 {V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (succ rw : U256) (a e s : Nat)
+    (hret : VEnv.get V' "ret" = some 0)
+    (hpf : VEnv.get V' "precompile_failed" = some 0)
+    (henv : st'.env = st.env) (hhalt : st'.halted = st.halted)
+    (hmem : st'.memory = st.memory) :
+    BatchInvertPost (c := c) (g := g) st succ a e s rw V' st' := by
+  refine ⟨0, 0, hret, hpf, henv, hhalt, ?_, ?_, ?_, ?_⟩
+  · intro x _ _
+    rw [hmem]
+  · intro hs
+    exact ⟨rfl, rfl, hmem⟩
+  · intro hpfne
+    exact absurd rfl hpfne
+  · intro hretne
+    exact absurd rfl hretne
+
 
 /-! ## 4. THE FORWARD PASS'S WORD ALGEBRA (the evidence's `P`, :354-358)
 
@@ -2831,6 +2875,8 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms bi_prelude_single_form [propext, Classical.choice, Quot.sound]
 #assert_axioms BatchInvertPost_zero [propext, Classical.choice, Quot.sound]
 #assert_axioms BatchInvertPost_succ [propext, Classical.choice, Quot.sound]
+#assert_axioms BatchInvertPost_succ_any [propext, Classical.choice, Quot.sound]
+#assert_axioms BatchInvertPost_head0 [propext, Classical.choice, Quot.sound]
 #assert_axioms biSingleArm_eq [propext, Classical.choice, Quot.sound]
 #assert_axioms ofNat_sub_of_le [propext, Classical.choice, Quot.sound]
 #assert_axioms ofNat_ne_zero_of_pos [propext, Classical.choice, Quot.sound]

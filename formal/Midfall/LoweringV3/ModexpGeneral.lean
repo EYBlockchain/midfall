@@ -1661,18 +1661,21 @@ theorem bi_prelude_main (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
         VEnv.get V "mptr_end" = some (BitVec.ofNat 256 e) ∧
         VEnv.get V "scratch_mptr" = some (BitVec.ofNat 256 s) ∧
         VEnv.get V "r" = some rw ∧ VEnv.get V "ret" = some succ ∧
+        VEnv.get V "precompile_failed" = some 0 ∧
         (loadWord st.memory a).toNat < rw.toNat)
       (fun _ st V' st' o => o = .normal ∧
         VEnv.get V' "mptr" = some (BitVec.ofNat 256 (a + 32)) ∧
         VEnv.get V' "mptr_end" = some (BitVec.ofNat 256 e) ∧
         VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 s) ∧
         VEnv.get V' "gp" = some (loadWord st.memory a) ∧
-        VEnv.get V' "r" = some rw ∧ (VEnv.get V' "ret").isSome ∧
+        VEnv.get V' "r" = some rw ∧ VEnv.get V' "ret" = some succ ∧
+        VEnv.get V' "precompile_failed" = some 0 ∧
+        VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a) ∧
         st'.memory = st.memory) := by
   obtain ⟨body, hform⟩ := bi_prelude_form (consts := consts)
   rw [hform]
   intro V st hpre V' st' o hrun
-  obtain ⟨hstart, hend, hscratch, hr, hret, hload0⟩ := hpre
+  obtain ⟨hstart, hend, hscratch, hr, hret, hpf0, hload0⟩ := hpre
   have hae' : a < e := by omega
   have hea : a ≤ e := by omega
   have hcpos : 0 < e - a := by omega
@@ -1768,7 +1771,7 @@ theorem bi_prelude_main (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
                   injection hget8 with hv8
                   subst hv8 hV8
                   cases hrest8
-                  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+                  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
                   · -- mptr
                     simp [VEnv.get, List.find?]
                     rw [ofNat_add_32 a (by omega : a + 32 < 2 ^ 256)]
@@ -1792,13 +1795,24 @@ theorem bi_prelude_main (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
                       Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "r") (by decide),
                       Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "count_bytes") (y := "r") (by decide)]
                     exact hr
-                  · -- ret isSome
+                  · -- ret
                     rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "ret") (by decide),
                       Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "gp") (y := "ret") (by decide),
                       Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "ret") (by decide),
                       Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "count_bytes") (y := "ret") (by decide)]
                     rw [hret]
-                    rfl
+                  · -- precompile_failed
+                    rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "precompile_failed") (by decide),
+                      Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "gp") (y := "precompile_failed") (by decide),
+                      Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "precompile_failed") (by decide),
+                      Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "count_bytes") (y := "precompile_failed") (by decide)]
+                    rw [hpf0]
+                  · -- mptr_start
+                    rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "mptr_start") (by decide),
+                      Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "gp") (y := "mptr_start") (by decide),
+                      Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "mptr_start") (by decide),
+                      Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g) (x := "count_bytes") (y := "mptr_start") (by decide)]
+                    exact hstart
                   · -- memory
                     rw [hst8, hst7, hst6, hst5, hst4, hst3, hst2, hst1]
                     rfl
@@ -3556,6 +3570,73 @@ theorem bi_prelude_single (consts : Inline.Consts) (product : PairingProduct) (g
 /-- `blsR` as a `U256` (the helper's `r` argument in this lane). -/
 abbrev BlsR : U256 := BitVec.ofNat 256 Midfall.Yul.blsR
 
+/-- The empty batch (`e = a`): the prelude leaves at `if iszero(count_bytes)`, with `ret`
+    untouched (the caller's non-zero `succ`), `precompile_failed` untouched, memory unchanged. -/
+theorem bi_prelude_empty (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (rw : U256) (a s : Nat) (succ : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 2 8)
+      (fun V _ =>
+        VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "mptr_end" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V "scratch_mptr" = some (BitVec.ofNat 256 s) ∧
+        VEnv.get V "r" = some rw ∧
+        VEnv.get V "ret" = some succ ∧
+        VEnv.get V "precompile_failed" = some 0)
+      (fun _ st V' st' o => o = .leave ∧
+        VEnv.get V' "ret" = some succ ∧ VEnv.get V' "precompile_failed" = some 0 ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧ st'.memory = st.memory) := by
+  rw [bi_prelude_single_form]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hstart, hend, hscratch, hr, hret, hpf⟩ := hpre
+  have hult : (BitVec.ofNat 256 a).ult (BitVec.ofNat 256 a) = false := by
+    rw [BitVec.ult]
+    exact decide_eq_false (Nat.lt_irrefl _)
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨-, hV1, hst1⟩ := exec_guard_ret0_lt_vars_false (x := "mptr_end") (y := "mptr_start")
+      hend hstart hult h1
+    subst hV1
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
+      ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · obtain ⟨yv, zv, hy, hz, ho2, hV2, hst2⟩ :=
+        exec_let_sub_vars_inv (x := "count_bytes") (y := "mptr_end") (z := "mptr_start") h2
+      rw [hend] at hy
+      rw [hstart] at hz
+      injection hy with hy'
+      injection hz with hz'
+      subst hy' hz'
+      have hsub : ((BitVec.ofNat 256 a : U256) - BitVec.ofNat 256 a) = 0 := by
+        simp
+      rw [hsub] at hV2
+      subst hV2
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest2 with
+        ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
+      · have hget : VEnv.get (("count_bytes", (0 : U256)) :: V1) "count_bytes" = some 0 := rfl
+        obtain ⟨ho3, -, -⟩ := (exec_guard_iszero_var (x := "count_bytes") hget h3).2 rfl
+        exact absurd ho3 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+      · have hget : VEnv.get (("count_bytes", (0 : U256)) :: V1) "count_bytes" = some 0 := rfl
+        obtain ⟨ho3, hV3, hst3⟩ := (exec_guard_iszero_var (x := "count_bytes") hget h3).2 rfl
+        refine ⟨ho3, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [hV3]
+          rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+            (x := "count_bytes") (y := "ret") (by decide)]
+          exact hret
+        · rw [hV3]
+          rw [Midfall.LoweringV3.LagrangeRows.venv_get_cons_ne (D := Bridge.Dialect c g)
+            (x := "count_bytes") (y := "precompile_failed") (by decide)]
+          exact hpf
+        · rw [hst3, hst2, hst1]
+        · rw [hst3, hst2, hst1]
+        · rw [hst3, hst2, hst1]
+    · obtain ⟨-, -, -, -, ho2, -, -⟩ :=
+        exec_let_sub_vars_inv (x := "count_bytes") (y := "mptr_end") (z := "mptr_start") h2
+      exact absurd ho2 hne2
+  · obtain ⟨ho1, -, -⟩ := exec_guard_ret0_lt_vars_false (x := "mptr_end") (y := "mptr_start")
+      hend hstart hult h1
+    exact absurd ho1 hne1
+
+
 /-! ## The general front of the helper: statements 10-28
 
   The forward loop (`seg 10 1`), the bridge (`seg 11 10`) and the staticcall walk
@@ -3646,6 +3727,7 @@ structure FwdSucc (M : Nat → UInt8) (fmem : Nat → UInt8) (a k s : Nat) (x : 
 /-- The general front, statements 10-28: forward loop, bridge, staticcall walk. The loop's
     `MemSameOutside` supplies the last batch word as the bridge's `x_last`; `fwdProd_last` turns
     the bridge's product into `P (k-1)`; the walk's honest answer is the inverse of that. -/
+
 theorem bi_front (consts : Inline.Consts) (product : PairingProduct) (g : ExternalGas)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
     (gas : Nat) (hgas : consts.lookup "MODEXP_GAS" = some gas)
