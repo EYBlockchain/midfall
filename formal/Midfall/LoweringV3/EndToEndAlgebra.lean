@@ -1042,6 +1042,58 @@ def QEvalSetCountMatches {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     (g1 : G1Codec G₁) (pcs : Pcs p G₁ G₂ Gₜ) (n : Nat) : Prop :=
   MultiPrepareBlockWidth g1 pcs n
 
+/-- `StateT.get`'s run. -/
+theorem StateT_get_run (s : Transcript) :
+    (StateT.get : TranscriptM Transcript).run s = .ok (s, s) := rfl
+
+/-- `run` distributes over a propositional `if`. -/
+theorem run_ite {α : Type} (c : Prop) [Decidable c] (a b : TranscriptM α) (s : Transcript) :
+    (if c then a else b).run s = if c then a.run s else b.run s := by
+  by_cases h : c <;> simp [h]
+
+/-- `PresWidthSeq` is invariant under equality of the width list. -/
+theorem PresWidthSeq.congr_width {α : Type} {m : TranscriptM α} {ws ws' : List Nat}
+    (h : PresWidthSeq ws m) (hw : ws = ws') : PresWidthSeq ws' m := by
+  rw [← hw]
+  exact h
+
+/-- `PresWidthSeq` of the exact `StateT.get` / `match m.run` / `StateT.set`
+    dance of `verifyAlgebraicConstraints` is `m`'s width: the ok arm sets the
+    state and returns, the error arms throw. -/
+theorem rerun {α : Type} {m : TranscriptM α} {ws : List Nat} (hm : PresWidthSeq ws m) :
+    PresWidthSeq ws
+      (StateT.get >>= fun (t : Transcript) =>
+        match m.run t with
+        | .ok (a, t2) => (do StateT.set t2; (pure a : TranscriptM α))
+        | .error (Fault.panic site) => throw (Fault.panic site)
+        | .error (Fault.error e) => throw (Fault.error Error.opening)) := by
+  intro s s' b h
+  rw [StateT.run_bind, StateT_get_run] at h
+  change StateT.run (match m.run s with
+      | .ok (a, t2) => (do StateT.set t2; (pure a : TranscriptM α))
+      | .error (Fault.panic site) => throw (Fault.panic site)
+      | .error (Fault.error e) => throw (Fault.error Error.opening)) s = .ok (b, s') at h
+  cases hmr : m.run s with
+  | error e =>
+      cases e with
+      | panic site =>
+          simp only [hmr] at h
+          change (Except.error (Fault.panic site) : Except Fault (α × Transcript)) =
+            .ok (b, s') at h
+          cases h
+      | error e2 =>
+          simp only [hmr] at h
+          change (Except.error (Fault.error Error.opening) : Except Fault (α × Transcript)) =
+            .ok (b, s') at h
+          cases h
+  | ok p =>
+      obtain ⟨a0, t2⟩ := p
+      simp only [hmr] at h
+      have hh : (a0, t2) = (b, s') := Except.ok.inj h
+      have hw := hm s t2 a0 hmr
+      cases hh
+      exact hw
+
 section Composition
 
 variable {G₁ G₂ Gₜ : Type}
@@ -1079,6 +1131,204 @@ theorem readAlgebra_multiPrepare_widths (g1 : G1Codec G₁) (feat : Features)
   refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift (lin alg))
     (fun queries => ?_)
   exact hMulti queries
+
+/-- **The `verifyAlgebraicConstraints` run glue.** `readAlgebra`'s exact
+    widths, the width-free `linearize` lift, and the `multiPrepare` block (via
+    `MultiPrepareBlockWidth`), with the `committed.isEmpty` guard and the
+    `StateT.get`/`match`/`StateT.set` re-run dance discharged. -/
+theorem verifyAlgebraicConstraints_width (g1 : G1Codec G₁) (delta : Fr p)
+    (feat : Features) (pcs : Pcs p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁)
+    (trace : VerifierTrace (Fr p) G₁)
+    (committedInstances : Array (Array G₁)) (instances : Array (Array (Array (Fr p))))
+    (n : Nat) (hMulti : MultiPrepareBlockWidth g1 pcs n)
+    (hCommit : feat.committedInstances = true) :
+    PresWidthSeq
+      (readAlgebraWidths g1 feat vk trace.permutations trace.lookups trace.trashcans
+          ((Option.map (fun r => r.size)
+            (if feat.committedInstances then committedInstances
+             else arrayReplicate instances.size (#[] : Array G₁))[0]?).getD 0)
+          instances.size instances
+        ++ ([(hashableG1 g1).width] ++
+          List.replicate n (hashableFr (p := p)).width ++
+          [(hashableG1 g1).width]))
+      (Verifier.verifyAlgebraicConstraints (p := p) g1 delta feat pcs vk trace
+        committedInstances instances) := by
+  unfold Verifier.verifyAlgebraicConstraints
+  dsimp only
+  simp only [hCommit]
+  refine PresWidthSeq.ite ?_ ?_
+  · refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.throwFault _) (fun _ => ?_)
+    refine PresWidthSeq.bind
+      (ws1 := readAlgebraWidths g1 feat vk trace.permutations trace.lookups trace.trashcans
+        _ instances.size instances)
+      (PresWidthSeq.readAlgebra_widths g1 feat vk trace.permutations trace.lookups
+        trace.trashcans _ instances.size instances) (fun alg => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun queries => ?_)
+    intro t2 t' d hd
+    rw [StateT.run_bind, StateT_get_run] at hd
+    change StateT.run (match (pcs.multiPrepare queries).run t2 with
+        | .ok (guard, t3) => (do StateT.set t3; (pure guard : TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ)))
+        | .error (Fault.panic site) => throw (Fault.panic site)
+        | .error (Fault.error e) => throw (Fault.error Error.opening)) t2 = .ok (d, t') at hd
+    cases hmr : (pcs.multiPrepare queries).run t2 with
+    | error e =>
+        cases e with
+        | panic site =>
+            simp only [hmr] at hd
+            change (Except.error (Fault.panic site) :
+              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+            cases hd
+        | error e2 =>
+            simp only [hmr] at hd
+            change (Except.error (Fault.error Error.opening) :
+              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+            cases hd
+    | ok p =>
+        obtain ⟨a0, t3⟩ := p
+        simp only [hmr] at hd
+        have hh : (a0, t3) = (d, t') := Except.ok.inj hd
+        have hw := hMulti queries t2 t3 a0 hmr
+        cases hh
+        simpa using hw
+  · refine PresWidthSeq.bind
+      (ws1 := readAlgebraWidths g1 feat vk trace.permutations trace.lookups trace.trashcans
+        _ instances.size instances)
+      (PresWidthSeq.readAlgebra_widths g1 feat vk trace.permutations trace.lookups
+        trace.trashcans _ instances.size instances) (fun alg => ?_)
+    refine PresWidthSeq.bind (ws1 := []) (PresWidthSeq.lift _) (fun queries => ?_)
+    intro t2 t' d hd
+    rw [StateT.run_bind, StateT_get_run] at hd
+    change StateT.run (match (pcs.multiPrepare queries).run t2 with
+        | .ok (guard, t3) => (do StateT.set t3; (pure guard : TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ)))
+        | .error (Fault.panic site) => throw (Fault.panic site)
+        | .error (Fault.error e) => throw (Fault.error Error.opening)) t2 = .ok (d, t') at hd
+    cases hmr : (pcs.multiPrepare queries).run t2 with
+    | error e =>
+        cases e with
+        | panic site =>
+            simp only [hmr] at hd
+            change (Except.error (Fault.panic site) :
+              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+            cases hd
+        | error e2 =>
+            simp only [hmr] at hd
+            change (Except.error (Fault.error Error.opening) :
+              Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) = .ok (d, t') at hd
+            cases hd
+    | ok p =>
+        obtain ⟨a0, t3⟩ := p
+        simp only [hmr] at hd
+        have hh : (a0, t3) = (d, t') := Except.ok.inj hd
+        have hw := hMulti queries t2 t3 a0 hmr
+        cases hh
+        simpa using hw
+
+/-- The plan-slot identity: once the three protocol counts match the three block
+    counts (`prefixG1Count = nonQuotient + nbQuotient`, `numEvals = evalCount`,
+    `numPointSets = n`), the concatenated block widths are exactly `slots`. -/
+theorem slots_eq_blocks (plan : Midfall.Generator.RepackedProofLayoutPlan)
+    (nNonQuot nbQuot nEval nPS : Nat)
+    (h1 : plan.prefixG1Count = nNonQuot + nbQuot)
+    (h2 : plan.numEvals = nEval) (h3 : plan.numPointSets = nPS) :
+    List.replicate nNonQuot Midfall.Lowering.WireSlot.g1 ++
+      List.replicate nbQuot Midfall.Lowering.WireSlot.g1 ++
+      List.replicate nEval Midfall.Lowering.WireSlot.fr ++
+      [Midfall.Lowering.WireSlot.g1] ++
+      List.replicate nPS Midfall.Lowering.WireSlot.fr ++
+      [Midfall.Lowering.WireSlot.g1]
+      = plan.slots := by
+  unfold Midfall.Generator.RepackedProofLayoutPlan.slots
+  rw [h1, h2, h3, ← List.replicate_append_replicate]
+
+/-- Mapping a width list block to `WireSlot`s: `g1` widths become
+    `WireSlot.g1`, `fr` widths become `WireSlot.fr`. -/
+theorem map_width_slots (g1 : G1Codec G₁) (nNonQuot nbQuot nEval nPS : Nat) :
+    (List.replicate nNonQuot (hashableG1 g1).width ++
+      List.replicate nbQuot (hashableG1 g1).width ++
+      List.replicate nEval (hashableFr (p := p)).width ++
+      [(hashableG1 g1).width] ++
+      List.replicate nPS (hashableFr (p := p)).width ++
+      [(hashableG1 g1).width]).map
+        (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                  else Midfall.Lowering.WireSlot.fr)
+      = List.replicate nNonQuot Midfall.Lowering.WireSlot.g1 ++
+        List.replicate nbQuot Midfall.Lowering.WireSlot.g1 ++
+        List.replicate nEval Midfall.Lowering.WireSlot.fr ++
+        [Midfall.Lowering.WireSlot.g1] ++
+        List.replicate nPS Midfall.Lowering.WireSlot.fr ++
+        [Midfall.Lowering.WireSlot.g1] := by
+  simp only [List.map_append, List.map_replicate, List.map_cons, List.map_nil,
+    hashableG1_width, hashableFr_width, Midfall.g1CompressedWidth]
+  simp [Midfall.g1CompressedWidth]
+
+/-- The `Native.prepareWith` = `Verifier.prepare` definitional bridge: the
+    native wrapper is the KZG-instantiated verifier on the array-converted
+    committed/instance arguments. -/
+theorem prepareWith_eq_verifierPrepare (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (vk : VerifyingKey (Fr p) G₁)
+    (committed : List (List G₁)) (inst : List (List (List (Fr p)))) :
+    Midfall.Halo2.prepareWith (Gₜ := Gₜ) E F vk committed inst =
+      Verifier.prepare (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.delta F
+        (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field F E.fewerPointSetsRuntime) vk
+        (committed.map (fun r => r.toArray)).toArray
+        (inst.map (fun row => (row.map (fun col => col.toArray)).toArray)).toArray := rfl
+
+/-- **`PrepareLogSlots` from the exact parts.** `hParse` is A6's `parseTrace`
+    schedule (the commitment prefix), `hMulti` is the KZG point-set count
+    residual, and `hSlots` is the plan-slot identity with the protocol counts
+    (`prefixG1Count = nonQuotient + nbQuotient`, `numEvals`, `numPointSets`).
+    The `readAlgebra` block is discharged here, not assumed. -/
+theorem PrepareLogSlots_of_parts (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (nParse n : Nat)
+    (hParse : ∀ (inst : Array (Fr p)),
+      ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
+    (hMulti : MultiPrepareBlockWidth R.E.g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) n)
+    (hSlots : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
+      (List.replicate nParse (hashableG1 R.E.g1).width
+        ++ (readAlgebraWidths R.E.g1 Features.solidity R.vk trace.permutations
+              trace.lookups trace.trashcans 1 1 #[#[inst.toList.toArray]]
+            ++ ([(hashableG1 R.E.g1).width]
+                ++ List.replicate n (hashableFr (p := p)).width
+                ++ [(hashableG1 R.E.g1).width]))).map
+          (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                    else Midfall.Lowering.WireSlot.fr)
+        = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots) :
+    PrepareLogSlots R := by
+  intro inst π d t hrun
+  unfold Midfall.Halo2.prepare at hrun
+  unfold Midfall.Halo2.prepareWith at hrun
+  unfold Verifier.prepare at hrun
+  obtain ⟨trace, t1, hparse, hver⟩ := PresWidthSeq.run_bind_ok hrun
+  have hparseW : t1.log.toList.map (fun r => r.1) =
+      (Transcript.initFromBytes π).log.toList.map (fun r => r.1)
+        ++ List.replicate nParse (hashableG1 R.E.g1).width :=
+    hParse inst (Transcript.initFromBytes π) t1 trace hparse
+  have hverW : t.log.toList.map (fun r => r.1) = t1.log.toList.map (fun r => r.1) ++
+      (readAlgebraWidths R.E.g1 Features.solidity R.vk trace.permutations
+          trace.lookups trace.trashcans 1 1 #[#[inst.toList.toArray]]
+        ++ ([(hashableG1 R.E.g1).width]
+            ++ List.replicate n (hashableFr (p := p)).width
+            ++ [(hashableG1 R.E.g1).width])) :=
+    verifyAlgebraicConstraints_width R.E.g1 R.E.delta Features.solidity
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) R.vk trace #[#[(1 : G₁)]] #[#[inst.toList.toArray]] n hMulti
+      rfl t1 t d hver
+  have hcompose : ∀ (l : List (Nat × Bytes)),
+      l.map (fun r => if r.1 = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                      else Midfall.Lowering.WireSlot.fr)
+        = (l.map (fun r => r.1)).map
+            (fun w => if w = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
+                      else Midfall.Lowering.WireSlot.fr) := by
+    intro l
+    rw [List.map_map]
+    rfl
+  rw [hcompose, hverW, hparseW]
+  have hinit : (Transcript.initFromBytes π).log.toList.map (fun r => r.1) = [] := rfl
+  rw [hinit]
+  simp only [List.nil_append]
+  exact hSlots inst trace
 
 end Composition
 
