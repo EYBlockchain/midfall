@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-**As of:** `e8145055` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`,
+**As of:** `091101f7` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`,
 KAT 1648/119, closure 5251/620 digest `da67ab3de31b92e9`). Later merges are proof terms and below-root KZG modules; the closure digest is unchanged. Current report: root **11 / sound 5**,
 register **96 rows / 11 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
 260 modules; closure **5251 declarations / 620 external leaves / digest `da67ab3de31b92e9`**.
@@ -250,6 +250,12 @@ At `7a55dc8d` (2026-11-23): register **96 rows / 11 ROOT / 22 CERT**, 0 REFUTED,
 (`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
 620 external leaves / digest 209cde2f48115a76**; quick gate green.
 
+**D-GATE11 (signed, 2026-11-23)**: `SupportedInput` gains a count bound (CS/lookup/
+commitment/point-set counts and VK payload length) so the generated layout's
+`staticWorkingSetFits`/`batchInvertScratchFits` and `proofEnd` bounds follow from the input; this closes
+the `prog_programFits`/`v3_cdBound` CERT leaves. It is a generator input-predicate strengthening, not a
+`ValidV3`/row/root hypothesis.
+
 **D-GATE8 (signed, 2026-11-23)**: `programFits`/`programFitB` carry `staticWorkingSetFits pv`
 (`traceU256Mptr + wordBytes < 2^256`), the full static-region fit. A11 derived `PG_PAIRINGFIT`,
 `pairingLhsMptr_toNat_of_valid` and `pairingRhsMptr_toNat_of_valid` from it;
@@ -307,10 +313,11 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
 
 ### Six-lane critical path (user cap)
 
-Phase 1 (live): A9 PCS `bpLines`/`bq`/term lines; A4 lag group 13 + inner contract; A6
-`common_uncompressed_g1` scope/body contract; A11b SIM.10 `xcript_total`; A5 KZG query-map bridge;
-D2 CERT.5 gas scans. A12's F1 gate is data-blocked on `LeanAccepts` (test-SRS proof vs production
-key).
+Nine-lane wave (2026-11-23): A9b PCS `pcsGenBody`/set-block/block; A4 lag group 13 + inner contract;
+A6 `common_uncompressed_g1` scope/body contract; A11c `XcriptAlgebraRun`/`tp_agrees`; A5 KZG
+same-order query shape/`hclass`; D2 CERT.5 gas scans; calldata `calldata_roundtrip`; PlanMeta/CERT.1;
+D-GATE11 generator input-fit. A12's F1 gate is data-blocked on `LeanAccepts` (test-SRS proof vs
+production key).
 
 Phase 2: `block_live` (3/7: traceReturn, vkLoading, finalPairing poison; clean finalPairing via A12),
 then the TP/PCS/lag/quotient cases, `TotalV3`, and the `Rows` glue.
