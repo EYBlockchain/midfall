@@ -16,6 +16,53 @@ namespace Midfall.Generator
 
 open Midfall Midfall.Halo2
 
+/-- The permutationZ PCS block in the generator's own order: per set
+    `cur, next`, plus `last` for every set but the final one. -/
+def permZBlock (k : Nat) : List PcsQuerySource :=
+  ((List.range k).map fun set =>
+    [PcsQuerySource.permutationZ set PermutationZEval.cur,
+      PcsQuerySource.permutationZ set PermutationZEval.next]
+      ++ (if set + 1 != k then
+            [PcsQuerySource.permutationZ set PermutationZEval.last] else [])).flatten
+
+/-- The same block reordered the way the upstream verifier emits it: all
+    `cur/next` openings in ascending set order, then the `last` openings in
+    descending set order (`KZ:159-186`). -/
+def permZUpstream (k : Nat) : List PcsQuerySource :=
+  (((List.range k).map fun set =>
+      [PcsQuerySource.permutationZ set PermutationZEval.cur,
+        PcsQuerySource.permutationZ set PermutationZEval.next]).flatten)
+    ++ ((((List.range k).reverse.drop 1).map fun set =>
+      [PcsQuerySource.permutationZ set PermutationZEval.last]).flatten)
+
+/-- At the deployment's three permutation sets the two orders differ.  This is
+    the exact reason a literal same-order theorem against raw `pcsQueries`
+    cannot hold; the generator's own upstream reordering is the target. -/
+theorem permZBlock_three :
+    permZBlock 3 =
+      [PcsQuerySource.permutationZ 0 PermutationZEval.cur,
+        PcsQuerySource.permutationZ 0 PermutationZEval.next,
+        PcsQuerySource.permutationZ 0 PermutationZEval.last,
+        PcsQuerySource.permutationZ 1 PermutationZEval.cur,
+        PcsQuerySource.permutationZ 1 PermutationZEval.next,
+        PcsQuerySource.permutationZ 1 PermutationZEval.last,
+        PcsQuerySource.permutationZ 2 PermutationZEval.cur,
+        PcsQuerySource.permutationZ 2 PermutationZEval.next] := rfl
+
+theorem permZUpstream_three :
+    permZUpstream 3 =
+      [PcsQuerySource.permutationZ 0 PermutationZEval.cur,
+        PcsQuerySource.permutationZ 0 PermutationZEval.next,
+        PcsQuerySource.permutationZ 1 PermutationZEval.cur,
+        PcsQuerySource.permutationZ 1 PermutationZEval.next,
+        PcsQuerySource.permutationZ 2 PermutationZEval.cur,
+        PcsQuerySource.permutationZ 2 PermutationZEval.next,
+        PcsQuerySource.permutationZ 1 PermutationZEval.last,
+        PcsQuerySource.permutationZ 0 PermutationZEval.last] := rfl
+
+theorem permZBlock_three_beq_upstream :
+    (permZBlock 3 == permZUpstream 3) = false := rfl
+
 /-- The literal `pcsQueries` construction of
     `ProtocolPlan.fromConstraintSystem` (PM:527-580), with the two computed
     values it depends on made parameters: the degree `dg` (`cs.degree`) and the
@@ -43,12 +90,7 @@ def pcsBlocks {F : Type} (cs : ConstraintSystem F) (nbCommittedInstances dg : Na
     fixedQueries.filter fun q => !(q.column ∈ simpleSelectorCols)
   let pcsAdvice := adviceQueries.map PcsQuerySource.advice
   let pcsCommittedInstances := committedInstanceQueries.map PcsQuerySource.committedInstance
-  let pcsPermutationZ :=
-    (List.range numPermutationZs).map fun set =>
-      [PcsQuerySource.permutationZ set PermutationZEval.cur,
-        PcsQuerySource.permutationZ set PermutationZEval.next]
-        ++ (if set + 1 != numPermutationZs
-            then [PcsQuerySource.permutationZ set PermutationZEval.last] else [])
+  let pcsPermutationZ := permZBlock numPermutationZs
   let pcsLookup :=
     ((List.range lc.length).zip lc).map fun (lookup, chunks) =>
       [PcsQuerySource.lookupMultiplicity lookup]
@@ -59,7 +101,7 @@ def pcsBlocks {F : Type} (cs : ConstraintSystem F) (nbCommittedInstances dg : Na
   let pcsFixed := nonSimpleFixedQueryList.map PcsQuerySource.fixed
   let pcsPermutationCommon :=
     cs.permutation.getColumns.toList.map PcsQuerySource.permutationCommon
-  [pcsAdvice, pcsCommittedInstances, pcsPermutationZ.flatten, pcsLookup.flatten,
+  [pcsAdvice, pcsCommittedInstances, pcsPermutationZ, pcsLookup.flatten,
     pcsTrash, pcsFixed, pcsPermutationCommon, [PcsQuerySource.linearization]]
 
 /-- The flat form of `pcsBlocks`: the eight-block spine the KZG lane compares. -/
@@ -92,7 +134,7 @@ theorem ProtocolPlan.fromConstraintSystem_pcsQueries {F : Type} (feat : Features
   · split at h
     · cases h
       refine ⟨dg, lc, hdg, ?_⟩
-      simp [pcsBlockList, pcsBlocks, List.append_assoc]
+      simp [pcsBlockList, pcsBlocks, permZBlock, List.append_assoc]
     · cases h
   · cases h
 
