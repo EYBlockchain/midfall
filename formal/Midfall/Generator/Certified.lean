@@ -48,6 +48,8 @@ import Midfall.Generator.Quotient.FoldCompute
 import Midfall.LoweringV2.Consts
 import Midfall.Lowering.VkDigest
 import Midfall.LoweringV3.LagrangeAlg
+import Midfall.LoweringV3.KzgQueryMap
+import Midfall.LoweringV3.EndToEndAlgebra
 set_option autoImplicit false
 
 namespace Midfall.Generator.Certified
@@ -175,6 +177,131 @@ theorem generate_spec {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut} (h : Genera
 
 /-! ## 2. The supported class, input-only -/
 
+/-! ### D-GATE11: the count budget
+
+`prog_programFits` and `v3_cdBound` are NOT derivable from the pre-D-GATE11 `SupportedInput`: the
+constraint system's counts are unbounded `Nat`s, and the layout arithmetic multiplies them by
+`G1_BYTES`/`WORD_BYTES`. The clause below bounds every count the two obligations consume, as a
+COMPUTATION on the input (`countBoundB`), so a concrete render witnesses it by `native_decide`.
+The bound `2 ^ 32` is far above any real circuit (a circuit with 2^32 advice columns would not fit
+in a transaction) and far below the `2 ^ 256` the address arithmetic needs; `2 ^ 200` leaves the VK
+payload below every `2 ^ 256 - (2 ^ 200 + ...)` balance in the fit. The point-set count is not a
+meta field, so it is bounded indirectly: `pcsQueries.length < 2 ^ 32` and
+`numPointSets ≤ pcsQueries.length` (`numPointSets_le_pcsQueries`), the number of PCS point sets
+never exceeding the number of PCS queries. No row, `ValidV3`, or root hypothesis is touched: this
+is an input predicate. -/
+
+/-- The `ConstraintSystemMeta` the generator builds from the input's constraint system, if the
+    build succeeds. The D-GATE11 clause reads its counts; `generate_spec` identifies it with the
+    `m0` of every successful run. -/
+def rawMetaOf (gi : GenInput p G₁ G₂ Gₜ) : Option ConstraintSystemMeta :=
+  match ConstraintSystemMeta.new Features.solidity gi.vk.cs gi.cfg.numCommittedInstances with
+  | .ok m => some m
+  | .error _ => none
+
+/-- D-GATE11's per-count budget on the raw meta. `2 ^ 32` per count (including every list entry),
+    which is the smallest round bound that keeps every product in the layout below `2 ^ 256`.
+    `pcsQueries` is included because the point-set count is bounded through it, and
+    `rotationLast.natAbs` because `batchInvertInputWords` adds it. -/
+structure MetaCountsBound (m : ConstraintSystemMeta) : Prop where
+  lookups : m.protocol.numLookups < 2 ^ 32
+  permutationZs : m.protocol.numPermutationZs < 2 ^ 32
+  trashcans : m.protocol.numTrashcans < 2 ^ 32
+  quotients : m.protocol.numQuotients < 2 ^ 32
+  simpleSelectors : m.numSimpleSelectors < 2 ^ 32
+  evals : m.numEvals < 2 ^ 32
+  challengeIndices : m.challengeIndices.length < 2 ^ 32
+  userAdvicesLen : m.protocol.numUserAdvices.length < 2 ^ 32
+  userAdvicesEach : ∀ n ∈ m.protocol.numUserAdvices, n < 2 ^ 32
+  lookupChunksLen : m.protocol.lookupChunks.length < 2 ^ 32
+  lookupChunksEach : ∀ n ∈ m.protocol.lookupChunks, n < 2 ^ 32
+  pcsQueries : m.protocol.pcsQueries.length < 2 ^ 32
+  rotationLast : m.rotationLast.natAbs < 2 ^ 32
+
+/-- The `Bool` face of `MetaCountsBound`, for the concrete-count witness (`native_decide`). -/
+def metaCountsBoundB (m : ConstraintSystemMeta) : Bool :=
+  decide (m.protocol.numLookups < 2 ^ 32) &&
+  decide (m.protocol.numPermutationZs < 2 ^ 32) &&
+  decide (m.protocol.numTrashcans < 2 ^ 32) &&
+  decide (m.protocol.numQuotients < 2 ^ 32) &&
+  decide (m.numSimpleSelectors < 2 ^ 32) &&
+  decide (m.numEvals < 2 ^ 32) &&
+  decide (m.challengeIndices.length < 2 ^ 32) &&
+  decide (m.protocol.numUserAdvices.length < 2 ^ 32) &&
+  m.protocol.numUserAdvices.all (fun n => decide (n < 2 ^ 32)) &&
+  decide (m.protocol.lookupChunks.length < 2 ^ 32) &&
+  m.protocol.lookupChunks.all (fun n => decide (n < 2 ^ 32)) &&
+  decide (m.protocol.pcsQueries.length < 2 ^ 32) &&
+  decide (m.rotationLast.natAbs < 2 ^ 32)
+
+theorem metaCountsBound_of_b {m : ConstraintSystemMeta}
+    (h : metaCountsBoundB m = true) : MetaCountsBound m := by
+  unfold metaCountsBoundB at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
+  refine { lookups := ?_, permutationZs := ?_, trashcans := ?_, quotients := ?_, simpleSelectors := ?_, evals := ?_, challengeIndices := ?_, userAdvicesLen := ?_, userAdvicesEach := ?_, lookupChunksLen := ?_, lookupChunksEach := ?_, pcsQueries := ?_, rotationLast := ?_ } <;>
+    simp_all
+
+/-- `ConstraintSystemMeta.new` copies every count from the protocol plan, so the direct fields the
+    memory layout reads agree with the protocol fields the proof layout reads. This is the bridge
+    the residual `staticWorkingSetFits` needs (D-GATE11 records it rather than adding a second set
+    of duplicated bounds to the clause). PROVED. -/
+theorem new_meta_counts_eq {F : Type} (feat : Features) (cs : ConstraintSystem F)
+    (nbCommittedInstances : Nat) {m : ConstraintSystemMeta}
+    (h : ConstraintSystemMeta.new feat cs nbCommittedInstances = .ok m) :
+    m.numLookups = m.protocol.numLookups ∧
+      m.numPermutationZs = m.protocol.numPermutationZs ∧
+      m.numTrashcans = m.protocol.numTrashcans ∧
+      m.numQuotients = m.protocol.numQuotients ∧
+      m.numSimpleSelectors = m.protocol.numSimpleSelectors ∧
+      m.numUserAdvices = m.protocol.numUserAdvices ∧
+      m.lookupChunks = m.protocol.lookupChunks ∧
+      m.challengeIndices = m.protocol.challengeIndices ∧
+      m.numEvals = m.protocol.numMainEvals := by
+  unfold ConstraintSystemMeta.new at h
+  simp only [Bind.bind] at h
+  obtain ⟨protocol, _, hok⟩ := cert_except_bind_ok h
+  cases hok
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- The VK payload a run produces, as a computation on the input. `generate`'s first two binds;
+    `generate_spec` identifies it with the payload every successful run uses. The D-GATE11 payload
+    length bound is stated on this, so it remains an input-only predicate even though the payload
+    is generated (there is no payload field in `GenInput`). -/
+def payloadOf (gi : GenInput p G₁ G₂ Gₜ) : Option Halo2VerifyingKey :=
+  match ConstraintSystemMeta.new Features.solidity gi.vk.cs gi.cfg.numCommittedInstances with
+  | .error _ => none
+  | .ok m0 =>
+    match generateVk Features.solidity (vkBuildEnvOf (frFieldCtx gi.E.delta) gi.vk.cs)
+        gi.codecs (buildInputsOf gi m0) with
+    | .ok p => some p
+    | .error _ => none
+
+/-- The D-GATE11 input clause: the generated VK payload and every count the layout arithmetic
+    consumes. `payloadOf` is a computation on `gi`, so this is still an input predicate. -/
+structure CountBound (gi : GenInput p G₁ G₂ Gₜ) : Prop where
+  payload : ∀ p, payloadOf gi = some p → p.len < 2 ^ 200
+  instances : gi.cfg.numInstances < 2 ^ 32
+  metaCounts : ∀ m, rawMetaOf gi = some m → MetaCountsBound m
+
+/-- The `Bool` face of `CountBound`; the concrete-count witness at F1 is `native_decide` on this. -/
+def countBoundB (gi : GenInput p G₁ G₂ Gₜ) : Bool :=
+  decide (gi.cfg.numInstances < 2 ^ 32) &&
+  (match payloadOf gi with | some p => decide (p.len < 2 ^ 200) | none => true) &&
+  (match rawMetaOf gi with | some m => metaCountsBoundB m | none => true)
+
+theorem countBound_of_b {gi : GenInput p G₁ G₂ Gₜ} (h : countBoundB gi = true) :
+    CountBound gi := by
+  unfold countBoundB at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  refine { payload := ?_, instances := ?_, metaCounts := ?_ }
+  · intro q hq
+    rw [hq] at h
+    simpa using h.1.2
+  · exact h.1.1
+  · intro m hm
+    rw [hm] at h
+    exact metaCountsBound_of_b h.2
+
 /-- **THE SUPPORTED CLASS.** Every clause mentions only the input. Clauses 1-11 are
     `SupportedV2` (Statements.lean) verbatim with `R.` read as `gi.`, minus `layout`, which
     mentions the plan and follows from generation (`supported_layout`). The scratch's `wfV3`
@@ -223,6 +350,286 @@ structure SupportedInput (gi : GenInput p G₁ G₂ Gₜ) : Prop where
       `BitVec.ofNat 256`, which wraps. Without it `payload_header`'s `numInstances` conjunct is
       false for `numInstances ≥ 2^256`. -/
   sizeBound : gi.cfg.numInstances < 2 ^ 64 ∧ gi.vk.domain.k < 64
+  /-- D-GATE11 (signed 2026-11-23): the count budget the layout arithmetic consumes. Every CS,
+      lookup, commitment and point-set count is `< 2 ^ 32`; the VK payload is `< 2 ^ 200`. This
+      is an INPUT predicate (a computation on `gi`), not a `ValidV3` hook. -/
+  countBound : CountBound gi
+
+/-! ## 2b. D-GATE11: the point-set count is bounded by the PCS-query count
+
+`numPointSets` is not a field of `ConstraintSystemMeta.new`: it is computed from the data by
+`intermediateSets`, which partitions the protocol's PCS queries by rotation set. The number of
+point sets therefore never exceeds the number of PCS queries, and `MetaCountsBound.pcsQueries`
+bounds that by `2 ^ 32`. The lemmas below are the length walk; none of them mentions a render. -/
+
+theorem span_length_eq {α : Type} (m : List α) (p : α → Bool) :
+    (m.span p).1.length + (m.span p).2.length = m.length := by
+  rw [List.span_eq_takeWhile_dropWhile]
+  have h := congrArg List.length (List.takeWhile_append_dropWhile (p := p) (l := m))
+  simp only [List.length_append] at h
+  omega
+
+theorem btreeMapEntryOrInsert_length_le (m : List (List Nat × Nat)) (key : List Nat) :
+    (btreeMapEntryOrInsert m key).length ≤ m.length + 1 := by
+  unfold btreeMapEntryOrInsert
+  split
+  · omega
+  · have hs := span_length_eq m (fun x => natListCmp x.1 key == Ordering.lt)
+    simp only [List.length_append, List.length_cons]
+    omega
+
+theorem btreeFold_length_le (l : List (EcPoint × List Nat × List Word))
+    (init : List (List Nat × Nat)) :
+    (l.foldl (fun m e => btreeMapEntryOrInsert m (btreeSetFromList natCmp e.2.1)) init).length
+      ≤ init.length + l.length := by
+  induction l generalizing init with
+  | nil => simp
+  | cons a as ih =>
+      simp only [List.foldl_cons, List.length_cons]
+      have h1 := btreeMapEntryOrInsert_length_le init (btreeSetFromList natCmp a.2.1)
+      have h2 := ih (btreeMapEntryOrInsert init (btreeSetFromList natCmp a.2.1))
+      omega
+
+theorem step1Pass_length_le
+    (st : List (EcPoint × List Nat × List Word) × List Int) (q : Query)
+    (st' : List (EcPoint × List Nat × List Word) × List Int)
+    (h : constructIntermediateSetsImpl.step1Pass st q = .ok st') :
+    st'.1.length ≤ st.1.length + 1 := by
+  obtain ⟨cm, pi⟩ := st
+  obtain ⟨rot, comm, ev⟩ := q
+  simp only [constructIntermediateSetsImpl.step1Pass, Bind.bind, Except.bind] at h
+  split at h
+  · simp only [pure, Except.pure] at h
+    cases h
+    simp
+  · split at h
+    · cases h
+    · split at h
+      · split at h
+        · cases h
+        · split at h
+          · simp only [pure, Except.pure] at h
+            cases h
+            simp
+          · split at h
+            · cases h
+            · simp only [pure, Except.pure] at h
+              cases h
+              simp
+      · split at h
+        · cases h
+        · rename_i hset
+          simp only [pure, Except.pure] at h
+          cases h
+          rw [Midfall.LoweringV3.listSetMut_length _ _ _ _ _ hset]
+          simp
+
+theorem step1Fold_length_le (qs : List Query) :
+    ∀ (st st' : List (EcPoint × List Nat × List Word) × List Int),
+      Midfall.LoweringV3.step1Fold qs st = .ok st' →
+      st'.1.length ≤ st.1.length + qs.length := by
+  induction qs with
+  | nil =>
+      intro st st' h
+      simp only [Midfall.LoweringV3.step1Fold] at h
+      cases h
+      simp
+  | cons q rest ih =>
+      intro st st' h
+      simp only [Midfall.LoweringV3.step1Fold, Bind.bind, Except.bind] at h
+      obtain ⟨st1, hstep, hrest⟩ := cert_except_bind_ok h
+      have h1 := step1Pass_length_le st q st1 hstep
+      have h2 := ih st1 st' hrest
+      simp only [List.length_cons]
+      omega
+
+theorem queries_length {meta_ : ConstraintSystemMeta} {dat : Data} {qs : List Query}
+    (h : queries meta_ dat = .ok qs) : qs.length = meta_.protocol.pcsQueries.length := by
+  unfold queries at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨qs0, hq, hrest⟩ := cert_except_bind_ok h
+  split at hrest
+  · cases hrest
+  · split at hrest
+    · cases hrest
+    · cases hrest
+      exact Midfall.LoweringV3.list_mapM_length meta_.protocol.pcsQueries qs hq
+
+theorem constructIntermediateSetsImpl_pointSets_length_le
+    (queries : List Query) (sets : IntermediateSets)
+    (h : constructIntermediateSetsImpl queries = .ok sets) :
+    sets.pointSets.length ≤ queries.length := by
+  unfold constructIntermediateSetsImpl at h
+  simp only [Bind.bind, Except.bind, pure, Except.pure] at h
+  obtain ⟨step1, hstep, hrest⟩ := cert_except_bind_ok h
+  have hformula := Midfall.LoweringV3.constructIntermediateSetsImpl_pointSets_length
+    queries sets step1 hstep (by
+      unfold constructIntermediateSetsImpl
+      simp only [Bind.bind, Except.bind, pure, Except.pure]
+      rw [hstep]
+      exact hrest)
+  have hmap : (step1.1.foldl (fun m e => btreeMapEntryOrInsert m (btreeSetFromList natCmp e.2.1)) []).length
+      ≤ step1.1.length := by
+    have h := btreeFold_length_le step1.1 []
+    simpa using h
+  have hstepLen : step1.1.length ≤ queries.length := by
+    have hstep' : Midfall.LoweringV3.step1Fold queries ([], []) = .ok step1 := by
+      rw [← Midfall.LoweringV3.foldlM_step1Fold]
+      exact hstep
+    have h := step1Fold_length_le queries ([], []) step1 hstep'
+    simpa using h
+  omega
+
+/-- **D-GATE11: THE POINT-SET COUNT IS BOUNDED BY THE PCS-QUERY COUNT.** `numPointSets` partitions
+    the PCS queries by rotation set, so its result is at most the number of queries. PROVED. -/
+theorem numPointSets_le_pcsQueries (meta_ : ConstraintSystemMeta) (dat : Data)
+    (hdummy : dat.dummyEvalWords = []) {n : Nat}
+    (h : numPointSets meta_ dat = .ok n) :
+    n ≤ meta_.protocol.pcsQueries.length := by
+  obtain ⟨out, hout, hlen⟩ := Midfall.LoweringV3.numPointSets_parts meta_ dat n h
+  obtain ⟨qs, sets, hq, hci, hs⟩ :=
+    Midfall.LoweringV3.intermediateSets_parts meta_ dat out hdummy hout
+  have hsets := Midfall.LoweringV3.sortSets_pointSets_length sets out hs
+  have hciLe := constructIntermediateSetsImpl_pointSets_length_le qs sets hci
+  have hqsLen := queries_length hq
+  omega
+
+/-- Left fold of addition with a seed; the count bound `v3_cdBound` needs. -/
+theorem foldl_add_le (l : List Nat) (B init : Nat) (h : ∀ x ∈ l, x ≤ B) :
+    l.foldl (fun a b => a + b) init ≤ init + l.length * B := by
+  induction l generalizing init with
+  | nil => simp
+  | cons a as ih =>
+      simp only [List.foldl_cons, List.length_cons]
+      have ha : a ≤ B := h a (by simp)
+      have hih := ih (init + a) (fun x hx => h x (by simp [hx]))
+      rw [Nat.succ_mul]
+      omega
+
+/-- A list of counts each at most `B` sums to at most `length * B`. -/
+theorem sumNat_le_length_mul {l : List Nat} {B : Nat} (h : ∀ x ∈ l, x ≤ B) :
+    sumNat l ≤ l.length * B := by
+  have hh := foldl_add_le l B 0 h
+  simpa [sumNat] using hh
+
+/-- **D-GATE11: `metaDataForVk`'s point-set count is bounded by the input's PCS queries.**
+    Under `Features.solidity` the dummy-eval pass is off, so the data `Data.new` builds has an
+    empty dummy vector; the number written by `setNumPointSets` is exactly the `numPointSets`
+    result on that data, and `numPointSets_le_pcsQueries` bounds it. PROVED. -/
+theorem metaDataForVk_numPointSets_le {Plan : Type} (feat : Features) (env : VkBuildEnv Plan)
+    (hfew : feat.outerFewerPointSets = false)
+    (m : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    {meta' : ConstraintSystemMeta} {dat : Data} {mem : VerifierMemoryLayout}
+    (h : metaDataForVk feat env m numInstances vk vkMptr = .ok (meta', dat, mem)) :
+    meta'.numPointSets ≤ m.protocol.pcsQueries.length := by
+  unfold metaDataForVk at h
+  rw [hfew] at h
+  simp only [Bind.bind, Except.bind, Bool.false_eq_true, ite_false] at h
+  obtain ⟨x1, _, h1⟩ := cert_except_bind_ok h
+  obtain ⟨x2, _, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨x3, hx3, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨x4, hx4, h4⟩ := cert_except_bind_ok h3
+  obtain ⟨x5, hx5, h5⟩ := cert_except_bind_ok h4
+  obtain ⟨x6, hx6, h6⟩ := cert_except_bind_ok h5
+  cases h6
+  have hx5' : numPointSets (m.setNumDummyEvals 0) x4 = .ok x5 := by simpa using hx5
+  have hdummy := Midfall.LoweringV3.Data.new_dummyEvalWords
+    (m.setNumDummyEvals 0) vk x3 x4 hx4
+  have hle := numPointSets_le_pcsQueries (m.setNumDummyEvals 0) x4 hdummy hx5'
+  simpa [ConstraintSystemMeta.setNumDummyEvals, ConstraintSystemMeta.setNumPointSets] using hle
+
+/-- **D-GATE11: THE PLAN META'S POINT-SET COUNT IS BOUNDED BY THE INPUT'S PCS QUERIES.** The
+    reservation loop only ever stores a `metaDataForVk` result, so the invariant is the previous
+    lemma at every step; `metaDataForStableStaticLayout` is the `List.range 3` fold. PROVED. -/
+theorem metaDataForStableStaticLayout_numPointSets_le {Plan : Type} (feat : Features)
+    (hfew : feat.outerFewerPointSets = false) (env : VkBuildEnv Plan)
+    (m : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey)
+    {vkMptr : Ptr} {meta' : ConstraintSystemMeta} {dat : Data} {mem : VerifierMemoryLayout}
+    (h : metaDataForStableStaticLayout feat env m numInstances vk
+      = .ok (vkMptr, meta', dat, mem)) :
+    meta'.numPointSets ≤ m.protocol.pcsQueries.length := by
+  unfold metaDataForStableStaticLayout at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨start, _, h1⟩ := cert_except_bind_ok h
+  obtain ⟨res, hres, hout⟩ := cert_except_bind_ok h1
+  have key : ∀ (l : List Nat)
+      (st : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr),
+      (∀ r, st.1 = some r → r.2.1.numPointSets ≤ m.protocol.pcsQueries.length) →
+      ∀ (res' : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr),
+        l.foldlM (fun (st : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr)
+            (_ : Nat) => do
+          if st.1.isSome then Except.ok st else do
+            let vkMptr := st.2
+            let (metaOut, dat, memory) ← metaDataForVk feat env m numInstances vk vkMptr
+            let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
+            let cur ← Value.asUsize vkMptr.value
+            if planned == cur then
+              Except.ok (some (vkMptr, metaOut, dat, memory), vkMptr)
+            else
+              Except.ok (none, ptrMemory (valueFromNat planned))) st = .ok res' →
+        (∀ r, res'.1 = some r → r.2.1.numPointSets ≤ m.protocol.pcsQueries.length) := by
+    intro l
+    induction l with
+    | nil =>
+        intro st hinv res' hf
+        cases hf
+        exact hinv
+    | cons a as ih =>
+        intro st hinv res' hf
+        rw [List.foldlM_cons] at hf
+        obtain ⟨st1, hstep, hrest⟩ := cert_except_bind_ok hf
+        apply ih _ ?_ res' hrest
+        intro r hr
+        split at hstep
+        · rename_i hsome
+          cases hstep
+          exact hinv r hr
+        · rename_i hnone
+          obtain ⟨q, hq, hstep2⟩ := cert_except_bind_ok hstep
+          obtain ⟨q2, hq2, hstep3⟩ := cert_except_bind_ok hstep2
+          obtain ⟨q3, hq3, hstep4⟩ := cert_except_bind_ok hstep3
+          split at hstep4
+          · cases hstep4
+            obtain ⟨rfl, rfl, rfl, rfl⟩ := hr
+            exact metaDataForVk_numPointSets_le feat env hfew m numInstances vk st.2 hq
+          · cases hstep4
+            cases hr
+  obtain ⟨resO, resPtr⟩ := res
+  cases resO with
+  | none => cases hout
+  | some r =>
+      have hkey := key (List.range 3) (none, ptrMemory (valueFromNat start))
+        (by intro r hr; cases hr) (some r, resPtr) hres
+      have hval : r = (vkMptr, meta', dat, mem) := Except.ok.inj hout
+      exact hkey (vkMptr, meta', dat, mem) (by rw [← hval])
+
+/-- **D-GATE11: `newFromVk`'s plan meta has at most as many point sets as the input's PCS
+    queries.** Six bind peels and the reservation lemma. PROVED. -/
+theorem newFromVk_numPointSets_le {F : Type} [BEq F]
+    (field : Midfall.Generator.QuotientEvaluator.FieldCtx F) (cs : ConstraintSystem F)
+    (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding) (payload : Halo2VerifyingKey)
+    (plan : LoweringPlan Unit Unit)
+    (h : Midfall.Generator.PlanNew.newFromVk Features.solidity field cs rawMeta numInstances
+        accEncoding payload = .ok plan) :
+    plan.meta_.numPointSets ≤ rawMeta.protocol.pcsQueries.length := by
+  simp only [Midfall.Generator.PlanNew.newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨q, hq, h1⟩ := cert_except_bind_ok h
+  obtain ⟨_proofLayout, _, h2⟩ := cert_except_bind_ok h1
+  obtain ⟨_qplan, _, h3⟩ := cert_except_bind_ok h2
+  obtain ⟨_build, _, h4⟩ := cert_except_bind_ok h3
+  obtain ⟨_nw, _, h5⟩ := cert_except_bind_ok h4
+  obtain ⟨_pcs, _, h6⟩ := cert_except_bind_ok h5
+  obtain ⟨_acc, _, h7⟩ := cert_except_bind_ok h6
+  obtain ⟨_memory, _, h8⟩ := cert_except_bind_ok h7
+  obtain ⟨_op, _, h9⟩ := cert_except_bind_ok h8
+  obtain ⟨_trip, _, h10⟩ := cert_except_bind_ok h9
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals
+    exact metaDataForStableStaticLayout_numPointSets_le Features.solidity rfl _
+      rawMeta numInstances payload hq
 
 /-! ## 3. One lemma per output-side clause. Every `sorry` below is the body of the named
     theorem. The first 33 are the scratch's; the last eight are D-CERT1's additions for the
@@ -281,6 +688,30 @@ theorem generated_of {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut} (hg : Genera
   show generateAll Features.solidity gi.E.delta gi.vk gi.cfg o.out.plan.vk
     (artifactInputsOf gi o.fingerprint) gi.flags = .ok o.out
   rw [hv]; exact h4
+
+/-- The D-GATE11 computations agree with a successful run: `rawMetaOf` is the run's raw meta and
+    `payloadOf` is the payload the run uses. PROVED. -/
+theorem payloadOf_of_generates {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut}
+    (hg : Generates gi o) :
+    ∃ (p : Halo2VerifyingKey) (m0 : ConstraintSystemMeta),
+      rawMetaOf gi = some m0 ∧ payloadOf gi = some p ∧ (renderOf gi o).plan.vk = p := by
+  obtain ⟨m0, payload, hraw, hgenvk, _, h4⟩ := generate_spec hg
+  refine ⟨payload, m0, ?_, ?_, plan_vk_of_generateAll h4⟩
+  · unfold rawMetaOf
+    rw [hraw]
+  · unfold payloadOf
+    rw [hraw]
+    simp only
+    rw [hgenvk]
+
+/-- **D-GATE11's payload clause, read off a run.** The render's VK payload is the `payloadOf`
+    computation and is below `2 ^ 200`. PROVED from the clause; no `ValidV3` projection. -/
+theorem payload_len_of_generates {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut}
+    (hg : Generates gi o) (hs : SupportedInput gi) :
+    (renderOf gi o).plan.vk.len < 2 ^ 200 := by
+  obtain ⟨q, _m0, _hraw, hpay, hvk⟩ := payloadOf_of_generates hg
+  rw [hvk]
+  exact hs.countBound.payload q hpay
 
 /-! ### P: the program clause, `programOk` - the 33 scratch lemmas -/
 
@@ -2286,7 +2717,118 @@ theorem v3_noShadow (hg : Generates gi o) (hs : SupportedInput gi) :
 
 theorem v3_cdBound (hg : Generates gi o) (hs : SupportedInput gi) :
     (renderOf gi o).plan.proofLayout.proofEnd + 32 + 32 * gi.cfg.numInstances < 2 ^ 256 := by
-  sorry -- CERT.1 (suspect: no generator check bounds proofEnd)
+  -- the raw meta and the plan's own meta / proof layout
+  obtain ⟨m0, _payload, hraw, _hgenvk, _hfp, _h4⟩ := generate_spec hg
+  obtain ⟨rawMeta, plan, hraw', hpl, hp⟩ :=
+    Midfall.LoweringV3.MemoryPairs.plan_of_generated (generated_of hg)
+  simp only [renderOf] at hraw' hpl
+  rw [hraw] at hraw'
+  cases hraw'
+  obtain ⟨meta_, L, hmeta, hLplan, hL⟩ :=
+    newFromVk_plan_meta_proofLayout Features.solidity (frFieldCtx gi.E.delta) gi.vk.cs
+      m0 gi.cfg.numInstances gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
+  have hLR : (renderOf gi o).plan.proofLayout = L := by rw [hp]; exact hLplan
+  -- the D-GATE11 count clause, instantiated at the run's own raw meta
+  have hr : rawMetaOf gi = some m0 := by
+    unfold rawMetaOf
+    rw [hraw]
+  have hM : MetaCountsBound m0 := hs.countBound.metaCounts m0 hr
+  have hmetaFacts := Midfall.LoweringV3.newFromVk_meta_numEvals (frFieldCtx gi.E.delta)
+    gi.vk.cs m0 gi.cfg.numInstances gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
+  rw [hmeta] at hmetaFacts
+  have hEval : meta_.numEvals < 2 ^ 32 := by
+    rw [hmetaFacts.1]; exact hM.evals
+  have hProtocol : meta_.protocol = m0.protocol := hmetaFacts.2
+  have hPointLe : meta_.numPointSets ≤ m0.protocol.pcsQueries.length := by
+    have h := newFromVk_numPointSets_le (frFieldCtx gi.E.delta) gi.vk.cs m0 gi.cfg.numInstances
+      gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
+    rwa [hmeta] at h
+  have hPoint : meta_.numPointSets < 2 ^ 32 := lt_of_le_of_lt hPointLe hM.pcsQueries
+  -- the proof-length equation and the commitment census
+  have hfacts := Midfall.LoweringV3.TranscriptRows.tp_fromProtocol hL
+  have hpen := proofLen_eq_repackedLen meta_.protocol meta_.numEvals meta_.numPointSets L hL
+  have hcptr := Midfall.LoweringV2.fromProtocol_proofCptr meta_.protocol meta_.numEvals
+    meta_.numPointSets L hL
+  have hCG : L.commitmentG1Count = sumNat meta_.protocol.numUserAdvices
+      + meta_.protocol.numLookups + meta_.protocol.numPermutationZs
+      + sumNat (((List.range meta_.protocol.lookupChunks.length).zip
+          meta_.protocol.lookupChunks).map (fun q => q.2 + 1))
+      + meta_.protocol.numTrashcans + meta_.protocol.numQuotients := by
+    rw [show L.commitmentG1Count =
+        sumNat (L.advicePhases.map (fun s => s.itemCount))
+        + L.lookupMultiplicities.itemCount + L.permutationProducts.itemCount
+        + sumNat (L.lookups.map (fun lk => lk.helpers.itemCount + lk.accumulator.itemCount))
+        + L.trash.itemCount + L.quotientLimbs.itemCount from rfl]
+    rw [hfacts.adviceSum, hfacts.lookupM, hfacts.permZ, hfacts.lookupSum,
+      hfacts.trash, hfacts.quotient]
+  have hAdvSum : sumNat meta_.protocol.numUserAdvices ≤ 2 ^ 32 * 2 ^ 32 := by
+    have h1 : sumNat meta_.protocol.numUserAdvices
+        ≤ meta_.protocol.numUserAdvices.length * 2 ^ 32 := by
+      rw [hProtocol]
+      exact sumNat_le_length_mul (fun x hx => Nat.le_of_lt (hM.userAdvicesEach x hx))
+    have h2 : meta_.protocol.numUserAdvices.length < 2 ^ 32 := by
+      rw [hProtocol]; exact hM.userAdvicesLen
+    nlinarith
+  have hLkSum : sumNat (((List.range meta_.protocol.lookupChunks.length).zip
+      meta_.protocol.lookupChunks).map (fun q => q.2 + 1)) ≤ 2 ^ 32 * 2 ^ 32 := by
+    have hmap : ((List.range meta_.protocol.lookupChunks.length).zip
+        meta_.protocol.lookupChunks).map (fun q => q.2 + 1)
+        = meta_.protocol.lookupChunks.map (fun n => n + 1) := by
+      let l := (List.range meta_.protocol.lookupChunks.length).zip meta_.protocol.lookupChunks
+      have hm : List.map (fun q => q.2 + 1) l = List.map (fun n => n + 1) (l.map Prod.snd) := by
+        rw [List.map_map]
+        rfl
+      rw [hm, Midfall.LoweringV3.TranscriptRows.zip_range_snd]
+    rw [hmap]
+    have h1 : sumNat (meta_.protocol.lookupChunks.map (fun n => n + 1))
+        ≤ meta_.protocol.lookupChunks.length * 2 ^ 32 := by
+      have h := sumNat_le_length_mul
+        (l := meta_.protocol.lookupChunks.map (fun n => n + 1)) (B := 2 ^ 32) (by
+          intro x hx
+          rw [List.mem_map] at hx
+          obtain ⟨n, hn, rfl⟩ := hx
+          rw [hProtocol] at hn
+          have := hM.lookupChunksEach n hn
+          omega)
+      simpa using h
+    have h2 : meta_.protocol.lookupChunks.length < 2 ^ 32 := by
+      rw [hProtocol]; exact hM.lookupChunksLen
+    nlinarith
+  have hCCount : L.commitmentG1Count < 2 ^ 66 := by
+    rw [hCG]
+    have hLk : meta_.protocol.numLookups < 2 ^ 32 := by rw [hProtocol]; exact hM.lookups
+    have hPs : meta_.protocol.numPermutationZs < 2 ^ 32 := by rw [hProtocol]; exact hM.permutationZs
+    have hTr : meta_.protocol.numTrashcans < 2 ^ 32 := by rw [hProtocol]; exact hM.trashcans
+    have hQ : meta_.protocol.numQuotients < 2 ^ 32 := by rw [hProtocol]; exact hM.quotients
+    nlinarith
+  have hRep : L.proofLen = 128 * L.commitmentG1Count + 32 * meta_.numEvals
+      + 128 + 32 * meta_.numPointSets + 128 := by
+    rw [hpen.1]
+    change (RepackedProofLayoutPlan.fromProofLayout L).prefixG1Count * Midfall.Generator.g1Bytes
+        + (RepackedProofLayoutPlan.fromProofLayout L).numEvals * Midfall.Generator.wordBytes
+        + Midfall.Generator.g1Bytes
+        + (RepackedProofLayoutPlan.fromProofLayout L).numPointSets * Midfall.Generator.wordBytes
+        + Midfall.Generator.g1Bytes = _
+    rw [sum_commitmentReadGroups]
+    change L.commitmentG1Count * Midfall.Generator.g1Bytes
+        + L.evals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes
+        + L.qEvals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes = _
+    rw [hfacts.evals, hfacts.qEvals]
+    have hg1 : Midfall.Generator.g1Bytes = 128 := rfl
+    have hw : Midfall.Generator.wordBytes = 32 := rfl
+    rw [hg1, hw]
+    ring
+  have hPE : L.proofEnd = 100 + L.proofLen := by
+    rw [hpen.2, hcptr]
+    rfl
+  have hEnd : L.proofEnd < 2 ^ 80 := by
+    rw [hPE, hRep]
+    nlinarith [hCCount, hEval, hPoint, Nat.zero_le L.commitmentG1Count]
+  rw [hLR]
+  have hNI : gi.cfg.numInstances < 2 ^ 64 := hs.sizeBound.1
+  have hsmall : L.proofEnd + 32 + 32 * gi.cfg.numInstances < 2 ^ 128 := by
+    nlinarith [hEnd, hNI]
+  exact lt_trans hsmall (by norm_num)
 
 theorem v3_payload (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.PayloadAgrees (renderOf gi o) :=
@@ -2386,10 +2928,20 @@ theorem prog_gasFree (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.GasFree ((renderOf gi o).prog 0 0) := by
   sorry -- CERT.5 (D3)
 
-/-- D-CERT1 / CERT.6: the address-fit invariant (D-QVM1), VK window and quotient interpreter. -/
+/-- D-CERT1 / CERT.6: the address-fit invariant (D-QVM1), VK window and quotient interpreter.
+
+    D-GATE11 reduced the `v3_cdBound` half and the point-set census to the input count budget
+    (`CountBound`). The residual is exact: `staticWorkingSetFits` still consumes the final
+    `VerifierMemoryLayoutConfig` (`quotientStateWords`, `quotientStackWords`, `accMsmTerms` and the
+    four `PcsMemoryRequirements` fields), which are sized from the quotient IDENTITY PLAN and the
+    emitted `QuotientProgramBuild` (`quotientProgramPlan` -> `buildQuotientProgramItems` ->
+    `memoryRequirements`), and `quotientProgramFits` needs the same program/const/stack lengths.
+    Those are not bounded by the CS count budget alone (a quotient-builder size lemma is needed),
+    so the remaining input clause is a quotient-build sizing bound, not another count bound. No `ValidV3`, row or root hypothesis is
+    involved; `SupportedInput` was strengthened, not weakened. -/
 theorem prog_programFits (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.programFits (renderOf gi o).pv (renderOf gi o).model := by
-  sorry -- CERT.6 (D4)
+  sorry -- CERT.6 (D4), residual documented above (quotient-build sizing)
 
 end Clauses
 

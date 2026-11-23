@@ -79,6 +79,44 @@ permCommMatchRepaired={PCM} gasCallOk={GCO} gasFree={GF} programFits={PF}"
 
 #eval report
 
+/-! ## D-GATE11 concrete-count witness (F1)
+
+The D-GATE11 clause is an input computation (`metaCountsBoundB` on the raw meta, the payload
+length, and the instance count), so its content at a concrete input is decided by `native_decide`.
+There is no `SupportedInput` inhabitant in the tree - `SupportedInput` is a generator-side
+predicate and the F1 files witness `SupportedV2`, not it - so this is the honest witness the
+clause has: the F1 raw meta, the F1 payload and the F1 proof-end all satisfy the new budget. -/
+
+/-- The F1 raw meta: the same `ConstraintSystemMeta.new` the generator's first bind runs. -/
+def f1RawMeta : ConstraintSystemMeta :=
+  match ConstraintSystemMeta.new Features.solidity poseidonVkExec.cs
+      poseidonConfig.numCommittedInstances with
+  | .ok m => m
+  | .error _ => constraintSystemMetaDefault
+
+/-- D-GATE11 at F1: every count `< 2 ^ 32`, the payload `< 2 ^ 200`, and the proof-end bound. -/
+def f1CountsOk : Bool :=
+  Midfall.Generator.Certified.metaCountsBoundB f1RawMeta &&
+  decide (genFilledOut.plan.vk.len < 2 ^ 200) &&
+  decide (genFilledOut.plan.proofLayout.proofEnd + 32 +
+    32 * poseidonConfig.numInstances < 2 ^ 256)
+
+theorem f1CountsOk_true : f1CountsOk = true := by native_decide
+
+/-- The clause's content at F1, as a `Prop`: the raw meta passes `MetaCountsBound`. -/
+theorem f1MetaCounts_true :
+    Midfall.Generator.Certified.metaCountsBoundB f1RawMeta = true := by native_decide
+
+theorem f1MetaCounts : Midfall.Generator.Certified.MetaCountsBound f1RawMeta :=
+  Midfall.Generator.Certified.metaCountsBound_of_b f1MetaCounts_true
+
+/-- The generated F1 payload is below the D-GATE11 `2 ^ 200` payload bound. -/
+theorem f1PayloadLen_lt : genFilledOut.plan.vk.len < 2 ^ 200 := by native_decide
+
+#print axioms f1CountsOk_true
+#print axioms f1MetaCounts
+#print axioms f1PayloadLen_lt
+
 #print axioms Midfall.Generator.Certified.generate_spec
 
 end Midfall.Instances.CertMeasure

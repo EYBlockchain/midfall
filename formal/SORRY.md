@@ -39,28 +39,27 @@ gate tool, so it carries the word `sorry` in the message strings it prints, and 
 comments but not string literals. The environment scan needs no exemption.
 
 | declaration | module | kind | status | cone | statement | removed by |
-| Midfall.Generator.Certified.prog_callsResolved | Midfall.Generator.Certified | theorem | OPEN | - | `e754e48eb935790e` | V3 CERT.5 - call-site lemma per emitter plus the helper signature table |
-| Midfall.Generator.Certified.prog_closed | Midfall.Generator.Certified | theorem | OPEN | - | `4d4e1b3f8d88ecd5` | V3 CERT.5 - from constsDeclared/constTable plus the inlineContractConstants free-name lemma |
-| Midfall.Generator.Certified.prog_codegenStruct | Midfall.Generator.Certified | theorem | OPEN | - | `d29d03ed48643742` | V3 CERT.2 - route A: the emitted tree is the generator text (today false until WP-G1 is certified) |
-| Midfall.Generator.Certified.prog_constLinesLiteral | Midfall.Generator.Certified | theorem | OPEN | - | `f714a0aaa04763f0` | V3 CERT.6 - every Constants.sol line has a literal RHS; disappears when CERT.3 prints the table |
-| Midfall.Generator.Certified.prog_constTable | Midfall.Generator.Certified | theorem | OPEN | - | `4287b2db65b94696` | V3 CERT.6 with CERT.3 - constTableOf is expectedConsts once Constants.sol is printed from the table |
-| Midfall.Generator.Certified.prog_constsDeclared | Midfall.Generator.Certified | theorem | OPEN | - | `79e6f660fe752b8d` | V3 CERT.5 - free-name lemma per emitter against the fixed constant name list |
-| Midfall.Generator.Certified.prog_gasCallOk | Midfall.Generator.Certified | theorem | OPEN | - | `3aa1cf4cf841a791` | V3 CERT.5 (D3, D-CERT1) - gas() occurs only as a call gas argument |
-| Midfall.Generator.Certified.prog_gasFree | Midfall.Generator.Certified | theorem | OPEN | - | `14ce060d6970fece` | V3 CERT.5 (D3, D-CERT1) - the whole program executes no gas() (D-GATE1) |
-| Midfall.Generator.Certified.prog_hasMultiPointSet | Midfall.Generator.Certified | theorem | OPEN | - | `3faca9d12edc289e` | V3 CERT.6 (D4, D-CERT1) - intermediateSets has a point set of size at least two |
-| Midfall.Generator.Certified.prog_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `ff281295813cb0cf` | V3 CERT.5 - every-binder scan: binder lemma per emitter (the tree name is noShadowProg) |
-| Midfall.Generator.Certified.prog_noWriters | Midfall.Generator.Certified | theorem | OPEN | - | `f3dfc04a7d459e38` | V3 CERT.5 - scan lemma per emitter; inlining substitutes literals only |
-| Midfall.Generator.Certified.prog_programFits | Midfall.Generator.Certified | theorem | OPEN | - | `fa1814585da48f98` | V3 CERT.6 (D4, D-CERT1) - D-QVM1 address-fit: VK window and quotient interpreter |
-| Midfall.Generator.Certified.prog_transcriptFloor | Midfall.Generator.Certified | theorem | OPEN | - | `90eb320a88e57a0f` | V3 CERT.4 - memory.validate pins transcript_mptr = TRANSCRIPT_BUFFER_START |
-| Midfall.Generator.Certified.prog_transcriptRegionOk | Midfall.Generator.Certified | theorem | OPEN | - | `03cc061fe5e69770` | V3 CERT.6 (D4, D-CERT1) - PG-TPBUF: transcript window holds the longest absorb run and meets no walk window |
-| Midfall.Generator.Certified.supported_layout | Midfall.Generator.Certified | theorem | OPEN | - | `ac0061a827a64822` | V3 CERT.4 - validateGeneratorInvariants runs memory.validate, which implies WellFormed and isOk |
-| Midfall.Generator.Certified.v3_cdBound | Midfall.Generator.Certified | theorem | OPEN | - | `9c747d99a283be2c` | V3 CERT.1 probe - NEEDS CLAUSE: no generator check bounds proofEnd; candidate size clause in Instances/CertProbes.lean |
-| Midfall.Generator.Certified.v3_closed | Midfall.Generator.Certified | theorem | OPEN | - | `a3fb03fed6e0f86a` | V3 CERT.5 - mainClosed restricted to the main block |
-| Midfall.Generator.Certified.v3_codegen | Midfall.Generator.Certified | theorem | OPEN | - | `d33dda869f6949aa` | V3 CERT.2 - route A: CodegenAgrees (today false until WP-G1 is certified) |
-| Midfall.Generator.Certified.v3_exitDiscipline | Midfall.Generator.Certified | theorem | OPEN | - | `1fd03addccdcce61` | V3 CERT.5 - exit-scan lemma per emitter |
-| Midfall.Generator.Certified.v3_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `3fceb6a2ff594db0` | V3 CERT.5 - top-level binder scan, as prog_noShadow |
+| Midfall.Generator.Certified.prog_callsResolved | Midfall.Generator.Certified | theorem | OPEN | - | `9421fd6429340074` | V3 CERT.5 - call-site lemma per emitter plus the helper signature table |
+| Midfall.Generator.Certified.prog_closed | Midfall.Generator.Certified | theorem | OPEN | - | `bcbde4e04e492ed2` | V3 CERT.5 - from constsDeclared/constTable plus the inlineContractConstants free-name lemma |
+| Midfall.Generator.Certified.prog_codegenStruct | Midfall.Generator.Certified | theorem | OPEN | - | `4f989eec634f4949` | V3 CERT.2 - route A: the emitted tree is the generator text (today false until WP-G1 is certified) |
+| Midfall.Generator.Certified.prog_constLinesLiteral | Midfall.Generator.Certified | theorem | OPEN | - | `e812aa299d987237` | V3 CERT.6 - every Constants.sol line has a literal RHS; disappears when CERT.3 prints the table |
+| Midfall.Generator.Certified.prog_constTable | Midfall.Generator.Certified | theorem | OPEN | - | `a896f0efd31c3e8e` | V3 CERT.6 with CERT.3 - constTableOf is expectedConsts once Constants.sol is printed from the table |
+| Midfall.Generator.Certified.prog_constsDeclared | Midfall.Generator.Certified | theorem | OPEN | - | `48602e76f62df287` | V3 CERT.5 - free-name lemma per emitter against the fixed constant name list |
+| Midfall.Generator.Certified.prog_gasCallOk | Midfall.Generator.Certified | theorem | OPEN | - | `6d1266c42d58757b` | V3 CERT.5 (D3, D-CERT1) - gas() occurs only as a call gas argument |
+| Midfall.Generator.Certified.prog_gasFree | Midfall.Generator.Certified | theorem | OPEN | - | `f5badf6de19edb41` | V3 CERT.5 (D3, D-CERT1) - the whole program executes no gas() (D-GATE1) |
+| Midfall.Generator.Certified.prog_hasMultiPointSet | Midfall.Generator.Certified | theorem | OPEN | - | `4c7363c40ef7ad06` | V3 CERT.6 (D4, D-CERT1) - intermediateSets has a point set of size at least two |
+| Midfall.Generator.Certified.prog_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `21866adc2c2e6bcd` | V3 CERT.5 - every-binder scan: binder lemma per emitter (the tree name is noShadowProg) |
+| Midfall.Generator.Certified.prog_noWriters | Midfall.Generator.Certified | theorem | OPEN | - | `028c6826839c483b` | V3 CERT.5 - scan lemma per emitter; inlining substitutes literals only |
+| Midfall.Generator.Certified.prog_programFits | Midfall.Generator.Certified | theorem | OPEN | - | `f6caf92177936208` | V3 CERT.6 (D4, D-CERT1) - D-QVM1 address-fit: VK window and quotient interpreter |
+| Midfall.Generator.Certified.prog_transcriptFloor | Midfall.Generator.Certified | theorem | OPEN | - | `1955e1c1dce3abe6` | V3 CERT.4 - memory.validate pins transcript_mptr = TRANSCRIPT_BUFFER_START |
+| Midfall.Generator.Certified.prog_transcriptRegionOk | Midfall.Generator.Certified | theorem | OPEN | - | `72ca42ee18d1554a` | V3 CERT.6 (D4, D-CERT1) - PG-TPBUF: transcript window holds the longest absorb run and meets no walk window |
+| Midfall.Generator.Certified.supported_layout | Midfall.Generator.Certified | theorem | OPEN | - | `597b8c9ded24f2fb` | V3 CERT.4 - validateGeneratorInvariants runs memory.validate, which implies WellFormed and isOk |
+| Midfall.Generator.Certified.v3_closed | Midfall.Generator.Certified | theorem | OPEN | - | `4b3ac30edb4fe645` | V3 CERT.5 - mainClosed restricted to the main block |
+| Midfall.Generator.Certified.v3_codegen | Midfall.Generator.Certified | theorem | OPEN | - | `dfc804e64b6ba392` | V3 CERT.2 - route A: CodegenAgrees (today false until WP-G1 is certified) |
+| Midfall.Generator.Certified.v3_exitDiscipline | Midfall.Generator.Certified | theorem | OPEN | - | `1e98f03044edf5bb` | V3 CERT.5 - exit-scan lemma per emitter |
+| Midfall.Generator.Certified.v3_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `6eebd740e722a4cd` | V3 CERT.5 - top-level binder scan, as prog_noShadow |
 | Midfall.Generator.Certified.v3_pins_of_valid | Midfall.Generator.Certified | theorem | OPEN | - | `8649414d6a6af241` | V3 CERT.6 - the pin bundles are consequences of the one ValidV3, not of generation |
-| Midfall.Generator.Certified.v3_planMeta | Midfall.Generator.Certified | theorem | OPEN | - | `9f526c3d549e8a4d` | V3 CERT.1 probe - NEEDS CLAUSE: Data.new gets the FINAL memory in the port, the pre-point-set memory in Rust; candidate stability clause in Instances/CertProbes.lean |
+| Midfall.Generator.Certified.v3_planMeta | Midfall.Generator.Certified | theorem | OPEN | - | `d4e081bb7bf8500a` | V3 CERT.1 probe - NEEDS CLAUSE: Data.new gets the FINAL memory in the port, the pre-point-set memory in Rust; candidate stability clause in Instances/CertProbes.lean |
 | Midfall.Halo2.Spec.accepts | Midfall.Halo2.Spec.Piop | def | OPEN | - | `6db1418cbda599b6` | Phase 4 (spec layer) |
 | Midfall.Instances.PoseidonV2.poseidon_quotient_block | Midfall.Instances.PoseidonV2 | theorem | OPEN | - | `f2571a03d4164a52` | V3 ROW.Q - the quotient row: the one block the generic hinge does not cover |
 | Midfall.Instances.PoseidonV2.poseidon_rejects | Midfall.Instances.PoseidonV2 | theorem | OPEN | - | `3e7a72dcd164821a` | V3 PL.H via rejectsV3_of_rows - V2 C.3 staged rejection contracts |

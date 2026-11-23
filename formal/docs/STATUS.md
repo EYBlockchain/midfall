@@ -304,6 +304,39 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
   A4's lag call uses it.
 - D-GATE10: the old `KzgMultiPrepareWidths` (`∀ queries`) is false for positive `numPointSets`;
   the consumer is repaired to the per-query obligation at `linearize`'s query vector.
+- **D-GATE11 (signed 2026-11-23): the generator's count budget.** `prog_programFits` and
+  `v3_cdBound` were not derivable from the pre-D-GATE11 `SupportedInput`: the layout arithmetic
+  multiplies unbounded `Nat` counts by `G1_BYTES`/`WORD_BYTES`, and no clause bounded `proofEnd` or
+  the static working set. `SupportedInput` now carries `countBound : CountBound gi` (a computation on
+  `gi`, so it remains an input predicate):
+  * every raw-meta protocol count is `< 2 ^ 32` (`numLookups`, `numPermutationZs`, `numTrashcans`,
+    `numQuotients`, `numUserAdvices` entries, `lookupChunks` entries, `pcsQueries.length`) —
+    `MetaCountsBound`;
+  * `numSimpleSelectors`, `numEvals` and `challengeIndices.length` are `< 2 ^ 32`;
+  * the generated payload (`payloadOf gi`, `generate`'s first two binds) has `len < 2 ^ 200`;
+  * `numInstances < 2 ^ 32`.
+  The point-set count is NOT a meta field (it is computed by `intermediateSets`), so it is bounded
+  indirectly: `pcsQueries.length < 2 ^ 32` plus the PROVED `numPointSets_le_pcsQueries` (the
+  partition has at most one set per PCS query). The new module lemmas
+  `step1Fold_length_le`/`constructIntermediateSetsImpl_pointSets_length_le` are the length walk.
+  **`v3_cdBound` is now PROVED** from `proofLen_eq_repackedLen`, `tp_fromProtocol`,
+  `newFromVk_meta_numEvals`, `newFromVk_numPointSets_le` and the count budget
+  (`commitmentG1Count < 2 ^ 66`, `proofEnd < 2 ^ 80`, hence `< 2 ^ 256`). The F1 concrete-count
+  witness is `Instances/CertMeasure.f1CountsOk_true`, a `native_decide` on the raw meta, the
+  payload length and the proof-end bound.
+  **Residual (CERT.6/D4), stated exactly.** `prog_programFits` itself is still OPEN. Its
+  `staticWorkingSetFits` half still consumes the final `VerifierMemoryLayoutConfig`
+  (`quotientStateWords`, `quotientStackWords`, `accMsmTerms` and the four `PcsMemoryRequirements`
+  fields), which are sized from the quotient IDENTITY PLAN and the emitted build
+  (`quotientProgramPlan` -> `buildQuotientProgramItems` -> `memoryRequirements`); their sizes are
+  not bounded by the CS count budget alone (a quotient-builder size lemma is needed), and
+  `quotientProgramFits` needs the same build/plan lengths. The separate input clause the residual needs is therefore a QUOTIENT-BUILD sizing
+  bound, not another count bound. `batchInvertScratchFits` is the one remaining count-adjacent
+  piece: `batchInvertScratchMptr` IS `selectorAccMptr`, and the `generated` clause gives the payload
+  floor (`generated_vkMptr_floor` + `0x1560`); the missing standalone lemma is the four-step
+  arena-chain extraction from `VerifierMemoryLayout.new` (`Totality.lean` already carries the
+  same steps inside `hp_selector`, not as an exported lemma). No `ValidV3`, row, bundle or root
+  hypothesis was added, and `SupportedInput` was strengthened.
 
 ### Six-lane critical path (user cap)
 
