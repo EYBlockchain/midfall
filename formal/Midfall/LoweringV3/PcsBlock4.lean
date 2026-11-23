@@ -3991,7 +3991,8 @@ theorem pcsGenBatch_contract {g : ExternalGas} (product : PairingProduct)
         n rv x2v fev cptr qep a nm)
       (fun V st V' st' o =>
         (o = .normal ∧ PcsGP4 (c := permissive (callsOf product)) (g := g)
-          points.length n rv x2v fev cptr qep a invName V' st') ∨
+          points.length n rv x2v fev cptr qep a invName V' st' ∧
+          MemSameOutside st st' scratch 192 ∧ st'.env = st.env) ∨
         (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   unfold PcsGP3 at hpre
@@ -4166,7 +4167,8 @@ theorem pcsGenBatch_contract {g : ExternalGas} (product : PairingProduct)
       (pcsDenInvLines points.length invName)
       (fun V1 st1 => Mid6 V st V1 st1)
       (fun _ _ V1 st1 o1 => o1 = .normal ∧ PcsGP4 (c := permissive (callsOf product)) (g := g)
-        points.length n rv x2v fev cptr qep a invName V1 st1) := by
+        points.length n rv x2v fev cptr qep a invName V1 st1 ∧
+        MemSameOutside st st1 scratch 192 ∧ st1.env = st.env) := by
     intro V1 st1 hm V2 st2 o2 h2
     obtain ⟨hinv1, hr1, hx21, hf1, hq1, hqset1, hfr1, henv1⟩ := hm
     have hr1' : VEnv.get V1 "r" = some (BitVec.ofNat 256 blsR) := by
@@ -4179,27 +4181,30 @@ theorem pcsGenBatch_contract {g : ExternalGas} (product : PairingProduct)
       points.length invName a (by omega)
       (fun j hj => hdenInvAll j (by omega)) hnames.denR
       V1 st1 hpre V2 st2 o2 h2
-    refine ⟨ho, ?_⟩
-    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, by simpa [hrv] using hdenv⟩
-    · rw [hpres "r" (fun h => hnames.denR h.symm)]
-      exact hr1
-    · rw [hpres "x2" (by pcs_ne1)]
-      exact hx21
-    · rw [hpres "f_eval" (by pcs_ne1)]
-      exact hf1
-    · rw [hpres "Q_EVAL_CPTR" (by pcs_ne1)]
-      exact hq1
-    · rw [hpres "Q_EVAL_SET_MPTR" (by pcs_ne1)]
-      exact hqset1
-    · intro i hi
-      rw [hpres (invName i) (fun h => (hdenInvAll i hi) h.symm)]
-      exact hinv1 i hi
+    refine ⟨ho, ?_, ?_, ?_⟩
+    · refine ⟨?_, ?_, ?_, ?_, ?_, ?_, by simpa [hrv] using hdenv⟩
+      · rw [hpres "r" (fun h => hnames.denR h.symm)]
+        exact hr1
+      · rw [hpres "x2" (by pcs_ne1)]
+        exact hx21
+      · rw [hpres "f_eval" (by pcs_ne1)]
+        exact hf1
+      · rw [hpres "Q_EVAL_CPTR" (by pcs_ne1)]
+        exact hq1
+      · rw [hpres "Q_EVAL_SET_MPTR" (by pcs_ne1)]
+        exact hqset1
+      · intro i hi
+        rw [hpres (invName i) (fun h => (hdenInvAll i hi) h.symm)]
+        exact hinv1 i hi
+    · rw [hst]; exact hfr1
+    · rw [hst]; exact henv1
   have hsuffix : StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
       (pcsBqLines n nm invName ++ [GenAst.ylet (invName 0) (GenAst.yvar "bq")]
         ++ pcsDenInvLines points.length invName)
       (fun V1 st1 => Mid4 V st V1 st1)
       (fun _ _ V1 st1 o1 => o1 = .normal ∧ PcsGP4 (c := permissive (callsOf product)) (g := g)
-        points.length n rv x2v fev cptr qep a invName V1 st1) := by
+        points.length n rv x2v fev cptr qep a invName V1 st1 ∧
+        MemSameOutside st st1 scratch 192 ∧ st1.env = st.env) := by
     simpa [List.append_assoc] using
       (pcsStmtsContractAll_append_mid4 (c := permissive (callsOf product)) (g := g) (funs := funs)
       (ss1 := pcsBqLines n nm invName)
@@ -4208,7 +4213,8 @@ theorem pcsGenBatch_contract {g : ExternalGas} (product : PairingProduct)
       (mid := fun _ _ V1 st1 => Mid5 V st V1 st1)
       (post := fun _ _ V1 st1 o1 => o1 = .normal ∧
         PcsGP4 (c := permissive (callsOf product)) (g := g)
-          points.length n rv x2v fev cptr qep a invName V1 st1)
+          points.length n rv x2v fev cptr qep a invName V1 st1 ∧
+        MemSameOutside st st1 scratch 192 ∧ st1.env = st.env)
       hbqlines (fun V1 st1 hm => by
         have hrest : StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
             ([GenAst.ylet (invName 0) (GenAst.yvar "bq")]
@@ -4216,7 +4222,8 @@ theorem pcsGenBatch_contract {g : ExternalGas} (product : PairingProduct)
             (fun V2 st2 => Mid5 V st V2 st2)
             (fun _ _ V2 st2 o2 => o2 = .normal ∧
               PcsGP4 (c := permissive (callsOf product)) (g := g)
-                points.length n rv x2v fev cptr qep a invName V2 st2) :=
+                points.length n rv x2v fev cptr qep a invName V2 st2 ∧
+              MemSameOutside st st2 scratch 192 ∧ st2.env = st.env) :=
           pcsStmtsContractAll_append_mid4 (c := permissive (callsOf product)) (g := g)
             (funs := funs)
             (ss1 := [GenAst.ylet (invName 0) (GenAst.yvar "bq")])
@@ -4225,7 +4232,8 @@ theorem pcsGenBatch_contract {g : ExternalGas} (product : PairingProduct)
             (mid := fun _ _ V1 st1 => Mid6 V st V1 st1)
             (post := fun _ _ V2 st2 o2 => o2 = .normal ∧
               PcsGP4 (c := permissive (callsOf product)) (g := g)
-                points.length n rv x2v fev cptr qep a invName V2 st2)
+                points.length n rv x2v fev cptr qep a invName V2 st2 ∧
+              MemSameOutside st st2 scratch 192 ∧ st2.env = st.env)
             hlet (fun V2 st2 hm2 => hden)
         exact hrest))
   have hrun' : ExecStmts (Bridge.Dialect (permissive (callsOf product)) g) funs V st
