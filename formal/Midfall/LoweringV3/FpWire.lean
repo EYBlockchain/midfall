@@ -196,7 +196,28 @@ theorem bytesAt_vkG2Base (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (st : Ev
   rw [hptrEq]
   exact bytesAt_vkHeader st R.pv vkG2BaseSlot 8 hpayload hfit hconst
 
+
+/-- The `NEG_S_G2_BASE_MPTR` slice of the payload image; the same proof as the base slot. -/
+theorem bytesAt_vkNegSG2Base (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (st : EvmState)
+    (hpayload : bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes)
+    (hptr : ∃ n : ℕ, ptrValue R.pv.memory.vkMptr = Value.integer ↑n)
+    (hconst : vkNegSG2BaseSlot + 8 ≤ R.pv.vk.constants.length)
+    (hfit : 32 * (vkNegSG2BaseSlot + 8) ≤ R.pv.vk.len) :
+    bytesAt st (Midfall.LoweringV3.cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base)) 256 =
+      vkG2Words R.pv vkNegSG2BaseSlot := by
+  have hH := Midfall.LoweringV3.MemoryPairs.vkHeader_default_of_generated hR.generated
+  rw [hH]
+  have hptrEq := Midfall.LoweringV3.VkClean.ptrAddr_ptr_add_of_integer R.pv.memory.vkMptr
+    vkHeaderTemplateSlotsDefault.negSG2Base hptr
+  change bytesAt st (ptrAddr (Ptr.add R.pv.memory.vkMptr
+    vkHeaderTemplateSlotsDefault.negSG2Base)) 256 = vkHeaderBytes R.pv vkNegSG2BaseSlot 8
+  rw [hptrEq]
+  exact bytesAt_vkHeader st R.pv vkNegSG2BaseSlot 8 hpayload hfit hconst
+
 end FpWireRender
+
+#assert_axioms Midfall.LoweringV3.bytesAt_vkNegSG2Base
+  [propext, Classical.choice, Quot.sound] native []
 
 #assert_axioms Midfall.LoweringV3.bytesAt_vkG2Base
   [propext, Classical.choice, Quot.sound] native []

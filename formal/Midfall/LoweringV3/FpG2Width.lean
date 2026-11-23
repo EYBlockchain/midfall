@@ -128,4 +128,30 @@ theorem negSG2_constants_length (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
 #assert_axioms Midfall.LoweringV3.vk_len_ge_of_header
   [propext, Classical.choice, Quot.sound] native []
 
+
+theorem bytesAt_vkG2Base_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (product : PairingProduct) (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
+    (st : EvmState)
+    (hpayload : bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes)
+    (hptr : ∃ n : ℕ, ptrValue R.pv.memory.vkMptr = Value.integer ↑n) :
+    bytesAt st (Midfall.LoweringV3.cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base)) 256 =
+      vkG2Words R.pv vkG2BaseSlot :=
+  bytesAt_vkG2Base R hR st hpayload hptr (g2Base_constants_length R hR product hpc)
+    (vk_len_ge_of_header R (g2Base_constants_length R hR product hpc))
+
+theorem bytesAt_vkNegSG2Base_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (product : PairingProduct) (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
+    (st : EvmState)
+    (hpayload : bytesAt st (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len = R.pv.vk.bytes)
+    (hptr : ∃ n : ℕ, ptrValue R.pv.memory.vkMptr = Value.integer ↑n) :
+    bytesAt st (Midfall.LoweringV3.cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base)) 256 =
+      vkG2Words R.pv vkNegSG2BaseSlot :=
+  bytesAt_vkNegSG2Base R hR st hpayload hptr (negSG2_constants_length R hR product hpc)
+    (vk_len_ge_of_header R (negSG2_constants_length R hR product hpc))
+
+#assert_axioms Midfall.LoweringV3.bytesAt_vkG2Base_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.bytesAt_vkNegSG2Base_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+
 end Midfall.LoweringV3
