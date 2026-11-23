@@ -1391,6 +1391,45 @@ theorem runsAll_readG1Groups (E : VerifierEnv p G₁ G₂ Gₜ) :
         exact ih (Qs.drop n) hlen₂
 
 
+/-- Read a list of homogeneous Fr groups in order. -/
+def readFrGroups (E : VerifierEnv p G₁ G₂ Gₜ) : List Nat → TranscriptM Unit
+  | [] => pure ()
+  | n :: ns => (tmReadN (hashableFr (p := p)) n) >>= fun _ => readFrGroups E ns
+
+theorem runsAll_readFrGroups (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (counts : List Nat) (Qs : List (Fr p)),
+      Qs.length = counts.sum →
+      RunsAll E (readFrGroups E counts) (Qs.map (fun Q => (Msg.fr Q : Msg (Fr p) G₁))) := by
+  intro counts
+  induction counts with
+  | nil =>
+      intro Qs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      exact RunsAll.pure E ()
+  | cons n ns ih =>
+      intro Qs hlen
+      have hle : n ≤ Qs.length := by rw [hlen, List.sum_cons]; omega
+      have hlen₁ : (Qs.take n).length = n := by rw [List.length_take]; omega
+      have hlen₂ : (Qs.drop n).length = ns.sum := by
+        rw [List.length_drop, hlen, List.sum_cons]; omega
+      have hsplit : Qs.map (fun Q => (Msg.fr Q : Msg (Fr p) G₁)) =
+          (Qs.take n).map (fun Q => (Msg.fr Q : Msg (Fr p) G₁)) ++
+            (Qs.drop n).map (fun Q => (Msg.fr Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [hsplit]
+      refine RunsAll.bind E ?_ ?_
+      · -- the first group
+        intro t pref rest hbuf hpos hp henc hwidth
+        rw [← ByteArray.append_assoc] at hbuf
+        obtain ⟨arr, t', hrun, hpos', hbuf'⟩ :=
+          tmReadN_fr_wire E n t pref (Qs.take n) rest hlen₁ hbuf hpos hp
+        refine ⟨arr, t', hrun, hbuf', ?_⟩
+        simpa only [List.map_map, Function.comp_def] using hpos'
+      · intro _
+        exact ih (Qs.drop n) hlen₂
+
+
 /-- `transcriptOf` starts at cursor 0 with exactly `wireMsgs` in the buffer. -/
 theorem transcriptOf_buffer {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
