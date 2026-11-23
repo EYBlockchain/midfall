@@ -3990,3 +3990,52 @@ theorem lag_stmt6_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline
         (k := (n + m) * 32) h1
       exact absurd ho hne
 
+theorem lag_stmt11_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 11 1 =
+      [GenAst.yset "mptr" (Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts)] := by
+  kernel_rfl
+
+theorem step_lit_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {a : Nat} {v : U256} {st' : EvmState}
+    (h : Step (Bridge.Dialect c g) funs V st (Code.expr (Expr.lit (.number a)))
+      (Res.eres (EResult.vals [v] st'))) :
+    v = BitVec.ofNat 256 a ∧ st' = st := by
+  cases h
+  exact ⟨rfl, rfl⟩
+
+theorem lag_stmt11_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aD : Nat) (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some aD) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 11 1)
+      (fun _ _ => True)
+      (fun V st V' st' o =>
+        o = .normal ∧ st' = st ∧ V' = VEnv.set V "mptr" (BitVec.ofNat 256 aD)) := by
+  rw [lag_stmt11_form]
+  intro V st _ V' st' o hrun
+  have hsite : Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts = Expr.lit (.number aD) := by
+    simp [Blocks.VkLoading.vkSite, hD]
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | assignVal he hlen =>
+              rw [hsite] at he
+              obtain ⟨v, rfl⟩ := list_length_one hlen
+              obtain ⟨hv, hst⟩ := step_lit_inv (c := c) (g := g) (funs := funs)
+                (V := V) (st := st) (a := aD) he
+              subst hv
+              refine ⟨rfl, ?_, ?_⟩
+              · exact hst
+              · simp [VEnv.setMany]
+  | seqStop h1 hne =>
+      cases h1 with
+      | assignVal he hlen =>
+          rw [hsite] at he
+          obtain ⟨v, rfl⟩ := list_length_one hlen
+          obtain ⟨hv, hst⟩ := step_lit_inv (c := c) (g := g) (funs := funs)
+            (V := V) (st := st) (a := aD) he
+          subst hv
+          exact absurd rfl hne
+      | assignHalt he =>
+          rw [hsite] at he
+          exact (Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts he).elim
