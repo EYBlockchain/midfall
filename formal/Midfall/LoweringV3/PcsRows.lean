@@ -4430,6 +4430,8 @@ theorem b3_rolled_iter_contract {funs : FunEnv (Bridge.Dialect c g)} (nRot : Nat
         VEnv.get V' "pow_p" = some (pp + BitVec.ofNat 256 Midfall.Generator.wordBytes) ∧
         VEnv.get V' "eval_p" = some
           (ep + BitVec.ofNat 256 (nRot * Midfall.Generator.wordBytes)) ∧
+        (∀ y, (∀ k, k < nRot → y ≠ qkey k) → y ≠ "pow_p" → y ≠ "eval_p" →
+          y ≠ "pow" → VEnv.get V' y = VEnv.get V y) ∧
         st'.memory = st.memory) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hinit, hpp, hep, hrv⟩ := hpre
@@ -4490,12 +4492,22 @@ theorem b3_rolled_iter_contract {funs : FunEnv (Bridge.Dialect c g)} (nRot : Nat
       obtain ⟨hoc, hppc, hepc, houtc, hstc⟩ :=
         b3_cursor_contract (c := c) (g := g) (funs := funs) nRot pp ep
           Vf stf ⟨hppf, hepf⟩ V' st' o hcursors
-      refine ⟨hoc, ?_, hppc, hepc, ?_⟩
+      refine ⟨hoc, ?_, hppc, hepc, ?_, ?_⟩
       · intro k hk
         rw [houtc (qkey k) (qkey_ne_pow_p k) (qkey_ne_eval_p k)]
         exact hlookf k hk
-      · rw [hstc, hmemf, hst1, Midfall.Yul.Word.touchMemory_memory]
-    · obtain ⟨hof, _, _, _⟩ :=
+      · intro y hyq hypow hype hypowvar
+        rw [houtc y hypow hype]
+        rw [houtf y (fun k hk => hyq k hk)]
+        rw [hV1]
+        exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := "pow") (y := y)
+          (v := loadWord st.memory pp.toNat) hypowvar
+      · calc
+          st'.memory = stf.memory := congrArg EvmState.memory hstc
+          _ = st1.memory := hmemf
+          _ = (touchMemory st pp.toNat 32).memory := congrArg EvmState.memory hst1
+          _ = st.memory := Midfall.Yul.Word.touchMemory_memory st pp.toNat 32
+    · have hof : o = .normal := (
         b3_rolled_body_contract (c := c) (g := g) (funs := funs) nRot init
           (rolledWord st ep) (loadWord st.memory pp.toNat) rv ep
           V1 st1 ⟨by
@@ -4520,7 +4532,7 @@ theorem b3_rolled_iter_contract {funs : FunEnv (Bridge.Dialect c g)} (nRot : Nat
           by
             intro k hk
             rw [hst1, Midfall.Yul.Word.touchMemory_memory]
-            rfl⟩ V' st' o hfolds
+            rfl⟩ V' st' o hfolds).1
       exact absurd hof hnef
   · obtain ⟨hop, _, _, _, _⟩ :=
       b1_exec_ylet_mload_var (x := "pow") (p := "pow_p") hpow
