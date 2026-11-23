@@ -3742,25 +3742,173 @@ theorem protocol_parseCounts {G₁ : Type} (vk : VerifyingKey (Fr p) G₁)
     · cases hp5
   · cases hp5
 
-/-- **THE MISSING vk-TO-PLAN PHASE PIN, NAMED.** The parser's phase loop reads one
-    `g1` per advice column of every phase; this is the advice-column count exactly
-    when the key's advice-phase vector covers its advice columns. `Obligations`'
-    `readScheduleAgrees` records the same gap for the emitted schedule: a vk whose
-    phase vector is shorter than its advice-column count makes `parseTrace` read a
-    different number of commitments than `fromProtocol` reserved. The natural
-    Rust invariant is `adviceColumnPhase.size = numAdviceColumns`; nothing in
-    `ValidV3` (or `WellFormed`) carries it. -/
+/-! ### D-GATE7: the advice read count is the advice-column count
+
+    `parseTrace`'s phase loop reads one `g1` per (phase, proof, column of that
+    phase). The phase list enumerates `0 .. maxPhase`, and every recorded column
+    phase is at most `maxPhase`, so each advice column contributes exactly once.
+    `WellFormed.advicePhaseTotal` then identifies `numAdviceColumns` with the
+    phase vector's length. -/
+
+/-- `filterMap (if p i then some i else none)` counts the indices satisfying `p`. -/
+theorem length_filterMap_ite (l : List Nat) (p : Nat → Bool) :
+    (l.filterMap (fun i => if p i then some i else none)).length = l.countP p := by
+  induction l with
+  | nil => rfl
+  | cons a as ih =>
+      rw [List.countP_cons]
+      by_cases h : p a <;> simp [h, ih]
+
+/-- Counting a value over the index range of a list counts its occurrences. -/
+theorem countP_getElem? (l : List Nat) (a : Nat) :
+    (List.range l.length).countP (fun i => l[i]? == some a) = l.count a := by
+  induction l with
+  | nil => simp
+  | cons b bs ih =>
+      rw [List.length_cons, List.range_succ_eq_map, List.countP_cons, List.countP_map,
+        Function.comp_def]
+      simp only [Nat.succ_eq_add_one, List.getElem?_cons_zero, List.getElem?_cons_succ]
+      rw [ih, List.count_cons]
+      simp only [Option.some.injEq, beq_iff_eq]
+
+/-- The indicator sum of a boolean predicate is its count. -/
+theorem sum_map_ite_one {α : Type} (l : List α) (p : α → Bool) :
+    (l.map (fun x => if p x then 1 else 0)).sum = l.countP p := by
+  induction l with
+  | nil => rfl
+  | cons a as ih => rw [List.map_cons, List.sum_cons, List.countP_cons, ih]; omega
+
+/-- `Σ_{ph < m} count ph l = l.length` when every entry of `l` is below `m`. -/
+theorem sum_range_count_eq_length (l : List Nat) (m : Nat) (h : ∀ x ∈ l, x < m) :
+    ((List.range m).map (fun ph => l.count ph)).sum = l.length := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+      have ha : a < m := h a (by simp)
+      have has : ∀ x ∈ as, x < m := fun x hx => h x (by simp [hx])
+      have hstep : (List.map (fun ph => (a :: as).count ph) (List.range m)).sum
+          = (List.map (fun ph => as.count ph) (List.range m)).sum
+            + (List.map (fun ph => if (a == ph) then 1 else 0) (List.range m)).sum := by
+        rw [← List.sum_map_add]
+        apply congrArg List.sum
+        apply List.map_congr_left
+        intro ph _
+        rw [List.count_cons]
+      rw [hstep, ih has]
+      have hind : (List.map (fun ph => if (a == ph) then 1 else 0)
+          (List.range m)).sum = 1 := by
+        rw [sum_map_ite_one]
+        have hc : (List.range m).count a = 1 := by
+          rw [List.count_range]; simp [ha]
+        rw [← hc, List.count_eq_countP]
+        apply List.countP_congr
+        intro x _
+        rw [beq_iff_eq, beq_iff_eq, eq_comm]
+      rw [hind]
+      simp
+
+/-- The phase fold never decreases its accumulator. -/
+theorem le_foldl_max_acc (acc : Nat) (ps : List Phase) :
+    acc ≤ ps.foldl (fun acc p => max acc p.val) acc := by
+  induction ps generalizing acc with
+  | nil => exact Nat.le_refl acc
+  | cons q rest ih =>
+      rw [List.foldl_cons]
+      exact Nat.le_trans (le_max_left acc q.val) (ih (max acc q.val))
+
+/-- Every recorded column phase is at most the fold-max of the phase vector. -/
+theorem le_foldl_max_val (b : Nat) (ps : List Phase) :
+    ∀ x ∈ ps, x.val ≤ ps.foldl (fun acc p => max acc p.val) b := by
+  induction ps generalizing b with
+  | nil => intro x hx; simp at hx
+  | cons q rest ih =>
+      intro x hx
+      rw [List.foldl_cons]
+      rw [List.mem_cons] at hx
+      rcases hx with hx | hx
+      · have hq' : x.val = q.val := by rw [hx]
+        rw [hq']
+        exact Nat.le_trans (le_max_right b q.val) (le_foldl_max_acc (max b q.val) rest)
+      · exact ih (max b q.val) x hx
+
+/-- The parser's per-phase advice column list counts occurrences of the phase. -/
+theorem advicePhaseCols_length_eq_count {p : ℕ} [Fact (Nat.Prime p)]
+    (cs : ConstraintSystem (Fr p)) (ph : Nat)
+    (h : cs.adviceColumnPhase.size = cs.numAdviceColumns) :
+    (advicePhaseCols cs ph).length = (cs.adviceColumnPhaseNats.toList).count ph := by
+  have hlen : (cs.adviceColumnPhaseNats.toList).length = cs.numAdviceColumns := by
+    unfold ConstraintSystem.adviceColumnPhaseNats
+    rw [Array.length_toList, Array.size_map, h]
+  rw [advicePhaseCols, ← hlen, length_filterMap_ite]
+  have hp : (fun (i : Nat) => (Option.map (fun (q : Phase) => q.val) cs.adviceColumnPhase[i]? == some ph))
+      = (fun (i : Nat) => (cs.adviceColumnPhaseNats.toList)[i]? == some ph) := by
+    funext (i : Nat)
+    unfold ConstraintSystem.adviceColumnPhaseNats
+    rw [Array.toList_map, List.getElem?_map, ← Array.getElem?_toList]
+  rw [hp]
+  exact countP_getElem? _ _
+
+/-- **THE ADVICE READ COUNT IS THE ADVICE-COLUMN COUNT.** `adviceReadCount cs 1`
+    sums, over the enumerated phases, the number of advice columns recorded at
+    that phase; every column is counted exactly once, so the total is the phase
+    vector's length — and `advicePhaseTotal` makes that `numAdviceColumns`. -/
+theorem adviceReadCount_eq_phaseSize {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : VerifyingKey (Fr p) G₁)
+    (h : vk.cs.adviceColumnPhase.size = vk.cs.numAdviceColumns) :
+    adviceReadCount vk.cs 1 = vk.cs.adviceColumnPhase.size := by
+  have hbound : ∀ x ∈ vk.cs.adviceColumnPhaseNats.toList,
+      x < vk.cs.adviceColumnPhase.foldl (fun acc p => max acc p.val) 0 + 1 := by
+    intro x hx
+    unfold ConstraintSystem.adviceColumnPhaseNats at hx
+    rw [Array.toList_map] at hx
+    obtain ⟨q, hq, hqx⟩ := List.mem_map.mp
+      (show x ∈ List.map (fun q : Phase => q.val) vk.cs.adviceColumnPhase.toList from hx)
+    subst hqx
+    rw [← Array.foldl_toList]
+    have := le_foldl_max_val 0 vk.cs.adviceColumnPhase.toList q hq
+    omega
+  unfold adviceReadCount ConstraintSystem.phases
+  simp only [Nat.one_mul]
+  rw [List.map_map]
+  dsimp only [Function.comp_def]
+  have hfun : (fun i => (advicePhaseCols vk.cs i).length)
+      = (fun i => (vk.cs.adviceColumnPhaseNats.toList).count i) := by
+    funext i
+    exact advicePhaseCols_length_eq_count vk.cs i h
+  rw [hfun, sum_range_count_eq_length _ _ hbound]
+  have hlen : (vk.cs.adviceColumnPhaseNats.toList).length = vk.cs.numAdviceColumns := by
+    unfold ConstraintSystem.adviceColumnPhaseNats
+    rw [Array.length_toList, Array.size_map, h]
+  rw [hlen, h]
+
+/-- **THE ADVICE COUNT IDENTITY, NAMED.** The parser's phase loop reads one `g1`
+    per advice column of every phase, so its total is the advice-phase vector's
+    length. D-GATE7's `WellFormed.advicePhaseTotal`
+    (`adviceColumnPhase.size = numAdviceColumns`) supplies that length, and
+    `adviceReadCount_eq_phaseSize` proves the identity from it
+    (`advicePhaseCountFit_of_wellFormed`); the name is kept because the counting
+    argument factors through it. -/
 def AdvicePhaseCountFit {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
     (vk : VerifyingKey (Fr p) G₁) : Prop :=
   adviceReadCount vk.cs 1 = vk.cs.adviceColumnPhase.size
 
+/-- **D-GATE7 DISCHARGES THE PIN.** `WellFormed.advicePhaseTotal` is exactly the
+    phase-vector length the count needs, so `AdvicePhaseCountFit` is a theorem of
+    every well-formed key. -/
+theorem advicePhaseCountFit_of_wellFormed {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity) :
+    AdvicePhaseCountFit vk :=
+  adviceReadCount_eq_phaseSize vk hf.advicePhaseTotal
+
 set_option maxHeartbeats 4000000 in
-/-- **`ParseTraceSchedule` FROM THE PHASE PIN.** The width walk
+/-- **`ParseTraceSchedule` FROM THE ADVICE COUNT IDENTITY.** The width walk
     (`parseTrace_widths`), the protocol counts (`protocol_parseCounts`), the layout
     peel (`tp_fromProtocol`) and the group-sum identity
     (`sum_commitmentReadGroups`) assemble into the schedule outright: every
-    committed group contributes exactly its parser reads. The single input not
-    derived from `ValidV3` is `AdvicePhaseCountFit`. -/
+    committed group contributes exactly its parser reads. The one input beyond
+    `ValidV3` is `AdvicePhaseCountFit`, itself a theorem of `WellFormed`
+    (`advicePhaseCountFit_of_wellFormed`), so `parseTraceSchedule` is
+    unconditional. -/
 theorem parseTraceSchedule_of_advicePhase {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
     [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
@@ -3820,6 +3968,18 @@ theorem parseTraceSchedule_of_advicePhase {G₁ G₂ Gₜ : Type}
     rw [eA, eM, eP, eS, eT, eQ]
     unfold Midfall.Lowering.sumNat
     dsimp only
+
+/-- **`ParseTraceSchedule`, UNCONDITIONAL.** The width walk
+    (`parseTrace_widths`), the protocol counts (`protocol_parseCounts`) and
+    D-GATE7's `WellFormed.advicePhaseTotal` close the parse side: no residual. -/
+theorem parseTraceSchedule {G₁ G₂ Gₜ : Type}
+    [inst₁ : Group G₁] [inst₂ : Group G₂] [inst₃ : Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    ParseTraceSchedule R :=
+  parseTraceSchedule_of_advicePhase R hR (advicePhaseCountFit_of_wellFormed R.vk hR.supported.wf)
 
 /-- **THE KZG RESIDUAL, NAMED (multiPrepare's scalar block).** `multiPrepare`
     appends `[g1]`, one scalar per quotient-opening point set, `[g1]`; the count
@@ -3901,13 +4061,20 @@ theorem PrepareLogSlots_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ G�
   rfl
 
 /-- **`PrepareLogSlots` WITH THE A6 WIDTH BLOCK DISCHARGED.** The parseTrace
-    schedule is now a theorem (`parseTraceSchedule_of_advicePhase`), so the only
-    A6-side input is the vk-to-plan phase pin; the KZG scalar block is unchanged. -/
+    schedule is a theorem of `ValidV3` (`parseTraceSchedule`); the KZG scalar
+    block is the only remaining premise. -/
 theorem PrepareLogSlots_of_advicePhase (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (hR : ValidV3 R) (hpin : AdvicePhaseCountFit R.vk)
     (hKZG : KzgMultiPrepareWidths R) :
     Midfall.LoweringV3.PrepareLogSlots R :=
   PrepareLogSlots_of_A6_KZG R hR (parseTraceSchedule_of_advicePhase R hR hpin) hKZG
+
+/-- **`PrepareLogSlots` with the A6 parse side discharged.** Only the KZG scalar
+    block remains. -/
+theorem PrepareLogSlots_of_parseTrace (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hKZG : KzgMultiPrepareWidths R) :
+    Midfall.LoweringV3.PrepareLogSlots R :=
+  PrepareLogSlots_of_A6_KZG R hR (parseTraceSchedule R hR) hKZG
 
 /-- **THE A6 LINK.** If `prepare`'s log widths are the emitted parser's own
     schedule `R.tpEvents`, then A6's `tp_events_slots` closes `PrepareLogSlots`
@@ -3928,13 +4095,12 @@ theorem PrepareLogSlots_of_tpEvents (R : Midfall.LoweringV2.Render p G₁ G₂ G
   rw [hEv inst π d t hrun]
   exact Midfall.LoweringV3.TranscriptRows.tp_events_slots R hR
 
-/-- **END-TO-END FROM THE A6 PHASE PIN AND THE KZG SCALAR BLOCK.** The full
-    `EndToEndV3` statement. The A6 `parseTrace` width block is no longer assumed:
-    `parseTraceSchedule_of_advicePhase` proves it from `ValidV3` plus the single
-    vk-to-plan phase pin `AdvicePhaseCountFit` (the gap
-    `Obligations.readScheduleAgrees` names). The KZG `multiPrepare` scalar block
-    remains the second named residual. Nothing is added to `ValidV3`, to any row
-    or to the root. -/
+/-- **END-TO-END FROM THE KZG SCALAR BLOCK ALONE.** The full `EndToEndV3`
+    statement. The A6 `parseTrace` width block is DISCHARGED: `parseTraceSchedule`
+    proves `ParseTraceSchedule` from `ValidV3` (D-GATE7's
+    `WellFormed.advicePhaseTotal` supplies the phase-vector length the count
+    needs). The KZG `multiPrepare` point-set count is the only extra premise.
+    Nothing is added to `ValidV3`, to any row or to the root. -/
 theorem end_to_end_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (product : Midfall.Yul.PairingProduct)
     (hR : ValidV3 R) (hEq : LoweringEquivalenceV3 R product)
@@ -3946,10 +4112,10 @@ theorem end_to_end_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
       Midfall.LoweringV2.SoundSide R keccak256 cd ∧
         Midfall.LoweringV2.CompleteSide R keccak256 cd)
-    (hpin : AdvicePhaseCountFit R.vk) (hKZG : KzgMultiPrepareWidths R) :
+    (hKZG : KzgMultiPrepareWidths R) :
     EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
   end_to_end_of_prepareLogSlots R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
-    inst π hn hside (PrepareLogSlots_of_advicePhase R hR hpin hKZG)
+    inst π hn hside (PrepareLogSlots_of_parseTrace R hR hKZG)
 
 /-- **END-TO-END FROM THE A6 STATIC SCHEDULE.** The A6 half is stated exactly as
     the project-level refinement between `prepare`'s log widths and `R.tpEvents`;
@@ -3984,6 +4150,9 @@ theorem end_to_end_of_tpEvents (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
 
 #check @ParseTraceSchedule
 #check @AdvicePhaseCountFit
+#check @adviceReadCount_eq_phaseSize
+#check @advicePhaseCountFit_of_wellFormed
+#check @parseTraceSchedule
 #check @parseTrace_widths
 #check @protocol_parseCounts
 #check @parseTraceSchedule_of_advicePhase
@@ -4004,6 +4173,14 @@ open Midfall.Tools.Done in
 open Midfall.Tools.Done in
 #assert_axioms Midfall.LoweringV3.PrepareLogSlots_of_tpEvents
   [propext, Classical.choice, Quot.sound, sorryAx] native []
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV3.adviceReadCount_eq_phaseSize
+  [propext, Classical.choice, Quot.sound] native []
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV3.parseTraceSchedule
+  [propext, Classical.choice, Quot.sound] native []
 
 open Midfall.Tools.Done in
 #assert_axioms Midfall.LoweringV3.parseTrace_widths
