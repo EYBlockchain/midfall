@@ -1,4 +1,4 @@
-# closure_fingerprint: 5252 project declarations, 620 external leaves, digest 9e5029e30b13fc82
+# closure_fingerprint: 5253 project declarations, 620 external leaves, digest a99a95e0ec07d6bc
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws inductive 0e89d3fd0bde015d 0000000000000000
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws.mk ctor 8c653d323d8fefae 0000000000000000
 DECL Midfall.Assumptions.CurvePairing Midfall.Assumptions.bls12_381Pairing axiom 3d246dc502557acb 0000000000000000
@@ -3786,9 +3786,10 @@ DECL Midfall.Instances.G2Kernel Midfall.Instances.h2x1 def e56ced778ddf93ae e93f
 DECL Midfall.Instances.G2Kernel Midfall.Instances.h2y0 def e56ced778ddf93ae fbdb1126c3297e5a
 DECL Midfall.Instances.G2Kernel Midfall.Instances.h2y1 def e56ced778ddf93ae 29c8b05cdda18391
 DECL Midfall.Instances.GeneratorDone Midfall.Instances.GeneratorDone.Done inductive 2fec8489fd2b99be 0000000000000000
-DECL Midfall.Instances.GeneratorDone Midfall.Instances.GeneratorDone.Done.mk ctor 12442283676a6fa6 0000000000000000
-DECL Midfall.Instances.GeneratorDone Midfall.LoweringV2.ArtifactEq inductive 0c2f2ea68bd2e138 0000000000000000
-DECL Midfall.Instances.GeneratorDone Midfall.LoweringV2.ArtifactEq.mk ctor ba3dfc0499e91f81 0000000000000000
+DECL Midfall.Instances.GeneratorDone Midfall.Instances.GeneratorDone.Done.mk ctor 6969f366098cb308 0000000000000000
+DECL Midfall.Instances.GeneratorDone Midfall.Instances.GeneratorDone.poseidonArtifactBuildId def 823b107044083827 2e00bcc4f18783a8
+DECL Midfall.Instances.GeneratorDone Midfall.LoweringV2.ArtifactEqV3 inductive 9860a6a71d0bb240 0000000000000000
+DECL Midfall.Instances.GeneratorDone Midfall.LoweringV2.ArtifactEqV3.mk ctor efa842bc470adb82 0000000000000000
 DECL Midfall.Instances.GeneratorDone Midfall.LoweringV3.GateAtV3 def 7e7c101bb913bfb2 2cfa66655efca3ef
 DECL Midfall.Instances.PoseidonEnv Midfall.Instances.PoseidonEnv.poseidonDelta def 762b1ddedbc2d0ef 8f62ee950ae25ee3
 DECL Midfall.Instances.PoseidonEnv Midfall.Instances.PoseidonEnv.poseidonDelta._proof_1 theorem 5207077be355db02 0000000000000000
