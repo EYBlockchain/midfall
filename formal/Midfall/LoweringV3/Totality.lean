@@ -2697,6 +2697,32 @@ theorem Inv_pcs_of_mem_outside {calls : ExternalCalls} {gas : ExternalGas}
       hc_pairingRhs, hc_vk, hlock, hhalt, henv] using h'
 
 
+
+/-- The clean `.pcs → .pairing` boundary transport at the STAGED invariant. The frame, the success
+    bit, and the `BaseInv`/`LeanRaw`/`Mirror` clauses survive by construction (`BaseInv` and `Mirror`
+    are `True` at both checkpoints and `LeanRaw` is the same existential); only `Agree` needs work,
+    and that is `leanStage_pairing_of` plus `Inv_pairing_of_pcs`, both proved. The `hdual` premise is
+    the pairing answer the helper supplies: at every decode, the snapshot the Lean stage built passes
+    `DualMSM.check`. -/
+theorem stageInv_pairing_of_pcs {calls : ExternalCalls} {gas : ExternalGas}
+    (R : Render p G₁ G₂ Gₜ) {H : Hash} {vkAddr : U256} {cd : Bytes}
+    {V : VEnv (Bridge.Dialect calls gas)} {st : EvmState}
+    (h : StageInv R H vkAddr cd Checkpoint.pcs V st)
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (hdual : ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+      Decoded R cd ms instW inst →
+      ∀ S, leanStage R H inst ms Checkpoint.pcs = .ok S →
+        DualMSM.check S.c.dual R.params = true) :
+    StageInv R H vkAddr cd Checkpoint.pairing V st := by
+  obtain ⟨hframe, -, -, hraw, -, hagree⟩ := h
+  refine ⟨hframe, hsucc, trivial, hraw, trivial, ?_⟩
+  intro ms instW inst hdec
+  obtain ⟨S, hstage, hinv⟩ := hagree ms instW inst hdec
+  have hsnap : snapshotOf R.E H R.vk inst ms none = .ok S := by
+    simpa only [leanStage] using hstage
+  have hck := hdual ms instW inst hdec S hstage
+  exact ⟨S, leanStage_pairing_of hsnap hck, Inv_pairing_of_pcs hinv hsucc hck⟩
+
 /-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
     existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
     answering at the four precompile addresses, and the block's all-runs row to classify the
