@@ -1668,6 +1668,55 @@ theorem runsAll_readGroupSeq_foldlM (E : VerifierEnv p G₁ G₂ Gₜ)
   RunsAll.congr E (fun t => readGroupSeq_flatMap_run E l t)
     (runsAll_readGroupSeq E l.flatten groups hm)
 
+/-- Splitting a matching group list at a schedule prefix. -/
+theorem groupsMatch_take_drop {p : Nat} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g rest : List (WireSlot × Nat)) (groups : List (List (Msg (Fr p) G₁)))
+    (hm : GroupsMatch (p := p) (G₁ := G₁) (g ++ rest) groups) :
+    GroupsMatch (p := p) (G₁ := G₁) g (groups.take g.length) ∧
+    GroupsMatch (p := p) (G₁ := G₁) rest (groups.drop g.length) := by
+  induction g generalizing groups with
+  | nil =>
+      simp only [List.nil_append, List.length_nil, List.take_nil, List.drop_nil]
+      exact ⟨trivial, hm⟩
+  | cons x g' ih =>
+      cases groups with
+      | nil => simp [GroupsMatch] at hm
+      | cons group groups' =>
+          simp only [List.cons_append, GroupsMatch] at hm
+          obtain ⟨hlen, hslot, hmrest⟩ := hm
+          obtain ⟨hhead, htail⟩ := ih groups' hmrest
+          refine ⟨?_, ?_⟩
+          · simp only [List.length_cons, List.take_succ_cons, GroupsMatch]
+            exact ⟨hlen, hslot, hhead⟩
+          · simpa only [List.length_cons, List.drop_succ_cons] using htail
+
+/-- The state-threaded fold over schedules reads the flattened groups. -/
+theorem runsAll_foldlM_readGroupSeq_state (E : VerifierEnv p G₁ G₂ Gₜ) {β : Type} :
+    ∀ (l : List (List (WireSlot × Nat))) (upd : β → List (WireSlot × Nat) → β) (s : β)
+      (groups : List (List (Msg (Fr p) G₁))),
+      GroupsMatch (p := p) (G₁ := G₁) l.flatten groups →
+      RunsAll E (l.foldlM (fun st g => readGroupSeq E g >>= fun _ => pure (upd st g)) s)
+        groups.flatten := by
+  intro l
+  induction l with
+  | nil =>
+      intro upd s groups hm
+      cases groups with
+      | nil => simpa only [List.foldlM_nil, List.flatten_nil] using RunsAll.pure E s
+      | cons group groups => simp [GroupsMatch] at hm
+  | cons g gs ih =>
+      intro upd s groups hm
+      obtain ⟨hm₁, hm₂⟩ := groupsMatch_take_drop g gs.flatten groups hm
+      rw [List.foldlM_cons]
+      have hstep : RunsAll E (readGroupSeq E g >>= fun _ => pure (upd s g))
+          (groups.take g.length).flatten := by
+        simpa only [List.append_nil] using
+          (RunsAll.bind E (runsAll_readGroupSeq E g (groups.take g.length) hm₁)
+            (fun _ => RunsAll.pure E (upd s g)))
+      have hbind := RunsAll.bind E hstep (fun st' => ih upd st' (groups.drop g.length) hm₂)
+      rw [← List.flatten_append, List.take_append_drop] at hbind
+      exact hbind
+
 /-- `transcriptOf` starts at cursor 0 with exactly `wireMsgs` in the buffer. -/
 theorem transcriptOf_buffer {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
