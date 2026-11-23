@@ -15,13 +15,13 @@
   explicit so the missing V3 projection is one named goal, not a hole in the
   theorem's proof.
 
-  THE EXACT REMAINING GOAL, for the next worker:
-
-      theorem readScheduleAgrees_of_validV3 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
-        ∀ (inst : Array (Fr p)) (π : Bytes) (ms : List (Msg (Fr p) G₁)),
-          decodeRust (Gₜ := Gₜ) R.E Features.solidity R.vk inst π = some ms →
-            ms.map Msg.slot =
-              (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots
+  NOW PROVED, CONDITIONAL ON ONE NAMED FACT. The width walk
+  (`PrepareLogSlots_of_parseTrace`, EndToEndAlgebra) is a theorem of `ValidV3` and the
+  parsed trace; the advertised slot equation is `readScheduleAgrees_of_validV3`, whose
+  only extra premise is the exact D1-specific fact `LinearizeQueryMap` (`linearize`'s
+  query vector ↔ the generator's query list, with the point-set count). It is not a
+  hypothesis on `ValidV3`, a row, a bundle or the root. `repack_spec_of_decodeRust`
+  itself is now PROVED in `Lowering/Calldata.lean` from its own `hsched`.
 
   This is `Obligations.readScheduleAgrees` specialised to `ValidV3`. The v1 field
   is REFUTED at the deployment because `Surface.vk` and `Surface.plan` were free
@@ -972,25 +972,18 @@ end X0Falsifier
     protocol's proof-read plan), which is not in the tree. This string is the
     handoff; it is NOT a hypothesis on any theorem. -/
 def gap_readScheduleAgrees : String :=
-  "D1 blocker: readScheduleAgrees_of_validV3. ValidV3.generated pins R.plan to " ++
-    "generateAll, so plan.proofLayout is from ProtocolPlan.fromConstraintSystem on " ++
-    "R.vk.cs; but no theorem relates the WIDTH SEQUENCE of Verifier.prepare (hence " ++
-    "decodeRust) to that protocol plan. SupportedV2.layout is the memory-map check " ++
-    "only. PROVED REDUCTION: decodeRust_slots_eq_logWidths below shows " ++
-    "ms.map Msg.slot IS t.log.toList.map width, so only the static width list " ++
-    "remains. Smallest true bridge: prepare_logSlots — for every successful " ++
-    "(prepare ...).run, the log widths are replicate prefixG1Count g1 ++ " ++
-    "replicate numEvals fr ++ [g1] ++ replicate numPointSets fr ++ [g1]. " ++
-    "Sub-facts still to prove: (a) parseTrace appends replicate " ++
-    "nonQuotientCommitmentCount g1; (b) readAlgebra appends replicate " ++
-    "nbQuotient g1 ++ replicate evalReadCount fr; (c) multiPrepare appends " ++
-    "[g1] ++ replicate qEvalSetCount fr ++ [g1]; (d) qEvalSetCount = " ++
-    "R.plan.meta_.numPointSets and the counts match the protocol fields " ++
-    "(prefixG1Count + nbQuotient, numEvals, numPointSets). (d)'s qEval count " ++
-    "is the generator's intermediateSets.pointSets.length vs the verifier's " ++
-    "MultiOpen.phaseA qEvalSets.size. With prepare_logSlots, " ++
-    "decodeRust_slots_eq_logWidths gives ms.map Msg.slot = plan.slots and " ++
-    "end_to_end_of_readSchedule is end_to_end."
+  "D1 remaining fact: LinearizeQueryMap (LoweringV3/EndToEndAlgebra.lean). The width " ++
+    "schedule itself is PROVED: PrepareLogSlots_of_parseTrace reduces PrepareLogSlots " ++
+    "to KzgMultiPrepareWidths using ValidV3 (parseTraceSchedule) and the parsed trace, " ++
+    "and readScheduleAgrees_of_validV3 is the exact advertised slot equation. " ++
+    "KzgMultiPrepareWidths_of_queryMap names the only missing datum: for each query " ++
+    "vector Verifier.linearize emits, a generator query list paired index-by-index by " ++
+    "KzgQueryMapData (same commitment partition and rotations) with the generator's " ++
+    "point-set count equal to the plan's numPointSets. That is the " ++
+    "linearize <-> Generator.Query correspondence, not a hypothesis on ValidV3, any row, " ++
+    "bundle or root. repack_spec_of_decodeRust is PROVED independently of this fact: " ++
+    "its hsched is the schedule input, and the decodeRust/decodeWire bridge plus the " ++
+    "exact-length guard discharge it."
 
 
 
