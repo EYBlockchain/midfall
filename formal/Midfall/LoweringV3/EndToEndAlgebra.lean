@@ -4670,6 +4670,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms assertPermutationQueryOrderIsUpstreamEquivalent_parts
   [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamSources_zslice
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamSources_filter_pcsBlockList
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
