@@ -276,6 +276,10 @@ def payloadOf (gi : GenInput p G₁ G₂ Gₜ) : Option Halo2VerifyingKey :=
     | .ok p => some p
     | .error _ => none
 
+/-- The quotient-builder output a plan carries, if it is a VM plan. -/
+def quotientBuildOf (L : LoweringPlan Unit Unit) : Option QuotientProgramBuild :=
+  L.quotient.map (fun q => q.build)
+
 /-- The D-GATE11 input clause: the generated VK payload and every count the layout arithmetic
     consumes. `payloadOf` is a computation on `gi`, so this is still an input predicate. -/
 structure CountBound (gi : GenInput p G₁ G₂ Gₜ) : Prop where
@@ -354,6 +358,14 @@ structure SupportedInput (gi : GenInput p G₁ G₂ Gₜ) : Prop where
       lookup, commitment and point-set count is `< 2 ^ 32`; the VK payload is `< 2 ^ 200`. This
       is an INPUT predicate (a computation on `gi`), not a `ValidV3` hook. -/
   countBound : CountBound gi
+  /-- D-GATE16 (signed 2026-11-23): the generated-build stack bound. The QVM:1217-1222
+      validator is not ported (`finishValidatorLeg`), and `finish` records `maxStack` from the
+      pre-compaction stream while `build.bytes` is compacted, so this inequality is not a
+      builder-state invariant. It is an input predicate over the generator's own outputs:
+      every successful run's quotient build has `maxStack ≤ bytes.size`. The F1 render witnesses
+      the concrete content by `native_decide` (`CertMeasure.f1StackOk_true`). -/
+  stackBound : ∀ (o : CertOut), Generates gi o →
+    ∀ b, quotientBuildOf o.out.plan = some b → b.maxStack ≤ b.bytes.size
 
 /-! ## 2b. D-GATE11: the point-set count is bounded by the PCS-query count
 

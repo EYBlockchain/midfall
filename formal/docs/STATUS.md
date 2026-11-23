@@ -255,6 +255,15 @@ At `7a55dc8d` (2026-11-23): register **96 rows / 11 ROOT / 22 CERT**, 0 REFUTED,
 insert bound (`fixedQueries.size ≤ numFixedColumns` + simple-selector coverage), rotation-not-`i32::MIN`,
 and the instance slice-window bound. VK sanity clauses, not row/root hypotheses.
 
+**D-GATE16 (signed, 2026-11-23)**: `SupportedInput` gains `stackBound`, the generated-build
+stack clause: for every successful output, the plan's quotient build satisfies
+`build.maxStack ≤ build.bytes.size`. The QVM:1217-1222 validator is not ported
+(`finishValidatorLeg`), and `finish` records `maxStack` from the pre-compaction stream while
+`build.bytes` is compacted, so this is not a builder-state invariant (`pushStackAcct` emits no
+byte). The clause is an input predicate over the generator's own outputs; F1 witnesses its
+concrete content (`CertMeasure.f1StackOk_true`, `native_decide`). The quotient byte size is
+already proved from `vkCarriesBuild` (`build_bytes_size_le`).
+
 **D-GATE14 (signed, 2026-11-23)**: `WellFormed` gains `fixedSelectorBound :
 numSimpleSelectors ≤ numFixedColumns`, the `readFixedEvals` no-throw precondition needed by the
 `readAlgebra` walk. VK well-formedness clause, not a row/root hypothesis.

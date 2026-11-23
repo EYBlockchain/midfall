@@ -113,9 +113,21 @@ theorem f1MetaCounts : Midfall.Generator.Certified.MetaCountsBound f1RawMeta :=
 /-- The generated F1 payload is below the D-GATE11 `2 ^ 200` payload bound. -/
 theorem f1PayloadLen_lt : genFilledOut.plan.vk.len < 2 ^ 200 := by native_decide
 
+/-- D-GATE16 concrete witness: the F1 plan's quotient build has `maxStack ≤ bytes.size`. -/
+def f1Build : Option QuotientProgramBuild :=
+  Midfall.Generator.Certified.quotientBuildOf genFilledOut.plan
+
+def f1StackOk : Bool :=
+  match f1Build with
+  | some b => decide (b.maxStack ≤ b.bytes.size)
+  | none => false
+
+theorem f1StackOk_true : f1StackOk = true := by native_decide
+
 #print axioms f1CountsOk_true
 #print axioms f1MetaCounts
 #print axioms f1PayloadLen_lt
+#print axioms f1StackOk_true
 
 #print axioms Midfall.Generator.Certified.generate_spec
 
