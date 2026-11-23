@@ -362,3 +362,48 @@ EXACT remaining datum inputs for one `linearize` output:
    committed-instance aliasing (`G1_IDENTITY_MPTR`) must be absent from the
    actual query list. `ofList` consumes exactly these facts; it does not assume
    them globally.
+
+## Concrete pairing increment
+
+Landed (targeted builds; `#assert_axioms` green):
+
+* `pairQueries` = `queriesV.toList.zip queriesG`; `pairQueries_fst` /
+  `pairQueries_snd` prove the two projections are the actual lists once
+  `queriesV.size = queriesG.length`. This is the mechanical `L` construction.
+* `QueryTail.mapM_getLast?_some`, `queries_mapM_ok`, `queries_getLast?_some`:
+  on success, `Generator.queries`'s last output is the last source's
+  `queryFromPlan` result. `queries_last_rotation` then gives rotation `0` for
+  the tail when `meta_.protocol.pcsQueries.getLast? = some .linearization`.
+* `VerifierQuery.newLinear_commitment` and
+  `computeLinearizationCommitment_commitment`: the last `linearize` query is a
+  `.linear` commitment. Together with `linearize_back?_point` (point `alg.x`),
+  the tail pair satisfies the point/linearization half of `hpairPoint` and the
+  `.linear` half of the last per-entry identity.
+
+Exact residual for the concrete pairing:
+
+1. Same-order/count correspondence: `queriesV.size = queriesG.length` and the
+   per-index order theorem from `collectQueries` to
+   `ProtocolPlan.fromConstraintSystem` (`pcsQueries`). The `pairQueries`
+   projections only need the length; the actual `hpairPoint` needs the order.
+2. `hpairPoint` for every pair: the verifier point is
+   `vk.domain.rotateOmega x rotation` from `collectQueries`; the generator
+   rotation is `PcsQuerySource.rotation`. `LinearizeEntry` supplies the last
+   entry; the per-entry shape lemma (advice, committed instance, permutation,
+   lookup, trash, fixed, sigma, linearization) is the main remaining piece.
+3. `hclass` and the restricted equivalence facts; the `.linear`-vs-
+   `computedQuotientComm` entry and the absence of `G1_IDENTITY_MPTR` aliasing
+   on the actual query list. `KzgQueryMapData.ofList`/`ofRotations` consume
+   exactly these facts; they are not assumed globally.
+4. `fromConstraintSystem_pcsQueries_last` is not yet a theorem: the plan's
+   `pcsQueries` literal ends in `[.linearization]`, but extracting it from the
+   successful `validate` match requires inverting the long
+   `fromConstraintSystem` do-block. `queries_last_rotation` takes the source-end
+   fact as a hypothesis until that projection is landed.
+5. `PlanMeta` remains a named conditional. It is **not** a `ValidV3` field:
+   `ValidV3.generated` gives `GeneratedBy`, not the `PlanMeta` data/meta
+   equation. The closest landed pieces are `CertProbes.PlanMetaStable` and its
+   `planMeta_of_stable`; the `v3_planMeta` target in
+   `Generator/Certified.lean` is still a `sorry` (`CERT.1`), and the missing
+   clause is the data equation on the final memory (the intermediate-vs-final
+   layout stability).

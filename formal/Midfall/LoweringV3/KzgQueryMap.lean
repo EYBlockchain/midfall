@@ -1632,6 +1632,24 @@ noncomputable def ckOf {F C : Type} (eqC : CommitmentReference F C → Commitmen
 noncomputable def gkOf {F C : Type} (L : List (VerifierQuery F C × Query)) (c : EcPoint) : Option Nat :=
   L.findIdx? (fun p => ecPointBeq c p.2.comm)
 
+/-- The paired list used by the concrete datum: the two query lists zipped in
+    order. The projections are the actual lists whenever the lengths agree. -/
+def pairQueries {F C : Type} (queriesV : Array (VerifierQuery F C)) (queriesG : List Query) :
+    List (VerifierQuery F C × Query) :=
+  queriesV.toList.zip queriesG
+
+theorem pairQueries_fst {F C : Type} (queriesV : Array (VerifierQuery F C))
+    (queriesG : List Query) (h : queriesV.size = queriesG.length) :
+    (pairQueries queriesV queriesG).map Prod.fst = queriesV.toList := by
+  unfold pairQueries
+  exact List.map_fst_zip (by simpa [Array.length_toList] using Nat.le_of_eq h)
+
+theorem pairQueries_snd {F C : Type} (queriesV : Array (VerifierQuery F C))
+    (queriesG : List Query) (h : queriesV.size = queriesG.length) :
+    (pairQueries queriesV queriesG).map Prod.snd = queriesG := by
+  unfold pairQueries
+  exact List.map_snd_zip (by simpa [Array.length_toList] using Nat.le_of_eq h.symm)
+
 noncomputable def KzgQueryMapData.ofList {F C : Type} [BEq F]
     (eqC : CommitmentReference F C → CommitmentReference F C → Bool)
     (queriesV : Array (VerifierQuery F C)) (queriesG : List Query)
