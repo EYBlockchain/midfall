@@ -2039,6 +2039,31 @@ theorem planMeta_numPointSets_generator (R : Midfall.LoweringV2.Render p G₁ G�
   rw [hmeta]
   exact hlen.symm
 
+/-- **THE KZG `PlanMeta` RESIDUAL, DISCHARGED FOR GENERATED RENDERS.** `PlanMeta` was the one
+    hypothesis `planMeta_numPointSets_generator` could not derive, because it is a property of
+    the plan the generator builds. `MemoryPairs.planMeta_of_generated` proves it from the
+    `generated` clause alone (the intermediate-vs-final layout stability is
+    `Generator.new_dataBases_setNumPointSets`), so the point-set count now follows from
+    generation with no extra premise. PROVED. -/
+theorem planMeta_numPointSets_of_generated (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (h : GeneratedBy R) :
+    ∃ (qs : List Midfall.Generator.Query) (sets out : Midfall.Generator.IntermediateSets),
+      Midfall.Generator.queries R.plan.meta_ R.plan.data = .ok qs ∧
+      Midfall.Generator.constructIntermediateSetsImpl qs = .ok sets ∧
+      Midfall.Generator.sortSets sets = .ok out ∧
+      R.plan.meta_.numPointSets = out.pointSets.length :=
+  planMeta_numPointSets_generator R (Midfall.LoweringV3.MemoryPairs.planMeta_of_generated h)
+
+/-- The same at the statement surface: `ValidV3`'s `generated` conjunct supplies the premise. -/
+theorem planMeta_numPointSets_of_validV3 (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) :
+    ∃ (qs : List Midfall.Generator.Query) (sets out : Midfall.Generator.IntermediateSets),
+      Midfall.Generator.queries R.plan.meta_ R.plan.data = .ok qs ∧
+      Midfall.Generator.constructIntermediateSetsImpl qs = .ok sets ∧
+      Midfall.Generator.sortSets sets = .ok out ∧
+      R.plan.meta_.numPointSets = out.pointSets.length :=
+  planMeta_numPointSets_of_generated R hR.generated
+
 /-- The same count as the protocol's eval-read list length. -/
 theorem plan_numEvals_eq_proofEvalsLength (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (hR : ValidV3 R) :
@@ -4558,6 +4583,10 @@ open Midfall.Tools.Done in
 #assert_axioms plan_numPointSets_eq_meta
   [propext, Classical.choice, Quot.sound]
 #assert_axioms planMeta_numPointSets_generator
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms planMeta_numPointSets_of_generated
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms planMeta_numPointSets_of_validV3
   [propext, Classical.choice, Quot.sound]
 #assert_axioms intermediateSets_parts
   [propext, Classical.choice, Quot.sound]
