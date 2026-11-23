@@ -2091,7 +2091,7 @@ theorem exec_guard_false_eq_var_lit {funs : FunEnv (Bridge.Dialect c g)}
 theorem exec_mstore_add_var_normal {funs : FunEnv (Bridge.Dialect c g)}
     {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
     {x : String} {k : Nat} {val : Expr EVM.Op}
-    (hval : ∀ st1, (∃ vv, EvalExpr (Bridge.Dialect c g) funs V st val (.vals [vv] st1)) → st1 = st)
+    (hval : ∀ st0 st1, (∃ vv, EvalExpr (Bridge.Dialect c g) funs V st0 val (.vals [vv] st1)) → st1 = st0)
     (h : ExecStmt (Bridge.Dialect c g) funs V st
       (Stmt.exprStmt (Expr.builtin EVM.Op.mstore
         [Expr.builtin EVM.Op.add [Expr.var x, Expr.lit (Literal.number k)], val])) V' st' .normal) :
@@ -2108,13 +2108,83 @@ theorem exec_mstore_add_var_normal {funs : FunEnv (Bridge.Dialect c g)}
           cases hnil with
           | argsNil =>
               obtain ⟨xv, hxv, hcv, hstadd⟩ := eval_add_var_lit_inv haddr
-              have hstv := hval _ ⟨_, hvalue⟩
+              have hstv := hval _ _ ⟨_, hvalue⟩
               subst hstadd
               subst hstv
               subst hcv
               simp only [builtinWithExternal, stepOp] at hbi
               cases hbi
               exact ⟨xv, _, hxv, rfl, rfl⟩
+
+
+theorem exec_mstore_add_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x : String} {k : Nat} {val : Expr EVM.Op}
+    (hval : ∀ st0 st1, (∃ vv, EvalExpr (Bridge.Dialect c g) funs V st0 val (.vals [vv] st1)) → st1 = st0)
+    (hne : ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 val (.halt st1) → False)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.builtin EVM.Op.mstore
+        [Expr.builtin EVM.Op.add [Expr.var x, Expr.lit (Literal.number k)], val])) V' st' o) :
+    ∃ xv vv, VEnv.get V x = some xv ∧ o = .normal ∧ V' = V ∧
+      st' = { touchMemory st ((xv + BitVec.ofNat 256 k).toNat) 32 with
+        memory := storeWord st.memory ((xv + BitVec.ofNat 256 k).toNat) vv } := by
+  cases h with
+  | exprStmt he =>
+      obtain ⟨xv, vv, hxv, hV, hst⟩ := exec_mstore_add_var_normal (c := c) (g := g)
+        (funs := funs) (x := x) (k := k) (val := val) hval (Step.exprStmt he)
+      exact ⟨xv, vv, hxv, rfl, hV, hst⟩
+  | exprStmtHalt he =>
+      cases he with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hrest haddr =>
+              cases hrest with
+              | argsCons hnil hvalue =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp] at hbi
+                      cases hbi
+      | builtinArgsHalt hargs =>
+          cases hargs with
+          | argsRestHalt h' =>
+              cases h' with
+              | argsRestHalt h'' => cases h''
+              | argsHeadHalt _ hvalue => exact (hne _ _ hvalue).elim
+          | argsHeadHalt _ haddr =>
+              exact (Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := .add)
+                (by
+                  intro a b st r hr
+                  simp only [builtinWithExternal, stepOp, bin] at hr
+                  cases hr
+                  exact ⟨_, _, rfl⟩)
+                (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+                (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) haddr).elim
+
+
+theorem ofNat_add_ofNat_toNat (p k : Nat) (h : p + k < 2 ^ 256) :
+    ((BitVec.ofNat 256 p + BitVec.ofNat 256 k : U256)).toNat = p + k := by
+  rw [BitVec.toNat_add, BitVec.toNat_ofNat, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt (by omega : p < 2 ^ 256),
+    Nat.mod_eq_of_lt (by omega : k < 2 ^ 256),
+    Nat.mod_eq_of_lt h]
+
+theorem bi_bridge_stores_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 15 6 =
+      [ GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 0], GenAst.ylit 32]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 32], GenAst.ylit 32]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 64], GenAst.ylit 32]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 96], GenAst.yvar "gp"]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 128],
+            GenAst.yop EVM.Op.sub [GenAst.yvar "r", GenAst.ylit 2]]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore
+          [GenAst.yop EVM.Op.add [GenAst.yvar "gp_mptr", GenAst.ylit 160], GenAst.yvar "r"]) ] := by
+  kernel_rfl
+
 
 
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
@@ -2148,6 +2218,9 @@ theorem exec_mstore_add_var_normal {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms b2w_eq_false_of_ne [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_false_eq_var_lit [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_mstore_add_var_normal [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_mstore_add_var_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms ofNat_add_ofNat_toNat [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_stores_form [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
