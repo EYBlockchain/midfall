@@ -237,13 +237,16 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `09b28ac`: D2 is merged (`Midfall/Generator/Certified.lean`, `CertMeasure`, `CertProbes`), the
-register is regenerated to **115 rows / 11 ROOT / 42 CERT / 0 REFUTED**, and the D2 KAT is green
-(**1648 annotated checks / 120 files**). A4's `runBody_mono` (ST.13) is **PROVED** and merged; A5's
-8-statement staticcall walk + tail are merged; A9's PCS block-2 semantics and `.pcs` slice shape are
-merged. `Midfall.LoweringV3.GeneratorTheorem` rebuilds (2168 jobs), `check_orphans` is 236, and the
-root's `assert_axioms` remain the standard four (native `[]`). The `ChallengesGood.xNonzero` field is
-now pinned in `check_statement_fingerprints.py`; the gate is green.
+At `086469e`: D2 is merged (`Midfall/Generator/Certified.lean`, `CertMeasure`, `CertProbes`) and five
+generation peels are closed. The register is **110 rows / 109 sorried declarations / 11 ROOT /
+37 CERT / 0 REFUTED**; the D2 KAT is green (**1648 annotated checks / 120 files**). A4's
+`runBody_mono` (ST.13) is **PROVED** and merged; A5's 8-statement staticcall walk, tail, and prelude
+head are merged; A9's PCS block-2 semantics and `.pcs` slice shape are merged; A11's guard helpers,
+trim, and V3 slice faces are merged; A12's `block_live` traceReturn and vkLoading cases are merged
+(2 of 7 blocks). `Midfall.LoweringV3.GeneratorTheorem` rebuilds (2167 jobs), `check_orphans` is 236,
+and the root's `assert_axioms` remain the standard four (native `[]`). The
+`ChallengesGood.xNonzero` field is pinned in `check_statement_fingerprints.py`; the full `checks.sh`
+gate is green.
 
 The vacuity report remains the non-vacuity ledger: the V3 root is **CONDITIONAL** (no `ValidV3`
 inhabitant), **VACUOUS at F1** (`f1_ValidV3_false`), and `0 REFUTED / 1 VACUOUS` is not a non-vacuity
