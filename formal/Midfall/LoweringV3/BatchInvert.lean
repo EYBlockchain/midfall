@@ -1445,6 +1445,140 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
 
   NOTHING IN THIS FILE IS WIRED INTO A ROW. No root, register, SORRY.md or cone moves. -/
 
+open Midfall.LoweringV2.Blocks.VkLoading
+
+theorem eval_mulmod_mload_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y z : String} {v : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod [Expr.var x, Expr.builtin Op.mload [Expr.var y], Expr.var z])
+      (.vals [v] st')) :
+    ∃ xv yv zv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧ VEnv.get V z = some zv ∧
+      v = wMulmodAt xv (loadWord st.memory yv.toNat) zv ∧ st' = touchMemory st yv.toNat 32 := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hx =>
+      cases hx with
+      | var hxv =>
+          cases hrest with
+          | argsCons hrest2 hmload =>
+              obtain ⟨yv, hyv, hv, hst⟩ := eval_mload_var_inv hmload
+              subst hst
+              cases hrest2 with
+              | argsCons hnil hz =>
+                  cases hnil with
+                  | argsNil =>
+                      cases hz with
+                      | var hzv =>
+                          simp only [builtinWithExternal, stepOp, ter, hv] at hbi
+                          cases hbi
+                          exact ⟨_, _, _, hxv, hyv, hzv, rfl, rfl⟩
+
+theorem eval_mulmod_mload_var_no_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {x y z : String}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.mulmod [Expr.var x, Expr.builtin Op.mload [Expr.var y], Expr.var z])
+      (.halt st')) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hrest hx =>
+          cases hrest with
+          | argsCons hrest2 hmload =>
+              cases hrest2 with
+              | argsCons hnil hz =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp, ter] at hbi
+                      cases hbi
+  | builtinArgsHalt hargs =>
+      exact eval_args_halt_false (es := [Expr.var x, Expr.builtin Op.mload [Expr.var y],
+        Expr.var z]) (by
+        intro e he st0 st1 hh
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+        rcases he with rfl | rfl | rfl
+        · exact vkVar_ne_halts hh
+        · exact eval_mload_var_halt_false hh
+        · exact vkVar_ne_halts hh) hargs
+
+theorem exec_let_mulmod_mload_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome} {x y z : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.builtin Op.mulmod
+        [Expr.var y, Expr.builtin Op.mload [Expr.var z], Expr.var "r"]))) V' st' o) :
+    ∃ yv zv rv, VEnv.get V y = some yv ∧ VEnv.get V z = some zv ∧
+      VEnv.get V "r" = some rv ∧ o = .normal ∧
+      V' = (x, wMulmodAt yv (loadWord st.memory zv.toNat) rv) :: V ∧
+      st' = touchMemory st zv.toNat 32 := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨yv, zv, rv, hyv, hzv, hrv, hv, hst⟩ := eval_mulmod_mload_var_inv he
+      subst hst
+      subst hv
+      exact ⟨yv, zv, rv, hyv, hzv, hrv, rfl, rfl, rfl⟩
+  | letHalt he => exact (eval_mulmod_mload_var_no_halt he).elim
+
+theorem exec_mstore_var_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome} {x y : String}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var x, Expr.var y])) V' st' o) :
+    ∃ xv yv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧ o = .normal ∧
+      V' = V ∧ st' = { touchMemory st xv.toNat 32 with
+        memory := storeWord st.memory xv.toNat yv } := by
+  cases h with
+  | exprStmt he =>
+      obtain ⟨argvals, st1, hargs, hbi⟩ := eval_builtin_vals_inv he
+      cases hargs with
+      | argsCons hrest hx =>
+          cases hx with
+          | var hxv =>
+              cases hrest with
+              | argsCons hnil hy =>
+                  cases hnil with
+                  | argsNil =>
+                      cases hy with
+                      | var hyv =>
+                          simp only [builtinWithExternal, stepOp] at hbi
+                          cases hbi
+                          exact ⟨_, _, hxv, hyv, rfl, rfl, rfl⟩
+  | exprStmtHalt he =>
+      cases he with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hrest hx =>
+              cases hrest with
+              | argsCons hnil hy =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp] at hbi
+                      cases hbi
+      | builtinArgsHalt hargs =>
+          exact (eval_args_halt_false (es := [Expr.var x, Expr.var y]) (by
+            intro e he st0 st1 hh
+            simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+            rcases he with rfl | rfl
+            · exact vkVar_ne_halts hh
+            · exact vkVar_ne_halts hh) hargs).elim
+
+theorem bi_tail_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 30 4 =
+      [ GenAst.ylet "inv_first" (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar "all_inv", GenAst.yop EVM.Op.mload [GenAst.yvar "second_mptr"],
+            GenAst.yvar "r"]),
+        GenAst.ylet "inv_second" (GenAst.yop EVM.Op.mulmod
+          [GenAst.yvar "all_inv", GenAst.yop EVM.Op.mload [GenAst.yvar "first_mptr"],
+            GenAst.yvar "r"]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.yvar "first_mptr", GenAst.yvar "inv_first"]),
+        GenAst.yexpr (GenAst.yop EVM.Op.mstore [GenAst.yvar "second_mptr", GenAst.yvar "inv_second"]) ] := by
+  kernel_rfl
+
+
+
+#assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_mstore_var_inv [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_tail_form [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
