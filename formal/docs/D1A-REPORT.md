@@ -136,3 +136,36 @@ EXACT RESIDUAL (not duplicated here):
 The consumer-side repair, when (1)–(3) land, is to replace the `hMulti` argument of
 `verifyAlgebraicConstraints_width`/`PrepareLogSlots_of_parsed` with the per-query
 form `multiPrepare_width_at` at the linearized queries.
+
+## D-GATE10 repair: the KZG residual is now per-`linearize`
+
+The `∀ queries` shape described above is SUPERSEDED. The consumer chain is
+repaired to the query vector `Verifier.linearize` actually produces:
+
+* `MultiPrepareBlockWidthAt g1 pcs n queries` — the per-query width obligation
+  (exactly `PresWidthSeq ([g1] ++ replicate n fr ++ [g1]) (pcs.multiPrepare queries)`).
+* `MultiPrepareWidthsLinearize …` — the same at every output of
+  `linearize` (quantified over the algebra-read state and the linearize equation).
+* `KzgMultiPrepareWidths R` is now THAT form (per `inst`/`trace`), not `∀ queries`.
+* `verifyAlgebraicConstraints_width`, `PrepareLogSlots_of_parts`,
+  `PrepareLogSlots_of_counts`, `PrepareLogSlots_of_counts'`,
+  `PrepareLogSlots_of_parsed` and `PrepareLogSlots_of_A6_KZG` all take the
+  per-linearize hypothesis; `readAlgebra_multiPrepare_widths` is also per-query.
+* `MultiPrepareBlockWidthAt_of_pointSets` proves the per-query obligation from the
+  point-set count, and `KzgMultiPrepareWidths_of_pointSets` /
+  `KzgMultiPrepareWidths_of_kzgPartitionBridge` reduce `KzgMultiPrepareWidths` to
+  the count at `linearize` / to the existing named `KzgPartitionBridge`.
+
+The old `MultiPrepareBlockWidth` (`∀ queries`) is kept ONLY as the W12 object:
+`MultiPrepareBlockWidth.eq_zero_of_empty_run` and `pointSetsCount_forces_zero`
+show it cannot hold for `numPointSets > 0`.
+
+EXACT remaining input (unchanged, and not duplicated here):
+
+1. the query-map bridge `linearize`'s queries ↔ `Generator.Query` per index
+   (slot + rotation correspondence); `KzgPartitionBridge` is stated in
+   `LoweringV3/EndToEnd.lean` but has no proof;
+2. the generator-side `Generator.constructIntermediateSetsImpl queriesG.pointSets.length
+   = plan.numPointSets`;
+3. the value→shape count lemma for `constructIntermediateSets` (under
+   `ChallengesGood.xNonzero`, `omega` order `n`; D-GATE6 rotation-distinctness).
