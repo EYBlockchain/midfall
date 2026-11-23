@@ -4106,6 +4106,36 @@ theorem eval_mulmod_mload_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
                   cases hbi
                   exact ⟨_, _, hxv, hzv, rfl, htouch⟩
 
+theorem lag_stmt4_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 4 1 =
+      [GenAst.ylet "omega" (GenAst.yop EVM.Op.mload
+        [Blocks.VkLoading.vkSite "OMEGA_MPTR" consts])] := by
+  kernel_rfl
+
+theorem lag_stmt4_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aO : Nat) (hO : consts.lookup "OMEGA_MPTR" = some aO) (haO : aO < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 4 1)
+      (fun _ _ => True)
+      (fun V st V' st' o => o = .normal ∧ st' = touchMemory st aO 32 ∧
+        V' = ("omega", loadWord st.memory aO) :: V) := by
+  rw [lag_stmt4_form]
+  simp only [Blocks.VkLoading.vkSite, hO]
+  intro V st _ V' st' o hrun
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := list_length_one hlen
+              obtain ⟨hv, hst⟩ := eval_mload_lit_inv (c := c) (g := g)
+                (funs := funs) (V := V) (a := aO) haO he
+              exact ⟨rfl, hst, by simp [hv]⟩
+  | seqStop h1 hne => cases h1 with
+      | letVal _ _ => simp at hne
+      | letHalt he => exact (eval_mload_lit_halt_false (c := c) (g := g)
+          (funs := funs) (V := V) (a := aO) he).elim
+
 theorem lag_stmt12_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
     (k n m aN : Nat) (hN : consts.lookup "N_INV_MPTR" = some aN) (haN : aN < 2 ^ 256)
     (hr : consts.lookup "r" = none) (xn rv : U256) :
