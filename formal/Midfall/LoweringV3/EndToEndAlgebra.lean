@@ -31,6 +31,7 @@ import Midfall.LoweringV3.RotationInjectivity
 import Midfall.LoweringV3.LinearizeEntry
 import Midfall.LoweringV3.QueryTail
 import Midfall.LoweringV3.QueryBlockShape
+import Midfall.LoweringV3.PcsOrder
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -4639,6 +4640,10 @@ open Midfall.Tools.Done in
 #assert_axioms perProofQueries_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms collectQueries_perProof_point
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms ProtocolPlan.fromConstraintSystem_pcsQueries
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.fromConstraintSystem_pcsQueries
   [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
