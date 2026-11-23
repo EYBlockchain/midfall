@@ -89,6 +89,69 @@ theorem pcsQueries_append_linearization_last (l : List PcsQuerySource) :
       some PcsQuerySource.linearization := by
   simp
 
+theorem queryFromPlan_advice_rotation (q : QueryKey) (meta_ : ConstraintSystemMeta)
+    (data : Data) (q' : Query)
+    (h : queryFromPlan (.advice q) meta_ data = .ok q') :
+    q'.rotation = q.rotation := by
+  unfold queryFromPlan at h
+  simp only [Bind.bind, Except.bind] at h
+  unfold listGetMut at h
+  repeat (first | split at h | cases h | rfl)
+
+theorem queryFromPlan_fixed_rotation (q : QueryKey) (meta_ : ConstraintSystemMeta)
+    (data : Data) (q' : Query)
+    (h : queryFromPlan (.fixed q) meta_ data = .ok q') :
+    q'.rotation = q.rotation := by
+  unfold queryFromPlan at h
+  simp only [Bind.bind, Except.bind] at h
+  unfold listGetMut at h
+  repeat (first | split at h | cases h | rfl)
+
+theorem queryFromPlan_lookupMultiplicity_rotation (lookup : Nat) (meta_ : ConstraintSystemMeta)
+    (data : Data) (q' : Query)
+    (h : queryFromPlan (.lookupMultiplicity lookup) meta_ data = .ok q') :
+    q'.rotation = 0 := by
+  unfold queryFromPlan at h
+  simp only [Bind.bind, Except.bind] at h
+  unfold listGetMut at h
+  repeat (first | split at h | cases h | rfl)
+
+theorem queryFromPlan_lookupHelper_rotation (lookup chunk : Nat) (meta_ : ConstraintSystemMeta)
+    (data : Data) (q' : Query)
+    (h : queryFromPlan (.lookupHelper lookup chunk) meta_ data = .ok q') :
+    q'.rotation = 0 := by
+  unfold queryFromPlan at h
+  simp only [Bind.bind, Except.bind] at h
+  unfold listGetMut at h
+  repeat (first | split at h | cases h | rfl)
+
+theorem queryFromPlan_trash_rotation (index : Nat) (meta_ : ConstraintSystemMeta)
+    (data : Data) (q' : Query)
+    (h : queryFromPlan (.trash index) meta_ data = .ok q') :
+    q'.rotation = 0 := by
+  unfold queryFromPlan at h
+  simp only [Bind.bind, Except.bind] at h
+  unfold listGetMut at h
+  repeat (first | split at h | cases h | rfl)
+
+theorem queryFromPlan_permutationCommon_rotation (column : Column) (meta_ : ConstraintSystemMeta)
+    (data : Data) (q' : Query)
+    (h : queryFromPlan (.permutationCommon column) meta_ data = .ok q') :
+    q'.rotation = 0 := by
+  unfold queryFromPlan at h
+  simp only [Bind.bind, Except.bind] at h
+  repeat (first | split at h | cases h | rfl)
+
+theorem queryFromPlan_committedInstance_rotation (q : QueryKey) (meta_ : ConstraintSystemMeta)
+    (data : Data) (q' : Query)
+    (h : queryFromPlan (.committedInstance q) meta_ data = .ok q') :
+    q'.rotation = q.rotation := by
+  unfold queryFromPlan at h
+  simp only [Bind.bind, Except.bind] at h
+  unfold listGetMut at h
+  repeat (first | split at h | cases h | rfl)
+
+
 theorem queryFromPlan_linearization (meta_ : ConstraintSystemMeta) (data : Data) :
     queryFromPlan .linearization meta_ data =
       .ok (Query.new data.computedQuotientComm 0 data.computedQuotientEval) := rfl

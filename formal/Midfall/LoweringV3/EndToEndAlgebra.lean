@@ -4516,6 +4516,20 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms pcsQueries_append_linearization_last
   [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_advice_rotation
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_committedInstance_rotation
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_fixed_rotation
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_lookupMultiplicity_rotation
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_lookupHelper_rotation
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_trash_rotation
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_permutationCommon_rotation
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms PcsQuerySource.rotation_linearization
   [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgQueryMapData.ofRotations

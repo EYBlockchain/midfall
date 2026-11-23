@@ -407,3 +407,29 @@ Exact residual for the concrete pairing:
    `Generator/Certified.lean` is still a `sorry` (`CERT.1`), and the missing
    clause is the data equation on the final memory (the intermediate-vs-final
    layout stability).
+
+## Per-source generator rotation lemmas
+
+Landed in `QueryTail` (all `#assert_axioms` green):
+
+* `queryFromPlan_advice_rotation`, `queryFromPlan_committedInstance_rotation`,
+  `queryFromPlan_fixed_rotation`: the generator rotation is the source
+  `QueryKey.rotation`.
+* `queryFromPlan_lookupMultiplicity_rotation`,
+  `queryFromPlan_lookupHelper_rotation`, `queryFromPlan_trash_rotation`,
+  `queryFromPlan_permutationCommon_rotation`: the generator rotation is `0`.
+* `queryFromPlan_linearization` + `PcsQuerySource.rotation_linearization`:
+  the linearization source is rotation `0` at `computedQuotientComm`.
+
+These are the generator half of the per-entry `hpairPoint` shape. The remaining
+generator sources are `permutationZ` (rotation `0`/`1`/`rotationLast`) and
+`lookupAccumulator` (rotation `0`/`1`/panic); both need the inner
+`PermutationZEval`/`Int` match in the `queryFromPlan` do-block.
+
+The verifier half is the same-order shape theorem: `collectQueries`'s advice,
+instance, permutation, lookup, trash, fixed, common and linearization blocks
+against `pcsQueries`'s source order. `pairQueries`/`pairQueries_fst/_snd` already
+build the zipped list once the sizes agree; the per-index block theorem is the
+remaining priority-2 input. `hclass`/`G1_IDENTITY_MPTR` freshness remains
+priority 3, and `fromConstraintSystem_pcsQueries_last` remains the single named
+`match`-wrapper residual.
