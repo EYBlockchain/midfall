@@ -591,3 +591,39 @@ holds on the diagonal; the off-diagonal `linearization` vs any one-piece query
 needs `computedQuotientComm`'s pointer to be distinct from every other
 commitment pointer (`G1_IDENTITY_MPTR` freshness). This is a concrete freshness
 obligation on `Data`, not a list-order one.
+
+## KZG datum: upstream slice and quotient freshness
+
+The upstream permutationZ slice is now PROVED.  `upstreamSources_zslice` and
+`upstreamSources_filter_pcsBlockList` compose the generic list plumbing
+(`filterMap_zip_range_append_block`, `mapM_get_consecutive`,
+`foldlM_set_consecutive`, `permZBlock_ztrue`, the z-free block facts, and
+`pcsBlockList_eq_permZ`) with the upstream-check inversion.  On a successful
+`assertPermutationQueryOrderIsUpstreamEquivalent` with a literal `pcsQueries`
+and nonempty z positions, the exposed `upstreamSources` satisfies
+
+`upstreamSources.filter isPermutationZSource = permZUpstream numPermutationZs`.
+
+`KzgQueryMapData.ofPairQueries` is the paired-list constructor: it sets
+`L = pairQueries queriesV queriesG` and uses `pairQueries_fst/_snd` to supply
+`hVlist`/`hGlist` from the length equality.  The remaining per-pair point and
+commitment facts are still inputs; the list-projection obligation is closed.
+
+For the linearization `hclass` case, `QuotientFresh` proves the concrete
+freshness data.  `Data.new_computedQuotientComm` pins the quotient commitment
+to the symbolic `QUOTIENT_MPTR`; `Data.new_commsNumericOrIdentity` proves every
+other commitment array of `Data.new` is numeric, except
+`committedInstanceComms`, which is the shared `G1_IDENTITY_MPTR` sentinel.
+`VerifierMemoryLayout.new_numericBases` supplies the layout half from
+`vkMptr.Numeric`.  `ecPointBeq_quotient_of_numeric` and
+`ecPointBeq_quotient_g1` prove the quotient pointer is distinct from those
+commitments, and `queryFromPlan_comm_classification` classifies every queried
+generator commitment as quotient, numeric, or G1 identity.
+
+The linearization hclass cases are formal:
+`kzgCommitBeq_linear_self_eq` covers the diagonal (verifier `.linear`
+self-equality equals generator quotient-pointer self-equality), and
+`kzgCommitBeq_linear_offdiag` covers the off-diagonal case from the
+classification and freshness.  The remaining assembly is to instantiate these
+at the actual `linearize`/`Generator.queries` pair and connect the
+`queryFromPlan` source to the verifier `.linear` linearization query.
