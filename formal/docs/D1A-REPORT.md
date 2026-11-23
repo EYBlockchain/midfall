@@ -333,19 +333,32 @@ interface for the real verifier (`kzgCommitBeq` compares `.onePiece` by slot,
   `KzgMultiPrepareWidths_of_queryMap` are unchanged in statement but now consume
   the local fields.
 
-This is the interface the concrete `linearize` ↔ `Generator.queries` map should
-target. The remaining datum inputs are exactly the per-tail facts:
+CONSTRUCTORS LANDED:
 
-1. `hclass : eqC p.1.commitment p'.1.commitment = ecPointBeq p.2.comm p'.2.comm`
-   for all paired entries (the slot/pointer alignment, including the
-   `.linear`-vs-`computedQuotientComm` entry);
-2. the equivalence facts for `eqC` and `ecPointBeq` restricted to `L`
-   (reflexivity/symmetry/transitivity), which the eventual `ck`/`gk` constructor
-   uses to turn the classes into keys;
-3. no-aliasing for the queried allocations (the committed-instance columns all
-   share `G1_IDENTITY_MPTR`, so the actual query list must not pair one pointer
-   with two distinct slot meanings; the `.linear` linearization key must be
-   unique to `computedQuotientComm`).
+* `findIdx?_eq_of_equiv`: the first-index characterization of an equivalence
+  relation on a list (`r a b = (idx a == idx b)`), used to turn per-tail
+  equivalence classes into keys.
+* `KzgQueryMapData.ofList`: builds the local datum with `K := Option Nat`,
+  `ck a := L.findIdx? (eqC a ·.commitment)`, `gk c := L.findIdx? (ecPointBeq c ·.comm)`.
+  It proves `hpairC` from `hclass` by pointwise predicate equality, and
+  `hCommEq`/`hGCommEq` from the restricted reflexivity/symmetry/transitivity
+  facts. `hPointEq` is the global point-key equality.
+* `KzgQueryMapData.ofRotations`: instantiates `ofList` with the global
+  `exists_pointKey` rotation key. Inputs are the actual point/rotation relation
+  (`hpairPoint`), the rotation-list membership (`hrot`), and the per-tail
+  `hclass`/equivalence data. `Data.new_dummyEvalWords` is proved, and
+  `planMeta_numPointSets_generator` no longer takes `hdummy`.
 
-The point half is already discharged by `exists_pointKey` (global `fk` with
-`(a == b) = (fk a == fk b)` and `fk (x·ω^r) = r` on the chosen rotation list).
+EXACT remaining datum inputs for one `linearize` output:
+
+1. the paired list `L` and its two projections: the `linearize` query vector
+   and `Generator.queries R.plan.meta_ R.plan.data` in the same order
+   (`collectQueries` order vs `ProtocolPlan.fromConstraintSystem` order);
+2. `hpairPoint`: `qV.point = x·ω^qG.rotation` for every pair;
+3. `hclass` and the equivalence facts for `kzgCommitBeq`/`ecPointBeq` over `L`.
+   The `.linear`-vs-`computedQuotientComm` entry is the remaining per-entry
+   identity: `kzgCommitBeq` on the verifier's `.linear` query must match
+   `ecPointBeq` on the generator's `computedQuotientComm`, and the
+   committed-instance aliasing (`G1_IDENTITY_MPTR`) must be absent from the
+   actual query list. `ofList` consumes exactly these facts; it does not assume
+   them globally.

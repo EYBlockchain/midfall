@@ -2005,16 +2005,18 @@ theorem plan_numPointSets_eq_meta (R : Midfall.LoweringV2.Render p G₁ G₂ G�
     `numPointSets`/`queries` read only the protocol (not the `numPointSets`
     field), the successful computation is available at `R.plan.meta_` itself,
     and its `sortSets` result has exactly `n = R.plan.meta_.numPointSets`
-    point sets. `hdummy` is the `Data.new` initialiser (the empty dummy-eval
-    buffer); `PlanMeta`'s data equation supplies it. -/
+    point sets. The empty dummy-eval buffer is derived from `PlanMeta`'s
+    `Data.new` equation by `Data.new_dummyEvalWords`. -/
 theorem planMeta_numPointSets_generator (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
-    (hM : PlanMeta R) (hdummy : R.plan.data.dummyEvalWords = []) :
+    (hM : PlanMeta R) :
     ∃ (qs : List Midfall.Generator.Query) (sets out : Midfall.Generator.IntermediateSets),
       Midfall.Generator.queries R.plan.meta_ R.plan.data = .ok qs ∧
       Midfall.Generator.constructIntermediateSetsImpl qs = .ok sets ∧
       Midfall.Generator.sortSets sets = .ok out ∧
       R.plan.meta_.numPointSets = out.pointSets.length := by
-  obtain ⟨m0, n, _hnew, _hdata, hn, hmeta⟩ := hM
+  obtain ⟨m0, n, _hnew, hdata, hn, hmeta⟩ := hM
+  have hdummy : R.plan.data.dummyEvalWords = [] :=
+    Data.new_dummyEvalWords (m0.setNumDummyEvals 0) R.plan.vk R.plan.memory R.plan.data hdata
   have hcount : Midfall.Generator.numPointSets (R.plan.meta_.setNumPointSets 0)
       R.plan.data = .ok n := by
     rw [hmeta]
@@ -4208,6 +4210,67 @@ theorem KzgMultiPrepareWidths_of_kzgPartitionBridge
   obtain ⟨queriesG, setsG, hGok, hBridge, hLen⟩ := hG inst trace alg queries hlin
   exact (hBridge (cm, pointSets) setsG hCI hGok).trans hLen
 
+/-- **THE ROTATION-KEY DATUM CONSTRUCTOR.** This instantiates
+    `KzgQueryMapData.ofList` with the global rotation key from
+    `exists_pointKey`: `hpairPoint` gives the actual verifier-point/generator-
+    rotation relation, and `hrot` puts each generator rotation in the key's
+    rotation list. The remaining arguments are the tail-local commitment
+    alignment and equivalence facts (the no-aliasing/value-injectivity data).
+    This is the concrete datum shape for one `linearize` output. -/
+noncomputable def KzgQueryMapData.ofRotations
+    (queriesV : Array (VerifierQuery (Fr p) G₁))
+    (queriesG : List Midfall.Generator.Query)
+    (L : List (VerifierQuery (Fr p) G₁ × Midfall.Generator.Query))
+    (hVlist : queriesV.toList = L.map Prod.fst)
+    (hGlist : queriesG = L.map Prod.snd)
+    (d : EvaluationDomain (Fr p)) (x : Fr p) (rots : List Int)
+    (hx : x ≠ 0) (hwi : d.omegaInv * d.omega = 1)
+    (hord : Midfall.Assumptions.orderExactly d.omega d.n)
+    (hdistinct : ∀ r s : Int, r ≡ s [ZMOD (d.n : Int)] → r = s)
+    (hpairPoint : ∀ p ∈ L,
+      p.1.point = d.rotateOmega x (Rotation.value p.2.rotation))
+    (hrot : ∀ p ∈ L, p.2.rotation ∈ rots)
+    (hclass : ∀ p ∈ L, ∀ p' ∈ L,
+      kzgCommitBeq (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        p.1.commitment p'.1.commitment = Midfall.Generator.ecPointBeq p.2.comm p'.2.comm)
+    (hCommRefl : ∀ p ∈ L,
+      kzgCommitBeq (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        p.1.commitment p.1.commitment = true)
+    (hCommSymm : ∀ p ∈ L, ∀ p' ∈ L,
+      kzgCommitBeq (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        p.1.commitment p'.1.commitment =
+      kzgCommitBeq (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        p'.1.commitment p.1.commitment)
+    (hCommTrans : ∀ p ∈ L, ∀ p' ∈ L, ∀ p'' ∈ L,
+      kzgCommitBeq (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        p.1.commitment p'.1.commitment = true →
+      kzgCommitBeq (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        p'.1.commitment p''.1.commitment = true →
+      kzgCommitBeq (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)
+        p.1.commitment p''.1.commitment = true)
+    (hGRefl : ∀ p ∈ L, Midfall.Generator.ecPointBeq p.2.comm p.2.comm = true)
+    (hGSymm : ∀ p ∈ L, ∀ p' ∈ L,
+      Midfall.Generator.ecPointBeq p.2.comm p'.2.comm =
+      Midfall.Generator.ecPointBeq p'.2.comm p.2.comm)
+    (hGTrans : ∀ p ∈ L, ∀ p' ∈ L, ∀ p'' ∈ L,
+      Midfall.Generator.ecPointBeq p.2.comm p'.2.comm = true →
+      Midfall.Generator.ecPointBeq p'.2.comm p''.2.comm = true →
+      Midfall.Generator.ecPointBeq p.2.comm p''.2.comm = true) :
+    KzgQueryMapData (eqC := kzgCommitBeq (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ))
+      queriesV queriesG := by
+  haveI : NeZero p := ⟨(Fact.out (p := Nat.Prime p)).pos.ne'⟩
+  let fk : Fr p → Int := Classical.choose (exists_pointKey d x rots hx hwi hord hdistinct)
+  have hspec := Classical.choose_spec (exists_pointKey d x rots hx hwi hord hdistinct)
+  have hfk : ∀ a b, (a == b) = (fk a == fk b) := hspec.1
+  have hfkRot : ∀ r ∈ rots, fk (d.rotateOmega x (Rotation.value r)) = r := hspec.2
+  exact KzgQueryMapData.ofList
+    (kzgCommitBeq (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ))
+    queriesV queriesG L hVlist hGlist fk hfk
+    (fun p hp => by
+      rw [hpairPoint p hp]
+      exact hfkRot p.2.rotation (hrot p hp))
+    hclass hCommRefl hCommSymm hCommTrans hGRefl hGSymm hGTrans
+
 /-- **THE QUERY-MAP FORM OF THE PARTITION BRIDGE.** This is
     `KzgPartitionBridge` discharged from the per-index verifier↔generator query
     map proved in `Midfall.LoweringV3.KzgQueryMap`: the two
@@ -4431,6 +4494,14 @@ open Midfall.Tools.Done in
 #assert_axioms KzgMultiPrepareWidths_of_queryMap
   [propext, Classical.choice, Quot.sound]
 #assert_axioms constructIntermediateSets_pointSets_size_eq_of_queryMap
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms findIdx?_eq_of_equiv
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms KzgQueryMapData.ofList
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms KzgQueryMapData.ofRotations
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Data.new_dummyEvalWords
   [propext, Classical.choice, Quot.sound]
 #assert_axioms pass1_step1_sim
   [propext, Classical.choice, Quot.sound]
