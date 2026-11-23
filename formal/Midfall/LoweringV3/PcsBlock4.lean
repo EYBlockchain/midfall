@@ -1814,6 +1814,378 @@ theorem pcs_wMulmodAt_toNat_lt {a b : U256} :
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_toNat_lt
   [propext, Classical.choice, Quot.sound] native []
 
+/-- `wMulmodAt` by the field one is the identity on canonical words. -/
+theorem pcs_wMulmodAt_one_right {a : U256} (ha : a.toNat < blsR) :
+    wMulmodAt a 1 (BitVec.ofNat 256 blsR) = a := by
+  apply BitVec.eq_of_toNat_eq
+  change (Midfall.LoweringV3.QuotientRows.wMulmodAt a 1 (BitVec.ofNat 256 blsR)).toNat
+    = a.toNat
+  rw [LagrangeRows.wMulmodAt_toNat (by decide) a 1]
+  have h1 : (1 : U256).toNat = 1 := by decide
+  rw [h1, Nat.mul_one, Nat.mod_eq_of_lt ha]
+
+theorem pcs_wMulmodAt_one_left {a : U256} (ha : a.toNat < blsR) :
+    wMulmodAt 1 a (BitVec.ofNat 256 blsR) = a := by
+  rw [pcs_wMulmodAt_comm, pcs_wMulmodAt_one_right ha]
+
+/-- A product of two canonical nonzero field words is nonzero. -/
+theorem pcs_wMulmodAt_ne_zero {x y : U256}
+    (hx : x.toNat < blsR) (hy : y.toNat < blsR)
+    (hx0 : x.toNat ≠ 0) (hy0 : y.toNat ≠ 0) :
+    wMulmodAt x y (BitVec.ofNat 256 blsR) ≠ 0 := by
+  have hp : Nat.Prime (BitVec.ofNat 256 blsR).toNat :=
+    Midfall.LoweringV3.ModexpGeneral.prime_BlsR_toNat
+  have hxt : x.toNat < (BitVec.ofNat 256 blsR).toNat := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]; exact hx
+  have hyt : y.toNat < (BitVec.ofNat 256 blsR).toNat := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by decide)]; exact hy
+  change Midfall.LoweringV3.QuotientRows.wMulmodAt x y (BitVec.ofNat 256 blsR) ≠ 0
+  rw [Midfall.LoweringV3.BatchInvert.wMulmodAt_ne_zero_iff hp hxt hyt]
+  exact ⟨fun h => hx0 (by rw [h]; rfl), fun h => hy0 (by rw [h]; rfl)⟩
+
+/-- `SIInv` lands in the canonical field range. -/
+theorem pcsSIInv_toNat_lt (x : U256) : (SIInv x).toNat < blsR := by
+  unfold SIInv
+  rw [BitVec.toNat_ofNat]
+  have h := ZMod.val_lt ((x.toNat : ZMod blsR)⁻¹)
+  rw [Nat.mod_eq_of_lt (lt_trans h (by decide : blsR < 2 ^ 256))]
+  exact h
+
+/-- Inverting a product recovers the inverse of the left factor. -/
+theorem pcs_inv_mul_left {prev a bp : U256}
+    (hbp : bp = wMulmodAt prev a (BitVec.ofNat 256 blsR))
+    (hprev : prev.toNat < blsR)
+    (hprev0 : prev.toNat ≠ 0) :
+    wMulmodAt (SIInv bp) prev (BitVec.ofNat 256 blsR) = SIInv a := by
+  have hinv : SIInv bp = wMulmodAt (SIInv prev) (SIInv a) (BitVec.ofNat 256 blsR) := by
+    rw [hbp, pcsSIInv_wMulmod]
+  rw [hinv, pcs_wMulmodAt_assoc]
+  rw [pcs_wMulmodAt_comm (a := SIInv a) (b := prev)]
+  rw [← pcs_wMulmodAt_assoc]
+  rw [pcsSIInv_mul prev hprev0 hprev]
+  exact pcs_wMulmodAt_one_left (pcsSIInv_toNat_lt a)
+
+/-- Inverting a product recovers the inverse of the right factor. -/
+theorem pcs_inv_mul_right {prev a bp : U256}
+    (hbp : bp = wMulmodAt prev a (BitVec.ofNat 256 blsR))
+    (ha : a.toNat < blsR)
+    (ha0 : a.toNat ≠ 0) :
+    wMulmodAt (SIInv bp) a (BitVec.ofNat 256 blsR) = SIInv prev := by
+  have hinv : SIInv bp = wMulmodAt (SIInv prev) (SIInv a) (BitVec.ofNat 256 blsR) := by
+    rw [hbp, pcsSIInv_wMulmod]
+  rw [hinv, pcs_wMulmodAt_assoc]
+  rw [pcsSIInv_mul a ha0 ha]
+  exact pcs_wMulmodAt_one_right (pcsSIInv_toNat_lt prev)
+
+/-- The running product `bp_i` stays canonical. -/
+theorem pcsBpVal_toNat_lt (a : Nat → U256) (N : Nat)
+    (hlt : ∀ i, i ≤ N → (a i).toNat < blsR) :
+    ∀ i, i ≤ N → (pcsBpVal (BitVec.ofNat 256 blsR) a i).toNat < blsR
+  | 0, _ => by simpa [pcsBpVal] using hlt 0 (by omega)
+  | _ + 1, _ => by
+      rw [pcsBpVal_succ]
+      exact pcs_wMulmodAt_toNat_lt
+
+/-- The running product `bp_i` stays nonzero when every input is. -/
+theorem pcsBpVal_ne_zero (a : Nat → U256) (N : Nat)
+    (hlt : ∀ i, i ≤ N → (a i).toNat < blsR)
+    (h0 : ∀ i, i ≤ N → (a i).toNat ≠ 0) :
+    ∀ i, i ≤ N → pcsBpVal (BitVec.ofNat 256 blsR) a i ≠ 0
+  | 0, _ => by
+      intro h
+      have h' : (a 0).toNat = 0 := by
+        rw [show a 0 = 0 by simpa [pcsBpVal] using h]
+        rfl
+      exact h0 0 (by omega) h'
+  | i + 1, hi => by
+      rw [pcsBpVal_succ]
+      exact pcs_wMulmodAt_ne_zero (pcsBpVal_toNat_lt a N hlt i (by omega))
+        (hlt (i + 1) hi)
+        (fun h => pcsBpVal_ne_zero a N hlt h0 i (by omega)
+          (BitVec.eq_of_toNat_eq (by rw [h]; rfl)))
+        (h0 (i + 1) hi)
+
+/-- One `bq` step: `let inv_i := mulmod(bq, bp_{i-1}, r)` then `bq := mulmod(bq, input_i, r)`. -/
+def pcsBqStep (i : Nat) (prev inp : String) (invName : Nat → String) : Block EVM.Op :=
+  [ GenAst.ylet (invName i) (GenAst.yop EVM.Op.mulmod
+      [GenAst.yvar "bq", GenAst.yvar prev, GenAst.yvar "r"]),
+    GenAst.yset "bq" (GenAst.yop EVM.Op.mulmod
+      [GenAst.yvar "bq", GenAst.yvar inp, GenAst.yvar "r"]) ]
+
+/-- The emitted backward `bq` walk. -/
+def pcsBqLines (n : Nat) (nm invName : Nat → String) : Block EVM.Op :=
+  ((List.range n).drop 1).reverse.flatMap fun i =>
+    pcsBqStep i (pcsBpName (i - 1)) (nm i) invName
+
+theorem pcsBqLines_succ (n : Nat) (hn : 1 ≤ n) (nm invName : Nat → String) :
+    pcsBqLines (n + 1) nm invName =
+      pcsBqStep n (pcsBpName (n - 1)) (nm n) invName ++ pcsBqLines n nm invName := by
+  unfold pcsBqLines
+  rw [List.range_succ]
+  rw [List.drop_append_of_le_length (by simpa using hn)]
+  simp only [List.reverse_append, List.reverse_singleton, List.flatMap_append,
+    List.flatMap_cons, List.flatMap_nil, List.append_nil]
+
+/-- Append two chunks when the first cannot halt. -/
+theorem pcsStmtsContractAll_append_normal {funs : FunEnv (Bridge.Dialect c g)}
+    {ss1 ss2 : Block EVM.Op}
+    {pre mid : VEnv (Bridge.Dialect c g) → EvmState → Prop}
+    {post : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Outcome → Prop}
+    (h1 : StmtsContractAll (D := Bridge.Dialect c g) funs ss1 pre
+      (fun V st V' st' o => o = .normal ∧ mid V' st'))
+    (h2 : ∀ V st, pre V st → StmtsContractAll (D := Bridge.Dialect c g) funs ss2 mid
+      (fun _ _ V' st' o => post V st V' st' o)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (ss1 ++ ss2) pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1run, h2run⟩ | ⟨h1run, hne⟩
+  · exact h2 V st hpre V1 st1 (h1 V st hpre V1 st1 .normal h1run).2 V' st' o h2run
+  · exact absurd (h1 V st hpre V' st' o h1run).1 hne
+
+/-- One backward step runs normally and binds the inverse of the factor. -/
+theorem pcsBqStep_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (i : Nat) (prev inp : String) (invName : Nat → String)
+    (bq0 bpv av rv : U256)
+    (h1 : invName i ≠ "bq") (h2 : invName i ≠ prev) (h3 : invName i ≠ inp)
+    (h4 : invName i ≠ "r") :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsBqStep i prev inp invName)
+      (fun V st => VEnv.get V "bq" = some bq0 ∧ VEnv.get V prev = some bpv ∧
+        VEnv.get V inp = some av ∧ VEnv.get V "r" = some rv)
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' (invName i) = some (wMulmodAt bq0 bpv rv) ∧
+        VEnv.get V' "bq" = some (wMulmodAt bq0 av rv) ∧
+        (∀ y, y ≠ invName i → y ≠ "bq" → VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hbq, hbp, hinp, hr⟩ := hpre
+  unfold pcsBqStep at hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, hhead, hrest⟩ | ⟨hhead, hne⟩
+  · obtain ⟨ho1, xv, yv, zv, hx, hy, hz, hV1, hst1⟩ :=
+      b1_exec_ylet_mulmod_vars hhead
+    have hxe : xv = bq0 := Option.some.inj (hx.symm.trans hbq)
+    have hye : yv = bpv := Option.some.inj (hy.symm.trans hbp)
+    have hze : zv = rv := Option.some.inj (hz.symm.trans hr)
+    rw [hV1] at hrest
+    rw [hst1] at hrest
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest with
+        ⟨V2, st2, htail, hnil⟩ | ⟨htail, hne2⟩
+    · cases hnil
+      obtain ⟨ho2, av', bv', zv', ha', hb', hz', hV2, hst2⟩ :=
+        b1_exec_yset_mulmod htail
+      have hae : av' = bq0 := by
+        have h := ha'
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := "bq")
+          (v := wMulmodAt xv yv zv) h1.symm] at h
+        exact Option.some.inj (h.symm.trans hbq)
+      have hbe : bv' = av := by
+        have h := hb'
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := inp)
+          (v := wMulmodAt xv yv zv) h3.symm] at h
+        exact Option.some.inj (h.symm.trans hinp)
+      have hze' : zv' = rv := by
+        have h := hz'
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := "r")
+          (v := wMulmodAt xv yv zv) h4.symm] at h
+        exact Option.some.inj (h.symm.trans hr)
+      refine ⟨ho2, ?_, ?_, ?_, hst2⟩
+      · rw [hV2]
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "bq") (y := invName i)
+          (v := wMulmodAt av' bv' zv') h1]
+        rw [venv_get_cons_self (D := Bridge.Dialect c g)]
+        rw [hxe, hye, hze]
+      · rw [hV2]
+        rw [venv_get_set_same (D := Bridge.Dialect c g)
+          (v := bq0) (w := wMulmodAt av' bv' zv')
+          (by
+            rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := "bq")
+              (v := wMulmodAt xv yv zv) h1.symm]
+            exact hbq)]
+        rw [hae, hbe, hze']
+      · intro y hyinv hybq
+        rw [hV2]
+        rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "bq") (y := y)
+          (v := wMulmodAt av' bv' zv') hybq]
+        rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := invName i) (y := y)
+          (v := wMulmodAt xv yv zv) hyinv]
+    · exact absurd (b1_exec_yset_mulmod htail).1 hne2
+  · exact absurd (b1_exec_ylet_mulmod_vars hhead).1 hne
+
+set_option maxHeartbeats 1200000 in
+/-- **THE `bqLines` FOLD.** Starting at `bq = bp_{n-1}⁻¹`, the backward walk binds every
+    `inv_i = input_i⁻¹` and leaves `bq = input_0⁻¹`; nothing else moves. -/
+theorem pcsBqLines_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (n : Nat) (nm invName : Nat → String) (a : Nat → U256)
+    (hn : 1 ≤ n)
+    (hlt : ∀ i, i < n → (a i).toNat < blsR)
+    (h0 : ∀ i, i < n → (a i).toNat ≠ 0)
+    (hbqNeR : "bq" ≠ "r")
+    (hinvBq : ∀ i, 1 ≤ i → i < n → invName i ≠ "bq")
+    (hinvPrev : ∀ i, 1 ≤ i → i < n → invName i ≠ pcsBpName (i - 1))
+    (hinvInp : ∀ i, 1 ≤ i → i < n → invName i ≠ nm i)
+    (hinvR : ∀ i, 1 ≤ i → i < n → invName i ≠ "r")
+    (hbqNotBp : ∀ i < n, pcsBpName i ≠ "bq")
+    (hbqNotInp : ∀ i < n, nm i ≠ "bq")
+    (hinvNotBp : ∀ i, 1 ≤ i → i < n → ∀ j < n, pcsBpName j ≠ invName i)
+    (hinvNotInp : ∀ i, 1 ≤ i → i < n → ∀ j < n, nm j ≠ invName i)
+    (hrNotInv : ∀ i, 1 ≤ i → i < n → "r" ≠ invName i)
+    (hinvDist : ∀ i, 1 ≤ i → i < n → ∀ j, 1 ≤ j → j < n → i ≠ j →
+      invName i ≠ invName j) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (pcsBqLines n nm invName)
+      (fun V st => VEnv.get V "bq" = some (SIInv (pcsBpVal (BitVec.ofNat 256 blsR) a (n - 1))) ∧
+        VEnv.get V "r" = some (BitVec.ofNat 256 blsR) ∧
+        (∀ i, i < n → VEnv.get V (pcsBpName i) = some (pcsBpVal (BitVec.ofNat 256 blsR) a i)) ∧
+        (∀ i, i < n → VEnv.get V (nm i) = some (a i)))
+      (fun V st V' st' o => o = .normal ∧
+        VEnv.get V' "bq" = some (SIInv (a 0)) ∧
+        (∀ i, 1 ≤ i → i < n → VEnv.get V' (invName i) = some (SIInv (a i))) ∧
+        (∀ y, y ≠ "bq" → (∀ i, 1 ≤ i → i < n → y ≠ invName i) →
+          VEnv.get V' y = VEnv.get V y) ∧
+        st' = st) := by
+  induction n with
+  | zero => omega
+  | succ n ih =>
+      cases n with
+      | zero =>
+          intro V st hpre V' st' o hrun
+          have hshape : pcsBqLines 1 nm invName = [] := by
+            unfold pcsBqLines
+            rfl
+          rw [hshape] at hrun
+          cases hrun
+          obtain ⟨hbq, _hr, _hbp, _hinp⟩ := hpre
+          refine ⟨rfl, ?_, ?_, ?_, rfl⟩
+          · simpa [pcsBpVal] using hbq
+          · intro i hi1 hin
+            omega
+          · intro y _ _
+            rfl
+      | succ m =>
+          intro V st hpre V' st' o hrun
+          obtain ⟨hbq, hr, hbp, hinp⟩ := hpre
+          have hshape : pcsBqLines (m + 2) nm invName =
+              pcsBqStep (m + 1) (pcsBpName ((m + 1) - 1)) (nm (m + 1)) invName
+                ++ pcsBqLines (m + 1) nm invName :=
+            pcsBqLines_succ (m + 1) (by omega) nm invName
+          rw [hshape] at hrun
+          rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun with
+              ⟨V1, st1, hstep, hrest⟩ | ⟨hstep, hne⟩
+          · have hbpN : VEnv.get V (pcsBpName ((m + 1) - 1)) =
+                some (pcsBpVal (BitVec.ofNat 256 blsR) a ((m + 1) - 1)) := by
+              simpa using hbp (m + 1 - 1) (by omega)
+            have hinpN : VEnv.get V (nm (m + 1)) = some (a (m + 1)) :=
+              hinp (m + 1) (by omega)
+            have hstepc := pcsBqStep_contract (c := c) (g := g) (funs := funs)
+              (m + 1) (pcsBpName ((m + 1) - 1)) (nm (m + 1)) invName
+              (SIInv (pcsBpVal (BitVec.ofNat 256 blsR) a (m + 1)))
+              (pcsBpVal (BitVec.ofNat 256 blsR) a ((m + 1) - 1)) (a (m + 1))
+              (BitVec.ofNat 256 blsR)
+              (hinvBq (m + 1) (by omega) (by omega))
+              (hinvPrev (m + 1) (by omega) (by omega))
+              (hinvInp (m + 1) (by omega) (by omega))
+              (hinvR (m + 1) (by omega) (by omega))
+              V st ⟨by simpa using hbq, hbpN, hinpN, hr⟩ V1 st1 .normal hstep
+            obtain ⟨ho1, hinvNew, hbqNew, hpres1, hst1⟩ := hstepc
+            have hbpSucc : pcsBpVal (BitVec.ofNat 256 blsR) a (m + 1) =
+                wMulmodAt (pcsBpVal (BitVec.ofNat 256 blsR) a m) (a (m + 1))
+                  (BitVec.ofNat 256 blsR) := by
+              simpa using pcsBpVal_succ (BitVec.ofNat 256 blsR) a m
+            have hprevEq : pcsBpVal (BitVec.ofNat 256 blsR) a ((m + 1) - 1) =
+                pcsBpVal (BitVec.ofNat 256 blsR) a m := by rw [Nat.add_sub_cancel]
+            have hvalNew : VEnv.get V1 (invName (m + 1)) = some (SIInv (a (m + 1))) := by
+              rw [hinvNew, hprevEq]
+              rw [pcs_inv_mul_left hbpSucc
+                (pcsBpVal_toNat_lt a (m + 1) (fun i hi => hlt i (by omega)) m (by omega))
+                (fun h => pcsBpVal_ne_zero a (m + 1)
+                  (fun i hi => hlt i (by omega)) (fun i hi => h0 i (by omega)) m (by omega)
+                  (BitVec.eq_of_toNat_eq (by rw [h]; rfl)))]
+            have hbqNew' : VEnv.get V1 "bq" =
+                some (SIInv (pcsBpVal (BitVec.ofNat 256 blsR) a m)) := by
+              rw [hbqNew, pcs_inv_mul_right hbpSucc
+                (hlt (m + 1) (by omega)) (h0 (m + 1) (by omega))]
+            have hr1 : VEnv.get V1 "r" = some (BitVec.ofNat 256 blsR) := by
+              rw [hpres1 "r" (hrNotInv (m + 1) (by omega) (by omega)) hbqNeR.symm]
+              exact hr
+            have hbp1 : ∀ i, i < m + 1 →
+                VEnv.get V1 (pcsBpName i) = some (pcsBpVal (BitVec.ofNat 256 blsR) a i) := by
+              intro i hi
+              rw [hpres1 (pcsBpName i)
+                (hinvNotBp (m + 1) (by omega) (by omega) i (by omega))
+                (hbqNotBp i (by omega))]
+              exact hbp i (by omega)
+            have hinp1 : ∀ i, i < m + 1 → VEnv.get V1 (nm i) = some (a i) := by
+              intro i hi
+              rw [hpres1 (nm i)
+                (hinvNotInp (m + 1) (by omega) (by omega) i (by omega))
+                (hbqNotInp i (by omega))]
+              exact hinp i (by omega)
+            have hrestc := ih (by omega) (fun i hi => hlt i (by omega))
+              (fun i hi => h0 i (by omega))
+              (fun i hi1 hin => hinvBq i (by omega) (by omega))
+              (fun i hi1 hin => hinvPrev i (by omega) (by omega))
+              (fun i hi1 hin => hinvInp i (by omega) (by omega))
+              (fun i hi1 hin => hinvR i (by omega) (by omega))
+              (fun i hi => hbqNotBp i (by omega))
+              (fun i hi => hbqNotInp i (by omega))
+              (fun i hi1 hin j hj => hinvNotBp i (by omega) (by omega) j (by omega))
+              (fun i hi1 hin j hj => hinvNotInp i (by omega) (by omega) j (by omega))
+              (fun i hi1 hin => hrNotInv i (by omega) (by omega))
+              (fun i hi1 hin j hj1 hjn hij => hinvDist i (by omega) (by omega)
+                j (by omega) (by omega) (by omega))
+              V1 st1 ⟨hbqNew', hr1, hbp1, hinp1⟩ V' st' o hrest
+            obtain ⟨ho2, hbqFinal, hinvRest, hpres2, hst2⟩ := hrestc
+            refine ⟨ho2, hbqFinal, ?_, ?_, by rw [hst2, hst1]⟩
+            · intro i hi1 hin
+              rcases Nat.lt_or_eq_of_le (by omega : i ≤ m + 1) with hilt | rfl
+              · exact hinvRest i hi1 hilt
+              · rw [hpres2 (invName (m + 1))
+                  (hinvBq (m + 1) (by omega) (by omega))
+                  (fun j hj1 hjn => hinvDist (m + 1) (by omega) (by omega)
+                    j hj1 (by omega) (by omega))]
+                exact hvalNew
+            · intro y hybq hyinv
+              rw [hpres2 y hybq (fun i hi1 hin => hyinv i hi1 (by omega))]
+              exact hpres1 y (hyinv (m + 1) (by omega) (by omega)) hybq
+          · exact absurd (pcsBqStep_contract (c := c) (g := g) (funs := funs)
+              (m + 1) (pcsBpName ((m + 1) - 1)) (nm (m + 1)) invName
+              (SIInv (pcsBpVal (BitVec.ofNat 256 blsR) a (m + 1)))
+              (pcsBpVal (BitVec.ofNat 256 blsR) a ((m + 1) - 1)) (a (m + 1))
+              (BitVec.ofNat 256 blsR)
+              (hinvBq (m + 1) (by omega) (by omega))
+              (hinvPrev (m + 1) (by omega) (by omega))
+              (hinvInp (m + 1) (by omega) (by omega))
+              (hinvR (m + 1) (by omega) (by omega))
+              V st ⟨by simpa using hbq, hbp (m + 1 - 1) (by omega), hinp (m + 1) (by omega), hr⟩
+              V' st' o hstep).1 hne
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_one_right
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_one_left
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_ne_zero
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsSIInv_toNat_lt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_inv_mul_left
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_inv_mul_right
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpVal_toNat_lt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpVal_ne_zero
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqStep [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqLines [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqLines_succ
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsStmtsContractAll_append_normal
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqStep_contract
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBqLines_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
