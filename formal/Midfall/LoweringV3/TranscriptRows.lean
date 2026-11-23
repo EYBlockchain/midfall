@@ -1737,9 +1737,109 @@ theorem transcriptOf_buffer {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Typ
   rw [wireMsgs_eq_fold]
   rfl
 
+/-! ## 3c. `parseTrace`'S READ WALK — THE LOOP LEMMAS
+
+SIM.10 obligation 1, smallest pieces first. Each `def` below is the corresponding fragment of
+`Midfall.Halo2.Verifier.parseTrace` copied VERBATIM (the same `do` block, the same `hashableG1 E.g1`),
+so the eventual whole-run composition can rewrite `parseTrace`'s subterms by `rfl`. Each
+`runsAll_*_one` theorem pairs a fragment with a `RunsAll` over exactly the wire messages it
+consumes at the deployed profile (`numProofs = instanceShape.size = 1`); the general message list is
+the `Qs.map Msg.g1` shape the `RunsAll` toolbox already handles. -/
+
+/-- One G1 read from the exact wire tail (`Msg.g1` singleton). -/
+theorem runsAll_read_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (Q : G₁) :
+    RunsAll E (Midfall.Halo2.tmRead (hashableG1 E.g1))
+      ([Msg.g1 Q] : List (Msg (Fr p) G₁)) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  have hbuf' : t.buffer = pref ++ E.g1.toCompressed Q ++ rest := by
+    simpa only [wireMsgs_cons, wireMsgs, msgWire, ByteArray.append_empty,
+      ByteArray.append_assoc, bytes_empty_append_local] using hbuf
+  obtain ⟨t', hrun, hpos', hbuf'⟩ := tmRead_g1_run E.g1 t pref rest Q hbuf' hpos henc hwidth
+  refine ⟨Q, t', hrun, hbuf', ?_⟩
+  rw [hpos']
+  show pref.size + g1CompressedWidth = pref.size + (([Msg.g1 Q] : List (Msg (Fr p) G₁)).map
+    (fun m => (msgWire E m).size)).sum
+  simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, msgWire]
+  rw [hwidth]
+  omega
+
+/-- The trashcan fragment of `parseTrace`, verbatim: one G1 read per trashcan, per proof. -/
+def parseTraceTrashcans (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁)
+    (numProofs : Nat) : TranscriptM (Array (Array (Trash.Committed G₁))) :=
+  (List.range numProofs).foldlM
+    (init := #[]) fun acc _ => do
+      let row ← vk.cs.trashcans.toList.foldlM (init := #[]) fun acc' t => do
+        let c ← Trash.readCommitted t (hashableG1 E.g1)
+        pure (acc'.push c)
+      pure (acc.push row)
+
+/-- `Trash.readCommitted` is one G1 read followed by a pure record. -/
+theorem runsAll_trash_readCommitted (E : VerifierEnv p G₁ G₂ Gₜ)
+    (t : TrashArgument (Fr p)) (Q : G₁) :
+    RunsAll E (Trash.readCommitted t (hashableG1 E.g1)) ([Msg.g1 Q] : List (Msg (Fr p) G₁)) := by
+  show RunsAll E ((Midfall.Halo2.tmRead (hashableG1 E.g1)) >>= fun c =>
+    (pure { trashCommitment := c } : TranscriptM (Trash.Committed G₁)))
+    ([Msg.g1 Q] : List (Msg (Fr p) G₁))
+  exact RunsAll.bind E (runsAll_read_g1 E Q) (fun _ => RunsAll.pure E _)
+
+/-- The inner trashcan fold reads one G1 per trashcan. -/
+theorem runsAll_trashcans_fold (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (ts : List (TrashArgument (Fr p))) (Qs : List G₁) (acc : Array (Trash.Committed G₁)),
+      Qs.length = ts.length →
+      RunsAll E (ts.foldlM (init := acc) fun acc' t => do
+          let c ← Trash.readCommitted t (hashableG1 E.g1)
+          pure (acc'.push c)) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  intro ts
+  induction ts with
+  | nil =>
+      intro Qs acc hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      simpa only [List.foldlM_nil, List.map_nil] using RunsAll.pure E acc
+  | cons t ts ih =>
+      intro Qs acc hlen
+      obtain ⟨Q, Qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      rw [List.foldlM_cons]
+      have hhead : RunsAll E ((fun acc => do
+          let c ← Trash.readCommitted t (hashableG1 E.g1)
+          pure (acc.push c)) acc) ([Msg.g1 Q] : List (Msg (Fr p) G₁)) := by
+        have hb := RunsAll.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁))) (ms₂ := [])
+          (runsAll_trash_readCommitted E t Q) (fun c => RunsAll.pure E (acc.push c))
+        rw [List.append_nil] at hb
+        exact hb
+      have hb := RunsAll.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+        (ms₂ := Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        hhead (fun init => ih Qs' init (by simpa using hlen))
+      exact hb
+
+/-- **THE TRASHCAN RUN.** At the deployed profile (one proof) `parseTrace`'s trashcan pass reads
+    one G1 commitment per trashcan, in order, and nothing else. -/
+theorem runsAll_parseTraceTrashcans_one (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (Qs : List G₁)
+    (hlen : Qs.length = vk.cs.trashcans.size) :
+    RunsAll E (parseTraceTrashcans E vk 1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+  rw [parseTraceTrashcans]
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil]
+  have hA : RunsAll E
+      (List.foldlM (fun acc' t => do
+        let c ← Trash.readCommitted t (hashableG1 E.g1)
+        pure (acc'.push c)) #[] vk.cs.trashcans.toList >>= fun row => pure (#[].push row))
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+    have hb := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+      (runsAll_trashcans_fold E vk.cs.trashcans.toList Qs #[] hlen)
+      (fun row => RunsAll.pure E (#[].push row))
+    rw [List.append_nil] at hb
+    exact hb
+  have hb := RunsAll.bind E (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+    hA (fun acc => RunsAll.pure E acc)
+  rw [List.append_nil] at hb
+  exact hb
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
+
 theorem decodeCalldata_slots {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
     [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
@@ -3607,6 +3707,10 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_poison_falsifier_empty_block [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_blockSim_falsifier_return_is_not_the_post [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_blockProgS_falsifier_reverting_block_is_not_total [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_read_g1 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trash_readCommitted [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashcans_fold [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTrashcans_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_at [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_total_of_algebraRun [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_at [propext, Classical.choice, Quot.sound] native []
