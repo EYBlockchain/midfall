@@ -261,14 +261,13 @@ codec law, a render-correct `Done` statement, `TotalV3`, and `ArtifactEq`. The D
 (**1648 annotated checks / 120 files**), quick gate and `checks.sh` are green, and the
 `ChallengesGood.xNonzero` statement pin is in place.
 
-**Generator-layout finding (`PG-FPSCRATCH`).** `VerifierMemoryLayout.validate`'s
-`memoryLifetimeIntersects` returns true only for equal phases (or `permanent`), so the finalPairing
-phase scratch and the `pcsQEvalSourceTable`/theta block are never compared. The current safety of
-the finalPairing normal path rests on the fixed low-memory scratch start plus the
-`vk_payload`/`challenge_slots` permanence chain; a plan with a small enough `vk.len` would pass
-`validate` and break `Inv .pcs` on that path. A12 is constructing the falsifier and the exact
-repair (a generator layout assertion or a `programOk` projection); no hypothesis is being added to
-`block_live` or `ValidV3`.
+**Generator-layout finding (`PG-FPSCRATCH`), refuted.** The proposed gap is false:
+`theta_scalar_and_g1_slots` is `MemoryLifetime.permanent`, and `memoryLifetimeIntersects` compares a
+permanent region with any phase, so `validate` rejects the finalPairing scratch/theta overlap.
+`pgFpScratchCandidate_rejected` proves the closest candidate is rejected; the phase-only overlap
+`fpScratch_phaseOverlap_accepted` is between two non-`Inv` regions. The exact residual for the
+finalPairing clean arm is the four generator-side `VerifierMemoryLayout.new` region equations needed
+by `FpScratchSeparated`; no `programOk`/`ValidV3` clause and no `block_live` hypothesis is needed.
 
 The vacuity report is the non-vacuity ledger: the generic V3 root is now **NON-VACUOUS (synthetic)**
 via `exists_validV3`, but **VACUOUS at F1** (`f1_ValidV3_false`), and `0 REFUTED / 1 VACUOUS` is not
