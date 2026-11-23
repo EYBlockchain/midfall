@@ -53,4 +53,5 @@ open Midfall.Instances.PoseidonValid
 #sorry_sweep [Midfall] root Midfall.LoweringV3.lowering_correct
 #closure_fingerprint [Midfall.LoweringV2.LoweringEquivalence, Midfall.LoweringV2.Render.Valid,
   Midfall.LoweringV2.HypothesesInhabited, Midfall.LoweringV2.EndToEnd,
-  Midfall.LoweringV2.EntryFrameInhabited] under [Midfall, YulSemantics]
+  Midfall.LoweringV2.EntryFrameInhabited, Midfall.Instances.GeneratorDone.Done]
+  under [Midfall, YulSemantics]
