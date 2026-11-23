@@ -206,6 +206,7 @@ import Midfall.LoweringV3.QuotientFrame
 import Midfall.LoweringV3.QuotientArms
 import Midfall.LoweringV3.QuotientFoldTie
 import Midfall.LoweringV3.Rows
+import Midfall.LoweringV3.TranscriptRows
 import Midfall.LoweringV3.LagrangeRows
 import Midfall.LoweringV3.BatchInvert
 import Midfall.LoweringV3.ModexpGeneral
