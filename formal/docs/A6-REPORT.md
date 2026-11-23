@@ -1,7 +1,7 @@
 # A6 / ROW.TP — worker report (transcriptParser, t/A6)
 
-**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `0770c28`** (the previous base was
-`b6e6d42`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
+**Branch** `t/A6`, rebased onto **`origin/formal/baseline` = `881f780`** (the previous base was
+`0770c28`). Worktree `/Users/julian/midfall-f`. **HEAD** is this commit
 (`git log -1`). No push. `formal/baseline` and `/Users/julian/midfall` untouched; no
 frozen/vendor/QVM/Quotient edit.
 
@@ -9,7 +9,7 @@ frozen/vendor/QVM/Quotient edit.
 
 `Rows.lean` is still untouched, so the ROOT cones are unchanged: `lowering_correct` **11**,
 `lowering_sound` **5**, both `assert_axioms` `ok (4 named, 0 native)`.
-`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (2485, 2500, 2527, 2540, 2572) — the
+`lean_grep.py sorry TranscriptRows.lean` prints **5** lines (2524, 2539, 2566, 2579, 2611) — the
 five named leaves below. Register delta vs the previous A6 head: **−1 non-ROOT sorry**.
 `gen_sorry.sh` was not run (zero-sorry precondition not met; worker rule W9/DG.2).
 
@@ -122,6 +122,8 @@ alone; D1 and A6 need the same schedule walk, tracked once at widths and once at
 | `RunsAll.pure` / `.get` / `.lift_ok` | no-read atoms |
 | `RunsAll.bind` | the sequential composition law: `RunsAll m ms₁` + `∀ a, RunsAll (f a) ms₂` gives `RunsAll (m >>= f) (ms₁ ++ ms₂)` |
 | `RunsAll.common` / `.squeeze` | absorptions/squeezes consume nothing |
+| `readG1Groups` | read a list of homogeneous G1 groups in order |
+| **`runsAll_readG1Groups`** | **loop flattening**: `counts.sum = Qs.length` gives `RunsAll (readG1Groups counts) (Qs.map Msg.g1)`; the advice/lookup/perm/trash loops are instances of this once their counts are read off `tpEvents` |
 
 This is the consumption/cursor counterpart of D1's `PresWidthSeq` (which has no closure layer yet).
 The residual is exactly the loop walk: each parser loop's `foldlM`/`mapM` must be flattened into
