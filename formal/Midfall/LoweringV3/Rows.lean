@@ -202,6 +202,56 @@ theorem fp_sliceV3 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
 #assert_axioms Midfall.LoweringV3.fp_sliceV3
   [propext, Classical.choice, Quot.sound] native []
 
+/-- **THE POISON ARM AT `ValidV3`.** From `Frame ∧ success = 0` the slice's first guard
+    reverts; the V2 `fp_stmt_steps` only used `fp_slice`, so this is the same proof at the
+    V3 face of the slice equation. -/
+theorem fp_stmt_stepsV3 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (H : Hash) (vkAddr : U256)
+    (cd : Bytes) (c : ExternalCalls) (g : ExternalGas) :
+    StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) (R.slice Partial.finalPairing)
+        (fun V st => Midfall.LoweringV2.Frame R H vkAddr cd V st ∧
+          VEnv.get V "success" = some (0 : U256))
+        (fun _ _ V' st' o => (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+          (o = .normal ∧ Midfall.LoweringV2.Poisoned R H vkAddr cd V' st')) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨_hframe, hsucc⟩ := hpre
+  rw [fp_sliceV3 R hR] at hrun
+  have hfail : lookupFun (R.scope c g) "fail" =
+      some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, R.scope c g) :=
+    Midfall.LoweringV2.Blocks.TraceReturn.fail_lookup R
+  have hfail' : lookupFun (hoist (Bridge.Dialect c g)
+      [Stmt.exprStmt (Expr.call "fail"
+        [Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED"])] ::
+        R.scope c g) "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, R.scope c g) := by
+    change lookupFun (R.scope c g) "fail" =
+      some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, R.scope c g)
+    exact hfail
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V₁, st₁, h₁, _⟩ | ⟨h₁, hne⟩
+  · exact (Midfall.LoweringV2.Blocks.FinalPairing.fp_guard_normal_impossible (R := R) hfail' hsucc h₁).elim
+  · obtain ⟨Vb, hbody⟩ := Midfall.LoweringV2.Blocks.FinalPairing.fp_guard_fire
+      (funs := R.scope c g) hsucc h₁
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hbody with
+        ⟨V₂, st₂, h₂, _⟩ | ⟨h₂, _⟩
+    · obtain ⟨ho, _⟩ := Midfall.LoweringV2.Blocks.FinalPairing.fp_fail_reverts
+        (e := Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED")
+        (funs := hoist (Bridge.Dialect c g)
+          [Stmt.exprStmt (Expr.call "fail"
+            [Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED"])] ::
+            R.scope c g)
+        (fun st₁ st₂ hh => Midfall.LoweringV2.Blocks.FinalPairing.fpErr_ne_halts hh) hfail' h₂
+      exact absurd ho (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+    · obtain ⟨ho, hrev⟩ := Midfall.LoweringV2.Blocks.FinalPairing.fp_fail_reverts
+        (e := Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED")
+        (funs := hoist (Bridge.Dialect c g)
+          [Stmt.exprStmt (Expr.call "fail"
+            [Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED"])] ::
+            R.scope c g)
+        (fun st₁ st₂ hh => Midfall.LoweringV2.Blocks.FinalPairing.fpErr_ne_halts hh) hfail' h₂
+      exact Or.inl ⟨ho, hrev⟩
+
+#assert_axioms Midfall.LoweringV3.fp_stmt_stepsV3
+  [propext, Classical.choice, Quot.sound] native []
+
 
 /-- **LEAF (ROW.FP, WP A11): the finalPairing simulation row.** Evidence `GeneratorRows.lean:1077`;
     children are `ec_pairing_sem`, `fp_pairing_algebra`, `fp_poison`. -/
