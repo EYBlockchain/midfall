@@ -491,6 +491,30 @@ only covers the retired V1 `LoweringCorrect` fields.
 
 ---
 
+## 10b. Render-correct `Done` (`DoneAt`)
+
+`Midfall.Instances.GeneratorDoneAt` adds the render-generic card
+
+```lean
+structure DoneAt (R : Render p G₁ G₂ Gₜ) (cd : Bytes) (artifact : String) : Prop where
+  headline : ∀ product, LoweringEquivalenceV3 R product
+  valid : ValidV3 R
+  gate : ∃ product, GateAtV3 R product cd
+  total : ∀ product, TotalV3 R product
+  artifactEq : LoweringV2.ArtifactEq R.model artifact
+```
+
+with `DoneAt.toGeneratorDone`, `DoneAt.hypothesesInhabitedV3` and `DoneAt.returns`. `Done`
+(`GeneratorDone.lean`) is the `R = poseidonRender` instance and remains REFUTED there
+(`not_done_today`); no fixture is substituted into the headline.
+
+`f1PointRenderCN_doneAt` reduces the F1-real `DoneAt` to exactly:
+`hpay` (the production NEG_S_G2 scalar) + `GateAtV3` at `f1PointRenderCN n` + `ArtifactEq` at its
+model. `total` is `totalV3_correct` (hence `block_live`), and `valid` is
+`f1PointRenderCN_validV3 n hpay`. The codec conjunct of the gate is the REF.9/REF.10 compressed
+encoder-first law (`g1CodecC`), in flight; the F1 render currently uses `g1CodecZ`, whose law set is
+false, so the render needs the computable-codec data choice before the gate can be inhabited.
+
 ## 11. Reproduce
 
 ```sh
