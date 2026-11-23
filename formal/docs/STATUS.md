@@ -237,10 +237,14 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `9712ba6`: D2 is merged and the next generation peels are closed (`env_nG2`, `prog_noDirect`,
+At `e2159069`: D2 is merged and the next generation peels are closed (`env_nG2`, `prog_noDirect`,
 `env_vkDigest`, `v3_payload`); the register is **105 sorried declarations / 11 ROOT / 32 CERT /
 0 REFUTED** (105 rows in `SORRY.md`); D1A's exact `readAlgebra` width sequence, `multiPrepare`
-phase A/B/C widths, and `PrepareLogSlots` composition layer are merged. A4's
+phase A/B/C widths, `PrepareLogSlots` composition layer, and eval-count/`PrepareLogSlots_of_counts'`
+are merged. Since then, A5's single-word prelude, A9's `PcsBlock4` sub/mload inversions, A11's
+literal `ec_pairing` call/`FpClean` G1 slots, A12's finalPairing clean slice/block case, and D2's
+header length/`generateVkFinalize` are merged. A11 has isolated a G2 encoder-width/header-slot
+coverage premise that may need a signed clause; it is checking a falsifier. A4's
 `runBody_mono` (ST.13), lag statements 0–27 except the batch-invert call 10, the five loop
 contracts, and the `litValue_number_nat` helper are merged; A5's
 8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, bridge modulus arithmetic, six-store
@@ -280,13 +284,13 @@ with the F1-specific `Done` recorded as data-blocked.
 ### Six-lane critical path (user cap)
 
 Phase 1 (live now):
-- **A5** bridge 11–14 composition + `count_bytes = 32` + `BatchInvertPost`.
-- **A9** PCS rolled `forLoop` + block 4–6.
-- **A4** lag fixed segments 4–6, 11–12, 14–15, 17, 19–21, 22–27, then whole-block/rows.
-- **A12** `block_live` clean arm + `PG-FPSCRATCH` falsifier/repair.
-- **D1A** `EndToEndAlgebra` readAlgebra/multiPrepare widths.
-- **D2** CERT derivable leaves.
-Paused: A6 TP accessor, A11 finalPairing clean arm (layout disjointness), B3/B4 F1-real/Done residual,
+- **A5** general-path bridge assembly → `BatchInvertPost`.
+- **A9** PCS block-4 `m==1`/general arm → blocks 5/6.
+- **A12** finalPairing clean slice / `ec_pairing` body run → `block_live`.
+- **D1A** trace shapes / protocol eval decomposition → `PrepareLogSlots`.
+- **D2** `generateVkFinalize` split → payload leaves.
+- **A11** G2 encoder-width premise gap / FP rows.
+Paused: A4 lag call stmt 10 (waiting A5), A6 TP accessor/parser count, B3/B4 F1-real/Done residual,
 port audit D-GATE6/7, calldata, CERT2.
 
 Phase 2, as A5/A11 close: **A4** lag fixed segments/rows, **D1P/D1A** `EndToEnd` widths,
