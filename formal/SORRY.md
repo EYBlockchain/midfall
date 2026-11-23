@@ -58,7 +58,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Generator.Certified.prog_gasFree | Midfall.Generator.Certified | theorem | OPEN | - | `14ce060d6970fece` | V3 CERT.5 (D3, D-CERT1) - the whole program executes no gas() (D-GATE1) |
 | Midfall.Generator.Certified.prog_hasMultiPointSet | Midfall.Generator.Certified | theorem | OPEN | - | `3faca9d12edc289e` | V3 CERT.6 (D4, D-CERT1) - intermediateSets has a point set of size at least two |
 | Midfall.Generator.Certified.prog_negLagrangesFloor | Midfall.Generator.Certified | theorem | OPEN | - | `bd485dd368546fea` | V3 CERT.6 (D4, D-CERT1) - PG-NEGLAG: at least two Lagrange denominators |
-| Midfall.Generator.Certified.prog_noDirect | Midfall.Generator.Certified | theorem | OPEN | - | `ea8cc033e901ac1b` | V3 CERT.6 - newFromVk sets direct := none; the ART builder copies it |
 | Midfall.Generator.Certified.prog_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `ff281295813cb0cf` | V3 CERT.5 - every-binder scan: binder lemma per emitter (the tree name is noShadowProg) |
 | Midfall.Generator.Certified.prog_noWriters | Midfall.Generator.Certified | theorem | OPEN | - | `f3dfc04a7d459e38` | V3 CERT.5 - scan lemma per emitter; inlining substitutes literals only |
 | Midfall.Generator.Certified.prog_permCommMatchRepaired | Midfall.Generator.Certified | theorem | OPEN | - | `d63f9dbb0b7608f5` | V3 CERT.6 (D4, D-CERT1) - D-P59 repair: one sigma commitment per permutation column |
