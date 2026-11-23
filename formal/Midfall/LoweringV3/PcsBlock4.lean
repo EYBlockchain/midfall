@@ -1509,6 +1509,71 @@ theorem b1_exec_ylet_mulmod_vars {funs : FunEnv (Bridge.Dialect c g)}
 #assert_axioms Midfall.LoweringV3.PcsBlock4.b1_exec_ylet_mulmod_vars
   [propext, Classical.choice, Quot.sound] native []
 
+/-- The `bp_i` name of the general set arm. -/
+def pcsBpName (i : Nat) : String := "bp_" ++ toString i
+
+/-- `let bp_0 := batchInputs[0]`. -/
+def pcsBpHead (inp : String) : Stmt EVM.Op :=
+  GenAst.ylet (pcsBpName 0) (GenAst.yvar inp)
+
+/-- `let bp_i := mulmod(bp_{i-1}, batchInputs[i], r)`. -/
+def pcsBpTail (i : Nat) (inp : String) : Stmt EVM.Op :=
+  GenAst.ylet (pcsBpName i) (GenAst.yop EVM.Op.mulmod
+    [GenAst.yvar (pcsBpName (i - 1)), GenAst.yvar inp, GenAst.yvar "r"])
+
+/-- The head line binds `bp_0` at the first input. -/
+theorem pcsBpHead_contract {funs : FunEnv (Bridge.Dialect c g)} (inp : String) (a0 : U256) :
+    StmtContractAll (D := Bridge.Dialect c g) funs (pcsBpHead inp)
+      (fun V st => VEnv.get V inp = some a0)
+      (fun V st V' st' o => o = .normal ∧
+        V' = (pcsBpName 0, a0) :: V ∧
+        VEnv.get V' (pcsBpName 0) = some a0 ∧
+        (∀ y, y ≠ pcsBpName 0 → VEnv.get V' y = VEnv.get V y) ∧ st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨ho, yv, hyv, hV, hst⟩ := b1_exec_ylet_var hrun
+  have hye : yv = a0 := Option.some.inj (hyv.symm.trans hpre)
+  refine ⟨ho, ?_, ?_, ?_, hst⟩
+  · rw [hV, hye]
+  · rw [hV, hye]
+    exact venv_get_cons_self (D := Bridge.Dialect c g) V _ _
+  · intro y hy
+    rw [hV]
+    exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsBpName 0) (y := y)
+      (v := yv) hy
+
+/-- One update line binds `bp_i` at `mulmod(bp_{i-1}, input_i, r)`. -/
+theorem pcsBpTail_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (i : Nat) (inp : String) (prev a rv : U256) :
+    StmtContractAll (D := Bridge.Dialect c g) funs (pcsBpTail i inp)
+      (fun V st => VEnv.get V (pcsBpName (i - 1)) = some prev ∧
+        VEnv.get V inp = some a ∧ VEnv.get V "r" = some rv)
+      (fun V st V' st' o => o = .normal ∧
+        V' = (pcsBpName i, wMulmodAt prev a rv) :: V ∧
+        VEnv.get V' (pcsBpName i) = some (wMulmodAt prev a rv) ∧
+        (∀ y, y ≠ pcsBpName i → VEnv.get V' y = VEnv.get V y) ∧ st' = st) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hprev, hinp, hrv⟩ := hpre
+  obtain ⟨ho, av, bv, zv, hp, hi, hr, hV, hst⟩ := b1_exec_ylet_mulmod_vars hrun
+  have hae : av = prev := Option.some.inj (hp.symm.trans hprev)
+  have hie : bv = a := Option.some.inj (hi.symm.trans hinp)
+  have hre : zv = rv := Option.some.inj (hr.symm.trans hrv)
+  refine ⟨ho, ?_, ?_, ?_, hst⟩
+  · rw [hV, hae, hie, hre]
+  · rw [hV, hae, hie, hre]
+    exact venv_get_cons_self (D := Bridge.Dialect c g) V _ _
+  · intro y hy
+    rw [hV]
+    exact venv_get_cons_ne (D := Bridge.Dialect c g) (x := pcsBpName i) (y := y)
+      (v := _) hy
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpName [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpHead [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpTail [propext] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpHead_contract
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBpTail_contract
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsBlock4.copyReturn_outside
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsBlock4.finishCall_memory_outside
