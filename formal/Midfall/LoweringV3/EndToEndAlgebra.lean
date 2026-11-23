@@ -33,7 +33,7 @@ set_option autoImplicit false
 
 namespace Midfall.LoweringV3
 
-open Midfall Midfall.Halo2
+open Midfall Midfall.Halo2 Midfall.Generator
 
 variable {p : ℕ} [Fact (Nat.Prime p)]
 
@@ -1480,6 +1480,293 @@ theorem PrepareLogSlots_of_counts (R : Midfall.LoweringV2.Render p G₁ G₂ G�
   intro inst trace
   exact prepareSlots_of_counts R inst trace nParse n
     (hCounts inst trace).1 (hCounts inst trace).2.1 (hCounts inst trace).2.2
+
+/-- `fromProtocol`'s `evals` section has the item count it was handed. -/
+theorem fromProtocol_evals_itemCount (protocol : Midfall.Generator.ProtocolPlan) (numEvals numPointSets : Nat)
+    (L : Midfall.Generator.ProofCalldataLayout)
+    (h : Midfall.Generator.ProofCalldataLayout.fromProtocol protocol Midfall.Generator.abiVerifyProofProofCptr numEvals numPointSets
+        = .ok L) :
+    L.evals.itemCount = numEvals := by
+  rw [Midfall.Generator.ProofCalldataLayout.fromProtocol] at h
+  simp only [Bind.bind] at h
+  obtain ⟨x1, _, h1⟩ := AlgebraWidths.except_bind_ok h
+  obtain ⟨x2, _, h2⟩ := AlgebraWidths.except_bind_ok h1
+  obtain ⟨x3, _, h3⟩ := AlgebraWidths.except_bind_ok h2
+  obtain ⟨x4, _, h4⟩ := AlgebraWidths.except_bind_ok h3
+  obtain ⟨x5, _, h5⟩ := AlgebraWidths.except_bind_ok h4
+  obtain ⟨x6, _, h6⟩ := AlgebraWidths.except_bind_ok h5
+  by_cases hc : (x6.2.1 != protocol.proof.commitments.length) = true
+  · rw [ite_eq_left hc] at h6
+    obtain ⟨r, hr, _⟩ := AlgebraWidths.except_bind_ok h6
+    cases hr
+  · rw [ite_eq_right (by simpa using hc)] at h6
+    cases h6
+    rfl
+
+/-- `fromProtocol`'s `qEvals` section has the point-set count it was handed. -/
+theorem fromProtocol_qEvals_itemCount (protocol : Midfall.Generator.ProtocolPlan) (numEvals numPointSets : Nat)
+    (L : Midfall.Generator.ProofCalldataLayout)
+    (h : Midfall.Generator.ProofCalldataLayout.fromProtocol protocol Midfall.Generator.abiVerifyProofProofCptr numEvals numPointSets
+        = .ok L) :
+    L.qEvals.itemCount = numPointSets := by
+  rw [Midfall.Generator.ProofCalldataLayout.fromProtocol] at h
+  simp only [Bind.bind] at h
+  obtain ⟨x1, _, h1⟩ := AlgebraWidths.except_bind_ok h
+  obtain ⟨x2, _, h2⟩ := AlgebraWidths.except_bind_ok h1
+  obtain ⟨x3, _, h3⟩ := AlgebraWidths.except_bind_ok h2
+  obtain ⟨x4, _, h4⟩ := AlgebraWidths.except_bind_ok h3
+  obtain ⟨x5, _, h5⟩ := AlgebraWidths.except_bind_ok h4
+  obtain ⟨x6, _, h6⟩ := AlgebraWidths.except_bind_ok h5
+  by_cases hc : (x6.2.1 != protocol.proof.commitments.length) = true
+  · rw [ite_eq_left hc] at h6
+    obtain ⟨r, hr, _⟩ := AlgebraWidths.except_bind_ok h6
+    cases hr
+  · rw [ite_eq_right (by simpa using hc)] at h6
+    cases h6
+    rfl
+
+/-- `newFromVk`'s first bind: the plan carries the meta and proof layout its own
+    second bind produced (meta equality included). -/
+theorem newFromVk_meta_layout {F : Type} [BEq F] (feat : Features)
+    (field : Midfall.Generator.QuotientEvaluator.FieldCtx F) (cs : ConstraintSystem F)
+    (rawMeta : Midfall.Generator.ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding) (payload : Midfall.Generator.Halo2VerifyingKey)
+    (plan : Midfall.Generator.LoweringPlan Unit Unit)
+    (h : Midfall.Generator.PlanNew.newFromVk feat field cs rawMeta numInstances accEncoding payload
+        = .ok plan) :
+    ∃ (meta_ : Midfall.Generator.ConstraintSystemMeta) (L : Midfall.Generator.ProofCalldataLayout),
+      plan.meta_ = meta_ ∧ plan.proofLayout = L ∧
+      Midfall.Generator.ProofCalldataLayout.fromProtocol meta_.protocol Midfall.Generator.abiVerifyProofProofCptr meta_.numEvals
+        meta_.numPointSets = .ok L := by
+  simp only [Midfall.Generator.PlanNew.newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨q, _, h1⟩ := AlgebraWidths.except_bind_ok h
+  obtain ⟨proofLayout, hpl, h2⟩ := AlgebraWidths.except_bind_ok h1
+  obtain ⟨_qplan, _, h3⟩ := AlgebraWidths.except_bind_ok h2
+  obtain ⟨_build, _, h4⟩ := AlgebraWidths.except_bind_ok h3
+  obtain ⟨_nw, _, h5⟩ := AlgebraWidths.except_bind_ok h4
+  obtain ⟨_pcs, _, h6⟩ := AlgebraWidths.except_bind_ok h5
+  obtain ⟨_acc, _, h7⟩ := AlgebraWidths.except_bind_ok h6
+  obtain ⟨_memory, _, h8⟩ := AlgebraWidths.except_bind_ok h7
+  obtain ⟨_op, _, h9⟩ := AlgebraWidths.except_bind_ok h8
+  obtain ⟨_trip, _, h10⟩ := AlgebraWidths.except_bind_ok h9
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals (exact ⟨q.2.1, proofLayout, rfl, rfl, hpl⟩)
+
+theorem metaDataForVk_meta_preserved {Plan : Type} (feat : Features) (env : VkBuildEnv Plan)
+    (m : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    (hfew : feat.outerFewerPointSets = false)
+    {meta' : ConstraintSystemMeta} {dat : Data} {mem : VerifierMemoryLayout}
+    (h : metaDataForVk feat env m numInstances vk vkMptr = .ok (meta', dat, mem)) :
+    meta'.numEvals = m.numEvals ∧ meta'.protocol = m.protocol := by
+  unfold metaDataForVk at h
+  simp only [Bind.bind, hfew, if_false] at h
+  obtain ⟨x1, _, h1⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h
+  obtain ⟨x2, _, h2⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h1
+  obtain ⟨x3, hx3, h3⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h2
+  obtain ⟨x4, _, h4⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h3
+  obtain ⟨x5, _, h5⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h4
+  obtain ⟨x6, _, h6⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h5
+  obtain ⟨x7, _, h7⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h6
+  cases hx3
+  cases h7
+  exact ⟨rfl, rfl⟩
+
+theorem metaDataForStableStaticLayout_meta_preserved {Plan : Type} (feat : Features)
+    (hfew : feat.outerFewerPointSets = false) (env : VkBuildEnv Plan)
+    (m : ConstraintSystemMeta) (numInstances : Nat) (vk : Halo2VerifyingKey)
+    {vkMptr : Ptr} {meta' : ConstraintSystemMeta} {dat : Data} {mem : VerifierMemoryLayout}
+    (h : metaDataForStableStaticLayout feat env m numInstances vk
+      = .ok (vkMptr, meta', dat, mem)) :
+    meta'.numEvals = m.numEvals ∧ meta'.protocol = m.protocol := by
+  unfold metaDataForStableStaticLayout at h
+  simp only [Bind.bind] at h
+  obtain ⟨start, _, h1⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h
+  obtain ⟨res, hres, hout⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h1
+  have key : ∀ (l : List Nat)
+      (st : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr),
+      (∀ r, st.1 = some r → r.2.1.numEvals = m.numEvals ∧ r.2.1.protocol = m.protocol) →
+      ∀ (res' : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr),
+        l.foldlM (fun (st : Option (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) × Ptr)
+            (_ : Nat) => do
+          if st.1.isSome then Except.ok st else do
+            let vkMptr := st.2
+            let (metaOut, dat, memory) ← metaDataForVk feat env m numInstances vk vkMptr
+            let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
+            let cur ← Value.asUsize vkMptr.value
+            if planned == cur then
+              Except.ok (some (vkMptr, metaOut, dat, memory), vkMptr)
+            else
+              Except.ok (none, ptrMemory (valueFromNat planned))) st = .ok res' →
+        (∀ r, res'.1 = some r → r.2.1.numEvals = m.numEvals ∧ r.2.1.protocol = m.protocol) := by
+    intro l
+    induction l with
+    | nil =>
+        intro st hinv res' hf
+        cases hf
+        exact hinv
+    | cons a as ih =>
+        intro st hinv res' hf
+        rw [List.foldlM_cons] at hf
+        obtain ⟨st1, hstep, hrest⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok hf
+        apply ih _ ?_ res' hrest
+        intro r hr
+        split at hstep
+        · rename_i hsome
+          cases hstep
+          exact hinv r hr
+        · rename_i hnone
+          obtain ⟨q, hq, hstep2⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok hstep
+          obtain ⟨q2, hq2, hstep3⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok hstep2
+          obtain ⟨q3, hq3, hstep4⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok hstep3
+          split at hstep4
+          · cases hstep4
+            obtain ⟨rfl, rfl, rfl, rfl⟩ := hr
+            exact metaDataForVk_meta_preserved feat env m numInstances vk st.2 hfew hq
+          · cases hstep4
+            cases hr
+  obtain ⟨resO, resPtr⟩ := res
+  cases resO with
+  | none => cases hout
+  | some r =>
+      have hkey := key (List.range 3) (none, ptrMemory (valueFromNat start))
+        (by intro r hr; cases hr) (some r, resPtr) hres
+      have hval : r = (vkMptr, meta', dat, mem) := Except.ok.inj hout
+      have hfin := hkey r rfl
+      rw [hval] at hfin
+      exact hfin
+
+theorem newFromVk_meta_numEvals {F : Type} [BEq F]
+    (field : Midfall.Generator.QuotientEvaluator.FieldCtx F) (cs : ConstraintSystem F)
+    (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding) (payload : Halo2VerifyingKey)
+    (plan : LoweringPlan Unit Unit)
+    (h : Midfall.Generator.PlanNew.newFromVk Features.solidity field cs rawMeta numInstances
+        accEncoding payload = .ok plan) :
+    plan.meta_.numEvals = rawMeta.numEvals ∧ plan.meta_.protocol = rawMeta.protocol := by
+  simp only [Midfall.Generator.PlanNew.newFromVk, Bind.bind, Except.bind] at h
+  obtain ⟨q, hq, h1⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h
+  obtain ⟨proofLayout, _hpl, h2⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h1
+  obtain ⟨_qplan, _, h3⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h2
+  obtain ⟨_build, _, h4⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h3
+  obtain ⟨_nw, _, h5⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h4
+  obtain ⟨_pcs, _, h6⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h5
+  obtain ⟨_acc, _, h7⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h6
+  obtain ⟨_memory, _, h8⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h7
+  obtain ⟨_op, _, h9⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h8
+  obtain ⟨_trip, _, h10⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h9
+  split at h10 <;> (try (split at h10)) <;> (try (split at h10)) <;>
+    (try (split at h10)) <;> (try (split at h10)) <;> (try (split at h10))
+  all_goals (try (cases h10))
+  all_goals exact metaDataForStableStaticLayout_meta_preserved Features.solidity rfl _ rawMeta numInstances payload hq
+
+theorem ConstraintSystemMeta.new_numEvals {F : Type} (feat : Features) (cs : ConstraintSystem F)
+    (nbCommittedInstances : Nat) {m : ConstraintSystemMeta}
+    (h : ConstraintSystemMeta.new feat cs nbCommittedInstances = .ok m) :
+    m.numEvals = m.protocol.numMainEvals := by
+  unfold ConstraintSystemMeta.new at h
+  simp only [Bind.bind] at h
+  obtain ⟨protocol, _hproto, hok⟩ := Midfall.LoweringV3.AlgebraWidths.except_bind_ok h
+  cases hok
+  rfl
+
+/-- **The plan-side eval-count identification.** For a generated plan (the
+    deployed `Features.solidity` profile), the layout's `numEvals` is the
+    protocol's main-eval count `meta_.protocol.numMainEvals =
+    meta_.protocol.proof.evals.length`: the meta starts from
+    `ConstraintSystemMeta.new` (`numEvals := protocol.numMainEvals`), the
+    dummy-eval write is `0` with outer-fewer-point-sets off, and
+    `fromProtocol` stores `meta_.numEvals` verbatim in `evals.itemCount`. -/
+theorem plan_numEvals_eq_protocol (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals
+      = R.plan.meta_.protocol.numMainEvals := by
+  obtain ⟨rawMeta, plan, hraw, hpl, hp⟩ := Midfall.LoweringV2.pfx_plan_of_generated hR.generated
+  obtain ⟨meta_, L, hmeta, hplL, hL⟩ := newFromVk_meta_layout Features.solidity
+    (Midfall.Generator.PlanNew.frFieldCtx R.E.delta) R.vk.cs rawMeta R.cfg.numInstances
+    R.cfg.accumulator R.plan.vk plan hpl
+  rw [← hp] at hmeta hplL
+  have h1 : (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+      R.plan.proofLayout).numEvals = R.plan.meta_.numEvals := by
+    rw [hplL, hmeta]
+    show L.evals.itemCount = meta_.numEvals
+    exact fromProtocol_evals_itemCount meta_.protocol meta_.numEvals meta_.numPointSets L hL
+  rw [h1]
+  have hq := newFromVk_meta_numEvals (Midfall.Generator.PlanNew.frFieldCtx R.E.delta)
+    R.vk.cs rawMeta R.cfg.numInstances R.cfg.accumulator R.plan.vk plan hpl
+  rw [← hp] at hq
+  have hrawE := ConstraintSystemMeta.new_numEvals Features.solidity R.vk.cs
+    R.cfg.numCommittedInstances hraw
+  obtain ⟨hqE, hqP⟩ := hq
+  rw [hqE, hqP, hrawE]
+
+/-- The same count as the protocol's eval-read list length. -/
+theorem plan_numEvals_eq_proofEvalsLength (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals
+      = R.plan.meta_.protocol.proof.evals.length := by
+  rw [plan_numEvals_eq_protocol R hR]
+  rfl
+
+/-- **`PrepareLogSlots` with the plan-side eval count discharged.** The
+    `numEvals` premise of `PrepareLogSlots_of_counts` is replaced by the
+    trace/protocol count equality: `plan.numEvals = protocol.numMainEvals` is
+    now proved (`plan_numEvals_eq_protocol`), so the only remaining eval-count
+    premise is the verifier's own count against the protocol's eval-read list
+    (the parseTrace shape half). -/
+theorem PrepareLogSlots_of_counts' (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (nParse n : Nat)
+    (hParse : ∀ (inst : Array (Fr p)),
+      ParseTraceWidths R.E Features.solidity R.vk #[#[(1 : G₁)]] #[#[inst.toList.toArray]] nParse)
+    (hMulti : MultiPrepareBlockWidth R.E.g1
+      (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) R.E.g1 R.E.field Features.solidity
+        R.E.fewerPointSetsRuntime) n)
+    (hCounts : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁),
+      nParse + readAlgebraQuotientCount Features.solidity R.vk
+        = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+            R.plan.proofLayout).prefixG1Count
+      ∧ readAlgebraEvalCount R.vk trace.permutations trace.lookups trace.trashcans
+          1 1 #[#[inst.toList.toArray]]
+        = R.plan.meta_.protocol.numMainEvals
+      ∧ n = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+            R.plan.proofLayout).numPointSets) :
+    PrepareLogSlots R := by
+  refine PrepareLogSlots_of_counts R nParse n hParse hMulti ?_
+  intro inst trace
+  refine ⟨(hCounts inst trace).1, ?_, (hCounts inst trace).2.2⟩
+  exact (hCounts inst trace).2.1.trans (plan_numEvals_eq_protocol R hR).symm
+
+/-- Filtering a mapped list by a property of the mapped index equals filtering
+    first and mapping: the committed-instance filter commutes with the
+    `(Column, Rotation) → QueryKey` map of `ProtocolPlan.fromConstraintSystem`. -/
+theorem filter_map_index_length (l : List (Column × Rotation)) (nb : Nat) :
+    ((l.map (fun q => QueryKey.new q.1.index q.2.int)).filter
+        (fun q => q.column < nb)).length
+      = (l.filter (fun q => q.1.index < nb)).length := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+      rw [List.map_cons, List.filter_cons, List.filter_cons]
+      have hcol : (QueryKey.new a.1.index a.2.int).column = a.1.index := rfl
+      by_cases h : a.1.index < nb <;> simp [h, hcol, ih]
+
+/-- **The committed-instance filter identity.** The verifier's committed-instance
+    query count (`q.1.index < nbCommitted`) is the protocol plan's
+    `committedInstanceQueries` count, given the plan's `instanceQueries` field is
+    the `QueryKey` image of the constraint system's query vector and the two
+    committed-instance counts agree (both are `hR`/`ConstraintsSystemMeta` plan
+    fields). -/
+theorem committedInstanceFilter_eq_protocol (cs : ConstraintSystem (Fr p))
+    (protocol : ProtocolPlan) (nbCommitted : Nat)
+    (hq : protocol.instanceQueries = cs.instanceQueries.toList.map
+      (fun q => QueryKey.new q.1.index q.2.int))
+    (hnb : protocol.numCommittedInstances = nbCommitted) :
+    (cs.instanceQueries.toList.filter (fun q => q.1.index < nbCommitted)).length
+      = (protocol.instanceQueries.filter
+          (fun q => q.column < protocol.numCommittedInstances)).length := by
+  rw [hq, hnb]
+  exact (filter_map_index_length cs.instanceQueries.toList nbCommitted).symm
 
 end Composition
 
