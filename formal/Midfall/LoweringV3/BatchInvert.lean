@@ -212,6 +212,7 @@ def fwdWords (mem : Nat → UInt8) (a : Nat) (rw : U256) (i : Nat) : U256 :=
   fwdProd mem a rw (i + 1)
 
 /-- The definition's own equation, as a rewrite rule. -/
+
 theorem fwdProd_succ (mem : Nat → UInt8) (a : Nat) (rw : U256) (i : Nat) :
     fwdProd mem a rw (i + 1) =
       wMulmodAt (fwdProd mem a rw i) (loadWord mem (a + 32 * (i + 1))) rw := rfl
@@ -293,6 +294,28 @@ theorem wMulmodAt_ne_zero_iff {r x y : U256} (hp : Nat.Prime r.toNat)
     (hx : x.toNat < r.toNat) (hy : y.toNat < r.toNat) :
     wMulmodAt x y r ≠ 0 ↔ x ≠ 0 ∧ y ≠ 0 := by
   rw [Ne, wMulmodAt_eq_zero_iff hp hx hy, not_or]
+
+/-- A prefix product of canonical, non-zero words remains canonical and non-zero. -/
+theorem fwdProd_canonical_nonzero (mem : Nat → UInt8) (a : Nat) (rw : U256)
+    (hp : Nat.Prime rw.toNat) (n j : Nat)
+    (hcanon : ∀ i, i ≤ n → (loadWord mem (a + 32 * i)).toNat < rw.toNat)
+    (hne : ∀ i, i ≤ n → loadWord mem (a + 32 * i) ≠ 0) (hj : j ≤ n) :
+    (fwdProd mem a rw j).toNat < rw.toNat ∧ fwdProd mem a rw j ≠ 0 := by
+  have hr : rw ≠ 0 := by
+    intro h0
+    have : rw.toNat = 0 := by rw [h0]; rfl
+    exact hp.ne_zero this
+  induction j with
+  | zero =>
+      simpa [fwdProd] using ⟨hcanon 0 (by omega), hne 0 (by omega)⟩
+  | succ j ih =>
+      have hj' : j ≤ n := by omega
+      obtain ⟨hcj, hnj⟩ := ih hj'
+      have hc1 : (loadWord mem (a + 32 * (j + 1))).toNat < rw.toNat := hcanon (j + 1) (by omega)
+      have hn1 : loadWord mem (a + 32 * (j + 1)) ≠ 0 := hne (j + 1) (by omega)
+      rw [fwdProd_succ]
+      exact ⟨wMulmodAt_toNat_lt hr,
+        (wMulmodAt_ne_zero_iff hp hcj hc1).mpr ⟨hnj, hn1⟩⟩
 
 
 /-- **ASSOCIATIVITY OF EVM `mulmod` AT A NON-ZERO MODULUS.** For any `a b c` and `r ≠ 0`,
@@ -2715,6 +2738,7 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms bi_forward_loop_form [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_backward_loop_form [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdProd_succ [propext, Classical.choice, Quot.sound]
+#assert_axioms fwdProd_canonical_nonzero [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdWords_eq [propext, Classical.choice, Quot.sound]
 #assert_axioms loadWord_writeWords_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_eq_zero_iff [propext, Classical.choice, Quot.sound]
