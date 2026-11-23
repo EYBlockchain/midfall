@@ -3094,17 +3094,14 @@ theorem batchInvertScratchFits_of_generated {gi : GenInput p G₁ G₂ Gₜ} {o 
     D-GATE11 reduced the `v3_cdBound` half, the point-set census, and `batchInvertScratchFits`
     (`batchInvertScratchFits_of_generated` via the exported `new_selectorAccMptr_ge`) to the input
     count budget (`CountBound`). The quotient program's byte size is proved from `vkCarriesBuild`
-    (`build_bytes_size_le`: `build.bytes.size ≤ 32 * vk.quotientProgramWords`). The residual is
-    now exact and is NOT another count bound: `build.maxStack ≤ build.bytes.size` is not a
-    state-level consequence of the builder API (`pushStackAcct` is a public accounting primitive
-    that emits no byte, so `pushStackAcct builderDefault` has `maxStack = 1` and `bytes.length =
-    0`), and `finish` records `maxStack` from the PRE-compaction stream while `build.bytes` is the
-    COMPACTED stream. The Rust asserts the validator's max stack against the compacted program at
-    QVM:1217-1222, but `finishValidatorLeg` is precisely the unported validator. Closing
-    `staticWorkingSetFits` (and `quotientProgramFits`'s stack half) therefore needs either a port
-    of that validator/compaction preservation proof or an input clause bounding
-    `build.maxStack`; the PCS-config half is sized from `memoryRequirements` and needs the
-    corresponding quotient-build count bounds. No `ValidV3`, row or root hypothesis is involved;
+    (`build_bytes_size_le`: `build.bytes.size ≤ 32 * vk.quotientProgramWords`) and D-GATE16's
+    `SupportedInput.stackBound` supplies the generated-build stack inequality
+    (`build.maxStack ≤ build.bytes.size`) that the unported QVM:1217-1222 validator would otherwise
+    have to prove. The residual is now the LAYOUT ARITHMETIC: bound `staticWorkingMemorySizeForMeta`
+    (the transcript-word count), the six `VerifierMemoryLayoutConfig` overrides
+    (`quotientStateWords`, `quotientStackWords`, `accMsmTerms`, the PCS requirements), and then the
+    twenty-three `traceU256Bound` candidates; `quotientProgramFits` needs the same config/selector
+    (`selectorFold.maxPower`) bounds. No `ValidV3`, row or root hypothesis is involved;
     `SupportedInput` was strengthened, not weakened. -/
 theorem prog_programFits (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.programFits (renderOf gi o).pv (renderOf gi o).model := by
