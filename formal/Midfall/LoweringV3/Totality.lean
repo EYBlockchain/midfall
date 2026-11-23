@@ -24,6 +24,8 @@ import Midfall.LoweringV3.Statements
 import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV2.Stages
 import Midfall.LoweringV2.Blocks.TraceReturn
+import Midfall.LoweringV2.Blocks.FinalPairing
+import Midfall.LoweringV3.FpConsts
 import Midfall.LoweringV3.VkClean
 import Midfall.Tools.ConeSorries
 import Midfall.Tools.Done
@@ -1581,6 +1583,57 @@ theorem block_live_vkLoading_of_exists (R : Render p G₁ G₂ Gₜ) (product : 
     V st hpre V' st' o hrun with hrev | hok
   · exact Or.inr (by rw [hrev.1]; decide)
   · exact Or.inl hok
+
+/-- The finalPairing slice at `ValidV3`, below `block_live` in the import order (`Rows.fp_sliceV3`
+    is above `Totality`). Same proof as that one; the emitter is no-accumulator at `ValidV3`. -/
+theorem fp_slice_at (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.slice Partial.finalPairing =
+      [Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"])
+          [Stmt.exprStmt (Expr.call "fail"
+            [Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "ERR_PRECOMPILE_FAILED"])],
+        Stmt.assign ["success"] (Expr.call "ec_pairing"
+          [Expr.var "success",
+           Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_RHS_MPTR",
+           Midfall.LoweringV2.Blocks.FinalPairing.fpVal R.consts "PAIRING_LHS_MPTR"])] := by
+  have hacc : R.pv.hasAccumulator = false := by
+    classical
+    have h : R.cfg.accumulator = none := hR.supported.noAcc
+    have h1 : R.pv = planViewOf R.plan R.model none := by
+      show planViewOf R.plan R.model R.cfg.accumulator = _
+      rw [h]
+    rw [h1, planViewOf, planViewWithAccumulator]
+    rfl
+  show Inline.inlineContractConstants R.consts
+    (Midfall.Lowering.GenAst.emitPartial R.pv Partial.finalPairing) = _
+  rw [Midfall.Lowering.GenAst.emitPartial, Midfall.Lowering.GenAst.emitFinalPairing, hacc]
+  rw [Midfall.LoweringV2.Blocks.FinalPairing.fp_slice_raw]
+  simp only [Midfall.LoweringV2.Blocks.FinalPairing.fpVal,
+    Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none]
+
+/-- The finalPairing slice from a POISONED boundary: the `iszero(success)` guard fires, so a run
+    exists and halts. Half of TOT.1.g; the clean boundary is the other half. -/
+theorem block_live_finalPairing_poison (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hR : ValidV3 R) (H : Hash) (vkAddr : U256) (cd : Bytes) :
+    ∀ V st, Poisoned R H vkAddr cd V st →
+      ∃ V' st' o, ExecStmts (Blocks.TraceReturn.Dhonest product)
+        (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) V st
+        (R.slice Partial.finalPairing) V' st' o ∧
+        ((o = .normal ∧ Mid R H vkAddr cd Checkpoint.pairing V' st') ∨ o ≠ .normal) := by
+  intro V st hpois
+  obtain ⟨-, hsucc0⟩ := hpois
+  have hsel := consts_lookup_ERR_PRECOMPILE_FAILED R hR
+  have hfail : lookupFun (R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) "fail" =
+      some (Blocks.TraceReturn.failFDecl,
+        R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) :=
+    Blocks.TraceReturn.fail_lookup (c := callsOf product)
+      (g := ExternalGas.ofFun fun _ => 0) R
+  obtain ⟨V', st', hguard⟩ := vk_gate_halts_any (c := callsOf product)
+    (g := ExternalGas.ofFun fun _ => 0) R "ERR_PRECOMPILE_FAILED" 0x84e81692
+    (funs := R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0))
+    (cenv := R.scope (callsOf product) (ExternalGas.ofFun fun _ => 0)) hsel hfail hsucc0
+  refine ⟨V', st', .halt, ?_, Or.inr (by decide)⟩
+  rw [fp_slice_at R hR]
+  exact Step.seqStop hguard (by show (Outcome.halt : Outcome) ≠ Outcome.normal; decide)
 
 /-- **TOT.1.b CLOSED: vkLoading is live.** The existence half is `vk_run_exists`; the classification
     is `block_live_vkLoading_of_exists`'s `vk_clean_walkV3`. Standard three, cone 0. -/
