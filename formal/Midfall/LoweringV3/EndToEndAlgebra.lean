@@ -4512,6 +4512,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms queries_last_rotation
   [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_linearization
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms PcsQuerySource.rotation_linearization
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgQueryMapData.ofRotations
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Data.new_dummyEvalWords
