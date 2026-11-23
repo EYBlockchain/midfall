@@ -129,18 +129,25 @@ theorem tp_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (
 
 The lagrange rows cannot yet be assembled from the tree. The blockers are NOT only A5:
 
-1. **T3.9.f (fixed-text block contract) is absent.** The five loop contracts
+1. **T3.9.f leaf coverage is complete except the call.** The five loop contracts
    (`lag_sq_loop`, `lag_denoms_loop`, `lag_second_pass_loop`, `lag_lblind_loop`,
-   `lag_instance_loop`) are `StmtsContractAll` for single segments. The row needs one contract for
-   the whole `lagInner` block whose post is
+   `lag_instance_loop`) are `StmtsContractAll` for segments 3, 7, 13, 16, 18, and every other
+   inner statement now has its own one-statement `StmtsContractAll`: 0/1/2 (`k`, `x`, `x_n`),
+   4/5/6 (`omega`, `mptr`, `mptr_end`), 8/9 (`x_n_minus_1`, `mptr_end` store), 11/12 (`mptr`
+   reset, `l_i_common`), 14/15 (`l_blind`, `l_i_cptr`), 17 (`instance_eval`), 19/20/21
+   (`x_n_minus_1_inv`, `l_last`, `l_0`), and 22-27 (the six slot stores). Statement 10 (the
+   `batch_invert` call) is the ONLY uncovered inner statement. The row still needs the
+   whole-block composition whose post is
    `∃ W, LagRel … W ∧ <the six slots hold W's words> ∧ <memory outside the denominator/scratch/slot
-   windows unchanged>`. No such theorem is in the tree; it is the T3.9.f card.
-2. **T3.9.h `lag_poison` is absent.** Its proof needs the loops to end normally from a poisoned
-   boundary, but `Poisoned` carries only `Frame` and `success = 0`; `Frame` does not pin
-   `mptr`/`mptr_end` or the denominator memory, so the loop contracts' preconditions are not
-   derivable there. This is the card's stated stop condition.
-3. **A5 `batch_invert_summary` is absent.** It supplies the `success = 0` / `ret = 0` call fact
-   (and the `ret = 1` arm for progress).
+   windows unchanged>`; that composition is the T3.9.f card and cannot be stated honestly until
+   the call segment's post exists.
+2. **T3.9.h `lag_poison` is absent.** Its proof needs the whole-block normal-run composition and
+   the poison arm of the `batch_invert` call (A5). The fixed prelude itself is no longer the
+   blocker: statements 0-9 bind `mptr`/`mptr_end` and write the denominator window inside the
+   inner block, so the loop preconditions are reached by the landed segment contracts.
+3. **A5 `batch_invert_summary` is absent.** It supplies statement 10's `success = 0` / `ret = 0`
+   call fact (and the `ret = 1` arm for progress), hence both the whole-block post and
+   `lag_poison`.
 
 Therefore `lag_blockSim`/`lag_blockProgS` remain the existing registered leaves; no row hypothesis
 has been added and no new `sorry` is introduced here. When 1–3 land, the rows are pure glue.
