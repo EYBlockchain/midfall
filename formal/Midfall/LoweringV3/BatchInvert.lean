@@ -218,9 +218,24 @@ theorem fwdProd_succ (mem : Nat → UInt8) (a : Nat) (rw : U256) (i : Nat) :
       wMulmodAt (fwdProd mem a rw i) (loadWord mem (a + 32 * (i + 1))) rw := rfl
 
 /-- The definition's equation for the value the loop stores. -/
+
 theorem fwdWords_eq (mem : Nat → UInt8) (a : Nat) (rw : U256) (i : Nat) :
     fwdWords mem a rw i =
       wMulmodAt (fwdProd mem a rw i) (loadWord mem (a + 32 * (i + 1))) rw := rfl
+
+/-- The last prefix product is the bridge product: `P(k-1) = mulmod (P(k-2)) x_last`. -/
+theorem fwdProd_last (mem : Nat → UInt8) (a k : Nat) (rw : U256) (hk : 2 ≤ k) :
+    fwdProd mem a rw (k - 1) =
+      wMulmodAt (fwdProd mem a rw (k - 2)) (loadWord mem (a + 32 * (k - 1))) rw := by
+  have hk' : k - 2 + 1 = k - 1 := by
+    cases k with
+    | zero => omega
+    | succ k =>
+        cases k with
+        | zero => omega
+        | succ k => omega
+  have h := fwdProd_succ mem a rw (k - 2)
+  rwa [hk'] at h
 
 /-- Reading a word after `j` stores at `D, D+32, …` is reading the ORIGINAL memory when the
 32-byte window is disjoint from `[D, D + 32j)`. Lifts `writeWords_outside` (LagrangeRows) from
@@ -2740,6 +2755,7 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms fwdProd_succ [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdProd_canonical_nonzero [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdWords_eq [propext, Classical.choice, Quot.sound]
+#assert_axioms fwdProd_last [propext, Classical.choice, Quot.sound]
 #assert_axioms loadWord_writeWords_outside [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_eq_zero_iff [propext, Classical.choice, Quot.sound]
 #assert_axioms wMulmodAt_ne_zero_iff [propext, Classical.choice, Quot.sound]
