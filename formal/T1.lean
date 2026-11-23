@@ -1,5 +1,6 @@
 import Midfall.LoweringV3.EndToEndAlgebra
 set_option autoImplicit false
+set_option maxRecDepth 100000
 open Midfall Midfall.Halo2 Midfall.Lowering Midfall.Lowering.GenAst YulSemantics YulSemantics.EVM
 namespace Midfall.LoweringV3
 
@@ -25,7 +26,7 @@ def commonG1Inline (err hi lo : Nat) : Block EVM.Op :=
   , yexpr (yop EVM.Op.calldatacopy [yvar "buf_len", yvar "cptr", ylit 0x80])
   , yset "ret" (yop EVM.Op.add [yvar "buf_len", ylit 0x80]) ]
 
-example (consts : Inline.Consts) (err hi lo : Nat)
+theorem commonG1_inline (consts : Inline.Consts) (err hi lo : Nat)
     (he : consts.lookup "ERR_BAD_POINT_ENCODING" = some err)
     (hh : consts.lookup "BLS_P_HI" = some hi)
     (hl : consts.lookup "BLS_P_MINUS_ONE_LO" = some lo) :
@@ -36,15 +37,45 @@ example (consts : Inline.Consts) (err hi lo : Nat)
       (Inline.inlineStep (Inline.inlineScan 63 consts) consts []
         GenAst.emitCommonUncompressedG1).blks from rfl]
   simp only [GenAst.emitCommonUncompressedG1, commonG1Inline, GenAst.ylet, GenAst.ylit,
-    GenAst.yexpr, GenAst.yop, GenAst.yvar, GenAst.yset, GenAst.yif,
+    GenAst.yexpr, GenAst.yop, GenAst.yvar, GenAst.yset, GenAst.yif, GenAst.yfun, GenAst.ycall,
     GenAst.g1CoordRangeCheck,
-    Inline.inlineStep, Inline.inlineScan, List.foldl_cons, List.foldl_nil, List.append_nil,
+    Inline.inlineStep, Inline.exprFuel, Inline.shadowed, Inline.boundOf, List.foldl_cons, List.foldl_nil, List.append_nil,
     List.nil_append, List.append_assoc, List.singleton_append, List.cons_append,
-    Inline.inlineStmtStep.eq_2, Inline.inlineStmtStep.eq_3, Inline.inlineStmtStep.eq_9,
-    Inline.inlineStmtStep.eq_4, Inline.inlineStmtStep.eq_8, Inline.inExpr.eq_2,
-    Inline.inExpr.eq_3, Inline.inExpr.eq_5,
+    Inline.inlineStmtStep.eq_2, Inline.inlineStmtStep.eq_3, Inline.inlineStmtStep.eq_5,
+    Inline.inlineStmtStep.eq_4, Inline.inlineStmtStep.eq_8, Inline.inlineStmtStep.eq_9,
+    Inline.inExpr.eq_2, Inline.inExpr.eq_3, Inline.inExpr.eq_5,
     he, hh, hl, Option.map_some, Option.map_none, List.map_cons, List.map_nil]
-  trace_state
-  sorry
+  simp [Inline.shadowed]
+  rw [show ∀ (sh : List String) (b : List (Stmt EVM.Op)),
+      (Inline.inlineScan 63 consts sh b).blks =
+        (Inline.inlineStep (Inline.inlineScan 62 consts) consts sh b).blks
+      from fun _ _ => rfl]
+  simp only [Inline.inlineStep, Inline.exprFuel, Inline.boundOf, List.foldl_cons, List.foldl_nil, List.append_nil,
+    List.nil_append, List.singleton_append, List.cons_append, List.append_assoc,
+    Inline.inlineStmtStep.eq_3, Inline.inlineStmtStep.eq_5, Inline.inlineStmtStep.eq_4,
+    Inline.inlineStmtStep.eq_8, Inline.inlineStmtStep.eq_9,
+    Inline.inExpr.eq_2, Inline.inExpr.eq_3, Inline.inExpr.eq_5,
+    he, hh, hl, Option.map_some, Option.map_none, List.map_cons, List.map_nil]
+  simp [Inline.shadowed]
+  rw [show ∀ (sh : List String) (b : List (Stmt EVM.Op)),
+      (Inline.inlineScan 62 consts sh b).blks =
+        (Inline.inlineStep (Inline.inlineScan 61 consts) consts sh b).blks
+      from fun _ _ => rfl]
+  simp only [Inline.inlineStep, Inline.exprFuel, Inline.boundOf, List.foldl_cons,
+    List.foldl_nil, List.nil_append, List.append_nil, List.singleton_append,
+    List.cons_append, Inline.inlineStmtStep.eq_8, Inline.inlineStmtStep.eq_9,
+    Inline.inExpr.eq_2, Inline.inExpr.eq_3, Inline.inExpr.eq_4,
+    he, Option.map_some, Option.map_none, List.map_cons, List.map_nil]
+  simp [Inline.shadowed]
+  rw [show ∀ (sh : List String) (b : List (Stmt EVM.Op)),
+      (Inline.inlineScan 62 consts sh b).blks =
+        (Inline.inlineStep (Inline.inlineScan 61 consts) consts sh b).blks
+      from fun _ _ => rfl]
+  simp only [Inline.inlineStep, Inline.exprFuel, Inline.boundOf, List.foldl_cons,
+    List.foldl_nil, List.nil_append, List.append_nil, List.singleton_append,
+    List.cons_append, Inline.inlineStmtStep.eq_8, Inline.inlineStmtStep.eq_9,
+    Inline.inExpr.eq_2, Inline.inExpr.eq_3, Inline.inExpr.eq_4,
+    he, Option.map_some, Option.map_none, List.map_cons, List.map_nil]
+  simp [Inline.shadowed]
 
 end Midfall.LoweringV3
