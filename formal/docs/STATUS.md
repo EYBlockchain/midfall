@@ -237,15 +237,16 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `99295c8`: D2 is merged and five generation peels are closed; the register is **109 sorried
-declarations / 11 ROOT / 36 CERT / 0 REFUTED** (109 rows in `SORRY.md`). A4's `runBody_mono` (ST.13)
-is **PROVED**; A5's 8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, and bridge
-modulus arithmetic are merged; A9's PCS block-1/block-2/block-3-seed semantics, generator Word
-bridge, and complete block-1 ROT_POINTS table spec are merged; A11's guard helpers, trim, normal
-leaf, call inversion/VK wire, `FpWire`, selector-bucket monotonicity, and the full
-`Inv .pcs → Inv .pairing` transfer are merged; A6's `GroupsMatch` split, state-threaded fold, and
-`phaseCols` are in its branch; A12's `block_live` traceReturn and vkLoading cases are merged
-(2 of 7 blocks). B4's `ValidV3InhabitationF1Completion` proves `f1GeneratedRender_notValidV3` and the
+At `56be7d0`: D2 is merged and six generation peels are closed (`env_nG2` now included); the register
+is **108 sorried declarations / 11 ROOT / 35 CERT / 0 REFUTED** (108 rows in `SORRY.md`). A4's
+`runBody_mono` (ST.13), lag statements 0–2, and the `litValue_number_nat` helper are merged; A5's
+8-statement walk, tail, prelude 2–9, `wMulmodAt` inverse link, bridge modulus arithmetic, and
+six-store frame composition are merged; A9's PCS block-1/block-2/block-3-seed semantics, generator
+Word bridge, complete block-1 ROT_POINTS table spec, and block-3 straight-line list folds are
+merged; A11's guard helpers, trim, normal leaf, call inversion/VK wire, `FpWire`, selector-bucket
+monotonicity, and the full `Inv .pcs → Inv .pairing` transfer are merged; A6's `GroupsMatch` split,
+state-threaded fold, and `phaseCols` are in its branch; A12's `block_live` traceReturn/vkLoading
+cases, finalPairing poison arm, and loop-existence rule are merged (3 of 7 block-cases). B4's `ValidV3InhabitationF1Completion` proves `f1GeneratedRender_notValidV3` and the
 exact reduction `ValidV3 R ↔ ValidV3ExceptPayload R ∧ PayloadPointHalf R`; B4's
 `ValidV3SyntheticInhabitant.exists_validV3` proves `∃ R, ValidV3 R` at a synthetic render, so the
 **generic root is non-vacuous**, and B4's DG.4 `GeneratorDone`/`Done`/`not_done_today` card is merged.
@@ -258,6 +259,15 @@ codec law, a render-correct `Done` statement, `TotalV3`, and `ArtifactEq`. The D
 (**1648 annotated checks / 120 files**), quick gate and `checks.sh` are green, and the
 `ChallengesGood.xNonzero` statement pin is in place.
 
+**Generator-layout finding (`PG-FPSCRATCH`).** `VerifierMemoryLayout.validate`'s
+`memoryLifetimeIntersects` returns true only for equal phases (or `permanent`), so the finalPairing
+phase scratch and the `pcsQEvalSourceTable`/theta block are never compared. The current safety of
+the finalPairing normal path rests on the fixed low-memory scratch start plus the
+`vk_payload`/`challenge_slots` permanence chain; a plan with a small enough `vk.len` would pass
+`validate` and break `Inv .pcs` on that path. A12 is constructing the falsifier and the exact
+repair (a generator layout assertion or a `programOk` projection); no hypothesis is being added to
+`block_live` or `ValidV3`.
+
 The vacuity report is the non-vacuity ledger: the generic V3 root is now **NON-VACUOUS (synthetic)**
 via `exists_validV3`, but **VACUOUS at F1** (`f1_ValidV3_false`), and `0 REFUTED / 1 VACUOUS` is not
 a non-vacuity certificate. The F1-real `ValidV3` is conditional on the production SRS `hpay`; the
@@ -267,13 +277,14 @@ with the F1-specific `Done` recorded as data-blocked.
 ### Six-lane critical path (user cap)
 
 Phase 1 (live now):
-- **A5** six-store bridge composition + `count_bytes = 32` + `BatchInvertPost`.
-- **A9** PCS block-3 folds/list folds + block 4–6.
-- **A11** finalPairing clean arm (scratch-window, literal call, rows).
-- **A12** `block_live` remaining 5 cases.
+- **A5** bridge 11–14 composition + `count_bytes = 32` + `BatchInvertPost`.
+- **A9** PCS rolled `forLoop` + block 4–6.
+- **A4** lag fixed segments 4–6, 11–12, 14–15, 17, 19–21, 22–27, then whole-block/rows.
+- **A12** `block_live` clean arm + `PG-FPSCRATCH` falsifier/repair.
 - **D1A** `EndToEndAlgebra` readAlgebra/multiPrepare widths.
 - **D2** CERT derivable leaves.
-Paused: A6 TP accessor, A4 lag, B3/B4 F1-real/Done residual, port audit D-GATE6/7, calldata, CERT2.
+Paused: A6 TP accessor, A11 finalPairing clean arm (layout disjointness), B3/B4 F1-real/Done residual,
+port audit D-GATE6/7, calldata, CERT2.
 
 Phase 2, as A5/A11 close: **A4** lag fixed segments/rows, **D1P/D1A** `EndToEnd` widths,
 then **A12** `block_live` (2/7 done) and the port audit D-GATE6 bridge.
