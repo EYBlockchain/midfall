@@ -2187,6 +2187,67 @@ theorem bi_bridge_stores_form (consts : Inline.Consts) :
 
 
 
+theorem exec_mstore_add_var_inv_val {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x : String} {k : Nat} {val : Expr EVM.Op} {v0 : U256}
+    (hval : ∀ st0 st1, (∃ vv, EvalExpr (Bridge.Dialect c g) funs V st0 val (.vals [vv] st1)) → st1 = st0)
+    (hvchar : ∀ vv st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 val (.vals [vv] st1) → vv = v0)
+    (hne : ∀ st0 st1, EvalExpr (Bridge.Dialect c g) funs V st0 val (.halt st1) → False)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.builtin EVM.Op.mstore
+        [Expr.builtin EVM.Op.add [Expr.var x, Expr.lit (Literal.number k)], val])) V' st' o) :
+    ∃ xv, VEnv.get V x = some xv ∧ o = .normal ∧ V' = V ∧
+      st' = { touchMemory st ((xv + BitVec.ofNat 256 k).toNat) 32 with
+        memory := storeWord st.memory ((xv + BitVec.ofNat 256 k).toNat) v0 } := by
+  cases h with
+  | exprStmt he =>
+      obtain ⟨hV, st1, hev, hst⟩ := exec_exprStmt_inv (Step.exprStmt he)
+      subst hst
+      obtain ⟨argvals, sti, hargs, hbi⟩ := eval_builtin_vals_inv hev
+      cases hargs with
+      | argsCons hrest haddr =>
+          cases hrest with
+          | argsCons hnil hvalue =>
+              cases hnil with
+              | argsNil =>
+                  obtain ⟨xv, hxv, hcv, hstadd⟩ := eval_add_var_lit_inv haddr
+                  have hstv := hval _ _ ⟨_, hvalue⟩
+                  subst hstadd
+                  subst hstv
+                  subst hcv
+                  have hv := hvchar _ _ _ hvalue
+                  subst hv
+                  simp only [builtinWithExternal, stepOp] at hbi
+                  cases hbi
+                  exact ⟨xv, hxv, rfl, hV, rfl⟩
+  | exprStmtHalt he =>
+      cases he with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hrest haddr =>
+              cases hrest with
+              | argsCons hnil hvalue =>
+                  cases hnil with
+                  | argsNil =>
+                      simp only [builtinWithExternal, stepOp] at hbi
+                      cases hbi
+      | builtinArgsHalt hargs =>
+          cases hargs with
+          | argsRestHalt h' =>
+              cases h' with
+              | argsRestHalt h'' => cases h''
+              | argsHeadHalt _ hvalue => exact (hne _ _ hvalue).elim
+          | argsHeadHalt _ haddr =>
+              exact (Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := .add)
+                (by
+                  intro a b st r hr
+                  simp only [builtinWithExternal, stepOp, bin] at hr
+                  cases hr
+                  exact ⟨_, _, rfl⟩)
+                (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+                (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) haddr).elim
+
+
 #assert_axioms eval_mulmod_mload_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms eval_mulmod_mload_var_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_let_mulmod_mload_inv [propext, Classical.choice, Quot.sound]
@@ -2221,6 +2282,7 @@ theorem bi_bridge_stores_form (consts : Inline.Consts) :
 #assert_axioms exec_mstore_add_var_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms ofNat_add_ofNat_toNat [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_bridge_stores_form [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_mstore_add_var_inv_val [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
