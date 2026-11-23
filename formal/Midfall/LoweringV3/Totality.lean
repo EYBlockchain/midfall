@@ -3911,6 +3911,26 @@ theorem fpBodyRun_clean (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
 #assert_axioms Midfall.LoweringV3.fpBodyRun_clean
   [propext, Classical.choice, Quot.sound] native []
 
+/-- **THE STATE-DEPENDENT BODY-RUN WITNESS.** Where the wire frame is valid and the
+    product is true, use the clean normal run (`fpBodyRun_clean`); elsewhere fall
+    back to `fpBodyRun`. At the clean call site the condition is discharged by
+    `hacc`/`hcomp` (`fpAnsBit = true`) and the wire-frame bridge, so `dif_pos`
+    exposes the `.normal` arm and the call cannot halt. -/
+noncomputable def fpBodyRun_cond (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
+    FpBodyRun R product := by
+  intro st lhsW rhsW hfits
+  by_cases h : pairingValidInput (fpActualFrame R st lhsW rhsW) = true ∧
+      product (fpActualFrame R st lhsW rhsW) = true
+  · obtain ⟨Vend, stend, hstep, hret, hmem, henv, hhalt, hprod⟩ :=
+      fpBodyRun_clean R product st lhsW rhsW hfits h.1 h.2
+    exact ⟨Vend, stend, .normal, hstep,
+      Or.inl ⟨Or.inl rfl, hret, hmem, henv, hhalt, hprod⟩⟩
+  · exact fpBodyRun R product st lhsW rhsW hfits
+
+#assert_axioms Midfall.LoweringV3.fpBodyRun_cond
+  [propext, Classical.choice, Quot.sound] native []
+
+
 /-- **THE pcs CASE OF `block_live`, REDUCED TO THE ROW'S TOTAL PROGRESS CONTRACT.** `BlockProgS`
     already carries both halves over the honest dialect: its `StmtsContract` field is the exhibited
     run and its `StmtsContractAll` field classifies every run as `o = .normal` at
