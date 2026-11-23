@@ -1092,7 +1092,8 @@ theorem guardsLit_contract {c : ExternalCalls} {g : ExternalGas}
       (fun V st V' st' o =>
         (o = .normal ∧ V' = ("p", sv scratch) :: V ∧
           VEnv.get V' "p" = some (sv scratch) ∧
-          VEnv.get V' "x" = some xv ∧ (VEnv.get V' "inv").isSome)
+          VEnv.get V' "x" = some xv ∧ (VEnv.get V' "inv").isSome ∧
+          st'.memory = st.memory)
         ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hx, hinv⟩ := hpre
@@ -1100,13 +1101,13 @@ theorem guardsLit_contract {c : ExternalCalls} {g : ExternalGas}
       ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne⟩
   · have g1 := guardLt_lit_contract (funs := funs) (cenv := cenv) n xv selN hfail
       V st hx V1 st1 .normal h1
-    rcases g1 with ⟨ho1, hV1, _⟩ | ⟨ho1, hrev1⟩
+    rcases g1 with ⟨ho1, hV1, hm1, _⟩ | ⟨ho1, hrev1⟩
     · subst V1
       rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
           ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
       · have g2 := guardNonzero_lit_contract (funs := funs) (cenv := cenv) xv selN hfail
           V st1 hx V2 st2 .normal h2
-        rcases g2 with ⟨ho2, hV2, _⟩ | ⟨ho2, hrev2⟩
+        rcases g2 with ⟨ho2, hV2, hm2, _⟩ | ⟨ho2, hrev2⟩
         · subst V2
           rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest2 with
               ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
@@ -1115,7 +1116,7 @@ theorem guardsLit_contract {c : ExternalCalls} {g : ExternalGas}
                 cases he with
                 | lit =>
                     cases hrest3
-                    refine Or.inl ⟨rfl, ?_, ?_, ?_, ?_⟩
+                    refine Or.inl ⟨rfl, ?_, ?_, ?_, ?_, ?_⟩
                     · simp only [List.zip_cons_cons, List.zip_nil_left, List.cons_append,
                         List.nil_append]
                       rfl
@@ -1130,6 +1131,7 @@ theorem guardsLit_contract {c : ExternalCalls} {g : ExternalGas}
                           (Literal.number scratch)) :: V) "inv").isSome
                       simpa [VEnv.get, List.find?,
                         show decide (("p" : String) = "inv") = false by decide] using hinv
+                    · exact hm2.trans hm1
           · cases h3 with
             | letVal he hlen => exact absurd rfl hne3
             | letHalt he => cases he
@@ -1158,20 +1160,22 @@ theorem storesLit_contract {c : ExternalCalls} {g : ExternalGas}
       (fun V st V' st' o =>
         (o = .normal ∧ V' = V ∧ VEnv.get V' "p" = some (sv scratch) ∧
           VEnv.get V' "x" = some xv ∧ (VEnv.get V' "inv").isSome ∧
-          SIFrame scratch xv st')
+          SIFrame scratch xv st' ∧
+          st'.memory = mxMem st.memory (sv scratch).toNat xv)
         ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hp, hx, hinv⟩ := hpre
   have h := modexpFrameStores_lit_contract (funs := funs) (pv := sv scratch) xv n hscratch
     V st ⟨hp, hx⟩ V' st' o hrun
   rcases h with ⟨ho, hV, hmem, henv, hhalt⟩
-  refine Or.inl ⟨ho, hV, ?_, ?_, ?_, ?_⟩
+  refine Or.inl ⟨ho, hV, ?_, ?_, ?_, ?_, ?_⟩
   · rw [hV]; exact hp
   · rw [hV]; exact hx
   · rw [hV]; exact hinv
   · unfold SIFrame
     rw [hmem, hn, mxMemFr_blsR]
     exact mxMem_frame st.memory (sv scratch).toNat xv
+  · rw [hmem, hn, mxMemFr_blsR]
 
 theorem invAssign_lit_contract {c : ExternalCalls} {g : ExternalGas}
     (funs : FunEnv (Bridge.Dialect c g)) (sv invW : U256) :
@@ -1206,6 +1210,28 @@ theorem invAssign_lit_contract {c : ExternalCalls} {g : ExternalGas}
   | assignHalt he => exact absurd he (expr_mload_var_ne_halts funs V "p")
 
 
+/-- Memory agrees outside the window `[lo, lo + len)`. -/
+def MemSameOutside (st st' : EvmState) (lo len : Nat) : Prop :=
+  ∀ a, (a < lo ∨ lo + len ≤ a) → st'.memory a = st.memory a
+
+/-- A returned byte range outside `dst..dst+size` is untouched by `copyReturn`. -/
+theorem copyReturn_outside (mem : Nat → UInt8) (dst size : Nat) (bytes : List UInt8)
+    (a : Nat) (h : a < dst ∨ dst + size ≤ a) :
+    copyReturn mem dst size bytes a = mem a := by
+  unfold copyReturn
+  rw [if_neg]
+  rintro ⟨h1, h2⟩
+  have hmin : min size bytes.length ≤ size := Nat.min_le_left _ _
+  omega
+
+/-- `finishCall` leaves memory outside the output window unchanged. -/
+theorem finishCall_memory_outside {kind : EVM.CallKind} {st : EvmState} {resp : CallResponse}
+    (io is oo os a : Nat) (h : a < oo ∨ oo + os ≤ a) :
+    (finishCall kind st resp io is oo os).memory a = st.memory a := by
+  unfold finishCall
+  dsimp
+  exact copyReturn_outside st.memory oo os resp.returndata a h
+
 theorem readBackLit_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
     {cenv : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
@@ -1227,7 +1253,9 @@ theorem readBackLit_contract {g : ExternalGas} (product : PairingProduct)
         0 < xv.toNat ∧ xv.toNat < Midfall.Yul.blsR ∧ SIFrame scratch xv st)
       (fun V st V' st' o =>
         (o = .normal ∧ V' = VEnv.set V "inv" (SIInv xv) ∧
-          VEnv.get V' "inv" = some (SIInv xv))
+          VEnv.get V' "inv" = some (SIInv xv) ∧
+          (∀ a, a < (sv scratch).toNat ∨ (sv scratch).toNat + 192 ≤ a →
+            st'.memory a = st.memory a))
         ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hp, hx, hinv, hx0, hxR, hframe⟩ := hpre
@@ -1252,9 +1280,13 @@ theorem readBackLit_contract {g : ExternalGas} (product : PairingProduct)
               ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
           · have asg := invAssign_lit_contract (funs := funs) (sv scratch) (SIInv xv)
               V st2 ⟨hp, hload2, hinv⟩ V3 st3 .normal h3
-            rcases asg with ⟨ho3, hV3, hget3, _hm, _hh⟩ | ⟨ho3, hrev3⟩
+            rcases asg with ⟨ho3, hV3, hget3, hm3, _hh⟩ | ⟨ho3, hrev3⟩
             · cases hrest3
-              exact Or.inl ⟨ho3, hV3, hget3⟩
+              refine Or.inl ⟨ho3, hV3, hget3, ?_⟩
+              intro a ha
+              rw [hm3, hst2, hst]
+              exact finishCall_memory_outside _ _ _ _ _
+                (by omega : a < (sv scratch).toNat ∨ (sv scratch).toNat + 32 ≤ a)
             · cases hrest3
               exact Or.inr ⟨ho3, hrev3⟩
           · cases h3 with
@@ -1308,6 +1340,7 @@ theorem bodyLit_contract {g : ExternalGas} (product : PairingProduct)
     (scratch n gasN selN selP : Nat) (xv : U256)
     (hn : BitVec.ofNat 256 n = BitVec.ofNat 256 Midfall.Yul.blsR)
     (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
     (hfail : lookupFun funs "fail" = some (failFDecl, cenv)) :
     StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
       (scalarBodyLit scratch n gasN selN selP)
@@ -1315,7 +1348,8 @@ theorem bodyLit_contract {g : ExternalGas} (product : PairingProduct)
         0 < xv.toNat ∧ xv.toNat < Midfall.Yul.blsR)
       (fun V st V' st' o =>
         (o = .normal ∧ V' = VEnv.set (("p", sv scratch) :: V) "inv" (SIInv xv) ∧
-          VEnv.get V' "inv" = some (SIInv xv))
+          VEnv.get V' "inv" = some (SIInv xv) ∧
+          MemSameOutside st st' scratch 192)
         ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
   intro V st hpre V' st' o hrun
   obtain ⟨hx, hinv, hx0, hxR⟩ := hpre
@@ -1325,18 +1359,26 @@ theorem bodyLit_contract {g : ExternalGas} (product : PairingProduct)
       ⟨V1, st1, hg, hrest⟩ | ⟨hg, hne⟩
   · have g := guardsLit_contract (funs := funs) (cenv := cenv) scratch n selN xv hfail
       V st ⟨hx, hinv⟩ V1 st1 .normal hg
-    rcases g with ⟨ho1, hV1, hp1, hx1, hinv1⟩ | ⟨ho1, hrev1⟩
+    rcases g with ⟨ho1, hV1, hp1, hx1, hinv1, hm1⟩ | ⟨ho1, hrev1⟩
     · rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrest with
           ⟨V2, st2, hs, hr⟩ | ⟨hs, hne2⟩
       · have s := storesLit_contract (funs := funs) scratch n xv hn hscratch
           V1 st1 ⟨hp1, hx1, hinv1⟩ V2 st2 .normal hs
-        rcases s with ⟨ho2, hV2, hp2, hx2, hinv2, hframe⟩ | ⟨ho2, hrev2⟩
+        rcases s with ⟨ho2, hV2, hp2, hx2, hinv2, hframe, hm2⟩ | ⟨ho2, hrev2⟩
         · have r := readBackLit_contract (product := product) (funs := funs) (cenv := cenv)
             scratch gasN selN selP xv hfail
             V2 st2 ⟨hp2, hx2, hinv2, hx0, hxR, hframe⟩ V' st' o hr
-          rcases r with ⟨ho3, hV3, hget3⟩ | ⟨ho3, hrev3⟩
-          · refine Or.inl ⟨ho3, ?_, hget3⟩
-            rw [hV3, hV2, hV1]
+          rcases r with ⟨ho3, hV3, hget3, hfr⟩ | ⟨ho3, hrev3⟩
+          · refine Or.inl ⟨ho3, ?_, hget3, ?_⟩
+            · rw [hV3, hV2, hV1]
+            · have hpv : (sv scratch).toNat = scratch := by
+                show (BitVec.ofNat 256 scratch).toNat = scratch
+                rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hscratch256]
+              intro a ha
+              have ha' : a < (sv scratch).toNat ∨ (sv scratch).toNat + 192 ≤ a := by
+                rw [hpv]; exact ha
+              rw [hfr a ha', hm2,
+                mxMem_outside st1.memory (sv scratch).toNat xv a (by rw [hpv]; exact ha), hm1]
           · exact Or.inr ⟨ho3, hrev3⟩
         · exact absurd ho2 (by decide)
       · have s := storesLit_contract (funs := funs) scratch n xv hn hscratch
@@ -1367,6 +1409,7 @@ theorem scalarInv_call_contract {g : ExternalGas} (product : PairingProduct)
     (hrets : decl.rets = ["inv"])
     (hn : BitVec.ofNat 256 n = BitVec.ofNat 256 Midfall.Yul.blsR)
     (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
     (hfail : lookupFun cenv "fail" = some (failFDecl, cenv')) :
     ∀ (V : VEnv (Bridge.Dialect (permissive (callsOf product)) g)) (st : EvmState)
       (r : EResult (Bridge.Dialect (permissive (callsOf product)) g)),
@@ -1378,7 +1421,7 @@ theorem scalarInv_call_contract {g : ExternalGas} (product : PairingProduct)
         (∃ st', r = .halt st' ∧ Midfall.LoweringV2.Reverted st') := by
   intro V st r hx hx0 hxR he
   have hbodyC := bodyLit_contract (product := product) (funs := cenv) (cenv := cenv')
-    scratch n gasN selN selP xv hn hscratch hfail
+    scratch n gasN selN selP xv hn hscratch hscratch256 hfail
   -- the body pre on the callee env for the argument value
   have hcalleePre : ∀ v : U256, v = xv →
       (fun (V : VEnv (Bridge.Dialect (permissive (callsOf product)) g)) _ =>
@@ -1416,7 +1459,7 @@ theorem scalarInv_call_contract {g : ExternalGas} (product : PairingProduct)
                       have hbodyC' := bodyLit_contract (product := product)
                         (funs := hoist (Bridge.Dialect (permissive (callsOf product)) g)
                           (scalarBodyLit scratch n gasN selN selP) :: cenv) (cenv := cenv')
-                        scratch n gasN selN selP xv hn hscratch hfail'
+                        scratch n gasN selN selP xv hn hscratch hscratch256 hfail'
                       have hpost := hbodyC' _ _ (hcalleePre _ hxv) _ _ _ hstmts
                       rcases hpost with ⟨hon, hVb, hget⟩ | ⟨hoh, hrev⟩
                       · exact Or.inl ⟨_, by
@@ -1450,7 +1493,7 @@ theorem scalarInv_call_contract {g : ExternalGas} (product : PairingProduct)
                       have hbodyC' := bodyLit_contract (product := product)
                         (funs := hoist (Bridge.Dialect (permissive (callsOf product)) g)
                           (scalarBodyLit scratch n gasN selN selP) :: cenv) (cenv := cenv')
-                        scratch n gasN selN selP xv hn hscratch hfail'
+                        scratch n gasN selN selP xv hn hscratch hscratch256 hfail'
                       have hpost := hbodyC' _ _ (hcalleePre _ hxv) _ _ _ hstmts
                       simp only [SIPost] at hpost
                       rcases hpost with ⟨hon, hinv⟩ | ⟨hoh, hrev⟩
