@@ -3881,3 +3881,46 @@ theorem exec_let_mload_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
             rcases he with rfl
             exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) hargs).elim
 
+theorem exec_let_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x : String} {a : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.letDecl [x] (some (Expr.lit (.number a)))) V' st' o) :
+    ∃ v, v = BitVec.ofNat 256 a ∧ o = .normal ∧ V' = (x, v) :: V ∧ st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨v, rfl⟩ := list_length_one hlen
+      obtain ⟨hv, hst⟩ := eval_lit_inv he
+      exact ⟨v, hv, rfl, rfl, hst⟩
+  | letHalt he => cases he
+
+theorem lag_stmt5_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 5 1 =
+      [GenAst.ylet "mptr" (Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts)] := by
+  kernel_rfl
+
+theorem lag_stmt5_contract (funs : FunEnv (Bridge.Dialect c g)) (consts : Inline.Consts)
+    (k n m aD : Nat) (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some aD) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (seg (lagInner consts k n m) 5 1)
+      (fun _ _ => True)
+      (fun V st V' st' o =>
+        o = .normal ∧ st' = st ∧ V' = ("mptr", BitVec.ofNat 256 aD) :: V) := by
+  rw [lag_stmt5_form]
+  intro V st _ V' st' o hrun
+  have hsite : Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts = Expr.lit (.number aD) := by
+    simp [Blocks.VkLoading.vkSite, hD]
+  cases hrun with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          rw [hsite] at h1
+          obtain ⟨v, hv, ho, hV, hst⟩ := exec_let_lit_inv (c := c) (g := g)
+            (funs := funs) (V := V) (st := st) (x := "mptr") (a := aD) h1
+          subst hv
+          exact ⟨ho, hst, hV⟩
+  | seqStop h1 hne =>
+      rw [hsite] at h1
+      obtain ⟨v, hv, ho, hV, hst⟩ := exec_let_lit_inv (c := c) (g := g)
+        (funs := funs) (V := V) (st := st) (x := "mptr") (a := aD) h1
+      exact absurd ho hne
+
