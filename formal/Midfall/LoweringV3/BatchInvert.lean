@@ -442,6 +442,31 @@ theorem fwdEnv_get_ret (mem : Nat → UInt8) (a s : Nat) (rw : U256)
         venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "ret") (by decide)]
       exact ih
 
+theorem fwdEnv_get_pf (mem : Nat → UInt8) (a s : Nat) (rw : U256)
+    (V : VEnv (Bridge.Dialect c g)) (j : Nat) :
+    VEnv.get (fwdEnv mem a s rw V j) "precompile_failed" =
+      VEnv.get V "precompile_failed" := by
+  induction j with
+  | zero => rfl
+  | succ j ih =>
+      simp only [fwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "precompile_failed") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "precompile_failed") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "precompile_failed") (by decide)]
+      exact ih
+
+theorem fwdEnv_get_mptr_start (mem : Nat → UInt8) (a s : Nat) (rw : U256)
+    (V : VEnv (Bridge.Dialect c g)) (j : Nat) :
+    VEnv.get (fwdEnv mem a s rw V j) "mptr_start" = VEnv.get V "mptr_start" := by
+  induction j with
+  | zero => rfl
+  | succ j ih =>
+      simp only [fwdEnv]
+      rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp_mptr") (y := "mptr_start") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "mptr") (y := "mptr_start") (by decide),
+        venv_get_set_ne (D := Bridge.Dialect c g) (x := "gp") (y := "mptr_start") (by decide)]
+      exact ih
+
 theorem fwdEnv_get_gp (mem : Nat → UInt8) (a s : Nat) (rw : U256)
     (V : VEnv (Bridge.Dialect c g)) (h : VEnv.get V "gp" = some (fwdProd mem a rw 0)) (j : Nat) :
     VEnv.get (fwdEnv mem a s rw V j) "gp" = some (fwdProd mem a rw j) := by
@@ -533,11 +558,16 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
         VEnv.get V "mptr_end" = some (BitVec.ofNat 256 e) ∧
         VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 s) ∧
         VEnv.get V "gp" = some (loadWord st.memory a) ∧ VEnv.get V "r" = some rw ∧
-        (VEnv.get V "ret").isSome ∧ (loadWord st.memory a).toNat < rw.toNat)
+        VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        (VEnv.get V "ret").isSome ∧ (VEnv.get V "precompile_failed").isSome ∧
+        (loadWord st.memory a).toNat < rw.toNat)
       (fun _ st V' st' o =>
         (o = .leave ∧ VEnv.get V' "ret" = some 0 ∧ st'.env = st.env ∧
           st'.halted = st.halted ∧ MemSameOutside st st' s (e - a - 64)) ∨
         (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+          (VEnv.get V' "ret").isSome ∧ (VEnv.get V' "precompile_failed").isSome ∧
+          VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a) ∧
+          VEnv.get V' "r" = some rw ∧
           MemSameOutside st st' s (e - a - 64) ∧
           VEnv.get V' "mptr" = some (BitVec.ofNat 256 (e - 32)) ∧
           VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 (s + (e - a - 64))) ∧
@@ -551,7 +581,7 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
   simp only [GenAst.yfor, GenAst.ylet, GenAst.ylit, GenAst.yvar, GenAst.yop, GenAst.yset,
     GenAst.yif, GenAst.yexpr]
   intro V st hpre
-  obtain ⟨hmptr, hmend, hgpm, hgp, hr, hret, hw0⟩ := hpre
+  obtain ⟨hmptr, hmend, hgpm, hgp, hr, hmstart, hret, hpf, hw0⟩ := hpre
   obtain ⟨k, hk⟩ := Nat.dvd_of_mod_eq_zero hal
   have hkdef : (e - a) / 32 = k := by
     rw [hk, Nat.mul_comm 32 k]
@@ -563,6 +593,9 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
       (o = .leave ∧ VEnv.get V' "ret" = some 0 ∧ st'.env = st.env ∧
         st'.halted = st.halted ∧ MemSameOutside st st' s (e - a - 64)) ∨
       (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+        (VEnv.get V' "ret").isSome ∧ (VEnv.get V' "precompile_failed").isSome ∧
+        VEnv.get V' "mptr_start" = some (BitVec.ofNat 256 a) ∧
+        VEnv.get V' "r" = some rw ∧
         MemSameOutside st st' s (e - a - 64) ∧
         VEnv.get V' "mptr" = some (BitVec.ofNat 256 (e - 32)) ∧
         VEnv.get V' "gp_mptr" = some (BitVec.ofNat 256 (s + (e - a - 64))) ∧
@@ -658,7 +691,15 @@ theorem bi_forward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect 
           simp [restore, hl]
         rw [hres]
         dsimp only [Q]
-        refine Or.inr ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_⟩
+        refine Or.inr ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        · -- ret isSome
+          rw [fwdEnv_get_ret]; exact hret
+        · -- precompile_failed isSome
+          rw [fwdEnv_get_pf]; exact hpf
+        · -- mptr_start
+          rw [fwdEnv_get_mptr_start]; exact hmstart
+        · -- r
+          rw [fwdEnv_get_r]; exact hr
         · -- MemSameOutside
           intro x hx
           show writeWords st.memory s (fwdWords st.memory a rw) (k - 2) x = st.memory x
@@ -1535,7 +1576,9 @@ theorem bi_backward_loop (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect
             VEnv.get V "mptr_end" = some (BitVec.ofNat 256 e) ∧
             VEnv.get V "gp_mptr" = some (BitVec.ofNat 256 s) ∧
             VEnv.get V "gp" = some (loadWord st.memory a) ∧ VEnv.get V "r" = some rw ∧
-            (VEnv.get V "ret").isSome ∧ (loadWord st.memory a).toNat < rw.toNat)
+            VEnv.get V "mptr_start" = some (BitVec.ofNat 256 a) ∧
+            (VEnv.get V "ret").isSome ∧ (VEnv.get V "precompile_failed").isSome ∧
+            (loadWord st.memory a).toNat < rw.toNat)
           (fun _ st V' st' o =>
             (o = .leave ∧ VEnv.get V' "ret" = some 0 ∧ st'.env = st.env ∧
               st'.halted = st.halted ∧ MemSameOutside st st' s (e - a - 64)) ∨
