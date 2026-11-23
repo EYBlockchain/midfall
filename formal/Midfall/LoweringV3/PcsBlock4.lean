@@ -4258,4 +4258,184 @@ theorem pcsGenBatch_contract {g : ExternalGas} (product : PairingProduct)
 
 
 
+theorem pcsMemSameOutside_of_memory_eq {st st' : EvmState} {lo len : Nat}
+    (h : st'.memory = st.memory) : MemSameOutside st st' lo len := by
+  intro a _
+  rw [h]
+
+def PcsGPost (rv x2v fev : U256) (a : Nat → U256) (m setIdx cptr off scratch : Nat)
+    (qep : U256) :
+    VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) →
+      EvmState → Outcome → Prop :=
+  fun V st V' st' o =>
+    (o = .normal ∧
+      VEnv.get V' "f_eval" = some (pcsGenFEval rv x2v fev
+        (wordFrom st.env.calldata (cptr + setIdx * Midfall.Generator.wordBytes))
+        (fun j => loadWord st.memory
+          (qep.toNat + (off + j) * Midfall.Generator.wordBytes)) a m) ∧
+      MemSameOutside st st' scratch 192 ∧ st'.env = st.env) ∨
+    (o = .halt ∧ Midfall.LoweringV2.Reverted st')
+
+set_option maxHeartbeats 8000000 in
+theorem pcsGenTail_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (setIdx : Nat) (m off n scratch : Nat) (a : Nat → U256) (invName : Nat → String)
+    (rv x2v fev cptr qep : U256)
+    (hm : 0 < m) (hn : n = 2 * m)
+    (hcptr : cptr.toNat + setIdx * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hqep : qep.toNat + (off + m) * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hinvEval : ∀ i, invName i ≠ "eval")
+    (hinvX2 : ∀ i, invName i ≠ "x2")
+    (hinvF : ∀ i, invName i ≠ "f_eval")
+    (hinvQ : ∀ i, invName i ≠ "Q_EVAL_CPTR")
+    (hinvQSet : ∀ i, invName i ≠ "Q_EVAL_SET_MPTR")
+    (htermEval : ∀ j, j < m → ("term_" ++ toString j) ≠ "eval")
+    (htermR : ∀ j, j < m → ("term_" ++ toString j) ≠ "r")
+    (htermQ : ∀ j, j < m → ("term_" ++ toString j) ≠ "Q_EVAL_SET_MPTR")
+    (htermF : ∀ j, j < m → ("term_" ++ toString j) ≠ "f_eval")
+    (htermX2 : ∀ j, j < m → ("term_" ++ toString j) ≠ "x2")
+    (htermDx : ∀ j, j < m → ∀ k, k < m → ("term_" ++ toString j) ≠ invName k)
+    (htermLb : ∀ j, j < m → ∀ k, k < m →
+      ("term_" ++ toString j) ≠ invName (m + k))
+    (htermDist : ∀ i, i < m → ∀ j, j < m → i ≠ j →
+      ("term_" ++ toString i) ≠ ("term_" ++ toString j))
+    (hdxEval : ∀ k, k < m → invName k ≠ "eval")
+    (hlbEval : ∀ k, k < m → invName (m + k) ≠ "eval")
+    (hdxTerm : ∀ k, k < m → ∀ j, j < m → invName k ≠ ("term_" ++ toString j))
+    (hlbTerm : ∀ k, k < m → ∀ j, j < m → invName (m + k) ≠ ("term_" ++ toString j))
+    (hrEval : "r" ≠ "eval")
+    (hrTerm : ∀ j, j < m → "r" ≠ ("term_" ++ toString j))
+    (hqEval : "Q_EVAL_SET_MPTR" ≠ "eval")
+    (hqTerm : ∀ j, j < m → "Q_EVAL_SET_MPTR" ≠ ("term_" ++ toString j)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      ([pcsEvalStmt setIdx] ++ pcsTermLines m off (fun j => invName j)
+        (fun j => invName (m + j)) ++ [pcsFEvalStmt])
+      (PcsGP4 m n rv x2v fev cptr qep a invName)
+      (fun V st V' st' o =>
+        (o = .normal ∧
+          VEnv.get V' "f_eval" = some (pcsGenFEval rv x2v fev
+            (wordFrom st.env.calldata (cptr.toNat + setIdx * Midfall.Generator.wordBytes))
+            (fun j => loadWord st.memory
+              (qep.toNat + (off + j) * Midfall.Generator.wordBytes)) a m) ∧
+          MemSameOutside st st' scratch 192 ∧ st'.env = st.env) ∨
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+  intro V st hpre V' st' o hrun
+  unfold PcsGP4 at hpre
+  obtain ⟨hr, hx2, hf, hcptrV, hqepV, hinvV, hdenV⟩ := hpre
+  let cval : U256 := wordFrom st.env.calldata
+    (cptr.toNat + setIdx * Midfall.Generator.wordBytes)
+  let ev : Nat → U256 := fun j => loadWord st.memory
+    (qep.toNat + (off + j) * Midfall.Generator.wordBytes)
+  let den : U256 := pcsDenInvVal rv (fun j => SIInv (a j)) m
+  have hrun' : ExecStmts (D := Bridge.Dialect c g) funs V st
+      ([pcsEvalStmt setIdx] ++ (pcsTermLines m off (fun j => invName j)
+        (fun j => invName (m + j)) ++ [pcsFEvalStmt])) V' st' o := by
+    simpa [List.append_assoc] using hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrun' with
+      ⟨V1, st1, hevrun, hrest⟩ | ⟨hevrun, hne⟩
+  · -- eval line
+    obtain ⟨ho1, hV1, hget1, hpres1, hst1⟩ :=
+      stmtsContractAll_singleton (pcsEval_contract (c := c) (g := g) (funs := funs)
+        setIdx den cptr rv hcptr)
+        V st ⟨hcptrV, by simpa [den] using hdenV, hr⟩ V1 st1 .normal hevrun
+    rw [hV1] at hrest hget1 hpres1
+    rw [hst1] at hrest
+    -- term lines
+    have hpreT : VEnv.get (("eval", wMulmodAt cval den rv) :: V) "r" = some rv ∧
+        VEnv.get (("eval", wMulmodAt cval den rv) :: V) "eval" =
+          some (wMulmodAt cval den rv) ∧
+        VEnv.get (("eval", wMulmodAt cval den rv) :: V) "Q_EVAL_SET_MPTR" = some qep ∧
+        (∀ j, j < m → VEnv.get (("eval", wMulmodAt cval den rv) :: V) (invName j) =
+          some (SIInv (a j))) ∧
+        (∀ j, j < m → VEnv.get (("eval", wMulmodAt cval den rv) :: V) (invName (m + j)) =
+          some (SIInv (a (m + j)))) ∧
+        (∀ j, j < m → loadWord st.memory
+          (qep.toNat + (off + j) * Midfall.Generator.wordBytes) = ev j) := by
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hpres1 "r" hrEval]
+        exact hr
+      · exact hget1
+      · rw [hpres1 "Q_EVAL_SET_MPTR" hqEval]
+        exact hqepV
+      · intro j hj
+        rw [hpres1 (invName j) (hinvEval j)]
+        exact hinvV j (by omega)
+      · intro j hj
+        rw [hpres1 (invName (m + j)) (hinvEval (m + j))]
+        exact hinvV (m + j) (by omega)
+      · intro j hj; rfl
+    let eval0 : U256 := wMulmodAt cval den rv
+    have hrunT' : ExecStmts (D := Bridge.Dialect c g) funs
+        (("eval", eval0) :: V) st (pcsTermLines m off (fun j => invName j)
+          (fun j => invName (m + j)) ++ [pcsFEvalStmt]) V' st' o := by
+      simpa [eval0] using hrest
+    rcases Step.stmts_append_inv (D := Bridge.Dialect c g) hrunT' with
+        ⟨V2, st2, htermrun, hferun⟩ | ⟨htermrun, hne2⟩
+    · obtain ⟨ho2, hevalF, hterms, hpres2, hmem2, henv2, _hhalt2⟩ :=
+        pcsTermLines_contract (c := c) (g := g) (funs := funs)
+        m off (fun j => invName j) (fun j => invName (m + j))
+        ev (fun j => SIInv (a j)) (fun j => SIInv (a (m + j))) rv eval0 qep
+        (fun j hj => by
+          have : (off + j) * Midfall.Generator.wordBytes ≤
+              (off + m) * Midfall.Generator.wordBytes := by
+            apply Nat.mul_le_mul_right; omega
+          omega)
+        htermEval htermR htermQ
+        (fun j hj k hk => htermDx j hj k hk)
+        (fun j hj k hk => htermLb j hj k hk)
+        htermDist
+        (fun k hk => hdxEval k hk)
+        (fun k hk => hlbEval k hk)
+        (fun k hk j hj => hdxTerm k hk j hj)
+        (fun k hk j hj => hlbTerm k hk j hj)
+        hrEval hrTerm hqEval hqTerm
+        (("eval", eval0) :: V) st hpreT V2 st2 .normal htermrun
+      -- f_eval line
+      have hpreF : VEnv.get V2 "f_eval" = some fev ∧ VEnv.get V2 "x2" = some x2v ∧
+          VEnv.get V2 "eval" = some (pcsEvalAcc rv ev (fun j => SIInv (a j))
+            (fun j => SIInv (a (m + j))) m eval0) ∧ VEnv.get V2 "r" = some rv := by
+        refine ⟨?_, ?_, hevalF, ?_⟩
+        · rw [hpres2 "f_eval" (by pcs_ne1) (fun j hj => (htermF j hj).symm)]
+          rw [hpres1 "f_eval" (by pcs_ne1)]
+          exact hf
+        · rw [hpres2 "x2" (by pcs_ne1) (fun j hj => (htermX2 j hj).symm)]
+          rw [hpres1 "x2" (by pcs_ne1)]
+          exact hx2
+        · rw [hpres2 "r" (by pcs_ne1) (fun j hj => (htermR j hj).symm)]
+          rw [hpres1 "r" hrEval]
+          exact hr
+      obtain ⟨ho3, hV3, hst3⟩ :=
+        stmtsContractAll_singleton (pcsFEval_contract (c := c) (g := g) (funs := funs)
+          fev x2v (pcsEvalAcc rv ev (fun j => SIInv (a j))
+            (fun j => SIInv (a (m + j))) m eval0) rv)
+          V2 st2 hpreF V' st' o hferun
+      refine Or.inl ⟨ho3, ?_, ?_, ?_⟩
+      · rw [hV3]
+        rw [venv_get_set_same (D := Bridge.Dialect c g) hpreF.1]
+        simp only [pcsGenFEval, eval0, den, cval, ev]
+      · apply pcsMemSameOutside_of_memory_eq
+        rw [hst3, hmem2]
+      · rw [hst3, henv2]
+    · exact absurd (pcsTermLines_contract (c := c) (g := g) (funs := funs)
+        m off (fun j => invName j) (fun j => invName (m + j))
+        ev (fun j => SIInv (a j)) (fun j => SIInv (a (m + j))) rv eval0 qep
+        (fun j hj => by
+          have : (off + j) * Midfall.Generator.wordBytes ≤
+              (off + m) * Midfall.Generator.wordBytes := by
+            apply Nat.mul_le_mul_right; omega
+          omega)
+        htermEval htermR htermQ
+        (fun j hj k hk => htermDx j hj k hk)
+        (fun j hj k hk => htermLb j hj k hk)
+        htermDist
+        (fun k hk => hdxEval k hk)
+        (fun k hk => hlbEval k hk)
+        (fun k hk j hj => hdxTerm k hk j hj)
+        (fun k hk j hj => hlbTerm k hk j hj)
+        hrEval hrTerm hqEval hqTerm
+        (("eval", eval0) :: V) st hpreT V' st' o htermrun).1 hne2
+  · exact absurd (stmtsContractAll_singleton (pcsEval_contract (c := c) (g := g)
+      (funs := funs) setIdx den cptr rv hcptr)
+      V st ⟨hcptrV, by simpa [den] using hdenV, hr⟩ V' st' o hevrun).1 hne
+
+
 end Midfall.LoweringV3.PcsBlock4
