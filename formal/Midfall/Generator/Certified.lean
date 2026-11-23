@@ -276,6 +276,10 @@ def payloadOf (gi : GenInput p G₁ G₂ Gₜ) : Option Halo2VerifyingKey :=
     | .ok p => some p
     | .error _ => none
 
+/-- The quotient-builder output a plan carries, if it is a VM plan. -/
+def quotientBuildOf (L : LoweringPlan Unit Unit) : Option QuotientProgramBuild :=
+  L.quotient.map (fun q => q.build)
+
 /-- The D-GATE11 input clause: the generated VK payload and every count the layout arithmetic
     consumes. `payloadOf` is a computation on `gi`, so this is still an input predicate. -/
 structure CountBound (gi : GenInput p G₁ G₂ Gₜ) : Prop where
@@ -354,6 +358,14 @@ structure SupportedInput (gi : GenInput p G₁ G₂ Gₜ) : Prop where
       lookup, commitment and point-set count is `< 2 ^ 32`; the VK payload is `< 2 ^ 200`. This
       is an INPUT predicate (a computation on `gi`), not a `ValidV3` hook. -/
   countBound : CountBound gi
+  /-- D-GATE16 (signed 2026-11-23): the generated-build stack bound. The QVM:1217-1222
+      validator is not ported (`finishValidatorLeg`), and `finish` records `maxStack` from the
+      pre-compaction stream while `build.bytes` is compacted, so this inequality is not a
+      builder-state invariant. It is an input predicate over the generator's own outputs:
+      every successful run's quotient build has `maxStack ≤ bytes.size`. The F1 render witnesses
+      the concrete content by `native_decide` (`CertMeasure.f1StackOk_true`). -/
+  stackBound : ∀ (o : CertOut), Generates gi o →
+    ∀ b, quotientBuildOf o.out.plan = some b → b.maxStack ≤ b.bytes.size
 
 /-! ## 2b. D-GATE11: the point-set count is bounded by the PCS-query count
 
@@ -3082,17 +3094,14 @@ theorem batchInvertScratchFits_of_generated {gi : GenInput p G₁ G₂ Gₜ} {o 
     D-GATE11 reduced the `v3_cdBound` half, the point-set census, and `batchInvertScratchFits`
     (`batchInvertScratchFits_of_generated` via the exported `new_selectorAccMptr_ge`) to the input
     count budget (`CountBound`). The quotient program's byte size is proved from `vkCarriesBuild`
-    (`build_bytes_size_le`: `build.bytes.size ≤ 32 * vk.quotientProgramWords`). The residual is
-    now exact and is NOT another count bound: `build.maxStack ≤ build.bytes.size` is not a
-    state-level consequence of the builder API (`pushStackAcct` is a public accounting primitive
-    that emits no byte, so `pushStackAcct builderDefault` has `maxStack = 1` and `bytes.length =
-    0`), and `finish` records `maxStack` from the PRE-compaction stream while `build.bytes` is the
-    COMPACTED stream. The Rust asserts the validator's max stack against the compacted program at
-    QVM:1217-1222, but `finishValidatorLeg` is precisely the unported validator. Closing
-    `staticWorkingSetFits` (and `quotientProgramFits`'s stack half) therefore needs either a port
-    of that validator/compaction preservation proof or an input clause bounding
-    `build.maxStack`; the PCS-config half is sized from `memoryRequirements` and needs the
-    corresponding quotient-build count bounds. No `ValidV3`, row or root hypothesis is involved;
+    (`build_bytes_size_le`: `build.bytes.size ≤ 32 * vk.quotientProgramWords`) and D-GATE16's
+    `SupportedInput.stackBound` supplies the generated-build stack inequality
+    (`build.maxStack ≤ build.bytes.size`) that the unported QVM:1217-1222 validator would otherwise
+    have to prove. The residual is now the LAYOUT ARITHMETIC: bound `staticWorkingMemorySizeForMeta`
+    (the transcript-word count), the six `VerifierMemoryLayoutConfig` overrides
+    (`quotientStateWords`, `quotientStackWords`, `accMsmTerms`, the PCS requirements), and then the
+    twenty-three `traceU256Bound` candidates; `quotientProgramFits` needs the same config/selector
+    (`selectorFold.maxPower`) bounds. No `ValidV3`, row or root hypothesis is involved;
     `SupportedInput` was strengthened, not weakened. -/
 theorem prog_programFits (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.programFits (renderOf gi o).pv (renderOf gi o).model := by
