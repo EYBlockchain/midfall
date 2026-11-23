@@ -3029,6 +3029,121 @@ theorem wordLenForBytes_le_mul (n : Nat) :
   have h : n ≤ (n + 31) / 32 * 32 := by omega
   simpa [Nat.mul_comm] using h
 
+/-- **D-GATE11: `fromProtocol`'s proof payload length is below `2 ^ 80`.** The same
+    `tp_fromProtocol` + `proofLen_eq_repackedLen` arithmetic as `v3_cdBound`, factored out for
+    the transcript-buffer bound. Counts come from `MetaCountsBound`; no render is mentioned. -/
+theorem proofLen_lt_of_fromProtocol {meta_ m0 : ConstraintSystemMeta} {L : ProofCalldataLayout}
+    (hM : MetaCountsBound m0) (hProtocol : meta_.protocol = m0.protocol)
+    (hEval : meta_.numEvals < 2 ^ 32) (hPoint : meta_.numPointSets < 2 ^ 32)
+    (hL : ProofCalldataLayout.fromProtocol meta_.protocol abiVerifyProofProofCptr
+      meta_.numEvals meta_.numPointSets = .ok L) :
+    L.proofLen < 2 ^ 80 := by
+  have hfacts := Midfall.LoweringV3.TranscriptRows.tp_fromProtocol hL
+  have hpen := proofLen_eq_repackedLen meta_.protocol meta_.numEvals meta_.numPointSets L hL
+  have hCG : L.commitmentG1Count = sumNat meta_.protocol.numUserAdvices
+      + meta_.protocol.numLookups + meta_.protocol.numPermutationZs
+      + sumNat (((List.range meta_.protocol.lookupChunks.length).zip
+          meta_.protocol.lookupChunks).map (fun q => q.2 + 1))
+      + meta_.protocol.numTrashcans + meta_.protocol.numQuotients := by
+    rw [show L.commitmentG1Count =
+        sumNat (L.advicePhases.map (fun s => s.itemCount))
+        + L.lookupMultiplicities.itemCount + L.permutationProducts.itemCount
+        + sumNat (L.lookups.map (fun lk => lk.helpers.itemCount + lk.accumulator.itemCount))
+        + L.trash.itemCount + L.quotientLimbs.itemCount from rfl]
+    rw [hfacts.adviceSum, hfacts.lookupM, hfacts.permZ, hfacts.lookupSum,
+      hfacts.trash, hfacts.quotient]
+  have hAdvSum : sumNat meta_.protocol.numUserAdvices ≤ 2 ^ 32 * 2 ^ 32 := by
+    have h1 : sumNat meta_.protocol.numUserAdvices
+        ≤ meta_.protocol.numUserAdvices.length * 2 ^ 32 := by
+      rw [hProtocol]
+      exact sumNat_le_length_mul (fun x hx => Nat.le_of_lt (hM.userAdvicesEach x hx))
+    have h2 : meta_.protocol.numUserAdvices.length < 2 ^ 32 := by
+      rw [hProtocol]; exact hM.userAdvicesLen
+    nlinarith
+  have hLkSum : sumNat (((List.range meta_.protocol.lookupChunks.length).zip
+      meta_.protocol.lookupChunks).map (fun q => q.2 + 1)) ≤ 2 ^ 32 * 2 ^ 32 := by
+    have hmap : ((List.range meta_.protocol.lookupChunks.length).zip
+        meta_.protocol.lookupChunks).map (fun q => q.2 + 1)
+        = meta_.protocol.lookupChunks.map (fun n => n + 1) := by
+      let l := (List.range meta_.protocol.lookupChunks.length).zip meta_.protocol.lookupChunks
+      have hm : List.map (fun q => q.2 + 1) l = List.map (fun n => n + 1) (l.map Prod.snd) := by
+        rw [List.map_map]
+        rfl
+      rw [hm, Midfall.LoweringV3.TranscriptRows.zip_range_snd]
+    rw [hmap]
+    have h1 : sumNat (meta_.protocol.lookupChunks.map (fun n => n + 1))
+        ≤ meta_.protocol.lookupChunks.length * 2 ^ 32 := by
+      have h := sumNat_le_length_mul
+        (l := meta_.protocol.lookupChunks.map (fun n => n + 1)) (B := 2 ^ 32) (by
+          intro x hx
+          rw [List.mem_map] at hx
+          obtain ⟨n, hn, rfl⟩ := hx
+          rw [hProtocol] at hn
+          have := hM.lookupChunksEach n hn
+          omega)
+      simpa using h
+    have h2 : meta_.protocol.lookupChunks.length < 2 ^ 32 := by
+      rw [hProtocol]; exact hM.lookupChunksLen
+    nlinarith
+  have hCCount : L.commitmentG1Count < 2 ^ 66 := by
+    rw [hCG]
+    have hLk : meta_.protocol.numLookups < 2 ^ 32 := by rw [hProtocol]; exact hM.lookups
+    have hPs : meta_.protocol.numPermutationZs < 2 ^ 32 := by rw [hProtocol]; exact hM.permutationZs
+    have hTr : meta_.protocol.numTrashcans < 2 ^ 32 := by rw [hProtocol]; exact hM.trashcans
+    have hQ : meta_.protocol.numQuotients < 2 ^ 32 := by rw [hProtocol]; exact hM.quotients
+    nlinarith
+  have hRep : L.proofLen = 128 * L.commitmentG1Count + 32 * meta_.numEvals
+      + 128 + 32 * meta_.numPointSets + 128 := by
+    rw [hpen.1]
+    change (RepackedProofLayoutPlan.fromProofLayout L).prefixG1Count * Midfall.Generator.g1Bytes
+        + (RepackedProofLayoutPlan.fromProofLayout L).numEvals * Midfall.Generator.wordBytes
+        + Midfall.Generator.g1Bytes
+        + (RepackedProofLayoutPlan.fromProofLayout L).numPointSets * Midfall.Generator.wordBytes
+        + Midfall.Generator.g1Bytes = _
+    rw [sum_commitmentReadGroups]
+    change L.commitmentG1Count * Midfall.Generator.g1Bytes
+        + L.evals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes
+        + L.qEvals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes = _
+    rw [hfacts.evals, hfacts.qEvals]
+    have hg1 : Midfall.Generator.g1Bytes = 128 := rfl
+    have hw : Midfall.Generator.wordBytes = 32 := rfl
+    rw [hg1, hw]
+    ring
+  rw [hRep]
+  nlinarith [hCCount, hEval, hPoint, Nat.zero_le L.commitmentG1Count]
+
+/-- The render's proof layout length bound, from the count clause. -/
+theorem plan_proofLen_lt {gi : GenInput p G₁ G₂ Gₜ} {o : CertOut}
+    (hg : Generates gi o) (hs : SupportedInput gi) :
+    (renderOf gi o).plan.proofLayout.proofLen < 2 ^ 80 := by
+  obtain ⟨m0, _payload, hraw, _hgenvk, _hfp, _h4⟩ := generate_spec hg
+  obtain ⟨rawMeta, plan, hraw', hpl, hp⟩ :=
+    Midfall.LoweringV3.MemoryPairs.plan_of_generated (generated_of hg)
+  simp only [renderOf] at hraw' hpl
+  rw [hraw] at hraw'
+  cases hraw'
+  obtain ⟨meta_, L, hmeta, hLplan, hL⟩ :=
+    newFromVk_plan_meta_proofLayout Features.solidity (frFieldCtx gi.E.delta) gi.vk.cs
+      m0 gi.cfg.numInstances gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
+  have hr : rawMetaOf gi = some m0 := by
+    unfold rawMetaOf
+    rw [hraw]
+  have hM : MetaCountsBound m0 := hs.countBound.metaCounts m0 hr
+  have hmetaFacts := Midfall.LoweringV3.newFromVk_meta_numEvals (frFieldCtx gi.E.delta)
+    gi.vk.cs m0 gi.cfg.numInstances gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
+  rw [hmeta] at hmetaFacts
+  have hEval : meta_.numEvals < 2 ^ 32 := by
+    rw [hmetaFacts.1]; exact hM.evals
+  have hPointLe : meta_.numPointSets ≤ m0.protocol.pcsQueries.length := by
+    have h := newFromVk_numPointSets_le (frFieldCtx gi.E.delta) gi.vk.cs m0 gi.cfg.numInstances
+      gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
+    rwa [hmeta] at h
+  have hPoint : meta_.numPointSets < 2 ^ 32 := lt_of_le_of_lt hPointLe hM.pcsQueries
+  have hlen := proofLen_lt_of_fromProtocol hM hmetaFacts.2 hEval hPoint hL
+  rw [hp]
+  rw [hLplan]
+  exact hlen
+
 /-- **D-GATE11: the quotient program's byte size from `vkCarriesBuild`.** The encoded program is
     the VK reservation's `quotientProgramWords`, and the raw bytes are at most the word count
     times the 32-byte word stride. This is the first builder-size bound the static layout needs;
