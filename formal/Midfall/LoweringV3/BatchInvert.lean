@@ -2671,6 +2671,53 @@ theorem exec_guard_iszero_lt_reject {funs : FunEnv (Bridge.Dialect c g)}
     | ifHalt hc => exact (eval_iszero_lt_vars_no_halt (x := x) (y := y) hc).elim
 
 
+theorem bi_bridge_guard1_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 12 1 =
+      [GenAst.yif (GenAst.yop EVM.Op.iszero
+        [GenAst.yop EVM.Op.lt [GenAst.yvar "x_last", GenAst.yvar "r"]])
+        [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave]] := by
+  kernel_rfl
+
+theorem bi_bridge_guard2_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 14 1 =
+      [GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "gp"])
+        [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave]] := by
+  kernel_rfl
+
+theorem bi_bridge_guard_xlast (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (xv rw : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 12 1)
+      (fun V st => VEnv.get V "x_last" = some xv ∧ VEnv.get V "r" = some rw)
+      (fun V0 st V' st' o =>
+        (xv.ult rw = true → o = .normal ∧ V' = V0 ∧ st' = st) ∧
+        (xv.ult rw = false → o = .leave ∧ V' = VEnv.set V0 "ret" 0 ∧ st' = st)) := by
+  rw [bi_bridge_guard1_form]
+  intro V st hpre V' st' o hrun
+  obtain ⟨hx, hr⟩ := hpre
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, h, rest⟩ | ⟨h, _⟩
+  · cases rest
+    exact exec_guard_iszero_lt_reject (funs := funs) (x := "x_last") (y := "r") hx hr h
+  · exact exec_guard_iszero_lt_reject (funs := funs) (x := "x_last") (y := "r") hx hr h
+
+theorem bi_bridge_guard_gp (consts : Inline.Consts) (funs : FunEnv (Bridge.Dialect c g))
+    (rv : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 14 1)
+      (fun V st => VEnv.get V "gp" = some rv)
+      (fun V0 st V' st' o =>
+        (rv ≠ 0 → o = .normal ∧ V' = V0 ∧ st' = st) ∧
+        (rv = 0 → o = .leave ∧ V' = VEnv.set V0 "ret" 0 ∧ st' = st)) := by
+  rw [bi_bridge_guard2_form]
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+    ⟨V1, st1, h, rest⟩ | ⟨h, _⟩
+  · cases rest
+    exact exec_guard_iszero_reject (funs := funs) (x := "gp") hpre h
+  · exact exec_guard_iszero_reject (funs := funs) (x := "gp") hpre h
+
+
 theorem bi_bridge_form (consts : Inline.Consts) :
     seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10 =
       [GenAst.ylet "x_last" (GenAst.yop EVM.Op.mload [GenAst.yvar "mptr"]),
@@ -2733,6 +2780,10 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms exec_reject_block [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_iszero_reject [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_iszero_lt_reject [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_guard1_form [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_guard2_form [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_guard_xlast [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_bridge_guard_gp [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
