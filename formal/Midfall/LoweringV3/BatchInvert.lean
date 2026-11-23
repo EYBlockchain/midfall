@@ -150,6 +150,48 @@ def BatchInvertPost (st : EvmState) (succ : U256) (a e s : Nat) (rw : U256)
       (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat ∧
       wMulmodAt (loadWord st'.memory (a + 32 * i)) (loadWord st.memory (a + 32 * i)) rw = 1)
 
+theorem BatchInvertPost_zero {V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (succ rw : U256) (a e s : Nat) (hsucc : succ ≠ 0)
+    (hret : VEnv.get V' "ret" = some 0)
+    (hpf_some : (VEnv.get V' "precompile_failed").isSome)
+    (henv : st'.env = st.env) (hhalt : st'.halted = st.halted)
+    (hout : ∀ x, (x < a ∨ e ≤ x) → (x < s ∨ s + (e - a) + 0xc0 ≤ x) →
+      st'.memory x = st.memory x) :
+    BatchInvertPost (c := c) (g := g) st succ a e s rw V' st' := by
+  obtain ⟨pf, hpf⟩ := Option.isSome_iff_exists.mp hpf_some
+  refine ⟨0, pf, hret, hpf, henv, hhalt, hout, ?_, ?_, ?_⟩
+  · intro hs
+    exact absurd hs hsucc
+  · intro hpfne
+    rfl
+  · intro hretne
+    exact absurd hretne (by simp)
+
+theorem BatchInvertPost_succ {V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (succ rw : U256) (a e s : Nat) (hsucc : succ ≠ 0)
+    (hret : VEnv.get V' "ret" = some 1)
+    (hpf : VEnv.get V' "precompile_failed" = some 0)
+    (henv : st'.env = st.env) (hhalt : st'.halted = st.halted)
+    (hout : ∀ x, (x < a ∨ e ≤ x) → (x < s ∨ s + (e - a) + 0xc0 ≤ x) →
+      st'.memory x = st.memory x)
+    (hcanon : ∀ i, a + 32 * i < e →
+      (loadWord st.memory (a + 32 * i)).toNat < rw.toNat ∧
+      loadWord st.memory (a + 32 * i) ≠ 0)
+    (hinv : ∀ i, a + 32 * i < e →
+      (loadWord st'.memory (a + 32 * i)).toNat < rw.toNat ∧
+      wMulmodAt (loadWord st'.memory (a + 32 * i)) (loadWord st.memory (a + 32 * i)) rw = 1) :
+    BatchInvertPost (c := c) (g := g) st succ a e s rw V' st' := by
+  refine ⟨1, 0, hret, hpf, henv, hhalt, hout, ?_, ?_, ?_⟩
+  · intro hs
+    exact absurd hs hsucc
+  · intro hpfne
+    exact absurd hpfne (by simp)
+  · intro hretne
+    refine ⟨rfl, ?_⟩
+    intro i hi
+    exact ⟨(hcanon i hi).1, (hcanon i hi).2, (hinv i hi).1, (hinv i hi).2⟩
+
+
 /-! ## 4. THE FORWARD PASS'S WORD ALGEBRA (the evidence's `P`, :354-358)
 
   The evidence states its prefix product as an existential `P : Nat → U256` with
@@ -1945,6 +1987,84 @@ theorem exec_guard_ret0_false {funs : FunEnv (Bridge.Dialect c g)}
   | ifHalt hc => exact (hne _ hc).elim
 
 
+def biSingleArm (consts : Inline.Consts) : Block EVM.Op :=
+  [ GenAst.ylet "x" (GenAst.yop EVM.Op.mload [GenAst.yvar "mptr_start"]),
+    GenAst.yif (GenAst.yop EVM.Op.iszero
+      [GenAst.yop EVM.Op.lt [GenAst.yvar "x", GenAst.yvar "r"]])
+      [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave],
+    GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "x"])
+      [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave],
+    GenAst.ylet "single_scratch" (GenAst.yvar "scratch_mptr") ] ++
+  GenAst.modexpFrameStores "single_scratch" (GenAst.yvar "x") (GenAst.yvar "r")
+    Midfall.Generator.templateConstantsDefault ++
+  [ GenAst.yset "ret" (GenAst.yop EVM.Op.staticcall
+      [ (match consts.lookup "MODEXP_GAS" with
+          | some v => Expr.lit (Literal.number v)
+          | none => Expr.var "MODEXP_GAS")
+      , GenAst.ylit 5, GenAst.yvar "single_scratch", GenAst.ylit 192,
+        GenAst.yvar "single_scratch", GenAst.ylit 32 ])
+  , GenAst.yset "ret" (GenAst.yop EVM.Op.and
+      [GenAst.yvar "ret", GenAst.yop EVM.Op.eq
+        [GenAst.yop EVM.Op.returndatasize [], GenAst.ylit 32]])
+  , GenAst.yset "precompile_failed" (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"])
+  , GenAst.yif (GenAst.yvar "ret")
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [GenAst.yvar "mptr_start", GenAst.yop EVM.Op.mload [GenAst.yvar "single_scratch"]])]
+  , Stmt.leave ]
+
+
+def biSingleHead : Block EVM.Op :=
+  [ GenAst.ylet "x" (GenAst.yop EVM.Op.mload [GenAst.yvar "mptr_start"]),
+    GenAst.yif (GenAst.yop EVM.Op.iszero
+      [GenAst.yop EVM.Op.lt [GenAst.yvar "x", GenAst.yvar "r"]])
+      [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave],
+    GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "x"])
+      [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave],
+    GenAst.ylet "single_scratch" (GenAst.yvar "scratch_mptr") ]
+
+def biSingleFrame (_consts : Inline.Consts) : Block EVM.Op :=
+  GenAst.modexpFrameStores "single_scratch" (GenAst.yvar "x") (GenAst.yvar "r")
+    Midfall.Generator.templateConstantsDefault
+
+def biSingleTail (consts : Inline.Consts) : Block EVM.Op :=
+  [ GenAst.yset "ret" (GenAst.yop EVM.Op.staticcall
+      [ (match consts.lookup "MODEXP_GAS" with
+          | some v => Expr.lit (Literal.number v)
+          | none => Expr.var "MODEXP_GAS")
+      , GenAst.ylit 5, GenAst.yvar "single_scratch", GenAst.ylit 192,
+        GenAst.yvar "single_scratch", GenAst.ylit 32 ])
+  , GenAst.yset "ret" (GenAst.yop EVM.Op.and
+      [GenAst.yvar "ret", GenAst.yop EVM.Op.eq
+        [GenAst.yop EVM.Op.returndatasize [], GenAst.ylit 32]])
+  , GenAst.yset "precompile_failed" (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"])
+  , GenAst.yif (GenAst.yvar "ret")
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [GenAst.yvar "mptr_start", GenAst.yop EVM.Op.mload [GenAst.yvar "single_scratch"]])]
+  , Stmt.leave ]
+
+theorem biSingleArm_eq (consts : Inline.Consts) :
+    biSingleArm consts = biSingleHead ++ (biSingleFrame consts ++ biSingleTail consts) := by
+  rfl
+
+theorem bi_prelude_single_form (consts : Inline.Consts) :
+    seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 2 8 =
+      [ GenAst.yif (Expr.builtin EVM.Op.lt [Expr.var "mptr_end", Expr.var "mptr_start"])
+          [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave],
+        GenAst.ylet "count_bytes" (GenAst.yop EVM.Op.sub
+          [GenAst.yvar "mptr_end", GenAst.yvar "mptr_start"]),
+        GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "count_bytes"]) [Stmt.leave],
+        GenAst.yif (Expr.builtin EVM.Op.eq
+          [Expr.var "count_bytes", Expr.lit (Literal.number 32)]) (biSingleArm consts),
+        GenAst.ylet "gp_mptr" (GenAst.yvar "scratch_mptr"),
+        GenAst.ylet "gp" (GenAst.yop EVM.Op.mload [GenAst.yvar "mptr_start"]),
+        GenAst.yif (GenAst.yop EVM.Op.iszero
+          [GenAst.yop EVM.Op.lt [GenAst.yvar "gp", GenAst.yvar "r"]])
+          [GenAst.yset "ret" (GenAst.ylit 0), Stmt.leave],
+        GenAst.ylet "mptr" (GenAst.yop EVM.Op.add
+          [GenAst.yvar "mptr_start", GenAst.ylit 32]) ] := by
+  kernel_rfl
+
+
 theorem bi_prelude_form (consts : Inline.Consts) :
     ∃ body : Block EVM.Op,
       seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 2 8 =
@@ -2342,6 +2462,115 @@ theorem exec_guard_ret0_iszero_var_false {funs : FunEnv (Bridge.Dialect c g)}
     exact eval_iszero_var_no_halt hc
 
 
+theorem exec_reject_block {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.block [Stmt.assign ["ret"] (Expr.lit (Literal.number 0)), Stmt.leave]) V' st' o) :
+    o = .leave ∧ V' = VEnv.set V "ret" 0 ∧ st' = st := by
+  obtain ⟨Vb, stb, hb, hV, hst⟩ := exec_block_inv (funs := funs) h
+  subst hV hst
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hb with
+    ⟨V1, st1, hassign, hrest⟩ | ⟨hassign, hne1⟩
+  · obtain ⟨v, he, hV1⟩ := exec_assign_inv (funs := hoist (Bridge.Dialect c g)
+      [Stmt.assign ["ret"] (Expr.lit (Literal.number 0)), Stmt.leave] :: funs) hassign
+    obtain ⟨hv, hst0⟩ := eval_lit_inv he
+    subst hv hst0 hV1
+    cases hrest with
+    | seqCons hleave hrest2 => cases hleave
+    | seqStop hleave hne2 =>
+        cases hleave
+        exact ⟨rfl, restore_set_same, rfl⟩
+  · cases hassign with
+    | assignVal he hl => exact absurd rfl hne1
+    | assignHalt he => cases he
+
+theorem exec_guard_iszero_reject {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x : String} {rv : U256}
+    (hx : VEnv.get V x = some rv)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin EVM.Op.iszero [Expr.var x])
+        [Stmt.assign ["ret"] (Expr.lit (Literal.number 0)), Stmt.leave]) V' st' o) :
+    (rv ≠ 0 → o = .normal ∧ V' = V ∧ st' = st) ∧
+      (rv = 0 → o = .leave ∧ V' = VEnv.set V "ret" 0 ∧ st' = st) := by
+  constructor
+  · intro hrv
+    cases h with
+    | ifTrue hc hnz hbody =>
+        obtain ⟨vv, hget, hst, hcv⟩ := eval_iszero_var_inv (x := x) hc
+        rw [hx] at hget
+        injection hget with hv
+        subst hv
+        subst hst
+        rw [hcv, b2w_eq_false_of_ne hrv] at hnz
+        exact absurd rfl hnz
+    | ifFalse hc hz =>
+        obtain ⟨-, -, hst, -⟩ := eval_iszero_var_inv (x := x) hc
+        exact ⟨rfl, rfl, hst⟩
+    | ifHalt hc => exact (eval_iszero_var_no_halt (x := x) hc).elim
+  · intro hrv
+    cases h with
+    | ifTrue hc hnz hbody =>
+        obtain ⟨-, -, hst, -⟩ := eval_iszero_var_inv (x := x) hc
+        subst hst
+        exact exec_reject_block (funs := funs) hbody
+    | ifFalse hc hz =>
+        obtain ⟨vv, hget, hst, hcv⟩ := eval_iszero_var_inv (x := x) hc
+        rw [hx] at hget
+        injection hget with hv
+        subst hv
+        subst hst
+        subst hrv
+        rw [hcv] at hz
+        change (1 : U256) = (0 : U256) at hz
+        exact absurd hz (by decide)
+    | ifHalt hc => exact (eval_iszero_var_no_halt (x := x) hc).elim
+
+theorem exec_guard_iszero_lt_reject {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x y : String} {xv yv : U256}
+    (hx : VEnv.get V x = some xv) (hy : VEnv.get V y = some yv)
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.builtin EVM.Op.iszero
+        [Expr.builtin EVM.Op.lt [Expr.var x, Expr.var y]])
+        [Stmt.assign ["ret"] (Expr.lit (Literal.number 0)), Stmt.leave]) V' st' o) :
+    (xv.ult yv = true → o = .normal ∧ V' = V ∧ st' = st) ∧
+      (xv.ult yv = false → o = .leave ∧ V' = VEnv.set V "ret" 0 ∧ st' = st) := by
+  constructor
+  · intro hlt
+    cases h with
+    | ifTrue hc hnz hbody =>
+        obtain ⟨x0, y0, hx0, hy0, hcv, -⟩ := eval_iszero_lt_vars_inv (x := x) (y := y) hc
+        rw [hx] at hx0
+        rw [hy] at hy0
+        injection hx0 with h1
+        injection hy0 with h2
+        subst h1 h2
+        rw [hcv, hlt] at hnz
+        change (0 : U256) ≠ 0 at hnz
+        exact absurd rfl hnz
+    | ifFalse hc hz =>
+        obtain ⟨-, -, -, -, -, hst⟩ := eval_iszero_lt_vars_inv (x := x) (y := y) hc
+        exact ⟨rfl, rfl, hst⟩
+    | ifHalt hc => exact (eval_iszero_lt_vars_no_halt (x := x) (y := y) hc).elim
+  · intro hlt
+    cases h with
+    | ifTrue hc hnz hbody =>
+        obtain ⟨-, -, -, -, -, hst⟩ := eval_iszero_lt_vars_inv (x := x) (y := y) hc
+        subst hst
+        exact exec_reject_block (funs := funs) hbody
+    | ifFalse hc hz =>
+        obtain ⟨x0, y0, hx0, hy0, hcv, hst⟩ := eval_iszero_lt_vars_inv (x := x) (y := y) hc
+        rw [hx] at hx0; rw [hy] at hy0
+        injection hx0 with h1; injection hy0 with h2
+        subst h1 h2
+        subst hst
+        rw [hcv, hlt] at hz
+        change (1 : U256) = (0 : U256) at hz
+        exact absurd hz (by decide)
+    | ifHalt hc => exact (eval_iszero_lt_vars_no_halt (x := x) (y := y) hc).elim
+
+
 theorem bi_bridge_form (consts : Inline.Consts) :
     seg (helperBody consts Midfall.Lowering.GenAst.emitBatchInvertAt) 11 10 =
       [GenAst.ylet "x_last" (GenAst.yop EVM.Op.mload [GenAst.yvar "mptr"]),
@@ -2377,6 +2606,10 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms eval_iszero_lt_vars_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_ret0_false [propext, Classical.choice, Quot.sound]
 #assert_axioms bi_prelude_form [propext, Classical.choice, Quot.sound]
+#assert_axioms bi_prelude_single_form [propext, Classical.choice, Quot.sound]
+#assert_axioms BatchInvertPost_zero [propext, Classical.choice, Quot.sound]
+#assert_axioms BatchInvertPost_succ [propext, Classical.choice, Quot.sound]
+#assert_axioms biSingleArm_eq [propext, Classical.choice, Quot.sound]
 #assert_axioms ofNat_sub_of_le [propext, Classical.choice, Quot.sound]
 #assert_axioms ofNat_ne_zero_of_pos [propext, Classical.choice, Quot.sound]
 #assert_axioms ofNat_ne_of_ne [propext, Classical.choice, Quot.sound]
@@ -2397,6 +2630,9 @@ theorem bi_bridge_form (consts : Inline.Consts) :
 #assert_axioms eval_mulmod_vars_no_halt [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_assign_mulmod_vars_inv [propext, Classical.choice, Quot.sound]
 #assert_axioms exec_guard_ret0_iszero_var_false [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_reject_block [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_iszero_reject [propext, Classical.choice, Quot.sound]
+#assert_axioms exec_guard_iszero_lt_reject [propext, Classical.choice, Quot.sound]
 #assert_axioms helperBody_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_length [propext, Classical.choice, Quot.sound]
 #assert_axioms fwdEnv_get_mptr [propext, Classical.choice, Quot.sound]
