@@ -875,7 +875,7 @@ theorem ecPairingBodyLit_product_runs (product : PairingProduct)
     (hdisj4 : (scratch % 2^256) + 768 ≤ (neg % 2^256) ∨ (neg % 2^256) + 256 ≤ (scratch % 2^256))
     (hg2 : g2 < 2^256) (hneg : neg < 2^256) (hscratchWin : scratch + 768 < 2^256) :
     AllRuns funs [("success", (1 : U256)), ("lhs_mptr", lhsW),
-      ("rhs_mptr", rhsW), ("ret", (0 : U256))] st
+      ("rhs_mptr", rhsW), ("ret", (Bridge.Dialect c g).zero)] st
       (ecPairingBodyLit scratch g2 neg gas 0x0f 768 32 errPre errProof)
       (fun V' st' o => Hold (
         (o = .halt ∧ Reverted st') ∨
