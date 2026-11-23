@@ -127,6 +127,7 @@ alone; D1 and A6 need the same schedule walk, tracked once at widths and once at
 | `readFrGroups` / **`runsAll_readFrGroups`** | the scalar twin: `counts.sum = Qs.length` gives `RunsAll (readFrGroups counts) (Qs.map Msg.fr)`; the eval-block loops are instances |
 | **`runsAll_readG1Groups_append`** | concatenating count lists composes the group reader: `RunsAll (readG1Groups (c₁ ++ c₂)) (Qs₁.map g1 ++ Qs₂.map g1)` |
 | **`runsAll_readFrGroups_append`** | the scalar twin: `RunsAll (readFrGroups (c₁ ++ c₂)) (Qs₁.map fr ++ Qs₂.map fr)` |
+| `readGroupSeq` / `GroupsMatch` / **`runsAll_readGroupSeq`** | the mixed schedule: any list of `(slot, count)` groups whose message groups match consumes `groups.flatten`; the parser's whole advice→…→pi sequence is an instance once its counts are listed |
 
 This is the consumption/cursor counterpart of D1's `PresWidthSeq` (which has no closure layer yet).
 The residual is exactly the loop walk: each parser loop's `foldlM`/`mapM` must be flattened into

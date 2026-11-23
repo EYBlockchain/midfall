@@ -1504,6 +1504,87 @@ theorem runsAll_readFrGroups_append (E : VerifierEnv p G₁ G₂ Gₜ) :
       · intro _
         exact ih counts₂ (Qs₁.drop n) Qs₂ hlen₂ h₂
 
+/-- A mixed schedule of homogeneous groups: one `(slot, count)` pair per group. -/
+def readGroupSeq (E : VerifierEnv p G₁ G₂ Gₜ) : List (WireSlot × Nat) → TranscriptM Unit
+  | [] => pure ()
+  | (s, n) :: rest =>
+      (match s with
+       | .g1 => (tmReadN (hashableG1 E.g1) n : TranscriptM (Array G₁)) >>= fun _ => pure ()
+       | .fr => (tmReadN (hashableFr (p := p)) n : TranscriptM (Array (Fr p))) >>= fun _ => pure ())
+      >>= fun _ => readGroupSeq E rest
+
+/-- The message groups match a group schedule: count and slot. -/
+def GroupsMatch : List (WireSlot × Nat) → List (List (Msg (Fr p) G₁)) → Prop
+  | [], [] => True
+  | (s, n) :: ss, g :: gs => g.length = n ∧ (∀ m ∈ g, Msg.slot m = s) ∧ GroupsMatch ss gs
+  | _, _ => False
+
+theorem runsAll_readGroupSeq (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (seq : List (WireSlot × Nat)) (groups : List (List (Msg (Fr p) G₁))),
+      GroupsMatch (p := p) (G₁ := G₁) seq groups →
+      RunsAll E (readGroupSeq E seq) groups.flatten := by
+  intro seq
+  induction seq with
+  | nil =>
+      intro groups h
+      cases groups with
+      | nil => simpa only [readGroupSeq, List.flatten] using RunsAll.pure E ()
+      | cons g gs => cases h
+  | cons sn ss ih =>
+      intro groups h
+      obtain ⟨s, n⟩ := sn
+      cases groups with
+      | nil => cases h
+      | cons g gs =>
+          obtain ⟨hlen, hslot, hmatch⟩ := h
+          cases s with
+          | g1 =>
+              have hmap : g.map Msg.slot = List.replicate n WireSlot.g1 := by
+                rw [← hlen]
+                calc g.map Msg.slot = g.map (fun _ => WireSlot.g1) :=
+                      List.map_congr_left hslot
+                  _ = List.replicate g.length WireSlot.g1 := List.map_const ..
+              obtain ⟨Qs, hg, hQlen⟩ := eq_map_g1_of_slots g n hmap
+              rw [readGroupSeq]
+              show RunsAll E
+                (((tmReadN (hashableG1 E.g1) n : TranscriptM (Array G₁)) >>= fun _ => pure ())
+                  >>= fun _ => readGroupSeq E ss) ((g :: gs).flatten)
+              refine RunsAll.bind E ?_ (fun _ => ih gs hmatch)
+              rw [hg]
+              have hstep : RunsAll E ((tmReadN (hashableG1 E.g1) n : TranscriptM (Array G₁)))
+                  (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) := by
+                intro t pref rest hbuf hpos hp henc hwidth
+                rw [← ByteArray.append_assoc] at hbuf
+                obtain ⟨arr, t', hrun, hpos', hbuf'⟩ :=
+                  tmReadN_g1_wire E n t pref Qs rest hQlen hbuf hpos hp henc hwidth
+                refine ⟨arr, t', hrun, hbuf', ?_⟩
+                simpa only [List.map_map, Function.comp_def] using hpos'
+              simpa only [List.append_nil] using
+                (RunsAll.bind E hstep (fun _ => RunsAll.pure E ()))
+          | fr =>
+              have hmap : g.map Msg.slot = List.replicate n WireSlot.fr := by
+                rw [← hlen]
+                calc g.map Msg.slot = g.map (fun _ => WireSlot.fr) :=
+                      List.map_congr_left hslot
+                  _ = List.replicate g.length WireSlot.fr := List.map_const ..
+              obtain ⟨xs, hg, hxlen⟩ := eq_map_fr_of_slots g n hmap
+              rw [readGroupSeq]
+              show RunsAll E
+                (((tmReadN (hashableFr (p := p)) n : TranscriptM (Array (Fr p))) >>= fun _ => pure ())
+                  >>= fun _ => readGroupSeq E ss) ((g :: gs).flatten)
+              refine RunsAll.bind E ?_ (fun _ => ih gs hmatch)
+              rw [hg]
+              have hstep : RunsAll E ((tmReadN (hashableFr (p := p)) n : TranscriptM (Array (Fr p))))
+                  (xs.map (fun x => (Msg.fr x : Msg (Fr p) G₁))) := by
+                intro t pref rest hbuf hpos hp henc hwidth
+                rw [← ByteArray.append_assoc] at hbuf
+                obtain ⟨arr, t', hrun, hpos', hbuf'⟩ :=
+                  tmReadN_fr_wire E n t pref xs rest hxlen hbuf hpos hp
+                refine ⟨arr, t', hrun, hbuf', ?_⟩
+                simpa only [List.map_map, Function.comp_def] using hpos'
+              simpa only [List.append_nil] using
+                (RunsAll.bind E hstep (fun _ => RunsAll.pure E ()))
+
 /-- `transcriptOf` starts at cursor 0 with exactly `wireMsgs` in the buffer. -/
 theorem transcriptOf_buffer {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
