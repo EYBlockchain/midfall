@@ -93,6 +93,7 @@ import Midfall.Instances.ValidV3InhabitationF1Completion
 import Midfall.Instances.ValidV3SyntheticInhabitant
 import Midfall.Instances.PayloadPointsF1
 import Midfall.Instances.GeneratorDone
+import Midfall.Instances.ValidV3F1Real
 import Midfall.Instances.PoseidonPins
 import Midfall.Instances.ConstsKats
 import Midfall.Generator.Vk
