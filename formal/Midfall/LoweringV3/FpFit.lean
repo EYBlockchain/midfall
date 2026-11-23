@@ -282,6 +282,38 @@ theorem pairingFit_of_staticWorkingSetFits (R : Render p G₁ G₂ Gₜ) (hR : V
 theorem PG_PAIRINGFIT_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) : PG_PAIRINGFIT R :=
   pairingFit_of_staticWorkingSetFits R hR
 
+/-- The clean slice reads the left pairing slot back from its emitted
+    `BitVec.ofNat 256` literal; the fit bridge supplies the bound. -/
+theorem pairingLhsMptr_toNat_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)).toNat =
+      ptrAddr R.pv.memory.pairingLhsMptr := by
+  have h := (MemoryPairs.ofNat_toNat_iff_lt (cAddr R.pv.memory.pairingLhsMptr)).mpr
+    (PG_PAIRINGFIT_of_valid R hR).1
+  simpa [cAddr, ptrAddr, Midfall.Generator.ptrValue] using h
+
+/-- The clean slice reads the right pairing slot back from its emitted
+    `BitVec.ofNat 256` literal; the fit bridge supplies the bound. -/
+theorem pairingRhsMptr_toNat_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr)).toNat =
+      ptrAddr R.pv.memory.pairingRhsMptr := by
+  have h := (MemoryPairs.ofNat_toNat_iff_lt (cAddr R.pv.memory.pairingRhsMptr)).mpr
+    (PG_PAIRINGFIT_of_valid R hR).2.1
+  simpa [cAddr, ptrAddr, Midfall.Generator.ptrValue] using h
+
+/-- **THE CLEAN SLICE CONSUMES THE FIT BRIDGE.** `block_live`'s finalPairing case
+    (`Totality.block_live_finalPairing_of_body`) previously carried the two
+    `BitVec.ofNat` read-back equations as premises; they are now
+    `pairingLhsMptr_toNat_of_valid`/`pairingRhsMptr_toNat_of_valid`, so the case
+    depends only on the helper body run `FpBodyRun`. -/
+theorem block_live_finalPairing_of_body_fit
+    (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
+    (vkAddr : U256) (cd : Bytes)
+    (hbody : FpBodyRun R product) :
+    BlockLive R .finalPairing H vkAddr product cd :=
+  block_live_finalPairing_of_body R product hR hpc H vkAddr cd hbody
+    (pairingRhsMptr_toNat_of_valid R hR) (pairingLhsMptr_toNat_of_valid R hR)
+
 #assert_axioms Midfall.LoweringV3.thetaStartOf_le_traceU256Mptr
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.pairingLhsMptr_lt_of_fit
@@ -295,6 +327,12 @@ theorem PG_PAIRINGFIT_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) : 
 #assert_axioms Midfall.LoweringV3.pairingFit_of_staticWorkingSetFits
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PG_PAIRINGFIT_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.pairingLhsMptr_toNat_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.pairingRhsMptr_toNat_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.block_live_finalPairing_of_body_fit
   [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3
