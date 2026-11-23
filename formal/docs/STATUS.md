@@ -237,32 +237,37 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `086469e`: D2 is merged (`Midfall/Generator/Certified.lean`, `CertMeasure`, `CertProbes`) and five
-generation peels are closed. The register is **110 rows / 109 sorried declarations / 11 ROOT /
-37 CERT / 0 REFUTED**; the D2 KAT is green (**1648 annotated checks / 120 files**). A4's
-`runBody_mono` (ST.13) is **PROVED** and merged; A5's 8-statement staticcall walk, tail, and prelude
-head are merged; A9's PCS block-2 semantics and `.pcs` slice shape are merged; A11's guard helpers,
-trim, and V3 slice faces are merged; A12's `block_live` traceReturn and vkLoading cases are merged
-(2 of 7 blocks). `Midfall.LoweringV3.GeneratorTheorem` rebuilds (2167 jobs), `check_orphans` is 236,
-and the root's `assert_axioms` remain the standard four (native `[]`). The
-`ChallengesGood.xNonzero` field is pinned in `check_statement_fingerprints.py`; the full `checks.sh`
-gate is green.
+At `aeb74b2`: D2 is merged and five generation peels are closed; the register is **109 sorried
+declarations / 11 ROOT / 36 CERT / 0 REFUTED** (109 rows in `SORRY.md`). A4's `runBody_mono` (ST.13)
+is **PROVED**; A5's 8-statement staticcall walk, tail, and prelude vocabulary are merged; A9's PCS
+block-1/block-2 semantics and generator Word bridge are merged; A11's guard helpers, trim, normal
+leaf, and V3 slice faces are merged; A12's `block_live` traceReturn and vkLoading cases are merged
+(2 of 7 blocks). The D2 KAT is green (**1648 annotated checks / 120 files**), quick gate and
+`checks.sh` are green, and the `ChallengesGood.xNonzero` statement pin is in place.
 
 The vacuity report remains the non-vacuity ledger: the V3 root is **CONDITIONAL** (no `ValidV3`
 inhabitant), **VACUOUS at F1** (`f1_ValidV3_false`), and `0 REFUTED / 1 VACUOUS` is not a non-vacuity
-certificate. The report's blockers are being worked separately.
+certificate. The shortest path therefore runs **`ValidV3` and the root rows together**; the
+`end_to_end` and generator layers follow the same dependencies.
 
-Six live long-running lanes (the user's cap):
-- **A4** lag rows `lag_blockSim`/`lag_blockProgS` + T3.9.h.
-- **A5** `batch_invert_summary` / `BatchInvertPost` at `r = ofNat blsR`, unblocking A4.
-- **A6** transcriptParser loop flattening → `snapshotAlgebraRun_wire` → `tp_agrees`.
-- **A9** PCS blocks 1/3/4/5/6 + fault arms + `decode_exists` coverage.
-- **A11** `wp_run` leave-arm trim → G1/G2 wire → `fp_blockSim`/`fp_blockProgS`.
-- **D2** the six generation-peel CERT projections (then `env_nG2`).
-- **QVM** segment/spill/validator is with the separate external agent.
+### Six-lane critical path (user cap)
 
-Paused, resumable from their worktrees/sessions: **A12** `block_live`, **B4** `ValidV3` inhabitant,
-**B3** payload point fields, **D1P/D1A** `EndToEnd` widths, **Port audit** D-GATE6/7,
-**Calldata**, **CERT2**, **DG.4** `Done`.
+Phase 1 (live now):
+- **B4** `ValidV3`: `f1GeneratedRender` clause transfer + isolated payload point half + synthetic/re-sourced witness.
+- **B3** payload point fields: real `g1Base`/`g2Base`/`negSG2`, the commitment decoder/`vkF1` re-source, and `sG2gen` bridge.
+- **A5** `batch_invert_summary` / `BatchInvertPost` at `r = ofNat blsR` (unblocks lag).
+- **A11** `ec_pairing` call inversion → G1/G2 wire → `fp_blockSim`/`fp_blockProgS`.
+- **A6** transcriptParser: `readGroupSeq` run equalities → per-phase counts → `tp_agrees`.
+- **A9** PCS blocks 3/4/5/6 + fault arms + `decode_exists` coverage.
+
+Phase 2, as A5/A11 close: **A4** lag fixed segments/rows, **D1P/D1A** `EndToEnd` widths,
+then **A12** `block_live` (2/7 done) and the port audit D-GATE6 bridge.
+
+Phase 3, as rows/ValidV3 close: **D2** CERT (`env_nG2` + remaining 36), **DG.4** `Done`/`ArtifactEq`,
+**calldata** and the final full gate.
+
+Paused, resumable from their worktrees/sessions: D2 (env_nG2), A4 (lag), A12 (`block_live`),
+D1P/D1A (`EndToEnd`), port audit D-GATE6/7, calldata, CERT2, DG.4. QVM is with the separate external
+agent.
 
 The root remains **11 / 5**. No row, bundle, `ValidV3`, `ValidW`, or root hypothesis was added.
