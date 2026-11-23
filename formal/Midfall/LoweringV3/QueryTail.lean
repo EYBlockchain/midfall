@@ -81,6 +81,14 @@ theorem queries_last_rotation (meta_ : ConstraintSystemMeta) (data : Data)
   rw [queries_getLast?_some meta_ data qs hq hsrc hqr]
   rfl
 
+/-- The literal `pcsQueries` construction in `fromConstraintSystem` ends in
+    `PcsQuerySource.linearization`, so its last source is definitional once the
+    final `validate` wrapper is peeled. -/
+theorem pcsQueries_append_linearization_last (l : List PcsQuerySource) :
+    (l ++ [PcsQuerySource.linearization]).getLast? =
+      some PcsQuerySource.linearization := by
+  simp
+
 theorem queryFromPlan_linearization (meta_ : ConstraintSystemMeta) (data : Data) :
     queryFromPlan .linearization meta_ data =
       .ok (Query.new data.computedQuotientComm 0 data.computedQuotientEval) := rfl
