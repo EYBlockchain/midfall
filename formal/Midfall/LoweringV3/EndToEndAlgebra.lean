@@ -1504,6 +1504,39 @@ theorem fromProtocol_evals_itemCount (protocol : Midfall.Generator.ProtocolPlan)
     cases h6
     rfl
 
+/-- **THE PARSER-SIDE ADVICE ITEM COUNT.** `fromProtocol` reserves one advice
+    section per entry of `protocol.numUserAdvices`, in phase order, so the i-th
+    section carries the i-th user-advice count. This is the advice half of the
+    `TpLayoutFacts` peel (`TranscriptRows.tp_fromProtocol` only records the
+    section-shape facts); the schedule walk needs the per-index count to identify
+    the parser's per-phase `tmReadN` widths with the plan's advice read groups. -/
+theorem fromProtocol_advice_itemCount
+    (protocol : Midfall.Generator.ProtocolPlan) (numEvals numPointSets : Nat)
+    (L : Midfall.Generator.ProofCalldataLayout)
+    (h : Midfall.Generator.ProofCalldataLayout.fromProtocol protocol
+        Midfall.Generator.abiVerifyProofProofCptr numEvals numPointSets = .ok L)
+    (i : Nat) (s : Midfall.Generator.ProofSection)
+    (hs : L.advicePhases[i]? = some s) :
+    ∃ c, protocol.numUserAdvices[i]? = some c ∧ s.itemCount = c := by
+  rw [Midfall.Generator.ProofCalldataLayout.fromProtocol] at h
+  simp only [Bind.bind] at h
+  obtain ⟨x1, hadv, h1⟩ := AlgebraWidths.except_bind_ok h
+  obtain ⟨x2, _, h2⟩ := AlgebraWidths.except_bind_ok h1
+  obtain ⟨x3, _, h3⟩ := AlgebraWidths.except_bind_ok h2
+  obtain ⟨x4, _, h4⟩ := AlgebraWidths.except_bind_ok h3
+  obtain ⟨x5, _, h5⟩ := AlgebraWidths.except_bind_ok h4
+  obtain ⟨x6, _, h6⟩ := AlgebraWidths.except_bind_ok h5
+  by_cases hc : (x6.2.1 != protocol.proof.commitments.length) = true
+  · rw [ite_eq_left hc] at h6
+    obtain ⟨r, hr, _⟩ := AlgebraWidths.except_bind_ok h6
+    cases hr
+  · rw [ite_eq_right (by simpa using hc)] at h6
+    cases h6
+    exact Midfall.LoweringV3.TranscriptRows.foldlM_take_nth protocol
+      Midfall.Generator.CommitmentRead.advice "advice phase" protocol.numUserAdvices
+      (([] : List Midfall.Generator.ProofSection), 0, Midfall.Generator.abiVerifyProofProofCptr)
+      x1 i s hadv (by simp) (by simpa using hs)
+
 /-- `fromProtocol`'s `qEvals` section has the point-set count it was handed. -/
 theorem fromProtocol_qEvals_itemCount (protocol : Midfall.Generator.ProtocolPlan) (numEvals numPointSets : Nat)
     (L : Midfall.Generator.ProofCalldataLayout)
