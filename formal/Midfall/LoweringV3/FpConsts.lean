@@ -101,6 +101,31 @@ theorem ecPairingDecl_eq_lit (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (c :
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.consts_lookup_ERR_PROOF_REJECTED
   [propext, Classical.choice, Quot.sound] native []
+
+theorem consts_lookup_PAIRING_LHS_MPTR (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.consts.lookup "PAIRING_LHS_MPTR" =
+      some (Midfall.LoweringV3.cAddr R.pv.memory.pairingLhsMptr) := by
+  apply Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR
+  cases h1 : R.model.expectedVkCodehash <;>
+  cases h2 : R.model.quotientExternal <;>
+  cases h3 : R.model.expectedQuotientCodehash <;>
+  cases h4 : R.model.expectedHasAccumulator <;>
+    simp [Midfall.LoweringV3.expectedConsts, h1, h2, h3, h4, List.lookup]
+
+theorem consts_lookup_PAIRING_RHS_MPTR (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.consts.lookup "PAIRING_RHS_MPTR" =
+      some (Midfall.LoweringV3.cAddr R.pv.memory.pairingRhsMptr) := by
+  apply Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR
+  cases h1 : R.model.expectedVkCodehash <;>
+  cases h2 : R.model.quotientExternal <;>
+  cases h3 : R.model.expectedQuotientCodehash <;>
+  cases h4 : R.model.expectedHasAccumulator <;>
+    simp [Midfall.LoweringV3.expectedConsts, h1, h2, h3, h4, List.lookup]
+
+#assert_axioms Midfall.LoweringV3.consts_lookup_PAIRING_LHS_MPTR
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.consts_lookup_PAIRING_RHS_MPTR
+  [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.ecPairingDecl_eq_lit
   [propext, Classical.choice, Quot.sound] native []
 
