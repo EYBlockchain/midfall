@@ -1261,6 +1261,18 @@ theorem map_width_slots (g1 : G1Codec G₁) (nNonQuot nbQuot nEval nPS : Nat) :
     hashableG1_width, hashableFr_width, Midfall.g1CompressedWidth]
   simp [Midfall.g1CompressedWidth]
 
+/-- The `Native.prepareWith` = `Verifier.prepare` definitional bridge: the
+    native wrapper is the KZG-instantiated verifier on the array-converted
+    committed/instance arguments. -/
+theorem prepareWith_eq_verifierPrepare (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (vk : VerifyingKey (Fr p) G₁)
+    (committed : List (List G₁)) (inst : List (List (List (Fr p)))) :
+    Midfall.Halo2.prepareWith (Gₜ := Gₜ) E F vk committed inst =
+      Verifier.prepare (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.delta F
+        (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field F E.fewerPointSetsRuntime) vk
+        (committed.map (fun r => r.toArray)).toArray
+        (inst.map (fun row => (row.map (fun col => col.toArray)).toArray)).toArray := rfl
+
 /-- **`PrepareLogSlots` from the exact parts.** `hParse` is A6's `parseTrace`
     schedule (the commitment prefix), `hMulti` is the KZG point-set count
     residual, and `hSlots` is the plan-slot identity with the protocol counts
