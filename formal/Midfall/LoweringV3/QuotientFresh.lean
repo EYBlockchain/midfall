@@ -576,4 +576,44 @@ theorem kzgCommitBeq_linear_offdiag
   exact (Midfall.Generator.ecPointBeq_quotient_of_classification
     x'.2.comm hclass hne).symm
 
+
+theorem all_zip_self_decEq (l : List G₁)
+    (h : ∀ x ∈ l, decideBool (P.decEqG₁ x x) = true) :
+    (l.zip l).all (fun x => decideBool (P.decEqG₁ x.1 x.2)) = true := by
+  induction l with
+  | nil => rfl
+  | cons a as ih =>
+      simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true]
+      exact ⟨h a (by simp), ih (fun x hx => h x (by simp [hx]))⟩
+
+theorem all_zip_self_beq (l : List (Fr p)) (h : ∀ x ∈ l, (x == x) = true) :
+    (l.zip l).all (fun x => x.1 == x.2) = true := by
+  induction l with
+  | nil => rfl
+  | cons a as ih =>
+      simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true]
+      exact ⟨h a (by simp), ih (fun x hx => h x (by simp [hx]))⟩
+
+theorem kzgCommitBeq_linear_self (pts : Array G₁) (scals : Array (Fr p))
+    (labs : Array CommitmentLabel)
+    (hpts : ∀ x ∈ pts.toList, decideBool (P.decEqG₁ x x) = true)
+    (hsc : ∀ x ∈ scals.toList, (x == x) = true) :
+    kzgCommitBeq (G₂ := G₂) (Gₜ := Gₜ) (P := P)
+      (.linear pts scals labs) (.linear pts scals labs) = true := by
+  unfold kzgCommitBeq
+  simp only [beq_self_eq_true, Bool.true_and]
+  rw [all_zip_self_decEq pts.toList hpts, all_zip_self_beq scals.toList hsc]
+  rfl
+
+/-- The diagonal linearization case: the verifier's `.linear` self-equality is
+    `true`, and so is the generator's quotient-pointer self-equality. -/
+theorem kzgCommitBeq_linear_self_eq (pts : Array G₁) (scals : Array (Fr p))
+    (labs : Array CommitmentLabel) (c : Midfall.Generator.EcPoint)
+    (hpts : ∀ x ∈ pts.toList, decideBool (P.decEqG₁ x x) = true)
+    (hsc : ∀ x ∈ scals.toList, (x == x) = true) :
+    kzgCommitBeq (G₂ := G₂) (Gₜ := Gₜ) (P := P)
+        (.linear pts scals labs) (.linear pts scals labs) =
+      Midfall.Generator.ecPointBeq c c := by
+  rw [kzgCommitBeq_linear_self pts scals labs hpts hsc, Midfall.Generator.ecPointBeq_self]
+
 end Midfall.Halo2

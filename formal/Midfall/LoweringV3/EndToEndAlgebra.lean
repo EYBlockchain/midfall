@@ -4701,6 +4701,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms kzgCommitBeq_linear_offdiag
   [propext, Classical.choice, Quot.sound]
+#assert_axioms kzgCommitBeq_linear_self
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms kzgCommitBeq_linear_self_eq
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
