@@ -1,4 +1,5 @@
 import Midfall.LoweringV2.Blocks.EcPairing
+import Midfall.LoweringV2.Stages
 set_option autoImplicit false
 
 namespace Midfall.LoweringV2.Blocks.EcPairing
@@ -9,6 +10,58 @@ open Midfall.LoweringV2 Midfall.LoweringV2.Blocks.TraceReturn
 open Midfall.Yul.Wp Midfall.Yul.WpBridge Midfall.Yul.WpTac Midfall.Yul.VKP
 
 variable {c : ExternalCalls} {g : ExternalGas}
+
+
+/-- The four `mcopy` states of the helper, as top-level defs so their memory projections unfold one
+    step at a time (`dsimp only`), instead of one deep `rfl`. -/
+def fpStep1 (st : EvmState) (scratch : Nat) (lhs : U256) : EvmState :=
+  { touchMemory2 st (BitVec.ofNat 256 scratch).toNat (0x80 : U256).toNat lhs.toNat
+      (0x80 : U256).toNat with
+    memory := copyWithin st.memory (BitVec.ofNat 256 scratch).toNat lhs.toNat 0x80 }
+
+def fpStep2 (st : EvmState) (scratch : Nat) (g2 : Nat) : EvmState :=
+  { touchMemory2 st ((BitVec.ofNat 256 scratch + (0x80 : U256)).toNat) (0x100 : U256).toNat
+      (BitVec.ofNat 256 g2).toNat (0x100 : U256).toNat with
+    memory := copyWithin st.memory ((BitVec.ofNat 256 scratch + (0x80 : U256)).toNat)
+      (BitVec.ofNat 256 g2).toNat 0x100 }
+
+def fpStep3 (st : EvmState) (scratch : Nat) (rhs : U256) : EvmState :=
+  { touchMemory2 st ((BitVec.ofNat 256 scratch + (0x180 : U256)).toNat) (0x80 : U256).toNat
+      rhs.toNat (0x80 : U256).toNat with
+    memory := copyWithin st.memory ((BitVec.ofNat 256 scratch + (0x180 : U256)).toNat)
+      rhs.toNat 0x80 }
+
+def fpStep4 (st : EvmState) (scratch : Nat) (neg : Nat) : EvmState :=
+  { touchMemory2 st ((BitVec.ofNat 256 scratch + (0x200 : U256)).toNat) (0x100 : U256).toNat
+      (BitVec.ofNat 256 neg).toNat (0x100 : U256).toNat with
+    memory := copyWithin st.memory ((BitVec.ofNat 256 scratch + (0x200 : U256)).toNat)
+      (BitVec.ofNat 256 neg).toNat 0x100 }
+
+
+theorem fpStep1_env (st : EvmState) (s : Nat) (l : U256) : (fpStep1 st s l).env = st.env := by
+  unfold fpStep1
+  rw [touchMemory2, Midfall.LoweringV2.touchMemory_env, Midfall.LoweringV2.touchMemory_env]
+theorem fpStep2_env (st : EvmState) (s : Nat) (g2 : Nat) : (fpStep2 st s g2).env = st.env := by
+  unfold fpStep2
+  rw [touchMemory2, Midfall.LoweringV2.touchMemory_env, Midfall.LoweringV2.touchMemory_env]
+theorem fpStep3_env (st : EvmState) (s : Nat) (r : U256) : (fpStep3 st s r).env = st.env := by
+  unfold fpStep3
+  rw [touchMemory2, Midfall.LoweringV2.touchMemory_env, Midfall.LoweringV2.touchMemory_env]
+theorem fpStep4_env (st : EvmState) (s : Nat) (n : Nat) : (fpStep4 st s n).env = st.env := by
+  unfold fpStep4
+  rw [touchMemory2, Midfall.LoweringV2.touchMemory_env, Midfall.LoweringV2.touchMemory_env]
+theorem fpStep1_halted (st : EvmState) (s : Nat) (l : U256) : (fpStep1 st s l).halted = st.halted := by
+  unfold fpStep1
+  rw [touchMemory2, Midfall.LoweringV2.touchMemory_halted, Midfall.LoweringV2.touchMemory_halted]
+theorem fpStep2_halted (st : EvmState) (s : Nat) (g2 : Nat) : (fpStep2 st s g2).halted = st.halted := by
+  unfold fpStep2
+  rw [touchMemory2, Midfall.LoweringV2.touchMemory_halted, Midfall.LoweringV2.touchMemory_halted]
+theorem fpStep3_halted (st : EvmState) (s : Nat) (r : U256) : (fpStep3 st s r).halted = st.halted := by
+  unfold fpStep3
+  rw [touchMemory2, Midfall.LoweringV2.touchMemory_halted, Midfall.LoweringV2.touchMemory_halted]
+theorem fpStep4_halted (st : EvmState) (s : Nat) (n : Nat) : (fpStep4 st s n).halted = st.halted := by
+  unfold fpStep4
+  rw [touchMemory2, Midfall.LoweringV2.touchMemory_halted, Midfall.LoweringV2.touchMemory_halted]
 
 /-- The helper's entry environment, as the call rule builds it. -/
 abbrev fpEntry (lhsW rhsW : U256) : VEnv (Bridge.Dialect c g) :=
@@ -41,7 +94,14 @@ theorem ecPairing_prefix_run (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState
       st3.env = st.env ∧ st3.halted = st.halted ∧
       VEnv.get V3 "ret" = some (1 : U256) ∧
       VEnv.get V3 "scratch" = some (BitVec.ofNat 256 scratch) ∧
-      VEnv.get V3 "lhs_mptr" = some lhsW ∧ VEnv.get V3 "rhs_mptr" = some rhsW := by
+      VEnv.get V3 "lhs_mptr" = some lhsW ∧ VEnv.get V3 "rhs_mptr" = some rhsW ∧
+      st3.memory = copyWithin
+        (copyWithin
+          (copyWithin
+            (copyWithin st.memory (BitVec.ofNat 256 scratch).toNat lhsW.toNat 0x80)
+            ((BitVec.ofNat 256 scratch + (0x80 : U256)).toNat) (BitVec.ofNat 256 g2).toNat 0x100)
+          ((BitVec.ofNat 256 scratch + (0x180 : U256)).toNat) rhsW.toNat 0x80)
+        ((BitVec.ofNat 256 scratch + (0x200 : U256)).toNat) (BitVec.ofNat 256 neg).toNat 0x100 := by
   -- V1: ret := success
   let V1 : VEnv (Bridge.Dialect c g) := VEnv.setMany (fpEntry (c := c) (g := g) lhsW rhsW) ["ret"] [1]
   have h1 : ExecStmt (Bridge.Dialect c g) funs (fpEntry (c := c) (g := g) lhsW rhsW) st
@@ -71,17 +131,10 @@ theorem ecPairing_prefix_run (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState
       (Step.lit (D := Bridge.Dialect c g) (l := Literal.number scratch)) rfl
   -- the four mcopy states
   let sc : U256 := BitVec.ofNat 256 scratch
-  let st1 : EvmState := { touchMemory2 st (sc.toNat) ((0x80 : U256).toNat) lhsW.toNat
-      ((0x80 : U256).toNat) with memory := copyWithin st.memory sc.toNat lhsW.toNat 0x80 }
-  let st2 : EvmState := { touchMemory2 st1 ((sc + (0x80 : U256)).toNat) ((0x100 : U256).toNat)
-      ((BitVec.ofNat 256 g2).toNat) ((0x100 : U256).toNat) with
-    memory := copyWithin st1.memory (sc + (0x80 : U256)).toNat (BitVec.ofNat 256 g2).toNat 0x100 }
-  let st3 : EvmState := { touchMemory2 st2 ((sc + (0x180 : U256)).toNat) ((0x80 : U256).toNat)
-      rhsW.toNat ((0x80 : U256).toNat) with
-    memory := copyWithin st2.memory (sc + (0x180 : U256)).toNat rhsW.toNat 0x80 }
-  let st4 : EvmState := { touchMemory2 st3 ((sc + (0x200 : U256)).toNat) ((0x100 : U256).toNat)
-      ((BitVec.ofNat 256 neg).toNat) ((0x100 : U256).toNat) with
-    memory := copyWithin st3.memory (sc + (0x200 : U256)).toNat (BitVec.ofNat 256 neg).toNat 0x100 }
+  let st1 : EvmState := fpStep1 st scratch lhsW
+  let st2 : EvmState := fpStep2 st1 scratch g2
+  let st3 : EvmState := fpStep3 st2 scratch rhsW
+  let st4 : EvmState := fpStep4 st3 scratch neg
   have hmc1 : ExecStmt (Bridge.Dialect c g) funs V2 st
       (Stmt.exprStmt (Expr.builtin Op.mcopy
         [Expr.var "scratch", Expr.var "lhs_mptr", Expr.lit (.number 0x80)])) V2 st1 .normal := by
@@ -178,13 +231,22 @@ theorem ecPairing_prefix_run (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState
       rfl
     · simp only [builtinWithExternal, stepOp]
       rfl
-  refine ⟨V2, st4, ?_, rfl, rfl, ?_, ?_, ?_, ?_⟩
+  refine ⟨V2, st4, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact Step.seqCons h1 (Step.seqCons h2 (Step.seqCons h3 (Step.seqCons hmc1
       (Step.seqCons hmc2 (Step.seqCons hmc3 (Step.seqCons hmc4 Step.seqNil))))))
+  · rw [show st4 = fpStep4 st3 scratch neg from rfl, fpStep4_env,
+      show st3 = fpStep3 st2 scratch rhsW from rfl, fpStep3_env,
+      show st2 = fpStep2 st1 scratch g2 from rfl, fpStep2_env,
+      show st1 = fpStep1 st scratch lhsW from rfl, fpStep1_env]
+  · rw [show st4 = fpStep4 st3 scratch neg from rfl, fpStep4_halted,
+      show st3 = fpStep3 st2 scratch rhsW from rfl, fpStep3_halted,
+      show st2 = fpStep2 st1 scratch g2 from rfl, fpStep2_halted,
+      show st1 = fpStep1 st scratch lhsW from rfl, fpStep1_halted]
   · rfl
   · rfl
   · rfl
   · rfl
+  · dsimp only [st4, st3, st2, st1, fpStep4, fpStep3, fpStep2, fpStep1]
 
 
 
@@ -287,7 +349,7 @@ theorem fp_venv_get_set_ne {D : YulSemantics.Dialect} [DecidableEq D.Value] {V :
     1 (the honest response on a valid frame with a true product), the five statements after the
     staticcall run normally with `ret = 1`; the two `fail` arms are not taken. -/
 theorem ecPairing_tail_normal (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState)
-    (V : VEnv (Bridge.Dialect c g)) (scratch errProof : Nat)
+    (V : VEnv (Bridge.Dialect c g)) (scratch errPre errProof : Nat)
     (hret : VEnv.get V "ret" = some (1 : U256))
     (hscratch : VEnv.get V "scratch" = some (BitVec.ofNat 256 scratch))
     (hlen : st.returndata.length = 32)
@@ -299,7 +361,7 @@ theorem ecPairing_tail_normal (funs : FunEnv (Bridge.Dialect c g)) (st : EvmStat
            [Expr.var "ret", Expr.builtin Op.eq
              [Expr.builtin Op.returndatasize [], Expr.lit (.number 32)]]),
          Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
-           [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errProof)])],
+           [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errPre)])],
          Stmt.assign ["ret"] (Expr.builtin Op.and
            [Expr.var "ret", Expr.builtin Op.eq
              [Expr.builtin Op.mload [Expr.var "scratch"], Expr.lit (.number 1)]]),
@@ -351,7 +413,7 @@ theorem ecPairing_tail_normal (funs : FunEnv (Bridge.Dialect c g)) (st : EvmStat
     simp only [builtinWithExternal, stepOp, un, b2w]; rfl
   have hg1 : ExecStmt (Bridge.Dialect c g) funs V1 st
       (Stmt.cond (Expr.builtin Op.iszero [Expr.var "ret"])
-        [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errProof)])]) V1 st .normal :=
+        [Stmt.exprStmt (Expr.call "fail" [Expr.lit (.number errPre)])]) V1 st .normal :=
     Step.ifFalse hz1 rfl
   let V2 : VEnv (Bridge.Dialect c g) := VEnv.setMany V1 ["ret"] [1]
   have hml : EvalExpr (Bridge.Dialect c g) funs V1 st
