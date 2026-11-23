@@ -300,19 +300,123 @@ theorem pairingRhsMptr_toNat_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV
     (PG_PAIRINGFIT_of_valid R hR).2.1
   simpa [cAddr, ptrAddr, Midfall.Generator.ptrValue] using h
 
+/-- **THE PAIRING SLOT FLOORS, FROM THE LAYOUT.** `pairingLhsMptr` is theta start `+ 44` words and
+    `pairingRhsMptr` theta start `+ 48` words, and the theta start is at or after the VK pointer,
+    whose floor is `0x1560`. These are the lower bounds the four-copy disjointness needs. -/
+theorem cAddr_eq_ptrAddr (q : Ptr) : cAddr q = ptrAddr q := rfl
+
+theorem pairingLhsMptr_floor_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    0x1560 ≤ cAddr R.pv.memory.pairingLhsMptr := by
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, hvk, -⟩ := plan_size_of_generated hR.generated
+  have hvkfloor := generated_vkMptr_floor R hR
+  rw [hmem] at hvkfloor ⊢
+  exact Nat.le_trans hvkfloor
+    (Nat.le_trans (vkMptr_le_thetaStartOf meta_ R.pv.vk vkMptr config)
+      (by rw [pairingLhsMptr_eq]; exact Nat.le_add_right _ _))
+
+theorem pairingRhsMptr_floor_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    0x1560 ≤ cAddr R.pv.memory.pairingRhsMptr := by
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, hvk, -⟩ := plan_size_of_generated hR.generated
+  have hvkfloor := generated_vkMptr_floor R hR
+  rw [hmem] at hvkfloor ⊢
+  exact Nat.le_trans hvkfloor
+    (Nat.le_trans (vkMptr_le_thetaStartOf meta_ R.pv.vk vkMptr config)
+      (by rw [pairingRhsMptr_eq]; exact Nat.le_add_right _ _))
+
+theorem g2Base_floor_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    0x1560 ≤ cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.g2Base) := by
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, hvk, -⟩ := plan_size_of_generated hR.generated
+  have hvkfloor := generated_vkMptr_floor R hR
+  have hH := MemoryPairs.vkHeader_default_of_generated hR.generated
+  rw [hmem] at hvkfloor ⊢
+  rw [hH]
+  have hptr : ∃ n : ℕ,
+      ptrValue (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vkMptr =
+        Value.integer ↑n := by
+    refine ⟨vkBase, ?_⟩
+    rw [MemoryPairs.new_vkMptr, hvk]
+    rfl
+  rw [show cAddr (Ptr.add (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vkMptr
+      vkHeaderTemplateSlotsDefault.g2Base) =
+      ptrAddr (Ptr.add (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vkMptr
+        vkHeaderTemplateSlotsDefault.g2Base) from rfl]
+  rw [VkClean.ptrAddr_ptr_add_of_integer _ _ hptr]
+  omega
+
+theorem negSG2Base_floor_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    0x1560 ≤ cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.negSG2Base) := by
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, hvk, -⟩ := plan_size_of_generated hR.generated
+  have hvkfloor := generated_vkMptr_floor R hR
+  have hH := MemoryPairs.vkHeader_default_of_generated hR.generated
+  rw [hmem] at hvkfloor ⊢
+  rw [hH]
+  have hptr : ∃ n : ℕ,
+      ptrValue (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vkMptr =
+        Value.integer ↑n := by
+    refine ⟨vkBase, ?_⟩
+    rw [MemoryPairs.new_vkMptr, hvk]
+    rfl
+  rw [show cAddr (Ptr.add (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vkMptr
+      vkHeaderTemplateSlotsDefault.negSG2Base) =
+      ptrAddr (Ptr.add (VerifierMemoryLayout.new meta_ R.pv.vk vkMptr config).vkMptr
+        vkHeaderTemplateSlotsDefault.negSG2Base) from rfl]
+  rw [VkClean.ptrAddr_ptr_add_of_integer _ _ hptr]
+  omega
+
+/-- **THE BODY-RUN SIDE CONDITIONS AT THE CLEAN CALL SITE.** The scratch does not wrap
+    (`0x1240 + 768`), the two G2 addresses fit (`PG_PAIRINGFIT`), and all four source windows sit
+    at or above `0x1560`, past the scratch end `0x1540`. -/
+theorem fpBodyEnvFits_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    FpBodyEnvFits R (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr))
+      (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr)) := by
+  obtain ⟨hLfit, hRfit, hG2fit, hNfit⟩ := PG_PAIRINGFIT_of_valid R hR
+  have hscr := generated_finalPairingScratchMptr R hR
+  have hstart : R.pv.memory.finalPairingScratchMptr = 0x1240 := by rw [hscr]; rfl
+  have hscrLt : R.pv.memory.finalPairingScratchMptr + 768 < 2 ^ 256 := by rw [hstart]; decide
+  refine ⟨hscrLt, hG2fit, hNfit, ?_, ?_, ?_, ?_⟩
+  · left
+    rw [pairingRhsMptr_toNat_of_valid R hR, hstart, ← cAddr_eq_ptrAddr]
+    have := pairingRhsMptr_floor_of_valid R hR
+    omega
+  · left
+    rw [hstart]
+    have := g2Base_floor_of_valid R hR
+    omega
+  · left
+    rw [pairingLhsMptr_toNat_of_valid R hR, hstart, ← cAddr_eq_ptrAddr]
+    have := pairingLhsMptr_floor_of_valid R hR
+    omega
+  · left
+    rw [hstart]
+    have := negSG2Base_floor_of_valid R hR
+    omega
+
 /-- **THE CLEAN SLICE CONSUMES THE FIT BRIDGE.** `block_live`'s finalPairing case
     (`Totality.block_live_finalPairing_of_body`) previously carried the two
     `BitVec.ofNat` read-back equations as premises; they are now
-    `pairingLhsMptr_toNat_of_valid`/`pairingRhsMptr_toNat_of_valid`, so the case
-    depends only on the helper body run `FpBodyRun`. -/
+    `pairingLhsMptr_toNat_of_valid`/`pairingRhsMptr_toNat_of_valid`. `hfits` is the body-run
+    side-condition bundle (`fpBodyEnvFits_of_valid`). -/
 theorem block_live_finalPairing_of_body_fit
     (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
     (vkAddr : U256) (cd : Bytes)
-    (hbody : FpBodyRun R product) :
+    (hbody : FpBodyRun R product)
+    (hfits : FpBodyEnvFits R (BitVec.ofNat 256 (cAddr R.pv.memory.pairingRhsMptr))
+      (BitVec.ofNat 256 (cAddr R.pv.memory.pairingLhsMptr))) :
     BlockLive R .finalPairing H vkAddr product cd :=
-  block_live_finalPairing_of_body R product hR hpc H vkAddr cd hbody
+  block_live_finalPairing_of_body R product hR hpc H vkAddr cd hbody hfits
     (pairingRhsMptr_toNat_of_valid R hR) (pairingLhsMptr_toNat_of_valid R hR)
+
+/-- **THE finalPairing CASE OF `block_live`, CLOSED.** The body run is `Totality.fpBodyRun`; the
+    four source windows are the `FpFit` floors and the two pointer fits are `PG_PAIRINGFIT`. No
+    hypothesis beyond `ValidV3`, the pairing-product statement and the clean boundary's data. -/
+theorem block_live_finalPairing
+    (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
+    (vkAddr : U256) (cd : Bytes) :
+    BlockLive R .finalPairing H vkAddr product cd :=
+  block_live_finalPairing_of_body_fit R product hR hpc H vkAddr cd
+    (fpBodyRun R product) (fpBodyEnvFits_of_valid R hR)
 
 #assert_axioms Midfall.LoweringV3.thetaStartOf_le_traceU256Mptr
   [propext, Classical.choice, Quot.sound] native []
@@ -331,6 +435,19 @@ theorem block_live_finalPairing_of_body_fit
 #assert_axioms Midfall.LoweringV3.pairingLhsMptr_toNat_of_valid
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.pairingRhsMptr_toNat_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.cAddr_eq_ptrAddr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.pairingLhsMptr_floor_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.pairingRhsMptr_floor_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.g2Base_floor_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.negSG2Base_floor_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.block_live_finalPairing
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.fpBodyEnvFits_of_valid
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.block_live_finalPairing_of_body_fit
   [propext, Classical.choice, Quot.sound] native []

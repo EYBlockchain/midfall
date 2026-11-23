@@ -568,4 +568,73 @@ theorem ecPairing_tail_normal (funs : FunEnv (Bridge.Dialect c g)) (st : EvmStat
     rw [venv_setMany_fst, venv_setMany_fst, venv_setMany_fst]
 
 
+/-! ## The honest answer at 0x0f, as a computed response -/
+
+/-- `honestOf` at the pairing address, on a VALID frame, is the success response whose return
+    data is the pairing output word. This is `honestOf_pairing` read forwards. -/
+theorem honestOf_pairing_valid (product : PairingProduct) (req : YulSemantics.EVM.CallRequest)
+    (st : EvmState) (htarget : req.target = pairingAddress)
+    (hv : pairingValidInput (ByteArray.mk req.input.toArray) = true) :
+    honestOf (honestRelations product) req st =
+      some (ofOutcome st ⟨true, pairingOutputWord (product (ByteArray.mk req.input.toArray))⟩) := by
+  unfold honestOf
+  rw [find_pairing product req htarget]
+  simp only [Option.map]
+  have hresp : (pairingRelation product).respond (toYulReq req) =
+      some ⟨true, pairingOutputWord (product (ByteArray.mk req.input.toArray))⟩ := by
+    unfold ExternalCallRelation.respond
+    simp only [toYulReq, pairingRelation, htarget]
+    simp only [bne_self_eq_false, Bool.false_or, hv, Bool.not_true, Bool.false_eq_true,
+      pairingOutput, ↓reduceIte]
+  rw [hresp]
+
+/-- `honestOf` at the pairing address, on an INVALID frame, is `failResp`. -/
+theorem honestOf_pairing_invalid (product : PairingProduct) (req : YulSemantics.EVM.CallRequest)
+    (st : EvmState) (htarget : req.target = pairingAddress)
+    (hv : pairingValidInput (ByteArray.mk req.input.toArray) = false) :
+    honestOf (honestRelations product) req st = some (failResp st) := by
+  unfold honestOf
+  rw [find_pairing product req htarget]
+  simp only [Option.map]
+  have hresp : (pairingRelation product).respond (toYulReq req) = none := by
+    unfold ExternalCallRelation.respond
+    simp only [toYulReq, pairingRelation, htarget]
+    simp only [bne_self_eq_false, Bool.false_or, hv, Bool.not_false, Bool.false_eq_true, ite_true]
+  rw [hresp]
+
+/-- The 32-byte output word `1` read back after `finishCall` copies it to the scratch. -/
+theorem loadWord_copyReturn_bytesNatBE_one (mem : Nat → UInt8) (p : Nat) :
+    loadWord (copyReturn mem p 32 (bytesNatBE 1 32).data.toList) p = (1 : U256) := by
+  rw [Word.loadWord_copyReturn mem p 32 p _ (by
+    constructor
+    · omega
+    · have h : (bytesNatBE 1 32).data.toList.length = 32 := by
+        simp [ByteArray.size_data, Midfall.Assumptions.bytesNatBE_size]
+      rw [h]; omega)]
+  rw [show p - p = 0 by omega]
+  decide
+
+/-- The 32-byte output word `0` read back after `finishCall` copies it to the scratch. -/
+theorem loadWord_copyReturn_bytesNatBE_zero (mem : Nat → UInt8) (p : Nat) :
+    loadWord (copyReturn mem p 32 (bytesNatBE 0 32).data.toList) p = (0 : U256) := by
+  rw [Word.loadWord_copyReturn mem p 32 p _ (by
+    constructor
+    · omega
+    · have h : (bytesNatBE 0 32).data.toList.length = 32 := by
+        simp [ByteArray.size_data, Midfall.Assumptions.bytesNatBE_size]
+      rw [h]; omega)]
+  rw [show p - p = 0 by omega]
+  decide
+
+theorem finishCall_staticcall_memory' (st : EvmState) (resp : CallResponse)
+    (io is oo os : Nat) :
+    (finishCall .staticcall st resp io is oo os).memory =
+      copyReturn st.memory oo os resp.returndata := rfl
+
+theorem finishCall_staticcall_env' (st : EvmState) (resp : CallResponse)
+    (io is oo os : Nat) :
+    (finishCall .staticcall st resp io is oo os).env = st.env := by
+  simp [finishCall, touchMemory2, touchMemory]
+
+
 end Midfall.LoweringV2.Blocks.EcPairing
