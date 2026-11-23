@@ -1,9 +1,9 @@
 # STATUS - midfall
 
-**As of:** `e8279b1b` (2026-11-23). **Quick gate green.** The last FULL gate was at `d0bf226` (KAT
+**As of:** `9c9e6eaf` (2026-11-23). **Quick gate green.** The last FULL gate was at `d0bf226` (KAT
 1648/119); it is stale after the D-GATE5-8 statement wave and the current lane merges, so the final
 full gate is deferred until the next integration point. Current report: root **11 / sound 5**,
-register **102 rows / 10 ROOT / 26 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
+register **98 rows / 10 ROOT / 22 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
 252 modules; closure **5250 declarations / 620 external leaves / digest `209cde2f48115a76`**.
 
 ## 1. Verified - PROGRESS
@@ -247,7 +247,7 @@ depends on D1's `prepare_logSlots`/`decodeRust` log schedule and should not be c
 
 ## 11. Current integration
 
-At `e8279b1b` (2026-11-23): register **102 rows / 10 ROOT / 26 CERT**, 0 REFUTED, 1 legacy VACUOUS
+At `9c9e6eaf` (2026-11-23): register **98 rows / 10 ROOT / 22 CERT**, 0 REFUTED, 1 legacy VACUOUS
 (`end_to_end_acc_complete`); 102 sorried declarations; 252 modules; closure **5250 declarations /
 620 external leaves / digest 209cde2f48115a76**; quick gate green.
 
@@ -277,7 +277,17 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
 - A11: `fp_blockSim` CLOSED (root 11 -> 10), `fpBodyRun_clean`, `fp_slice_det`, `callsOf_functional`.
 - A12: REF.9/REF.10 CLOSED (`g1CodecC_compressedEncoderFirst`, `g1CodecC_lawsV3`; register 102 rows).
 - A9: PCS block-4 m1 set contract and the general-arm `dxLines`/`lbasisLines`/`bp` step contracts,
-  `block_live_pcs`; A4: `LagrangeBlock` vocabulary + statement-4 contract.
+  `block_live_pcs`.
+- A4: `LagrangeBlock` vocabulary + statement-4 contract; per-phase representation and group-4
+  denominator-loop proof.
+- A5: `bi_front`, `bi_back_tail`, prelude main, and **`batch_invert_summary` PROVED** (with the
+  first-word-canonicality and `32 ≤ s` preconditions the lag pre supplies).
+- A12: REF.9/REF.10 **CLOSED** (`g1CodecC_compressedEncoderFirst`, `g1CodecC_lawsV3`), and the
+  resourced-codec F1 render `f1PointRenderCCN` with `ValidV3` under `hpay` and the gate's codec
+  conjunct discharged (`f1PointRenderCCN_gateAtV3_of`); `DoneAt` now has the F1-resourced instance
+  `f1PointRenderCCN_doneAt`, reducing to the gate data, `ArtifactEq` and `hpay`.
+- A6: `TranscriptRows` merged, `fromProtocol_advice_itemCount`, and the `parseTrace` loop-width
+  lemmas (advice/lookup/permutation/trashcan) building `ParseTraceSchedule`.
 
 ### Six-lane critical path (user cap)
 
