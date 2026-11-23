@@ -37,4 +37,16 @@ theorem Permutation.CommonEvaluated.queries_point
   obtain ⟨a, _ha, rfl⟩ := hq
   rfl
 
+theorem Logup.Evaluated.queries_point (ev : Logup.Evaluated (Fr p) G₁)
+    (domain : EvaluationDomain (Fr p)) (x : Fr p) (proof lookup : Nat) :
+    ∀ q ∈ (Logup.Evaluated.queries ev domain x proof lookup).toList,
+      q.point = x ∨ q.point = domain.rotateOmega x Rotation.next := by
+  intro q hq
+  simp [Logup.Evaluated.queries] at hq
+  rcases hq with hq | hq | hq | hq
+  all_goals
+    first
+    | (rw [hq]; first | left; rfl | right; rfl)
+    | (obtain ⟨a, b, c, hmem, rfl⟩ := hq; left; rfl)
+
 end Midfall.LoweringV3

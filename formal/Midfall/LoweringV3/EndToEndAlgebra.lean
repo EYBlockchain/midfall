@@ -4569,6 +4569,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Permutation.CommonEvaluated.queries_point
   [propext, Classical.choice, Quot.sound]
+#assert_axioms Logup.Evaluated.queries_point
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms VerifierQuery.newLinear_point
   [propext, Classical.choice, Quot.sound]
 #assert_axioms computeLinearizationCommitment_point
