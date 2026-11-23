@@ -43,6 +43,7 @@
   are named at the foot.
 -/
 import Midfall.Instances.PayloadPointsF1
+import Midfall.Instances.GeneratorDone
 
 set_option autoImplicit false
 
@@ -268,6 +269,45 @@ theorem f1PointRenderCN_validV3_iff (n : Nat) :
   · intro h
     exact f1PointRenderCN_validV3 n h
 
+/-! ## 3. THE `Done` / `ArtifactEq` RESIDUAL AT THIS RENDER.
+
+  `ValidV3` at `f1PointRenderCN n` is NOT `Done`, for three independent reasons, two of which are
+  machine-checked here:
+
+  * **The codec law fails.** `f1PointRenderCN n`'s G1 codec is `g1CodecZ` (`f1EnvC.g1`), whose
+    compressed half is the constant `none`; `f1_codec_headline_false` refutes the four headline
+    laws at it, and `G1CodecLawsV3` extends those laws. So `GateAtV3` - hence `Done.gate` - is
+    FALSE at this render for every product and every calldata, independent of the data:
+    `f1PointRenderCN_gate_false`.
+  * **The render is not the artifact render, and `Done` is stated only at the artifact render.**
+    `Done`'s five fields are all at `poseidonRender : Render blsR G₁z G2fold blsGT`, whereas
+    `f1PointRenderCN n : Render blsR G₁z G2fold G₁z` - a DIFFERENT carrier for `Gₜ` and a
+    re-sourced key/params/`sG2gen`. It cannot be substituted for `poseidonRender` even
+    syntactically, and its model is the generator's (`genFilledOut.model`), not the artifact
+    render's `poseidonM`.
+  * **`TotalV3` is open.** `Done.total` is the TOT.1 obligation at every product; it is a named
+    open leaf of the root, not a fact this render supplies.
+
+  What remains for a positive `Done`, in order: (i) a codec with `G1CodecLawsV3` at the render
+  (`g1CodecC_laws` proves the computable codec's laws from a width fact - the codec is a `Render`
+  field, so this is a data choice, not a clause change); (ii) a `Done` STATEMENT at the re-sourced
+  render or OBJ.8 step 3/4 executed on `poseidonRender` itself; (iii) TOT.1; (iv) an
+  `ArtifactEq` measurement at whichever render `Done` names; (v) the `hpay` data witness from the
+  tracked SRS. None of these is a weakening, and none is added as a hypothesis to `ValidV3`. -/
+
+/-- **THE GATE CANNOT HOLD AT THIS RENDER.** Its `G1CodecLawsV3` conjunct is false at
+    `g1CodecZ`. Machine-checked, so `Done` at this render is refuted independently of the data. -/
+theorem f1PointRenderCN_codec_not_lawsV3 (n : Nat) :
+    ¬ Midfall.LoweringV3.G1CodecLawsV3 (f1PointRenderCN n).E.g1 := by
+  intro h
+  exact Midfall.Instances.VacuityWitnesses.f1_codec_headline_false h.headline
+
+/-- `GateAtV3` is uninhabited at `f1PointRenderCN n`: every product, every calldata. -/
+theorem f1PointRenderCN_gate_false (n : Nat) (product : PairingProduct) (cd : Bytes) :
+    ¬ GateAtV3 (f1PointRenderCN n) product cd := by
+  rintro ⟨W, Lyt, vkAddr, st₀, _hdep, _hentry, _hpc, hcodec, _hacc, _hss, _hcs, _hdec⟩
+  exact f1PointRenderCN_codec_not_lawsV3 n hcodec
+
 end
 
 end Midfall.Instances.ValidV3F1Real
@@ -283,3 +323,5 @@ end Midfall.Instances.ValidV3F1Real
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_validV3ExceptPayload
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_validV3
 #print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_validV3_iff
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_codec_not_lawsV3
+#print axioms Midfall.Instances.ValidV3F1Real.f1PointRenderCN_gate_false
