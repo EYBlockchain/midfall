@@ -3681,6 +3681,15 @@ theorem PrepareLogSlots_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ G�
       R.plan.proofLayout).numPointSets hParse hKZG hQuot ?_
   rfl
 
+/-- **`PrepareLogSlots` WITH THE A6 WIDTH BLOCK DISCHARGED.** The parseTrace
+    schedule is now a theorem (`parseTraceSchedule_of_advicePhase`), so the only
+    A6-side input is the vk-to-plan phase pin; the KZG scalar block is unchanged. -/
+theorem PrepareLogSlots_of_advicePhase (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hpin : AdvicePhaseCountFit R.vk)
+    (hKZG : KzgMultiPrepareWidths R) :
+    Midfall.LoweringV3.PrepareLogSlots R :=
+  PrepareLogSlots_of_A6_KZG R hR (parseTraceSchedule_of_advicePhase R hR hpin) hKZG
+
 /-- **THE A6 LINK.** If `prepare`'s log widths are the emitted parser's own
     schedule `R.tpEvents`, then A6's `tp_events_slots` closes `PrepareLogSlots`
     outright. This is the exact project-level refinement A6's report names; the
@@ -3700,10 +3709,13 @@ theorem PrepareLogSlots_of_tpEvents (R : Midfall.LoweringV2.Render p G₁ G₂ G
   rw [hEv inst π d t hrun]
   exact Midfall.LoweringV3.TranscriptRows.tp_events_slots R hR
 
-/-- **END-TO-END FROM EXACTLY THE TWO NAMED RESIDUALS.** The full `EndToEndV3`
-    statement, with the A6 `parseTrace` width block and the KZG `multiPrepare`
-    scalar block as the only extra premises. Nothing is added to `ValidV3`, to
-    any row or to the root: both residuals are Props local to this lane. -/
+/-- **END-TO-END FROM THE A6 PHASE PIN AND THE KZG SCALAR BLOCK.** The full
+    `EndToEndV3` statement. The A6 `parseTrace` width block is no longer assumed:
+    `parseTraceSchedule_of_advicePhase` proves it from `ValidV3` plus the single
+    vk-to-plan phase pin `AdvicePhaseCountFit` (the gap
+    `Obligations.readScheduleAgrees` names). The KZG `multiPrepare` scalar block
+    remains the second named residual. Nothing is added to `ValidV3`, to any row
+    or to the root. -/
 theorem end_to_end_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (product : Midfall.Yul.PairingProduct)
     (hR : ValidV3 R) (hEq : LoweringEquivalenceV3 R product)
@@ -3715,10 +3727,10 @@ theorem end_to_end_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
       Midfall.LoweringV2.SoundSide R keccak256 cd ∧
         Midfall.LoweringV2.CompleteSide R keccak256 cd)
-    (hA6 : ParseTraceSchedule R) (hKZG : KzgMultiPrepareWidths R) :
+    (hpin : AdvicePhaseCountFit R.vk) (hKZG : KzgMultiPrepareWidths R) :
     EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
   end_to_end_of_prepareLogSlots R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
-    inst π hn hside (PrepareLogSlots_of_A6_KZG R hR hA6 hKZG)
+    inst π hn hside (PrepareLogSlots_of_advicePhase R hR hpin hKZG)
 
 /-- **END-TO-END FROM THE A6 STATIC SCHEDULE.** The A6 half is stated exactly as
     the project-level refinement between `prepare`'s log widths and `R.tpEvents`;
