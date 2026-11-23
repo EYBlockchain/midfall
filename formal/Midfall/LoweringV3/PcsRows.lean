@@ -2788,6 +2788,271 @@ theorem b1_head_contract {funs : FunEnv (Bridge.Dialect c g)} (rots : List Int)
       b1_lets_contract (c := c) (g := g) (funs := funs) xp op oip xv om oi
         V st ⟨hX, hO, hOI, hx, ho, hoi⟩ V' st' o hlets
     exact absurd ho hne
+/-! ## 10. Blocks 3-5 groundwork: generator words (`valueExpr`/`wordExpr`) evaluated
+
+  Every q_eval_set / f_eval / MSM statement reads generator `Word`s (`wordExpr`): a pointer
+  expression (literal, `name`, `name+off`, or `name-off`) read with `mload` or `calldataload`.
+  The four theorems below are the total evaluation bridge: `b3val`/`b3word` name the value in
+  terms of the env/state, and the inversions recover it from any `EvalExpr`/`ExecStmt` derivation,
+  together with the fact that a read leaves memory, env and the halt record untouched and cannot
+  halt. These are the base cases for block 3's seeds/folds and for blocks 4 and 5, whose
+  operands are all `wordExpr`/`x1Pow` reads. No row, bundle or `ValidV3` gains a hypothesis.
+-/
+
+/-- The value of a generator pointer expression (the AST twin of `printValue`). -/
+def b3val (V : VEnv (Bridge.Dialect c g)) (v : Midfall.Generator.Value) : Option U256 :=
+  match v with
+  | .integer i =>
+      if 0 ≤ i then some (BitVec.ofNat 256 i.toNat)
+      else some (-(BitVec.ofNat 256 i.natAbs))
+  | .identifier name 0 => VEnv.get V name
+  | .identifier name off =>
+      if 0 < off then (VEnv.get V name).map (fun x => x + BitVec.ofNat 256 off.toNat)
+      else (VEnv.get V name).map (fun x => x - BitVec.ofNat 256 off.natAbs)
+
+/-- The word a generator `Word` reads (memory `mload` or calldata `calldataload`). -/
+def b3word (st : EvmState) (V : VEnv (Bridge.Dialect c g)) (w : Midfall.Generator.Word) :
+    Option U256 :=
+  match w.ptr.loc with
+  | .calldata => (b3val V w.ptr.value).map (fun p => wordFrom st.env.calldata p.toNat)
+  | .memory => (b3val V w.ptr.value).map (fun p => loadWord st.memory p.toNat)
+
+theorem b3_ok_add {a b : U256} {st : EvmState} {r : BuiltinResult U256 EvmState}
+    (h : (Bridge.Dialect c g).Builtin EVM.Op.add [a, b] st r) :
+    ∃ (rets : List U256) (st₂ : EvmState), r = .ok rets st₂ := by
+  have h' : stepOp EVM.Op.add [a, b] st = some r := h
+  simp only [stepOp] at h'
+  cases h'
+  exact ⟨_, _, rfl⟩
+
+theorem b3_ok_sub {a b : U256} {st : EvmState} {r : BuiltinResult U256 EvmState}
+    (h : (Bridge.Dialect c g).Builtin EVM.Op.sub [a, b] st r) :
+    ∃ (rets : List U256) (st₂ : EvmState), r = .ok rets st₂ := by
+  have h' : stepOp EVM.Op.sub [a, b] st = some r := h
+  simp only [stepOp] at h'
+  cases h'
+  exact ⟨_, _, rfl⟩
+
+theorem b3_eval_two_lits_add {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {a b : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.add
+        [Expr.lit (Literal.number a), Expr.lit (Literal.number b)]) (.vals [cv] st')) :
+    cv = BitVec.ofNat 256 a + BitVec.ofNat 256 b ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest ha =>
+      cases hrest with
+      | argsCons hnil hb =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨ha', hsta⟩ := b2_eval_lit_inv ha
+              obtain ⟨hb', hstb⟩ := b2_eval_lit_inv hb
+              subst hsta; subst hstb
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨by rw [ha', hb'], rfl⟩
+
+theorem b3_eval_two_lits_sub {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {a b : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.sub
+        [Expr.lit (Literal.number a), Expr.lit (Literal.number b)]) (.vals [cv] st')) :
+    cv = BitVec.ofNat 256 a - BitVec.ofNat 256 b ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest ha =>
+      cases hrest with
+      | argsCons hnil hb =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨ha', hsta⟩ := b2_eval_lit_inv ha
+              obtain ⟨hb', hstb⟩ := b2_eval_lit_inv hb
+              subst hsta; subst hstb
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨by rw [ha', hb'], rfl⟩
+
+theorem b1_eval_sub_var_lit_inv {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {b : String} {off : Nat} {cv : U256}
+    {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin EVM.Op.sub [Expr.var b, Expr.lit (Literal.number off)]) (.vals [cv] st')) :
+    ∃ bv, VEnv.get V b = some bv ∧ cv = bv - BitVec.ofNat 256 off ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hb =>
+      cases hrest with
+      | argsCons hnil hl =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hv, hst⟩ := b2_eval_lit_inv hl
+              obtain ⟨hbv, hstv⟩ := b1_eval_var_inv hb
+              subst hst; subst hstv
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨_, hbv, by rw [hv], rfl⟩
+
+theorem b3_eval_valueExpr {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {v : Midfall.Generator.Value}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (GenAstPcs.valueExpr v) (.vals [cv] st')) :
+    b3val V v = some cv ∧ st' = st := by
+  cases v with
+  | integer i =>
+      by_cases hi : 0 ≤ i
+      · simp only [GenAstPcs.valueExpr, hi, if_true] at h
+        obtain ⟨hc, hst⟩ := b2_eval_lit_inv h
+        subst hc; subst hst
+        simp only [b3val, hi, if_true, and_self]
+      · have hlt : i < 0 := by omega
+        simp only [GenAstPcs.valueExpr, hi, if_false] at h
+        obtain ⟨hc, hst⟩ := b3_eval_two_lits_sub h
+        subst hc; subst hst
+        simp only [b3val, hi, if_false]
+        rw [BitVec.zero_sub]
+        simp only [and_self]
+  | identifier name off =>
+      cases off with
+      | ofNat n =>
+          cases n with
+          | zero =>
+              simp only [GenAstPcs.valueExpr] at h
+              obtain ⟨hget, hst⟩ := b1_eval_var_inv h
+              change VEnv.get V name = some cv ∧ st' = st
+              exact ⟨hget, hst⟩
+          | succ k =>
+              have hpos : (0 : Int) < Int.ofNat (k + 1) := by
+                have h : ((k + 1 : Nat) : Int) = Int.ofNat (k + 1) := rfl
+                rw [← h, Nat.cast_add, Nat.cast_one]
+                omega
+              simp only [GenAstPcs.valueExpr, if_pos hpos, GenAst.yvar, GenAst.yop,
+                GenAst.ylit] at h
+              obtain ⟨xv, hxv, hc, hst⟩ := b1_eval_add_var_lit_inv h
+              subst hc; subst hst
+              simp only [b3val, if_pos hpos]
+              rw [hxv]
+              simp
+      | negSucc n =>
+          have hneg : ¬ (Int.negSucc n > 0) := by omega
+          simp only [GenAstPcs.valueExpr, if_neg hneg, GenAst.yvar, GenAst.yop,
+            GenAst.ylit] at h
+          obtain ⟨xv, hxv, hc, hst⟩ := b1_eval_sub_var_lit_inv h
+          subst hc; subst hst
+          simp only [b3val, if_neg hneg]
+          rw [hxv]
+          simp
+
+theorem b3_eval_valueExpr_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {v : Midfall.Generator.Value}
+    {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (GenAstPcs.valueExpr v) (.halt st')) : False := by
+  cases v with
+  | integer i =>
+      by_cases hi : 0 ≤ i
+      · simp only [GenAstPcs.valueExpr, hi, if_true] at h
+        exact Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts h
+      · simp only [GenAstPcs.valueExpr, hi, if_false] at h
+        exact Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := EVM.Op.sub)
+          (fun _ _ _ _ hr => b3_ok_sub hr)
+          (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh)
+          (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) h
+  | identifier name off =>
+      cases off with
+      | ofNat n =>
+          cases n with
+          | zero =>
+              simp only [GenAstPcs.valueExpr] at h
+              exact Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts h
+          | succ k =>
+              have hpos : (0 : Int) < Int.ofNat (k + 1) := by
+                have hh : ((k + 1 : Nat) : Int) = Int.ofNat (k + 1) := rfl
+                rw [← hh, Nat.cast_add, Nat.cast_one]
+                omega
+              simp only [GenAstPcs.valueExpr, if_pos hpos] at h
+              exact Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := EVM.Op.add)
+                (fun _ _ _ _ hr => b3_ok_add hr)
+                (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+                (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) h
+      | negSucc n =>
+          have hneg : ¬ (Int.negSucc n > 0) := by
+            rw [Int.negSucc_eq]; omega
+          simp only [GenAstPcs.valueExpr, if_neg hneg] at h
+          exact Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := EVM.Op.sub)
+            (fun _ _ _ _ hr => b3_ok_sub hr)
+            (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+            (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) h
+
+theorem b3_eval_wordExpr {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {w : Midfall.Generator.Word}
+    {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (GenAstPcs.wordExpr w) (.vals [cv] st')) :
+    b3word st V w = some cv ∧ st'.memory = st.memory ∧ st'.env = st.env ∧
+      st'.halted = st.halted := by
+  cases hl : w.ptr.loc with
+  | calldata =>
+      have hw : GenAstPcs.wordExpr w = GenAst.yop EVM.Op.calldataload
+          [GenAstPcs.valueExpr w.ptr.value] := by
+        simp [GenAstPcs.wordExpr, hl]
+      rw [hw] at h
+      obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+      cases hargs with
+      | argsCons hnil ha =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hav, hsta⟩ := b3_eval_valueExpr ha
+              rw [hsta] at hbi
+              simp only [stepOp] at hbi
+              cases hbi
+              refine ⟨?_, rfl, rfl, rfl⟩
+              simp only [b3word, hl, hav, Option.map_some]
+  | memory =>
+      have hw : GenAstPcs.wordExpr w = GenAst.yop EVM.Op.mload
+          [GenAstPcs.valueExpr w.ptr.value] := by
+        simp [GenAstPcs.wordExpr, hl]
+      rw [hw] at h
+      obtain ⟨argvals, st1, hargs, hbi⟩ := b2_eval_builtin_vals_inv h
+      cases hargs with
+      | argsCons hnil ha =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hav, hsta⟩ := b3_eval_valueExpr ha
+              rw [hsta] at hbi
+              simp only [stepOp] at hbi
+              cases hbi
+              refine ⟨?_, rfl, rfl, rfl⟩
+              simp only [b3word, hl, hav, Option.map_some]
+
+theorem b3_eval_wordExpr_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {w : Midfall.Generator.Word}
+    {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (GenAstPcs.wordExpr w) (.halt st')) : False := by
+  cases hl : w.ptr.loc with
+  | calldata =>
+      have hw : GenAstPcs.wordExpr w = GenAst.yop EVM.Op.calldataload
+          [GenAstPcs.valueExpr w.ptr.value] := by
+        simp [GenAstPcs.wordExpr, hl]
+      rw [hw] at h
+      exact Midfall.LoweringV2.Blocks.VkLoading.vk_nh_unary (op := EVM.Op.calldataload)
+        (fun _ _ _ hr => Midfall.LoweringV2.Blocks.VkLoading.vk_ok_calldataload hr)
+        (fun _ _ hh => b3_eval_valueExpr_halt hh) h
+  | memory =>
+      have hw : GenAstPcs.wordExpr w = GenAst.yop EVM.Op.mload
+          [GenAstPcs.valueExpr w.ptr.value] := by
+        simp [GenAstPcs.wordExpr, hl]
+      rw [hw] at h
+      exact Midfall.LoweringV2.Blocks.VkLoading.vk_nh_unary (op := EVM.Op.mload)
+        (fun _ _ _ hr => Midfall.LoweringV2.Blocks.VkLoading.vk_ok_mload hr)
+        (fun _ _ hh => b3_eval_valueExpr_halt hh) h
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_valueExpr
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_valueExpr_halt
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_wordExpr
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.b3_eval_wordExpr_halt
+  [propext, Classical.choice, Quot.sound] native []
+
 #assert_axioms Midfall.LoweringV3.PcsRows.b1_lets_contract
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.PcsRows.b1_store_only
