@@ -530,4 +530,75 @@ theorem NoWriters_forLoop {init post body : YulBlock} {c : Expr EVM.Op}
   simp only [noWritersFuel, noWritersScan, noWritersStep, hi', hc', hp', hb', Bool.and_true,
     Bool.true_and]
 
+
+/-! ### From per-block facts to the PCS slice
+
+  `emitPcsFromPlan` is `[]` on a fault / empty plan and `[Stmt.block (blocks.map Stmt.block)]`
+  otherwise, so the slice inherits each emitted block's scan. These two lemmas turn a per-block
+  hypothesis (the shape the block facts above have) into the slice's scan. -/
+
+theorem CallsOK_blocks_map {S : List (String × Nat)} (blocks : List YulBlock)
+    (h : ∀ b ∈ blocks, CallsOK S b) : CallsOK S (blocks.map Stmt.block) := by
+  apply CallsOK_map'
+  intro b hb
+  exact CallsOK_block (h b hb)
+
+theorem NoWriters_blocks_map (blocks : List YulBlock)
+    (h : ∀ b ∈ blocks, NoWriters b) : NoWriters (blocks.map Stmt.block) := by
+  apply NoWriters_map
+  intro b hb
+  exact NoWriters_block (h b hb)
+
+theorem CallsOK_emitPcsFromPlan_of (pv : PlanView) {S : List (String × Nat)}
+    (h : ∀ blocks, Midfall.Lowering.GenAstPcs.computationsAst pv.meta_ pv.dat pv.memory
+      pv.truncatedChallenges false = .ok blocks → ∀ b ∈ blocks, CallsOK S b) :
+    CallsOK S (GenAst.emitPcsFromPlan pv) := by
+  unfold GenAst.emitPcsFromPlan
+  cases hc : Midfall.Lowering.GenAstPcs.computationsAst pv.meta_ pv.dat pv.memory
+    pv.truncatedChallenges false with
+  | error e => simp [hc]; exact CallsOK_nil' _
+  | ok blocks =>
+      cases blocks with
+      | nil => simp [hc]; exact CallsOK_nil' _
+      | cons b bs =>
+          simp only [hc]
+          exact CallsOK_block (CallsOK_blocks_map (S := S) (b :: bs) (h (b :: bs) hc))
+
+theorem NoWriters_emitPcsFromPlan_of (pv : PlanView)
+    (h : ∀ blocks, Midfall.Lowering.GenAstPcs.computationsAst pv.meta_ pv.dat pv.memory
+      pv.truncatedChallenges false = .ok blocks → ∀ b ∈ blocks, NoWriters b) :
+    NoWriters (GenAst.emitPcsFromPlan pv) := by
+  unfold GenAst.emitPcsFromPlan
+  cases hc : Midfall.Lowering.GenAstPcs.computationsAst pv.meta_ pv.dat pv.memory
+    pv.truncatedChallenges false with
+  | error e => simp [hc]; exact ⟨1, rfl⟩
+  | ok blocks =>
+      cases blocks with
+      | nil => simp [hc]; exact ⟨1, rfl⟩
+      | cons b bs =>
+          simp only [hc]
+          exact NoWriters_block (NoWriters_blocks_map (b :: bs) (h (b :: bs) hc))
+
+/-- `callsResolved` of `mainAsmRaw` with the PCS residual replaced by the per-block hypothesis. -/
+theorem callsResolved_mainAsmRaw_of_pcs (pv : PlanView) (m : Model)
+    (hacc : pv.hasAccumulator = false)
+    (hnumSigs : Midfall.LoweringV3.funSigsOf
+      (GenAst.emitQuotientNumerator (partialCtxOfVerifier m)) = [])
+    (hnumCalls : CallsOK (mainSigSet (partialCtxOfVerifier m))
+      (GenAst.emitQuotientNumerator (partialCtxOfVerifier m)))
+    (hpcs : ∀ blocks, Midfall.Lowering.GenAstPcs.computationsAst pv.meta_ pv.dat pv.memory
+      pv.truncatedChallenges false = .ok blocks → ∀ b ∈ blocks,
+        CallsOK (mainSigSet (partialCtxOfVerifier m)) b) :
+    Midfall.LoweringV3.callsResolved (mainAsmRaw pv m) = true :=
+  callsResolved_mainAsmRaw_of pv m hacc hnumSigs hnumCalls
+    (CallsOK_emitPcsFromPlan_of pv hpcs)
+
+/-- `NoWriters` of `mainAsmRaw` with the PCS residual replaced by the per-block hypothesis. -/
+theorem noWriters_mainAsmRaw_of_pcs (pv : PlanView) (m : Model)
+    (hpcs : ∀ blocks, Midfall.Lowering.GenAstPcs.computationsAst pv.meta_ pv.dat pv.memory
+      pv.truncatedChallenges false = .ok blocks → ∀ b ∈ blocks, NoWriters b)
+    (hnum : NoWriters (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
+    NoWriters (mainAsmRaw pv m) :=
+  noWriters_mainAsmRaw_of pv m (parser_noWriters pv) (NoWriters_emitPcsFromPlan_of pv hpcs) hnum
+
 end Midfall.Generator.CertScanPcs
