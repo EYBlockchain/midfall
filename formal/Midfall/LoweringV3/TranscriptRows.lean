@@ -1680,6 +1680,24 @@ def phaseCols {p : Nat} [Fact (Nat.Prime p)] (cs : Midfall.Halo2.ConstraintSyste
 def AdvicePhasesColumnOrder (vk : VerifyingKey (Fr p) G₁) : Prop :=
   vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph) = List.range vk.cs.numAdviceColumns
 
+section AdvicePhaseOrderFalsifier
+local instance : Fact (Nat.Prime 17) := ⟨by decide⟩
+
+/-- **THE ORDER IS NOT FREE.** A two-column key with phase vector `[1,0]` satisfies
+    `adviceColumnPhase.size = numAdviceColumns` but its phase blocks flatten to
+    `[1,0]`, not `[0,1]`. So `WellFormed.advicePhaseTotal` does NOT derive
+    `AdvicePhasesColumnOrder`; the order is the named phase-order premise. -/
+theorem advicePhaseTotal_not_columnOrder :
+    ∃ cs : Midfall.Halo2.ConstraintSystem (Fr 17),
+      cs.adviceColumnPhase.size = cs.numAdviceColumns ∧
+        cs.phases.flatMap (fun ph => phaseCols cs ph) ≠ List.range cs.numAdviceColumns := by
+  refine ⟨{ Midfall.Halo2.ConstraintSystem.default (F := Fr 17) with
+      numAdviceColumns := 2, adviceColumnPhase := #[⟨1⟩, ⟨0⟩] }, ?_, ?_⟩
+  · rfl
+  · decide
+
+end AdvicePhaseOrderFalsifier
+
 /-- The advice-phase segment of the parser schedule: one G1 group per user phase. -/
 def seqAdvice (userPhases : List UserPhase) : List (WireSlot × Nat) :=
   userPhases.map (fun ph => (WireSlot.g1, ph.adviceBytes / 128))
@@ -8146,6 +8164,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhase_values [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhases_values [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_readAlgebra_quotient_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.advicePhaseTotal_not_columnOrder [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.bind_nil [propext, Classical.choice, Quot.sound] native []
