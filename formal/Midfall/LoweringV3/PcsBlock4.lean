@@ -6259,6 +6259,12 @@ theorem pcsBlock4_store_contract {funs : FunEnv (Bridge.Dialect c g)} (fp fv : U
   · rw [hst]; rfl
 
 
+theorem pcsEnumIdx_fst_nodup (distinct : List Int) :
+    ((Midfall.Generator.enumIdx distinct).map Prod.fst).Nodup := by
+  unfold Midfall.Generator.enumIdx
+  rw [List.map_fst_zip (by simp)]
+  exact List.nodup_range
+
 theorem pcsRot_name_inj {i j : Nat}
     (h : "rot_pt_" ++ toString i = "rot_pt_" ++ toString j) : i = j := by
   apply Nat.repr_inj.mp
