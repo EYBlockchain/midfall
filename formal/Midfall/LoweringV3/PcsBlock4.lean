@@ -5418,6 +5418,64 @@ theorem pcs_restore_map_fst {D : YulSemantics.Dialect} [DecidableEq D.Value]
     simp only [List.length_map, List.length_append] at hh
     omega
   rw [hlen, List.drop_left]
+def pcsSetBlockLocalsAll (points distinct : List Int) : List String :=
+  pcsSetBlockLocals points distinct ++ ["dx0", "dx0_inv"]
+
+theorem pcsSetBlockLocals_subset_all (points distinct : List Int) {x : String}
+    (h : x ∈ pcsSetBlockLocals points distinct) :
+    x ∈ pcsSetBlockLocalsAll points distinct :=
+  List.mem_append_left _ h
+
+theorem pcsStmtLocal_mono {locals locals' : List String}
+    (hsub : ∀ x ∈ locals, x ∈ locals') {s : Stmt EVM.Op}
+    (h : pcsStmtLocal locals s) : pcsStmtLocal locals' s := by
+  cases s with
+  | letDecl vars e =>
+      cases vars with
+      | nil => simp [pcsStmtLocal] at h
+      | cons x vars =>
+          cases vars with
+          | nil => simp [pcsStmtLocal] at h ⊢; exact hsub x h
+          | cons _ _ => simp [pcsStmtLocal] at h
+  | assign vars e =>
+      cases vars with
+      | nil => simp [pcsStmtLocal] at h
+      | cons x vars =>
+          cases vars with
+          | nil => simp [pcsStmtLocal] at h ⊢; exact hsub x h
+          | cons _ _ => simp [pcsStmtLocal] at h
+  | _ => simp [pcsStmtLocal] at h
+
+theorem pcs_exec_frame_of_locals {funs : FunEnv (Bridge.Dialect c g)} {body : Block EVM.Op}
+    {locals : List String}
+    (hns : ∀ s ∈ body, ∃ x e, s = GenAst.ylet x e ∨ s = GenAst.yset x e)
+    (hloc : ∀ s ∈ body, pcsStmtLocal locals s)
+    (hsub : ∀ y ∈ pcsAddedNames body, y ∈ locals)
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome}
+    (hrun : ExecStmts (Bridge.Dialect c g) funs V st body V' st' o)
+    (ho : o = .normal) :
+    (∀ x, x ∉ locals → VEnv.get (restore V V') x = VEnv.get V x) ∧
+    (∀ y, VEnv.get V y = none → VEnv.get (restore V V') y = none) := by
+  have hnamesExec := pcsExec_names (funs := funs) (ss := body) hns hrun ho
+  have hrestore : (restore V V').map Prod.fst = V.map Prod.fst :=
+    pcs_restore_map_fst hnamesExec
+  constructor
+  · intro x hx
+    have hxExtra : x ∉ pcsAddedNames body := fun h => hx (hsub x h)
+    have hinner : VEnv.get V' x = VEnv.get V x :=
+      pcsExec_get_of_local (funs := funs) (ss := body) (locals := locals)
+        hloc hx hrun ho
+    cases hv : VEnv.get V x with
+    | none =>
+        exact pcs_venv_get_none_of_map_fst (D := Bridge.Dialect c g) hrestore hv
+    | some v =>
+        have hget' : VEnv.get V' x = some v := by rw [hinner, hv]
+        exact pcs_venv_get_restore_of_names hnamesExec hxExtra hget'
+  · intro y hy
+    exact pcs_venv_get_none_of_map_fst (D := Bridge.Dialect c g) hrestore hy
+
+
 set_option maxHeartbeats 16000000 in
 theorem pcsSetBlock_multi_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
@@ -5708,6 +5766,144 @@ theorem pcsSetBlock_contract {g : ExternalGas} (product : PairingProduct)
       hscratch256 hfail hvalDx0 hvalLb0 hdx0pos hdx0lt hrv hcptr
       (by simpa using hqep) (by simpa using hdisj) V st hpre1 V' st' o hrun
     simpa using hmain
+
+
+set_option maxHeartbeats 16000000 in
+theorem pcsSetBlock_contract_frame {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off scratch hbls gasN selN selP : Nat)
+    (p a : Nat → U256) (x3v rv x2v fev cptr qep : U256)
+    (hm : 0 < points.length)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch hbls gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hnbls : BitVec.ofNat 256 hbls = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some
+      ((failFDecl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)), cenv'))
+    (hnames : PcsGenNames points.length (pcsPointRefs points distinctRotations)
+      (pcsKs points distinctRotations))
+    (hainlt : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat < blsR)
+    (hain0 : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat ≠ 0)
+    (hvalDx : ∀ i, i < points.length → a i = wAddmodAt x3v (rv - p i) rv)
+    (hvalLb : ∀ j, j < points.length →
+      a (points.length + j) = pcsLbasisVal rv (p j) p (pcsKs points distinctRotations j))
+    (hks_sub : ∀ g ∈ pcsPointRefs points distinctRotations,
+      ∀ k ∈ pcsKs points distinctRotations g.1, k ∈ pcsPointRefs points distinctRotations)
+    (hinv0Dist : ∀ j, 1 ≤ j → j < (pcsBatchInputs points.length).length →
+      pcsInvName points.length 0 ≠ pcsInvName points.length j)
+    (hinvEvalAll : ∀ i, pcsInvName points.length i ≠ "eval")
+    (hinvQSetAll : ∀ i, pcsInvName points.length i ≠ "Q_EVAL_SET_MPTR")
+    (hinvR0 : pcsInvName points.length 0 ≠ "r")
+    (htermF : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "f_eval")
+    (htermX2 : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "x2")
+    (hdenInvAll : ∀ i, i < (pcsBatchInputs points.length).length →
+      "den_inv" ≠ pcsInvName points.length i)
+    (hrv : rv = BitVec.ofNat 256 blsR)
+    (hcptr : cptr.toNat + setIdx * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hqep : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hdisj : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes ≤ scratch ∨
+      scratch + 192 ≤ qep.toNat + off * Midfall.Generator.wordBytes) :
+    StmtContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (Stmt.block (GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off))
+      (fun V st =>
+        PcsGPre (c := permissive (callsOf product)) (g := g)
+          x3v rv x2v fev cptr qep p (pcsPointRefs points distinctRotations)
+          (pcsBatchInputs points.length).length V st ∧
+        (∀ j, j < points.length → (loadWord st.memory
+          (qep.toNat + (off + j) * Midfall.Generator.wordBytes)).toNat < blsR))
+      (fun V st V' st' o =>
+        PcsGPost (c := permissive (callsOf product)) (g := g)
+          rv x2v fev a points.length setIdx cptr.toNat off scratch qep V st V' st' o ∧
+        (o = .normal →
+          (∀ x, x ∉ pcsSetBlockLocalsAll points distinctRotations →
+            VEnv.get V' x = VEnv.get V x) ∧
+          (∀ y, VEnv.get V y = none → VEnv.get V' y = none))) := by
+  apply StmtsContractAll.block
+  intro V st hpre V' st' o hrun
+  have hblockrun : ExecStmt (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      V st (Stmt.block (GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off))
+      (restore V V') st' o := Step.block hrun
+  have hcontract := pcsSetBlock_contract (g := g) (product := product) (funs := funs)
+    (decl := decl) (cenv := cenv) (cenv' := cenv')
+    setIdx points distinctRotations off scratch hbls gasN selN selP p a
+    x3v rv x2v fev cptr qep hm hlook hbody hparams hrets hnbls hscratch
+    hscratch256 hfail hnames hainlt hain0 hvalDx hvalLb hks_sub hinv0Dist
+    hinvEvalAll hinvQSetAll hinvR0 htermF htermX2 hdenInvAll hrv hcptr
+    hqep hdisj V st hpre (restore V V') st' o hblockrun
+  refine ⟨hcontract, ?_⟩
+  intro ho
+  by_cases h1 : 1 < points.length
+  · have hbodyEq : GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off =
+        pcsGenBody setIdx points distinctRotations off := by
+      rw [pcsSetBlockAst_eq_gen setIdx points distinctRotations off h1,
+        pcsSetBodyGen_eq setIdx points distinctRotations off h1]
+    have hhoistGen : hoist (Bridge.Dialect (permissive (callsOf product)) g)
+        (pcsGenBody setIdx points distinctRotations off) = [] := by
+      unfold hoist
+      rw [List.filterMap_eq_nil_iff]
+      intro s hs
+      rcases pcsGenBody_allLetSet setIdx points distinctRotations off s hs with ⟨x, e, h | h⟩
+      · subst s; simp [GenAst.ylet]
+      · subst s; simp [GenAst.yset]
+    rw [hbodyEq, hhoistGen] at hrun
+    have hns : ∀ s ∈ pcsGenBody setIdx points distinctRotations off,
+        ∃ x e, s = GenAst.ylet x e ∨ s = GenAst.yset x e :=
+      pcsGenBody_allLetSet setIdx points distinctRotations off
+    have hloc : ∀ s ∈ pcsGenBody setIdx points distinctRotations off,
+        pcsStmtLocal (pcsSetBlockLocalsAll points distinctRotations) s := by
+      intro s hs
+      exact pcsStmtLocal_mono
+        (fun x hx => pcsSetBlockLocals_subset_all points distinctRotations hx)
+        (pcsGenBody_pcsStmtLocal_explicit setIdx points distinctRotations off
+          (by omega) s hs)
+    have hsub : ∀ y ∈ pcsAddedNames (pcsGenBody setIdx points distinctRotations off),
+        y ∈ pcsSetBlockLocalsAll points distinctRotations := by
+      intro y hy
+      exact pcsSetBlockLocals_subset_all points distinctRotations
+        (pcsAddedNames_subset_locals setIdx points distinctRotations off (by omega) y hy)
+    exact pcs_exec_frame_of_locals (funs := [] :: funs) hns hloc hsub hrun ho
+  · have hlen : points.length = 1 := by omega
+    obtain ⟨p0, hp⟩ := List.length_eq_one_iff.mp hlen
+    subst hp
+    have hns : ∀ s ∈ GenAstPcs.pcsSetBlockAst setIdx [p0] distinctRotations off,
+        ∃ x e, s = GenAst.ylet x e ∨ s = GenAst.yset x e := by
+      intro s hs
+      rw [pcsSetBlockAst_one] at hs
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+      rcases hs with rfl | rfl | rfl | rfl
+      · exact ⟨_, _, Or.inl rfl⟩
+      · exact ⟨_, _, Or.inl rfl⟩
+      · exact ⟨_, _, Or.inl rfl⟩
+      · exact ⟨_, _, Or.inr rfl⟩
+    have hloc : ∀ s ∈ GenAstPcs.pcsSetBlockAst setIdx [p0] distinctRotations off,
+        pcsStmtLocal (pcsSetBlockLocalsAll [p0] distinctRotations) s := by
+      intro s hs
+      rw [pcsSetBlockAst_one] at hs
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+      rcases hs with rfl | rfl | rfl | rfl <;>
+        simp [pcsStmtLocal, GenAst.ylet, GenAst.yset, pcsSetBlockLocalsAll,
+          pcsSetBlockLocals]
+    have hsub : ∀ y ∈ pcsAddedNames (GenAstPcs.pcsSetBlockAst setIdx [p0] distinctRotations off),
+        y ∈ pcsSetBlockLocalsAll [p0] distinctRotations := by
+      intro y hy
+      rw [pcsSetBlockAst_one] at hy
+      simp only [pcsAddedNames, pcsLetNames, List.mem_reverse, pcsStmtLetName?,
+        GenAst.ylet, GenAst.yset, List.filterMap_cons, List.filterMap_nil,
+        List.mem_cons, List.not_mem_nil, or_false] at hy
+      rcases hy with rfl | rfl | rfl
+      · simp [pcsSetBlockLocalsAll, pcsSetBlockLocals]
+      · simp [pcsSetBlockLocalsAll, pcsSetBlockLocals]
+      · simp [pcsSetBlockLocalsAll, pcsSetBlockLocals]
+    exact pcs_exec_frame_of_locals (funs := hoist (Bridge.Dialect (permissive (callsOf product)) g)
+      (GenAstPcs.pcsSetBlockAst setIdx [p0] distinctRotations off) :: funs)
+      hns hloc hsub hrun ho
+
 
 
 end Midfall.LoweringV3.PcsBlock4
