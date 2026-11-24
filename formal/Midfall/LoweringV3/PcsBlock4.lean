@@ -1895,6 +1895,55 @@ theorem pcs_field_distrib (c e inv : U256) (he : e.toNat < Midfall.Yul.blsR) :
     pcs_wMulmodAt_toNat]
   exact pcs_nat_key c.toNat e.toNat inv.toNat Midfall.Yul.blsR he
 
+/-- Loads from a `pcsWriteWords` image are canonical when every written value is. -/
+theorem pcsLoadWord_writeWords_toNat_lt {mem : Nat → UInt8} {D : Nat} {v : Nat → U256}
+    {n i : Nat} (hv : ∀ k, k < n → (v k).toNat < blsR) (hi : i < n) :
+    (loadWord (pcsWriteWords mem D v n) (D + 32 * i)).toNat < blsR := by
+  rw [pcsLoadWord_writeWords_lt mem D v hi]
+  exact hv i hi
+
+/-- A `b3FoldAcc` started from a canonical accumulator stays canonical: every update is an
+    `addmod`, and untouched entries keep the initial value. -/
+theorem b3FoldAcc_toNat_lt {rv : U256} (hrv : rv = BitVec.ofNat 256 blsR)
+    {f : FoldPair → U256} {x1 : Nat → U256}
+    {xs : List FoldPair} {k : Nat} {acc : U256} (hacc : acc.toNat < blsR) :
+    (b3FoldAcc rv f x1 xs k acc).toNat < blsR := by
+  subst rv
+  induction xs generalizing acc with
+  | nil => exact hacc
+  | cons q rest ih =>
+      rw [b3FoldAcc_cons]
+      by_cases hq : q.2.1 = k
+      · rw [if_pos hq]
+        apply ih
+        rw [pcs_wAddmodAt_toNat]
+        exact Nat.mod_lt _ (Fact.out (p := Nat.Prime blsR)).pos
+      · rw [if_neg hq]
+        exact ih hacc
+
+/-- The q_eval offset of a point set: the number of q_eval words in the sets before it. -/
+def pcsSetOff (pointSets : List (List Int)) (setIdx : Nat) : Nat :=
+  ((pointSets.take setIdx).map List.length).foldl (fun a b => a + b) 0
+
+/-- The memory invariant block 4 needs: every q_eval word of every point set is canonical.
+    Block 3 writes these words with `pcsWriteWords` from `addmod`/`mulmod` values. -/
+def PcsQEvalCanon (qep : U256) (pointSets : List (List Int)) (st : EvmState) : Prop :=
+  ∀ s, s < pointSets.length → ∀ j, j < (pointSets.getD s []).length →
+    (loadWord st.memory
+      (qep.toNat + (pcsSetOff pointSets s + j) * Midfall.Generator.wordBytes)).toNat < blsR
+
+/-- One block-3 persist chunk: canonical stored values give canonical loads. -/
+theorem pcsQEvalCanon_chunk {mem : Nat → UInt8} {R off m : Nat} {v : Nat → U256}
+    (hv : ∀ j, j < m → (v j).toNat < blsR) :
+    ∀ j, j < m →
+      (loadWord (pcsWriteWords mem (R + off * 32) v m)
+        (R + (off + j) * 32)).toNat < blsR := by
+  intro j hj
+  have h := pcsLoadWord_writeWords_toNat_lt (mem := mem) (D := R + off * 32)
+    (v := v) (n := m) (i := j) hv hj
+  convert h using 1
+  ring
+
 /-- `wMulmodAt` by the field one is the identity on canonical words. -/
 theorem pcs_wMulmodAt_one_right {a : U256} (ha : a.toNat < blsR) :
     wMulmodAt a 1 (BitVec.ofNat 256 blsR) = a := by
@@ -5204,6 +5253,252 @@ theorem pcsGenBody_contract {g : ExternalGas} (product : PairingProduct)
   · exact absurd (hpfxC V st hpre V' st' o hpfx).1 hne
 
 
+def pcsSetBlockLocals (points distinct : List Int) : List String :=
+  "f_eval" :: "bq" :: "eval" :: "den_inv" :: pcsInvName points.length 0 ::
+    (pcsPointRefs points distinct).map (fun q => pcsDxName q.1) ++
+    (pcsPointRefs points distinct).map (fun q => pcsLbasisName q.1) ++
+    (List.range (pcsBatchInputs points.length).length).map pcsBpName ++
+    (List.range (pcsBatchInputs points.length).length).map (pcsInvName points.length) ++
+    (List.range points.length).map (fun j => "term_" ++ toString j)
+
+theorem pcsGenBody_eq_chunks (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off : Nat) :
+    pcsGenBody setIdx points distinctRotations off =
+      (((pcsPointRefs points distinctRotations).map (fun q => pcsDxStmt q.1 q.2))
+        ++ ((pcsPointRefs points distinctRotations).map (fun q =>
+            pcsLbasisGroupAst q.1 q.2 (pcsKs points distinctRotations q.1))).flatten
+        ++ pcsBpLines (pcsBatchInputs points.length).length (pcsBatchName points.length))
+      ++ ([pcsBqStmt (pcsBpName ((pcsBatchInputs points.length).length - 1))]
+        ++ pcsBqLines (pcsBatchInputs points.length).length (pcsBatchName points.length)
+          (pcsInvName points.length)
+        ++ [GenAst.ylet (pcsInvName points.length 0) (GenAst.yvar "bq")]
+        ++ pcsDenInvLines points.length (pcsInvName points.length))
+      ++ ([pcsEvalStmt setIdx]
+        ++ pcsTermLines points.length off (fun j => pcsInvName points.length j)
+          (fun j => pcsInvName points.length (points.length + j))
+        ++ [pcsFEvalStmt]) := by
+  simp [pcsGenBody, List.append_assoc]
+
+theorem pcsGenBody_pcsStmtLocal_explicit (setIdx : Nat) (points distinct : List Int) (off : Nat)
+    (hm : 0 < points.length) :
+    ∀ s ∈ pcsGenBody setIdx points distinct off,
+      pcsStmtLocal (pcsSetBlockLocals points distinct) s := by
+  intro s hs
+  rw [pcsGenBody_eq_chunks] at hs
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, or_assoc] at hs
+  rcases hs with hdx | hlb | hbp | hbqc | hbq | hinv0 | hden | hev | hterm | hfe
+  · simp only [List.mem_map] at hdx
+    rcases hdx with ⟨q, hq, rfl⟩
+    simp only [pcsDxStmt, pcsStmtLocal, GenAst.ylet]
+    have hmem : pcsDxName q.1 ∈
+        (pcsPointRefs points distinct).map (fun q => pcsDxName q.1) :=
+      List.mem_map_of_mem hq
+    simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+    tauto
+  · simp only [List.mem_flatten, List.mem_map] at hlb
+    rcases hlb with ⟨l, ⟨q, hq, rfl⟩, hsl⟩
+    simp only [pcsLbasisGroupAst, pcsLbasisInit, pcsLbasisStmt,
+      List.mem_append, List.mem_cons, List.mem_map, List.not_mem_nil, or_false] at hsl
+    rcases hsl with rfl | ⟨k, hk, rfl⟩
+    · simp only [pcsStmtLocal, GenAst.ylet]
+      have hmem : pcsLbasisName q.1 ∈
+          (pcsPointRefs points distinct).map (fun q => pcsLbasisName q.1) :=
+        List.mem_map_of_mem hq
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+    · simp only [pcsStmtLocal, GenAst.yset]
+      have hmem : pcsLbasisName q.1 ∈
+          (pcsPointRefs points distinct).map (fun q => pcsLbasisName q.1) :=
+        List.mem_map_of_mem hq
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+  · simp only [pcsBpLines, pcsBpHead, pcsBpTail, List.mem_cons, List.mem_map,
+      List.not_mem_nil, or_false] at hbp
+    rcases hbp with rfl | ⟨i, hi, rfl⟩
+    · simp only [pcsStmtLocal, GenAst.ylet]
+      have hmem : pcsBpName 0 ∈
+          (List.range (pcsBatchInputs points.length).length).map pcsBpName :=
+        List.mem_map_of_mem (List.mem_range.mpr (by
+          rw [pcsBatchInputs_length]; omega))
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+    · simp only [pcsStmtLocal, GenAst.ylet]
+      have hmem : pcsBpName i ∈
+          (List.range (pcsBatchInputs points.length).length).map pcsBpName :=
+        List.mem_map_of_mem (List.mem_of_mem_drop hi)
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+  · subst hbqc
+    simp only [pcsBqStmt, pcsStmtLocal, GenAst.ylet]
+    have hmem : "bq" ∈ pcsSetBlockLocals points distinct := by
+      simp only [pcsSetBlockLocals, List.mem_cons]; tauto
+    simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+    tauto
+  · simp only [pcsBqLines, List.mem_flatMap] at hbq
+    rcases hbq with ⟨i, hi, hsl⟩
+    simp only [pcsBqStep, List.mem_cons, List.not_mem_nil, or_false] at hsl
+    rcases hsl with rfl | rfl
+    · simp only [pcsStmtLocal, GenAst.ylet]
+      have hmem : pcsInvName points.length i ∈
+          (List.range (pcsBatchInputs points.length).length).map (pcsInvName points.length) :=
+        List.mem_map_of_mem (List.mem_of_mem_drop (List.mem_reverse.mp hi))
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+    · simp only [pcsStmtLocal, GenAst.yset]
+      have hmem : "bq" ∈ pcsSetBlockLocals points distinct := by
+        simp only [pcsSetBlockLocals, List.mem_cons]; tauto
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+  · subst hinv0
+    simp only [pcsStmtLocal, GenAst.ylet]
+    have hmem : pcsInvName points.length 0 ∈ pcsSetBlockLocals points distinct := by
+      simp only [pcsSetBlockLocals, List.mem_cons]; tauto
+    simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+    tauto
+  · simp only [pcsDenInvLines, List.mem_append, List.mem_cons, List.mem_map,
+      List.not_mem_nil, false_or, or_false] at hden
+    rcases hden with h | ⟨j, hj, h⟩
+    · subst h
+      simp only [pcsStmtLocal, GenAst.ylet]
+      have hmem : "den_inv" ∈ pcsSetBlockLocals points distinct := by
+        simp only [pcsSetBlockLocals, List.mem_cons]; tauto
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+    · subst h
+      simp only [pcsDenInvSetStmt, pcsStmtLocal, GenAst.yset]
+      have hmem : "den_inv" ∈ pcsSetBlockLocals points distinct := by
+        simp only [pcsSetBlockLocals, List.mem_cons]; tauto
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+  · subst hev
+    simp only [pcsEvalStmt, pcsStmtLocal, GenAst.ylet]
+    have hmem : "eval" ∈ pcsSetBlockLocals points distinct := by
+      simp only [pcsSetBlockLocals, List.mem_cons]; tauto
+    simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+    tauto
+  · simp only [pcsTermLines, List.mem_flatMap] at hterm
+    rcases hterm with ⟨j, hj, hsl⟩
+    simp only [pcsTermStmt, List.mem_cons, List.not_mem_nil, or_false] at hsl
+    rcases hsl with rfl | rfl
+    · simp only [pcsStmtLocal, GenAst.ylet]
+      have hmem : ("term_" ++ toString j) ∈
+          (List.range points.length).map (fun j => "term_" ++ toString j) :=
+        List.mem_map_of_mem hj
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+    · simp only [pcsStmtLocal, GenAst.yset]
+      have hmem : "eval" ∈ pcsSetBlockLocals points distinct := by
+        simp only [pcsSetBlockLocals, List.mem_cons]; tauto
+      simp only [pcsSetBlockLocals, List.mem_cons, List.mem_append]
+      tauto
+  · subst hfe
+    simp only [pcsFEvalStmt, pcsStmtLocal, GenAst.yset, pcsSetBlockLocals]
+    exact List.mem_cons_self
+
+theorem pcsAddedNames_subset_locals (setIdx : Nat) (points distinct : List Int) (off : Nat)
+    (hm : 0 < points.length) :
+    ∀ y ∈ pcsAddedNames (pcsGenBody setIdx points distinct off),
+      y ∈ pcsSetBlockLocals points distinct := by
+  intro y hy
+  simp only [pcsAddedNames, pcsLetNames, List.mem_reverse] at hy
+  obtain ⟨s, hs, hsome⟩ := List.mem_filterMap.mp hy
+  have hloc := pcsGenBody_pcsStmtLocal_explicit setIdx points distinct off hm s hs
+  cases s with
+  | letDecl vars e =>
+      cases vars with
+      | nil => simp [pcsStmtLetName?] at hsome
+      | cons x vars =>
+          cases vars with
+          | nil =>
+              simp only [pcsStmtLetName?, Option.some.injEq] at hsome
+              simp only [pcsStmtLocal] at hloc
+              exact hsome ▸ hloc
+          | cons _ _ => simp [pcsStmtLetName?] at hsome
+  | _ => simp [pcsStmtLetName?] at hsome
+
+theorem pcs_venv_get_none_of_map_fst {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V W : YulSemantics.VEnv D} {x : YulSemantics.Ident}
+    (h : W.map Prod.fst = V.map Prod.fst)
+    (hV : YulSemantics.VEnv.get V x = none) :
+    YulSemantics.VEnv.get W x = none := by
+  unfold YulSemantics.VEnv.get at hV ⊢
+  rw [Option.map_eq_none_iff] at hV ⊢
+  rw [List.find?_eq_none] at hV ⊢
+  intro p hp
+  have hp' : p.1 ∈ W.map Prod.fst := List.mem_map_of_mem hp
+  rw [h] at hp'
+  rcases List.mem_map.mp hp' with ⟨q, hq, hq1⟩
+  intro hpx
+  exact hV q hq (by simpa [hq1] using hpx)
+theorem pcs_restore_map_fst {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V W : YulSemantics.VEnv D} {extra : List YulSemantics.Ident}
+    (h : W.map Prod.fst = extra ++ V.map Prod.fst) :
+    (YulSemantics.restore V W).map Prod.fst = V.map Prod.fst := by
+  unfold YulSemantics.restore
+  rw [List.map_drop, h]
+  have hlen : W.length - V.length = extra.length := by
+    have hh := congrArg List.length h
+    simp only [List.length_map, List.length_append] at hh
+    omega
+  rw [hlen, List.drop_left]
+def pcsSetBlockLocalsAll (points distinct : List Int) : List String :=
+  pcsSetBlockLocals points distinct ++ ["dx0", "dx0_inv"]
+
+theorem pcsSetBlockLocals_subset_all (points distinct : List Int) {x : String}
+    (h : x ∈ pcsSetBlockLocals points distinct) :
+    x ∈ pcsSetBlockLocalsAll points distinct :=
+  List.mem_append_left _ h
+
+theorem pcsStmtLocal_mono {locals locals' : List String}
+    (hsub : ∀ x ∈ locals, x ∈ locals') {s : Stmt EVM.Op}
+    (h : pcsStmtLocal locals s) : pcsStmtLocal locals' s := by
+  cases s with
+  | letDecl vars e =>
+      cases vars with
+      | nil => simp [pcsStmtLocal] at h
+      | cons x vars =>
+          cases vars with
+          | nil => simp [pcsStmtLocal] at h ⊢; exact hsub x h
+          | cons _ _ => simp [pcsStmtLocal] at h
+  | assign vars e =>
+      cases vars with
+      | nil => simp [pcsStmtLocal] at h
+      | cons x vars =>
+          cases vars with
+          | nil => simp [pcsStmtLocal] at h ⊢; exact hsub x h
+          | cons _ _ => simp [pcsStmtLocal] at h
+  | _ => simp [pcsStmtLocal] at h
+
+theorem pcs_exec_frame_of_locals {funs : FunEnv (Bridge.Dialect c g)} {body : Block EVM.Op}
+    {locals : List String}
+    (hns : ∀ s ∈ body, ∃ x e, s = GenAst.ylet x e ∨ s = GenAst.yset x e)
+    (hloc : ∀ s ∈ body, pcsStmtLocal locals s)
+    (hsub : ∀ y ∈ pcsAddedNames body, y ∈ locals)
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {V' : VEnv (Bridge.Dialect c g)}
+    {st' : EvmState} {o : Outcome}
+    (hrun : ExecStmts (Bridge.Dialect c g) funs V st body V' st' o)
+    (ho : o = .normal) :
+    (∀ x, x ∉ locals → VEnv.get (restore V V') x = VEnv.get V x) ∧
+    (∀ y, VEnv.get V y = none → VEnv.get (restore V V') y = none) := by
+  have hnamesExec := pcsExec_names (funs := funs) (ss := body) hns hrun ho
+  have hrestore : (restore V V').map Prod.fst = V.map Prod.fst :=
+    pcs_restore_map_fst hnamesExec
+  constructor
+  · intro x hx
+    have hxExtra : x ∉ pcsAddedNames body := fun h => hx (hsub x h)
+    have hinner : VEnv.get V' x = VEnv.get V x :=
+      pcsExec_get_of_local (funs := funs) (ss := body) (locals := locals)
+        hloc hx hrun ho
+    cases hv : VEnv.get V x with
+    | none =>
+        exact pcs_venv_get_none_of_map_fst (D := Bridge.Dialect c g) hrestore hv
+    | some v =>
+        have hget' : VEnv.get V' x = some v := by rw [hinner, hv]
+        exact pcs_venv_get_restore_of_names hnamesExec hxExtra hget'
+  · intro y hy
+    exact pcs_venv_get_none_of_map_fst (D := Bridge.Dialect c g) hrestore hy
+
+
 set_option maxHeartbeats 16000000 in
 theorem pcsSetBlock_multi_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
@@ -5494,6 +5789,144 @@ theorem pcsSetBlock_contract {g : ExternalGas} (product : PairingProduct)
       hscratch256 hfail hvalDx0 hvalLb0 hdx0pos hdx0lt hrv hcptr
       (by simpa using hqep) (by simpa using hdisj) V st hpre1 V' st' o hrun
     simpa using hmain
+
+
+set_option maxHeartbeats 16000000 in
+theorem pcsSetBlock_contract_frame {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off scratch hbls gasN selN selP : Nat)
+    (p a : Nat → U256) (x3v rv x2v fev cptr qep : U256)
+    (hm : 0 < points.length)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch hbls gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hnbls : BitVec.ofNat 256 hbls = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some
+      ((failFDecl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)), cenv'))
+    (hnames : PcsGenNames points.length (pcsPointRefs points distinctRotations)
+      (pcsKs points distinctRotations))
+    (hainlt : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat < blsR)
+    (hain0 : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat ≠ 0)
+    (hvalDx : ∀ i, i < points.length → a i = wAddmodAt x3v (rv - p i) rv)
+    (hvalLb : ∀ j, j < points.length →
+      a (points.length + j) = pcsLbasisVal rv (p j) p (pcsKs points distinctRotations j))
+    (hks_sub : ∀ g ∈ pcsPointRefs points distinctRotations,
+      ∀ k ∈ pcsKs points distinctRotations g.1, k ∈ pcsPointRefs points distinctRotations)
+    (hinv0Dist : ∀ j, 1 ≤ j → j < (pcsBatchInputs points.length).length →
+      pcsInvName points.length 0 ≠ pcsInvName points.length j)
+    (hinvEvalAll : ∀ i, pcsInvName points.length i ≠ "eval")
+    (hinvQSetAll : ∀ i, pcsInvName points.length i ≠ "Q_EVAL_SET_MPTR")
+    (hinvR0 : pcsInvName points.length 0 ≠ "r")
+    (htermF : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "f_eval")
+    (htermX2 : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "x2")
+    (hdenInvAll : ∀ i, i < (pcsBatchInputs points.length).length →
+      "den_inv" ≠ pcsInvName points.length i)
+    (hrv : rv = BitVec.ofNat 256 blsR)
+    (hcptr : cptr.toNat + setIdx * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hqep : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hdisj : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes ≤ scratch ∨
+      scratch + 192 ≤ qep.toNat + off * Midfall.Generator.wordBytes) :
+    StmtContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (Stmt.block (GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off))
+      (fun V st =>
+        PcsGPre (c := permissive (callsOf product)) (g := g)
+          x3v rv x2v fev cptr qep p (pcsPointRefs points distinctRotations)
+          (pcsBatchInputs points.length).length V st ∧
+        (∀ j, j < points.length → (loadWord st.memory
+          (qep.toNat + (off + j) * Midfall.Generator.wordBytes)).toNat < blsR))
+      (fun V st V' st' o =>
+        PcsGPost (c := permissive (callsOf product)) (g := g)
+          rv x2v fev a points.length setIdx cptr.toNat off scratch qep V st V' st' o ∧
+        (o = .normal →
+          (∀ x, x ∉ pcsSetBlockLocalsAll points distinctRotations →
+            VEnv.get V' x = VEnv.get V x) ∧
+          (∀ y, VEnv.get V y = none → VEnv.get V' y = none))) := by
+  apply StmtsContractAll.block
+  intro V st hpre V' st' o hrun
+  have hblockrun : ExecStmt (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      V st (Stmt.block (GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off))
+      (restore V V') st' o := Step.block hrun
+  have hcontract := pcsSetBlock_contract (g := g) (product := product) (funs := funs)
+    (decl := decl) (cenv := cenv) (cenv' := cenv')
+    setIdx points distinctRotations off scratch hbls gasN selN selP p a
+    x3v rv x2v fev cptr qep hm hlook hbody hparams hrets hnbls hscratch
+    hscratch256 hfail hnames hainlt hain0 hvalDx hvalLb hks_sub hinv0Dist
+    hinvEvalAll hinvQSetAll hinvR0 htermF htermX2 hdenInvAll hrv hcptr
+    hqep hdisj V st hpre (restore V V') st' o hblockrun
+  refine ⟨hcontract, ?_⟩
+  intro ho
+  by_cases h1 : 1 < points.length
+  · have hbodyEq : GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off =
+        pcsGenBody setIdx points distinctRotations off := by
+      rw [pcsSetBlockAst_eq_gen setIdx points distinctRotations off h1,
+        pcsSetBodyGen_eq setIdx points distinctRotations off h1]
+    have hhoistGen : hoist (Bridge.Dialect (permissive (callsOf product)) g)
+        (pcsGenBody setIdx points distinctRotations off) = [] := by
+      unfold hoist
+      rw [List.filterMap_eq_nil_iff]
+      intro s hs
+      rcases pcsGenBody_allLetSet setIdx points distinctRotations off s hs with ⟨x, e, h | h⟩
+      · subst s; simp [GenAst.ylet]
+      · subst s; simp [GenAst.yset]
+    rw [hbodyEq, hhoistGen] at hrun
+    have hns : ∀ s ∈ pcsGenBody setIdx points distinctRotations off,
+        ∃ x e, s = GenAst.ylet x e ∨ s = GenAst.yset x e :=
+      pcsGenBody_allLetSet setIdx points distinctRotations off
+    have hloc : ∀ s ∈ pcsGenBody setIdx points distinctRotations off,
+        pcsStmtLocal (pcsSetBlockLocalsAll points distinctRotations) s := by
+      intro s hs
+      exact pcsStmtLocal_mono
+        (fun x hx => pcsSetBlockLocals_subset_all points distinctRotations hx)
+        (pcsGenBody_pcsStmtLocal_explicit setIdx points distinctRotations off
+          (by omega) s hs)
+    have hsub : ∀ y ∈ pcsAddedNames (pcsGenBody setIdx points distinctRotations off),
+        y ∈ pcsSetBlockLocalsAll points distinctRotations := by
+      intro y hy
+      exact pcsSetBlockLocals_subset_all points distinctRotations
+        (pcsAddedNames_subset_locals setIdx points distinctRotations off (by omega) y hy)
+    exact pcs_exec_frame_of_locals (funs := [] :: funs) hns hloc hsub hrun ho
+  · have hlen : points.length = 1 := by omega
+    obtain ⟨p0, hp⟩ := List.length_eq_one_iff.mp hlen
+    subst hp
+    have hns : ∀ s ∈ GenAstPcs.pcsSetBlockAst setIdx [p0] distinctRotations off,
+        ∃ x e, s = GenAst.ylet x e ∨ s = GenAst.yset x e := by
+      intro s hs
+      rw [pcsSetBlockAst_one] at hs
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+      rcases hs with rfl | rfl | rfl | rfl
+      · exact ⟨_, _, Or.inl rfl⟩
+      · exact ⟨_, _, Or.inl rfl⟩
+      · exact ⟨_, _, Or.inl rfl⟩
+      · exact ⟨_, _, Or.inr rfl⟩
+    have hloc : ∀ s ∈ GenAstPcs.pcsSetBlockAst setIdx [p0] distinctRotations off,
+        pcsStmtLocal (pcsSetBlockLocalsAll [p0] distinctRotations) s := by
+      intro s hs
+      rw [pcsSetBlockAst_one] at hs
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+      rcases hs with rfl | rfl | rfl | rfl <;>
+        simp [pcsStmtLocal, GenAst.ylet, GenAst.yset, pcsSetBlockLocalsAll,
+          pcsSetBlockLocals]
+    have hsub : ∀ y ∈ pcsAddedNames (GenAstPcs.pcsSetBlockAst setIdx [p0] distinctRotations off),
+        y ∈ pcsSetBlockLocalsAll [p0] distinctRotations := by
+      intro y hy
+      rw [pcsSetBlockAst_one] at hy
+      simp only [pcsAddedNames, pcsLetNames, List.mem_reverse, pcsStmtLetName?,
+        GenAst.ylet, GenAst.yset, List.filterMap_cons, List.filterMap_nil,
+        List.mem_cons, List.not_mem_nil, or_false] at hy
+      rcases hy with rfl | rfl | rfl
+      · simp [pcsSetBlockLocalsAll, pcsSetBlockLocals]
+      · simp [pcsSetBlockLocalsAll, pcsSetBlockLocals]
+      · simp [pcsSetBlockLocalsAll, pcsSetBlockLocals]
+    exact pcs_exec_frame_of_locals (funs := hoist (Bridge.Dialect (permissive (callsOf product)) g)
+      (GenAstPcs.pcsSetBlockAst setIdx [p0] distinctRotations off) :: funs)
+      hns hloc hsub hrun ho
+
 
 
 end Midfall.LoweringV3.PcsBlock4
