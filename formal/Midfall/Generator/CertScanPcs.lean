@@ -1,4 +1,5 @@
 import Midfall.Generator.CertScan
+import Midfall.Generator.CertScanInline
 
 set_option autoImplicit false
 open Midfall Midfall.Generator Midfall.Lowering
@@ -23,8 +24,9 @@ open Midfall.Lowering.GenAstPcs
   `pcsLinExpansion`'s pure limb fold and selector fold use the same invariant.
   The `computationsAst` assembly is closed here too: `computationsAst_calls` /
   `computationsAst_noWriters` extract the emitted block list from the `Except`
-  chain, and the `*_pcs` reductions below discharge the PCS slice. The numerator
-  and inliner-preservation sides remain named hypotheses.
+  chain, and the `*_pcs` reductions below discharge the PCS slice. The inliner
+  side is `CertScanInline.noWriters_inlineContractConstants`; only the numerator
+  scan remains a named hypothesis.
 -/
 
 namespace Midfall.Generator.CertScanPcs
@@ -1736,16 +1738,14 @@ theorem noWriters_program_pcs (pv : PlanView) (m : Model)
           blocks hc b hb))
     hnum
 
-/-- The target's INLINED program with the PCS residual discharged. The remaining
-    named side condition is the inliner's `NoWriters` preservation; the numerator
-    scan is `hnum`. -/
+/-- The target's INLINED program with both the PCS residual and the inliner
+    side condition discharged. The only remaining named scan hypothesis is the
+    numerator `hnum`. -/
 theorem noWriters_asmOf_pcs (pv : PlanView) (m : Model)
-    (hinline : NoWriters (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m) →
-      NoWriters (Midfall.Lowering.Inline.inlineContractConstants
-        (Midfall.LoweringV2.constTableOf m)
-        (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m)))
     (hnum : NoWriters (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
     NoWriters (Midfall.LoweringV2.asmOf pv m 0 0) :=
-  hinline (noWriters_program_pcs pv m hnum)
+  Midfall.Generator.CertScanInline.noWriters_inlineContractConstants
+    (Midfall.LoweringV2.constTableOf m) _
+    (noWriters_program_pcs pv m hnum)
 
 end Midfall.Generator.CertScanPcs

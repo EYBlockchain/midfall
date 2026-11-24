@@ -2138,13 +2138,13 @@ theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan
     numerator signatures/calls remain).
   * `prog_noWriters`: `noWriters_program_of` leaves the PCS slice and the parsed numerator; the
     parser (`parser_noWriters`) and all fixed groups are proved. The target's `prog` is the INLINED
-    program, so one more child remains: `NoWriters` is invariant under
+    program; `CertScanInline.noWriters_inlineContractConstants` proves `NoWriters` is preserved by
     `Inline.inlineContractConstants` (the inliner changes expressions only, and the writer scan
     reads constructors only). `CertScanPcs.noWriters_mainAsmRaw_of_pcs` replaces the PCS slice by
     the same per-block invariant; `CertScanPcs.computationsAst_noWriters` closes it, and
     `CertScanPcs.noWriters_mainAsmRaw_pcs` / `noWriters_program_pcs` / `noWriters_asmOf_pcs`
     are the PCS-free reductions for `mainAsmRaw`, the guard/wrapper concatenation, and the
-    inlined `asmOf` (the last keeps the inliner-preservation and numerator hypotheses named).
+    inlined `asmOf` (the last leaves only the numerator hypothesis named).
   * `prog_constsDeclared`: `freeNames_program_of` reduces the scan to one `FreeOK` hypothesis per
     emitter group; the guard/prefix facts are `constTableOf`/`expectedConsts` computations, and the
     numerator's free names are Blocker 1.
@@ -2162,8 +2162,8 @@ theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan
   `bySet`/commitments and `pcsLinExpansion`'s folds, through `foldlM_invariant'` and the
   identity/linearization/MSM step invariant). `computationsAst_calls` / `computationsAst_noWriters`
   close the block-list extraction from the `Except` chain, so the PCS residual is discharged in
-  `callsResolved_mainAsmRaw_pcs` / `noWriters_mainAsmRaw_pcs`; the numerator and the inliner
-  (`noWriters_asmOf_pcs`'s `hinline`) remain the named residuals.
+  `callsResolved_mainAsmRaw_pcs` / `noWriters_mainAsmRaw_pcs`; the inliner side is discharged by
+  `CertScanInline.noWriters_inlineContractConstants`, leaving only the numerator residual named.
   `topBinders_emitPcsFromPlan = []` and `funSigs_emitPcsFromPlan = []` are proved in §2/§3 here. -/
 
 end Midfall.Generator.CertScan
