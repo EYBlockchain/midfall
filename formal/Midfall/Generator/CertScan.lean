@@ -1488,6 +1488,223 @@ theorem funSigs_emitTranscriptParser (pv : PlanView) :
   | _ => rfl
 
 
+
+/-! ## 8. `callsResolved` OF `mainAsmRaw`, CONDITIONAL ON THE TWO RESIDUALS
+
+  Every group's call sites are now tabulated: the fixed groups exactly, the transcript parser by
+  `parser_callsOK`, the numerator and the PCS slice by hypothesis. `mainSigSet` is the function
+  table `funSigsOf (mainAsmRaw pv m)` (proved equal in §4 once the numerator defines nothing).
+  The hypotheses are the FIRST blocker of §5 (the numerator) and the second list-mapped group
+  (PCS, whose call sites are `scalar_inv` only). `callsResolved_of` then closes the scan. -/
+
+theorem CallsOK_nil (S : List (String × Nat)) : CallsOK S [] := by
+  unfold CallsOK
+  simp [Midfall.LoweringV3.callSitesSs]
+
+theorem CallsOK_mono {S T : List (String × Nat)} {b : YulBlock}
+    (h : CallsOK S b) (hsub : ∀ c ∈ S, c ∈ T) : CallsOK T b := by
+  unfold CallsOK at *
+  rw [List.all_eq_true] at h ⊢
+  intro c hc
+  exact List.contains_iff_mem.mpr (hsub c (List.contains_iff_mem.mp (h c hc)))
+
+theorem CallsOK_of_callSites_eq {S T : List (String × Nat)} {b : YulBlock}
+    (h : Midfall.LoweringV3.callSitesSs b = T) (hT : ∀ c ∈ T, c ∈ S) : CallsOK S b := by
+  unfold CallsOK
+  rw [h, List.all_eq_true]
+  intro c hc
+  exact List.contains_iff_mem.mpr (hT c hc)
+
+def mainSigSet (c : PartialCtx) : List (String × Nat) :=
+  [("fail", 1), ("scalar_inv", 1), ("transcript_init", 0), ("common_word", 2),
+   ("common_uncompressed_g1", 2), ("squeeze_to", 2), ("batch_invert", 5),
+   ("ec_pairing", 3)] ++
+  [("load_acc_coord_shifted", 5), ("is_bls_p_minus_one", 2), ("check_acc_coord_packing", 4),
+   ("load_acc_coord", 5), ("load_acc_point", 5)] ++
+  (if c.quotientPow5Helper then [("q_program_fail", 0), ("q_pow5", 1)]
+   else [("q_program_fail", 0)])
+
+
+example (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitTraceReturn pv) := by
+  apply CallsOK_of_callSites_eq (T := [("fail", 1)])
+  · exact callSites_emitTraceReturn pv
+  · intro x hx
+    simp only [List.mem_singleton] at hx
+    subst hx
+    simp [mainSigSet]
+
+example (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitLagrange pv) := by
+  apply CallsOK_of_callSites_eq (T := [("batch_invert", 5), ("fail", 1), ("fail", 1)])
+  · exact callSites_emitLagrange pv
+  · intro x hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+    rcases hx with rfl | rfl | rfl
+    all_goals simp [mainSigSet]
+
+example (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitFinalPairing pv) := by
+  apply CallsOK_of_callSites_eq (T := [("fail", 1), ("ec_pairing", 3)])
+  · exact callSites_emitFinalPairing pv
+  · intro x hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+    rcases hx with rfl | rfl
+    all_goals simp [mainSigSet]
+
+example (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitQuotientLin pv) :=
+  CallsOK_of_callSites_eq (callSites_emitQuotientLin pv) (by simp)
+
+example (pv : PlanView) (c : PartialCtx) (hacc : pv.hasAccumulator = false) :
+    CallsOK (mainSigSet c) (GenAst.emitVkLoading pv) := by
+  apply CallsOK_of_callSites_eq (T := [("fail", 1), ("fail", 1), ("fail", 1)])
+  · rw [callSites_emitVkLoading, hacc]; rfl
+  · intro x hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+    rcases hx with rfl | rfl | rfl
+    all_goals simp [mainSigSet]
+
+
+theorem callsOK_helpers (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitHelpers pv) := by
+  apply CallsOK_of_callSites_eq (T :=
+    [("fail", 1), ("fail", 1), ("fail", 1), ("fail", 1), ("fail", 1), ("fail", 1),
+     ("fail", 1), ("fail", 1), ("fail", 1), ("fail", 1)])
+  · exact callSites_emitHelpers pv
+  · intro x hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+    rcases hx with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    all_goals simp [mainSigSet]
+
+theorem callsOK_acc (c : PartialCtx) :
+    CallsOK (mainSigSet c) GenAst.emitAccumulatorHelpers := by
+  apply CallsOK_of_callSites_eq (T :=
+    [("check_acc_coord_packing", 4), ("load_acc_coord_shifted", 5), ("is_bls_p_minus_one", 2),
+     ("load_acc_coord", 5), ("load_acc_coord", 5)])
+  · exact callSites_emitAccumulatorHelpers
+  · intro x hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+    rcases hx with rfl | rfl | rfl | rfl | rfl
+    all_goals simp [mainSigSet]
+
+theorem callsOK_parser (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitTranscriptParser pv) :=
+  CallsOK_mono (parser_callsOK pv) (by
+    intro x hx
+    simp only [parserCallNames, List.mem_cons, List.not_mem_nil, or_false] at hx
+    rcases hx with rfl | rfl | rfl | rfl | rfl
+    all_goals simp [mainSigSet])
+
+
+
+theorem callsOK_trace (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitTraceReturn pv) := by
+  apply CallsOK_of_callSites_eq (T := [("fail", 1)])
+  · exact callSites_emitTraceReturn pv
+  · intro x hx; simp only [List.mem_singleton] at hx; subst hx; simp [mainSigSet]
+
+theorem callsOK_fp (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitFinalPairing pv) := by
+  apply CallsOK_of_callSites_eq (T := [("fail", 1), ("ec_pairing", 3)])
+  · exact callSites_emitFinalPairing pv
+  · intro x hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+    rcases hx with rfl | rfl <;> simp [mainSigSet]
+
+theorem callsOK_lagrange (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitLagrange pv) := by
+  apply CallsOK_of_callSites_eq (T := [("batch_invert", 5), ("fail", 1), ("fail", 1)])
+  · exact callSites_emitLagrange pv
+  · intro x hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+    rcases hx with rfl | rfl | rfl <;> simp [mainSigSet]
+
+theorem callsOK_qlin (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitQuotientLin pv) :=
+  CallsOK_of_callSites_eq (callSites_emitQuotientLin pv) (by simp)
+
+theorem callsOK_qhelpers (pv : PlanView) (c : PartialCtx) :
+    CallsOK (mainSigSet c) (GenAst.emitQuotientHelpersAt c.quotientPow5Helper) := by
+  apply CallsOK_of_callSites_eq (callSites_emitQuotientHelpersAt c.quotientPow5Helper)
+  intro x hx; simp at hx
+
+theorem callsOK_vk (pv : PlanView) (c : PartialCtx) (hacc : pv.hasAccumulator = false) :
+    CallsOK (mainSigSet c) (GenAst.emitVkLoading pv) := by
+  apply CallsOK_of_callSites_eq (T := [("fail", 1), ("fail", 1), ("fail", 1)])
+  · rw [callSites_emitVkLoading, hacc]; rfl
+  · intro x hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+    rcases hx with rfl | rfl | rfl <;> simp [mainSigSet]
+
+theorem callsOK_mainGuard (c : PartialCtx) :
+    CallsOK (mainSigSet c) mainGuardBlock :=
+  CallsOK_of_callSites_eq callSites_mainGuardBlock (by simp)
+
+theorem callsOK_mainLocals (c : PartialCtx) :
+    CallsOK (mainSigSet c) mainLocals :=
+  CallsOK_of_callSites_eq callSites_mainLocals (by simp)
+
+theorem callsOK_mainAsmRaw (pv : PlanView) (m : Model) (hacc : pv.hasAccumulator = false)
+    (hnum : CallsOK (mainSigSet (partialCtxOfVerifier m))
+      (GenAst.emitQuotientNumerator (partialCtxOfVerifier m)))
+    (hpcs : CallsOK (mainSigSet (partialCtxOfVerifier m)) (GenAst.emitPcsFromPlan pv)) :
+    CallsOK (mainSigSet (partialCtxOfVerifier m)) (mainAsmRaw pv m) := by
+  have hq : CallsOK (mainSigSet (partialCtxOfVerifier m)) (qlinSlice pv (partialCtxOfVerifier m)) := by
+    change CallsOK (mainSigSet (partialCtxOfVerifier m))
+      (GenAst.emitQuotientHelpersAt (partialCtxOfVerifier m).quotientPow5Helper ++
+        GenAst.emitQuotientNumerator (partialCtxOfVerifier m) ++ GenAst.emitQuotientLin pv)
+    exact CallsOK_append (CallsOK_append (callsOK_qhelpers pv _) hnum) (callsOK_qlin pv _)
+  rw [mainAsmRaw_decomp]
+  exact CallsOK_append
+    (CallsOK_append
+      (CallsOK_append
+        (CallsOK_append
+          (CallsOK_append
+            (CallsOK_append
+              (CallsOK_append
+                (CallsOK_append
+                  (CallsOK_append (CallsOK_append (callsOK_mainGuard _) (callsOK_helpers pv _))
+                    (callsOK_acc _))
+                  (callsOK_mainLocals _)) (callsOK_vk pv _ hacc)) (callsOK_parser pv _))
+              (callsOK_lagrange pv _)) hq) hpcs) (callsOK_fp pv _))
+    (callsOK_trace pv _)
+
+
+theorem callsResolved_mainAsmRaw_of (pv : PlanView) (m : Model)
+    (hacc : pv.hasAccumulator = false)
+    (hnumSigs : Midfall.LoweringV3.funSigsOf
+      (GenAst.emitQuotientNumerator (partialCtxOfVerifier m)) = [])
+    (hnumCalls : CallsOK (mainSigSet (partialCtxOfVerifier m))
+      (GenAst.emitQuotientNumerator (partialCtxOfVerifier m)))
+    (hpcsCalls : CallsOK (mainSigSet (partialCtxOfVerifier m)) (GenAst.emitPcsFromPlan pv)) :
+    Midfall.LoweringV3.callsResolved (mainAsmRaw pv m) = true := by
+  have hsigs : Midfall.LoweringV3.funSigsOf (mainAsmRaw pv m) =
+      mainSigSet (partialCtxOfVerifier m) :=
+    funSigsOf_mainAsmRaw pv m hnumSigs (funSigs_emitTranscriptParser pv)
+  have hcalls : ∀ c ∈ Midfall.LoweringV3.callSitesSs (mainAsmRaw pv m),
+      (Midfall.LoweringV3.funSigsOf (mainAsmRaw pv m)).contains c = true := by
+    have h := callsOK_mainAsmRaw pv m hacc hnumCalls hpcsCalls
+    unfold CallsOK at h
+    rw [List.all_eq_true] at h
+    intro c hc
+    rw [hsigs]
+    exact h c (by simpa [hsigs] using hc)
+  refine callsResolved_of hcalls ?_ ?_
+  · rw [hsigs]
+    intro s hs
+    have hall : (mainSigSet (partialCtxOfVerifier m)).all
+        (fun s => (EVM.parse s.1).isNone) = true := by
+      cases hp : (partialCtxOfVerifier m).quotientPow5Helper <;>
+        simp [mainSigSet, hp] <;> decide
+    exact List.all_eq_true.mp hall s hs
+  · rw [hsigs]
+    have hnd : ((mainSigSet (partialCtxOfVerifier m)).map Prod.fst).Nodup := by
+      cases hp : (partialCtxOfVerifier m).quotientPow5Helper <;>
+        simp [mainSigSet, hp]
+    exact hnd
+
+
 /-! ## 5. WHY THE NUMERATOR RESIDUAL IS NOT A TREE LEMMA (reproduction record)
 
   The three hypotheses of `noWriters_mainAsmRaw_of` are not interchangeable. The parser and PCS
