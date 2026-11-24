@@ -7283,7 +7283,11 @@ theorem g1WalkTail_contract (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g
     (hw : w + 128 * j < 2 ^ 256) (hb : b + 128 * j < 2 ^ 256)
     (hdisj : w + 128 * j ≤ b ∨ b + 128 * j ≤ w)
     (st0 : EvmState) (k : Nat) (hklt : k < j) :
-    StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g)
+    StmtsContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) ::
+        hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+          [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] ::
+        R.scope c g)
       [GenAst.yexpr (GenAst.yop Op.calldatacopy
           [GenAst.yvar walk, GenAst.yvar "proof_cptr", GenAst.ylit 128]),
         GenAst.yset walk (GenAst.yop Op.add [GenAst.yvar walk, GenAst.ylit 128]),
