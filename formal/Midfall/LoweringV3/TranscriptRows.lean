@@ -1680,6 +1680,32 @@ def phaseCols {p : Nat} [Fact (Nat.Prime p)] (cs : Midfall.Halo2.ConstraintSyste
   (List.range cs.numAdviceColumns).filterMap fun i =>
     if (cs.adviceColumnPhase[i]?.map (fun q => q.val)) == some ph.val then some i else none
 
+/-- **THE PHASE-ORDER INTERFACE.** The phases, listed in `vk.cs.phases` order,
+    enumerate the advice columns in column order. This is what the advice
+    commitment array (`scatterIndexed`, column-indexed) and the calldata advice
+    window (phase-indexed) need in order to agree; `WellFormed.advicePhaseTotal`
+    only fixes the LENGTH of `adviceColumnPhase`, so it does not derive this. -/
+def AdvicePhasesColumnOrder (vk : VerifyingKey (Fr p) G₁) : Prop :=
+  vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph) = List.range vk.cs.numAdviceColumns
+
+section AdvicePhaseOrderFalsifier
+local instance : Fact (Nat.Prime 17) := ⟨by decide⟩
+
+/-- **THE ORDER IS NOT FREE.** A two-column key with phase vector `[1,0]` satisfies
+    `adviceColumnPhase.size = numAdviceColumns` but its phase blocks flatten to
+    `[1,0]`, not `[0,1]`. So `WellFormed.advicePhaseTotal` does NOT derive
+    `AdvicePhasesColumnOrder`; the order is the named phase-order premise. -/
+theorem advicePhaseTotal_not_columnOrder :
+    ∃ cs : Midfall.Halo2.ConstraintSystem (Fr 17),
+      cs.adviceColumnPhase.size = cs.numAdviceColumns ∧
+        cs.phases.flatMap (fun ph => phaseCols cs ph) ≠ List.range cs.numAdviceColumns := by
+  refine ⟨{ Midfall.Halo2.ConstraintSystem.default (F := Fr 17) with
+      numAdviceColumns := 2, adviceColumnPhase := #[⟨1⟩, ⟨0⟩] }, ?_, ?_⟩
+  · rfl
+  · decide
+
+end AdvicePhaseOrderFalsifier
+
 /-- The advice-phase segment of the parser schedule: one G1 group per user phase. -/
 def seqAdvice (userPhases : List UserPhase) : List (WireSlot × Nat) :=
   userPhases.map (fun ph => (WireSlot.g1, ph.adviceBytes / 128))
@@ -4860,6 +4886,466 @@ theorem runsAll_readAlgebra (E : VerifierEnv p G₁ G₂ Gₜ)
       intro trashcansEvaluatedList _
       exact RunsAllP.pure E _ _ trivial
 
+theorem readN_g1_wire_values (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (n : Nat) (acc : Array G₁) (t : Midfall.Halo2.Transcript) (pref : Bytes)
+      (qs : List G₁) (rest : Bytes),
+      qs.length = n →
+      t.buffer = pref ++ (wireMsgs E (qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest) →
+      t.pos = pref.size →
+      p ≤ 2 ^ 256 →
+      (∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q) →
+      (∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth) →
+      ∃ (arr : Array G₁) (t' : Midfall.Halo2.Transcript),
+        Midfall.Halo2.Transcript.readN.go (hashableG1 E.g1) t acc n = .ok (arr, t') ∧
+        arr.toList = acc.toList ++ qs ∧
+        t'.pos = pref.size + (qs.map fun Q => (msgWire E (Msg.g1 Q)).size).sum ∧
+        t'.buffer = t.buffer := by
+  intro n
+  induction n with
+  | zero =>
+      intro acc t pref qs rest hlen hbuf hpos hp henc hwidth
+      have hqs : qs = [] := List.eq_nil_of_length_eq_zero hlen
+      subst hqs
+      refine ⟨acc, t, ?_, ?_, ?_, rfl⟩
+      · simp only [Midfall.Halo2.Transcript.readN.go]
+      · simp
+      · simp [hpos]
+  | succ n ih =>
+      intro acc t pref qs rest hlen hbuf hpos hp henc hwidth
+      obtain ⟨Q, qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      have hsize : (msgWire E (Msg.g1 Q)).size = g1CompressedWidth := by
+        show (E.g1.toCompressed Q).size = g1CompressedWidth
+        exact hwidth Q
+      have hbuf' : t.buffer = pref ++ msgWire E (Msg.g1 Q) ++
+          (wireMsgs E (qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest) := by
+        rw [hbuf, List.map_cons, wireMsgs_cons]
+        simp only [ByteArray.append_assoc]
+      have hbt : bytesTake t.buffer t.pos g1CompressedWidth = some (E.g1.toCompressed Q) := by
+        rw [hbuf', hpos, ← Nat.add_zero (ByteArray.size pref), ByteArray.append_assoc]
+        simp only [msgWire]
+        rw [bytesTake_append_right pref (E.g1.toCompressed Q ++
+          (wireMsgs E (qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest)) 0 g1CompressedWidth (by
+            rw [ByteArray.size_append, hwidth]; omega)]
+        rw [bytesTake_append_left (E.g1.toCompressed Q)
+          (wireMsgs E (qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest) 0 g1CompressedWidth (by rw [hwidth]; omega)]
+        rw [← hwidth Q, bytesTake_whole]
+      obtain ⟨t1, hread, hpos1, hbuf1⟩ :=
+        transcript_read_ok (hashableG1 E.g1) t (E.g1.toCompressed Q) Q hbt
+          (by rw [hashableG1_readRepr?]; exact henc Q)
+      have hpos1' : t1.pos = (pref ++ msgWire E (Msg.g1 Q)).size := by
+        rw [hpos1, hpos, hashableG1_width, ByteArray.size_append, hsize]
+      have hbuf1' : t1.buffer = (pref ++ msgWire E (Msg.g1 Q)) ++
+          wireMsgs E (qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest := by
+        rw [hbuf1, hbuf']
+        simp only [ByteArray.append_assoc]
+      obtain ⟨arr, t2, hrun2, hval, hpos2, hbuf2⟩ :=
+        ih (acc.push Q) t1 (pref ++ msgWire E (Msg.g1 Q)) qs' rest
+          (by simpa using hlen) (by simpa only [ByteArray.append_assoc] using hbuf1') hpos1' hp henc hwidth
+      refine ⟨arr, t2, ?_, ?_, ?_, hbuf2.trans hbuf1⟩
+      · simp only [Midfall.Halo2.Transcript.readN.go]
+        rw [hread]
+        exact hrun2
+      · rw [hval, Array.toList_push, List.append_assoc]
+        rfl
+      · rw [hpos2, ByteArray.size_append, List.map_cons, List.sum_cons]
+        omega
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem runsAllP_tmReadN_g1_values (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs : List G₁)
+    (hlen : Qs.length = n) :
+    RunsAllP E (tmReadN (hashableG1 E.g1) n)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (fun arr => arr.toList = Qs) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨arr, t', hrun, hval, hpos', hbuf'⟩ :=
+    readN_g1_wire_values E n #[] t pref Qs rest hlen (by simpa only [ByteArray.append_assoc] using hbuf) hpos hp henc hwidth
+  refine ⟨arr, t', ?_, hbuf', ?_, ?_⟩
+  · rw [tmReadN_run_eq]
+    simpa only [Midfall.Halo2.Transcript.readN] using hrun
+  · simpa only [List.map_map, Function.comp_def] using hpos'
+  · simpa using hval
+
+theorem runsAllP_parseTraceAdvicePhase_values (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0)
+    (row : List (Nat × G₁)) (ph : Phase) (Qs : List G₁)
+    (hlen : Qs.length = (phaseCols vk.cs ph).length) :
+    RunsAllP E (parseTraceAdvicePhase E vk ([row], []) ph)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun st => st = ([row ++ List.zip (phaseCols vk.cs ph) Qs], [])) := by
+  rw [parseTraceAdvicePhase_zero_eq E vk hsp row ph]
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨reads, t', hrun, hbuf', hpos', hval⟩ :=
+    runsAllP_tmReadN_g1_values E (phaseCols vk.cs ph).length Qs hlen t pref rest hbuf
+      hpos hp henc hwidth
+  refine ⟨([row ++ List.zip (phaseCols vk.cs ph) reads.toList], []), t', ?_, hbuf', hpos', ?_⟩
+  · simp only [StateT.run_bind, hrun, StateT.run_pure]
+    rfl
+  · rw [hval]
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem length_flatMap_phaseCols (cs : Midfall.Halo2.ConstraintSystem (Fr p)) (phs : List Phase) :
+    (phs.flatMap (fun ph => phaseCols cs ph)).length =
+      (phs.map (fun ph => (phaseCols cs ph).length)).sum := by
+  induction phs with
+  | nil => rfl
+  | cons ph phs ih =>
+      simp only [List.flatMap_cons, List.length_append, List.map_cons, List.sum_cons, ih]
+
+theorem runsAllP_parseTraceAdvicePhases_values (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0) :
+    ∀ (phs : List Phase) (row : List (Nat × G₁)) (Qs : List G₁),
+      Qs.length = (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum →
+      RunsAllP E (phs.foldlM (parseTraceAdvicePhase E vk) ([row], []))
+        (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun st => st = ([row ++ List.zip (phs.flatMap (fun ph => phaseCols vk.cs ph)) Qs], [])) := by
+  intro phs
+  induction phs with
+  | nil =>
+      intro row Qs hlen
+      have h0 : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst h0
+      simpa only [List.foldlM_nil, List.flatMap_nil, List.zip_nil_right, List.map_nil] using
+        (RunsAllP.pure E ([row], []) (fun st => st = ([row ++ []], [])) (by simp))
+  | cons ph phs ih =>
+      intro row Qs hlen
+      have hsum : Qs.length = (phaseCols vk.cs ph).length +
+          (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum := by
+        simpa only [List.map_cons, List.sum_cons] using hlen
+      set n := (phaseCols vk.cs ph).length with hn
+      have hlen1 : (Qs.take n).length = n := by rw [List.length_take]; omega
+      have hlen2 : (Qs.drop n).length =
+          (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum := by
+        rw [List.length_drop, hsum]; omega
+      have hsplit : Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.foldlM_cons, hsplit]
+      refine RunsAllP.bind E
+        (ms₁ := (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (ms₂ := (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (runsAllP_parseTraceAdvicePhase_values E vk hsp row ph (Qs.take n)
+          (by rw [hlen1, hn])) ?_
+      intro st hst
+      rw [hst]
+      refine RunsAllP.mono E (ih (row ++ List.zip (phaseCols vk.cs ph) (Qs.take n))
+        (Qs.drop n) hlen2) ?_
+      intro st2 hst2
+      rw [hst2]
+      have hzip : List.zip ((phaseCols vk.cs ph) ++
+          (phs.flatMap (fun ph => phaseCols vk.cs ph))) Qs =
+          List.zip (phaseCols vk.cs ph) (Qs.take n) ++
+            List.zip (phs.flatMap (fun ph => phaseCols vk.cs ph)) (Qs.drop n) := by
+        conv_lhs => rw [show Qs = Qs.take n ++ Qs.drop n from
+          (List.take_append_drop n Qs).symm]
+        exact List.zip_append (l₁ := phaseCols vk.cs ph) (l₂ := Qs.take n)
+          (r₁ := phs.flatMap (fun ph => phaseCols vk.cs ph)) (r₂ := Qs.drop n)
+          (hn.symm.trans hlen1.symm)
+      rw [List.flatMap_cons, hzip, List.append_assoc]
+
+theorem runsAllP_readAlgebra_quotient_values (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p))))
+    (hmax : maxInstanceLen instances < 2 ^ 31)
+    (hrows : ∀ row ∈ instances.toList, ∀ q ∈ vk.cs.instanceQueries.toList,
+      ¬ q.1.index < nbCommitted → ∃ col, row[q.1.index - nbCommitted]? = some col)
+    (Qg : List G₁) (Qi Qa Qf Qc Qp Ql Qt : List (Fr p))
+    (hlenQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else vk.domain.getQuotientPolyDegree))
+    (hlenI : Qi.length = instances.size *
+      (vk.cs.instanceQueries.toList.filter
+        (fun q => decide (q.1.index < nbCommitted))).length)
+    (hlenA : Qa.length = numProofs * vk.cs.adviceQueries.size)
+    (hlenF : Qf.length = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors)
+    (hlenC : Qc.length = vk.permutation.commitments.size)
+    (hlenP : Qp.length = (permutations.toList.map
+      (fun pc => 3 * pc.permutationProductCommitments.size - 1)).sum)
+    (hlenL : Ql.length = (lookups.toList.map
+      (fun row => (row.toList.map (fun l => l.helperPolys.size + 3)).sum)).sum)
+    (hlenT : Qt.length = (trashcans.toList.map (fun row => row.size)).sum) :
+    RunsAllP E (Verifier.readAlgebra (p := p) E.g1 Features.solidity vk permutations lookups
+      trashcans nbCommitted numProofs instances)
+      (Qg.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (Qi.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                  (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                    (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ []))))))))
+      (fun alg => alg.quotientLimbComs.toList = Qg) := by
+  unfold Verifier.readAlgebra
+  dsimp only
+  let rest : List (Msg (Fr p) G₁) :=
+    Qi.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+      (Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ []))))))
+  have hfirst : RunsAllP E
+      (tmReadN (hashableG1 E.g1) (if Features.solidity.outerSingleHCommitment then 1
+        else vk.domain.getQuotientPolyDegree))
+      (Qg.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (fun arr => arr.toList = Qg) :=
+    runsAllP_tmReadN_g1_values E vk.domain.getQuotientPolyDegree Qg
+      (by simpa [show (if Features.solidity.outerSingleHCommitment = true then 1
+        else vk.domain.getQuotientPolyDegree) = vk.domain.getQuotientPolyDegree from rfl] using hlenQ)
+  refine RunsAllP.bind E (ms₁ := Qg.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := rest) hfirst ?_
+  intro quotientLimbComs hq
+  · refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := rest)
+      (RunsAllP.squeeze E) ?_
+    intro x _
+    have hmin : (List.foldl
+        (fun st q =>
+          if q.2.int < st.1 then (q.2.int, st.2)
+          else if q.2.int > st.2 then (st.1, q.2.int) else st)
+        (0, 0) vk.cs.instanceQueries.toList).1 = 0 := by
+      simpa only using congrArg Prod.fst (readAlgebra_rotBounds_zero vk hf)
+    have hm : RunsAllP E
+        (StateT.lift (Verifier.i32Abs
+          (List.foldl
+            (fun st q =>
+              if q.2.int < st.1 then (q.2.int, st.2)
+              else if q.2.int > st.2 then (st.1, q.2.int) else st)
+            (0, 0) vk.cs.instanceQueries.toList).1
+          "proofs/src/plonk/verifier.rs:348")) [] (fun a => a = 0) := by
+      simpa only [hmin, i32Abs_zero] using
+        (RunsAllP.lift_ok E (0 : Int) (fun a => a = 0) rfl)
+    refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+      (ms₂ := rest) hm ?_
+    intro absMin habs
+    subst habs
+    set maxRot : Int := (List.foldl
+      (fun st q =>
+        if q.2.int < st.1 then (q.2.int, st.2)
+        else if q.2.int > st.2 then (st.1, q.2.int) else st)
+      (0, 0) vk.cs.instanceQueries.toList).2 with hmaxRot
+    set lIS : Array (Fr p) :=
+      vk.domain.lIRange x (powVartime x (vk.n - 1) * x) _ with hLIS
+    have hmaxRot0 : maxRot = 0 := by
+      rw [hmaxRot]
+      simpa only using congrArg Prod.snd (readAlgebra_rotBounds_zero vk hf)
+    have hlis0 : lIS = vk.domain.lIRange x (powVartime x (vk.n - 1) * x)
+        (zeroRotations (maxInstanceLen instances)) := by
+      have hfold : List.foldl max 0 (List.flatMap
+          (fun row => List.map (fun col => col.size) row.toList) instances.toList) =
+          maxInstanceLen instances := rfl
+      rw [hLIS, hmaxRot0, hfold,
+        readAlgebra_rotations_zero (maxInstanceLen instances) hmax]
+    refine RunsAllP.bind E (ms₁ := Qi.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+      (ms₂ := (Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [])))))))
+      (RunsAll.toRunsAllP E (runsAll_instanceEvals E vk nbCommitted maxRot lIS
+        instances.toList Qi hlenI ?_)) ?_
+    · intro row hrow q hq hnc
+      obtain ⟨col, hcol⟩ := hrows row hrow q hq hnc
+      refine ⟨col, hcol, ?_⟩
+      rw [hlis0, hmaxRot0]
+      exact readAlgebra_instanceSlice_safe vk hf nbCommitted instances hmax x
+        (powVartime x (vk.n - 1) * x) row hrow q hq col hcol
+    · intro instanceEvalsList _
+      refine RunsAllP.bind E (ms₁ := Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ []))))))
+        (RunsAll.toRunsAllP E (runsAll_readAlgebraAdviceEvals E vk numProofs Qa hlenA)) ?_
+      intro adviceEvalsList _
+      refine RunsAllP.bind E (ms₁ := Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [])))))
+        (RunsAll.toRunsAllP E (runsAll_readFixedEvals E vk hf Qf hlenF)) ?_
+      intro fixedEvals _
+      refine RunsAllP.bind E (ms₁ := Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ []))))
+        (RunsAll.toRunsAllP E (runsAll_permutationCommon E vk Qc hlenC)) ?_
+      intro permutationsCommon _
+      refine RunsAllP.bind E (ms₁ := Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [])))
+        (RunsAll.toRunsAllP E (runsAll_permutationsEvaluated E permutations Qp hlenP)) ?_
+      intro permutationsEvaluatedList _
+      refine RunsAllP.bind E (ms₁ := Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ []))
+        (RunsAll.toRunsAllP E (runsAll_lookupsEvaluated E lookups Ql hlenL)) ?_
+      intro lookupsEvaluatedList _
+      refine RunsAllP.bind E (ms₁ := Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := ([] : List (Msg (Fr p) G₁)))
+        (RunsAll.toRunsAllP E (runsAll_trashcansEvaluated E trashcans Qt hlenT)) ?_
+      intro trashcansEvaluatedList _
+      exact RunsAllP.pure E _ (fun (alg : Verifier.AlgebraRead (Fr p) G₁) =>
+        alg.quotientLimbComs.toList = Qg) (by
+        simpa using hq)
+
+
+theorem scatStep_fold_range_shift {α : Type} (n : Nat) :
+    ∀ (k : Nat) (pref : List (Option α)) (Qs : List α),
+      pref.length = k → k + Qs.length ≤ n →
+      (List.zip ((List.range Qs.length).map (fun i => k + i)) Qs).foldl
+        (scatStep n) (pref ++ List.replicate (n - k) none) =
+      pref ++ Qs.map some ++ List.replicate (n - k - Qs.length) none := by
+  intro k pref Qs
+  induction Qs generalizing k pref with
+  | nil =>
+      intro hk hle
+      simp
+  | cons Q Qs ih =>
+      intro hk hle
+      simp only [List.length_cons] at hle
+      have hklt : k < n := by omega
+      have htake : (pref ++ List.replicate (n - k) none).take k = pref := by
+        rw [List.take_append_of_le_length (by omega), List.take_of_length_le (by omega)]
+      have hdrop : (pref ++ List.replicate (n - k) none).drop (k + 1) =
+          List.replicate (n - k - 1) none := by
+        rw [List.drop_append, List.drop_eq_nil_of_le (by omega), List.drop_replicate,
+          List.nil_append, hk]
+        congr 1
+        omega
+      have hstep : scatStep n (pref ++ List.replicate (n - k) none) (k, Q) =
+          (pref ++ [some Q]) ++ List.replicate (n - (k + 1)) none := by
+        unfold scatStep
+        rw [if_pos hklt, htake, hdrop, List.append_assoc,
+          show n - k - 1 = n - (k + 1) by omega]
+        simp only [List.append_assoc]
+      have hzip : List.zip ((List.range (Qs.length + 1)).map (fun i => k + i)) (Q :: Qs) =
+          (k, Q) :: List.zip ((List.range Qs.length).map (fun i => (k + 1) + i)) Qs := by
+        rw [List.range_succ_eq_map]
+        simp only [List.map_cons, List.map_map, List.zip_cons_cons]
+        congr 1
+        rw [show ((fun i => k + i) ∘ Nat.succ) = (fun i => (k + 1) + i) by
+          funext x
+          simp only [Function.comp_apply]
+          omega]
+      rw [show (Q :: Qs).length = Qs.length + 1 by rfl]
+      rw [hzip, List.foldl_cons, hstep]
+      have hlenpref : (pref ++ [some Q]).length = k + 1 := by simp [hk]
+      have hmain := ih (k + 1) (pref ++ [some Q]) hlenpref (by omega)
+      rw [hmain, List.map_cons]
+      simp only [List.append_assoc]
+      rw [show n - (k + 1) - Qs.length = n - k - (Qs.length + 1) by omega]
+      rfl
+
+theorem scatStep_fold_zip_range {α : Type} (n : Nat) (Qs : List α)
+    (hlen : Qs.length = n) :
+    (List.zip (List.range n) Qs).foldl (scatStep n) (List.replicate n none) =
+      Qs.map some := by
+  have h := scatStep_fold_range_shift (α := α) n 0 [] Qs rfl (by omega)
+  rw [hlen] at h
+  simpa using h
+
+theorem mapM_id_map_some {α : Type} (Qs : List α) :
+    List.mapM (fun x => x) (Qs.map some) = some Qs := by
+  induction Qs with
+  | nil => rfl
+  | cons q qs ih => simp [ih]
+
+theorem scatterIndexed_zip_range {α : Type} (n : Nat) (Qs : List α)
+    (hlen : Qs.length = n) (site : String) :
+    Midfall.Halo2.scatterIndexed n (List.zip (List.range n) Qs) site = .ok Qs.toArray := by
+  have hfold := scatStep_fold_zip_range n Qs hlen
+  unfold Midfall.Halo2.scatterIndexed
+  change (match (List.zip (List.range n) Qs).foldl (scatStep n)
+      (List.replicate n (none : Option α)) with
+    | placed =>
+      match placed.mapM (fun x => x) with
+      | some xs => Except.ok xs.toArray
+      | none => Except.error (Midfall.Halo2.Fault.panic site)) = Except.ok Qs.toArray
+  rw [hfold]
+  simp only [mapM_id_map_some]
+
+theorem runsAllP_adviceScatter_values (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (Qs : List G₁)
+    (hlen : Qs.length = vk.cs.numAdviceColumns) :
+    RunsAllP E
+      (([(List.zip (List.range vk.cs.numAdviceColumns) Qs)] :
+          List (List (Nat × G₁))).foldlM (init := (#[] : Array (Array G₁)))
+        fun acc pairs => do
+          let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+            "proofs/src/plonk/verifier.rs:118")
+          pure (acc.push row))
+      ([] : List (Msg (Fr p) G₁)) (fun acc => acc.toList = [Qs.toArray]) := by
+  have hsingle :
+      List.foldlM (fun acc pairs => (do
+        let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+          "proofs/src/plonk/verifier.rs:118")
+        pure (acc.push row) : TranscriptM (Array (Array G₁))))
+        (#[] : Array (Array G₁))
+        [(List.zip (List.range vk.cs.numAdviceColumns) Qs)] =
+      ((StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns
+          (List.zip (List.range vk.cs.numAdviceColumns) Qs)
+          "proofs/src/plonk/verifier.rs:118")) >>= fun row => pure (#[].push row)) := by
+    simp [List.foldlM_cons]
+  rw [hsingle]
+  rw [scatterIndexed_zip_range vk.cs.numAdviceColumns Qs hlen
+    "proofs/src/plonk/verifier.rs:118"]
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := [])
+    (RunsAllP.lift_ok E Qs.toArray (fun row => row = Qs.toArray) rfl) ?_
+  intro row hrow
+  subst hrow
+  exact RunsAllP.pure E (#[].push Qs.toArray) (fun acc => acc.toList = [Qs.toArray]) (by simp)
+
+theorem runsAllP_parseTraceAdviceBlock_values (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0)
+    (horder : AdvicePhasesColumnOrder vk) (Qs : List G₁)
+    (hlen : Qs.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum) :
+    RunsAllP E
+      (do let st ← parseTraceAdvicePhases E vk
+          st.1.foldlM (init := (#[] : Array (Array G₁))) fun acc pairs => do
+            let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+              "proofs/src/plonk/verifier.rs:118")
+            pure (acc.push row))
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun acc => acc.toList = [Qs.toArray]) := by
+  have hlen' : Qs.length = (vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph)).length := by
+    rw [length_flatMap_phaseCols, hlen]
+  have hlenN : Qs.length = vk.cs.numAdviceColumns := by
+    rw [hlen', horder, List.length_range]
+  have hph := runsAllP_parseTraceAdvicePhases_values E vk hsp vk.cs.phases [] Qs
+    (by simpa using hlen)
+  rw [show (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) =
+      Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []
+      from (List.append_nil _).symm]
+  refine RunsAllP.bind E (m := parseTraceAdvicePhases E vk)
+    (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := []) hph ?_
+  intro st hst
+  rw [hst, horder]
+  simpa using runsAllP_adviceScatter_values E vk Qs hlenN
+
 theorem wireMsgs_map_fr (E : VerifierEnv p G₁ G₂ Gₜ) :
     ∀ (qs : List (Fr p)),
       wireMsgs E (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) = wireOf (p := p) qs
@@ -5584,6 +6070,101 @@ theorem runsAllP_parseTraceTail (E : VerifierEnv p G₁ G₂ Gₜ)
   intro y _
   exact RunsAllP.pure E _ _ ⟨hperm, hlook, htrash⟩
 
+theorem runsAllP_parseTraceTail_advice (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (adviceCommitments : Array (Array G₁)) (challenges : Array (Fr p))
+    (QMult QPerm QLook QTrash : List G₁)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E
+      (do let theta ← tmSqueezeChallenge
+          let lookupMultiplicities ← parseTraceLookupMultiplicities E vk 1
+          let beta ← tmSqueezeChallenge
+          let gamma ← tmSqueezeChallenge
+          let permutations ← parseTracePermutations E vk 1
+          let lookups ← parseTraceLookupCommitments E lookupMultiplicities
+          let trashChallenge ← tmSqueezeChallenge
+          let trashcans ← parseTraceTrashcans E vk 1
+          let y ← tmSqueezeChallenge
+          pure ({ adviceCommitments := adviceCommitments, lookups := lookups, trashcans := trashcans, permutations := permutations, challenges := challenges, beta := beta, gamma := gamma, theta := theta, trashChallenge := trashChallenge, y := y } : VerifierTrace (Fr p) G₁))
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+      (fun tr =>
+        tr.adviceCommitments = adviceCommitments ∧
+        (tr.permutations.toList.map (fun pc =>
+          3 * pc.permutationProductCommitments.size - 1)).sum =
+          3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+        (tr.lookups.toList.map (fun row => (row.toList.map
+          (fun c => c.helperPolys.size + 3)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+        (tr.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size) := by
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAllP.squeeze E) ?_
+  intro theta _
+  refine RunsAllP.bind E (m := parseTraceLookupMultiplicities E vk 1)
+    (ms₁ := QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (runsAllP_parseTraceLookupMultiplicities_one_both E vk hs QMult hlenMult) ?_
+  intro rows hrows
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (RunsAllP.squeeze E) ?_
+  intro beta _
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (RunsAllP.squeeze E) ?_
+  intro gamma _
+  refine RunsAllP.bind E (m := parseTracePermutations E vk 1)
+    (ms₁ := QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))
+    (runsAllP_parseTracePermutations_one E vk hdeg QPerm hlenPerm) ?_
+  intro permutations hperm
+  have hlenLook' : QLook.length = (rows.toList.map
+      (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum := by
+    rw [hlenLook]
+    exact hrows.1.symm
+  refine RunsAllP.bind E (m := parseTraceLookupCommitments E rows)
+    (ms₁ := QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])
+    (runsAllP_parseTraceLookupCommitments_count E vk rows QLook hlenLook' hrows.1 hrows.2) ?_
+  intro lookups hlook
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])
+    (RunsAllP.squeeze E) ?_
+  intro trashChallenge _
+  refine RunsAllP.bind E (m := parseTraceTrashcans E vk 1)
+    (ms₁ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := ([] : List (Msg (Fr p) G₁)))
+    (runsAllP_parseTraceTrashcans_one E vk QTrash hlenTrash) ?_
+  intro trashcans htrash
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := ([] : List (Msg (Fr p) G₁)))
+    (RunsAllP.squeeze E) ?_
+  intro y _
+  exact RunsAllP.pure E _ _ ⟨rfl, hperm, hlook, htrash⟩
+
 theorem runsAllP_parseTraceWireBody_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
     (hf : vk.WellFormed Features.solidity) (hsp : vk.cs.numChallenges = 0)
@@ -5682,6 +6263,126 @@ theorem runsAllP_parseTraceWireBody_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
   exact runsAllP_parseTraceTail E vk hdeg hs adviceCommitments challenges
     QMult QPerm QLook QTrash hlenMult hlenPerm hlenLook hlenTrash
 
+theorem runsAllP_parseTraceWireBody_advice (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity) (hsp : vk.cs.numChallenges = 0)
+    (horder : AdvicePhasesColumnOrder vk)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E (parseTraceWireBody E vk inst)
+      (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+      (fun tr => tr.adviceCommitments.getD 0 #[] = QAdv.toArray) := by
+  unfold parseTraceWireBody
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (runsAll_hashInto E vk)) ?_
+  intro _ _
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (by
+      simpa only [Array.forIn_toList] using
+        runsAll_absorb_committed E (committedShape (G₁ := G₁)))) ?_
+  intro _ _
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (by
+      simpa only [Array.forIn_toList] using
+        runsAll_absorb_instance E (instanceShape inst))) ?_
+  intro _ _
+  -- advice phase values
+  have hph := runsAllP_parseTraceAdvicePhases_values E vk hsp vk.cs.phases [] QAdv
+    (by simpa using hlenAdv)
+  refine RunsAllP.bind E (m := parseTraceAdvicePhases E vk)
+    (ms₁ := QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    hph ?_
+  intro st hst
+  rw [hst, horder]
+  have hlenN : QAdv.length = vk.cs.numAdviceColumns := by
+    have hlen' : QAdv.length =
+        (vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph)).length := by
+      rw [length_flatMap_phaseCols, hlenAdv]
+    rw [hlen', horder, List.length_range]
+  -- advice scatter value
+  have hscat : RunsAllP E
+      (([(List.zip (List.range vk.cs.numAdviceColumns) QAdv)] :
+          List (List (Nat × G₁))).foldlM (init := (#[] : Array (Array G₁)))
+        fun acc pairs => do
+          let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+            "proofs/src/plonk/verifier.rs:118")
+          pure (acc.push row))
+      ([] : List (Msg (Fr p) G₁)) (fun acc => acc.toList = [QAdv.toArray]) :=
+    runsAllP_adviceScatter_values E vk QAdv hlenN
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    hscat ?_
+  intro acc hacc
+  have hacc' : acc.getD 0 #[] = QAdv.toArray := by
+    have haccEq : acc = #[QAdv.toArray] := by
+      apply Array.toList_inj.mp
+      rw [hacc]
+    rw [haccEq]
+    rfl
+  -- challenges scatter (empty)
+  obtain ⟨xs, hxs⟩ := scatterIndexed_ok_of_cover 0 ([] : List (Nat × Fr p))
+    "proofs/src/plonk/verifier.rs:134" (fun i hi => by omega)
+  rw [hsp, hxs]
+  refine RunsAllP.bind E (m := StateT.lift (.ok xs : Except Fault (Array (Fr p))))
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAllP.lift_ok E xs (fun _ => True) trivial) ?_
+  intro challenges _
+  refine RunsAllP.mono E
+    (runsAllP_parseTraceTail_advice E vk hdeg hs acc challenges QMult QPerm QLook QTrash
+      hlenMult hlenPerm hlenLook hlenTrash) ?_
+  intro tr htr
+  rw [htr.1, hacc']
+
+
+end Midfall.LoweringV3.TranscriptRows
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
 theorem runsAllP_parseTrace_one_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
     (hf : vk.WellFormed Features.solidity)
@@ -5731,6 +6432,38 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
   [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
   [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem runsAllP_parseTrace_advice (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity)
+    (hnc : 2 = vk.cs.numInstanceColumns)
+    (hsp : vk.cs.numChallenges = 0)
+    (horder : AdvicePhasesColumnOrder vk)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E (parseTrace (p := p) E.g1 Features.solidity vk
+        (committedShape (G₁ := G₁)) (instanceShape inst))
+      (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+      (fun tr => tr.adviceCommitments.getD 0 #[] = QAdv.toArray) := by
+  unfold parseTrace
+  simp only [Features.solidity, ite_true]
+  rw [if_neg (by simp [committedShape])]
+  rw [if_neg (by simp [committedShape])]
+  rw [if_neg (by simp [committedShape, instanceShape, hnc])]
+  exact runsAllP_parseTraceWireBody_advice E vk inst hf hsp horder hdeg hs
+    QAdv QMult QPerm QLook QTrash hlenAdv hlenMult hlenPerm hlenLook hlenTrash
 
 theorem parseTrace_run_of_ms_sizes (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
@@ -6215,6 +6948,81 @@ theorem decodeCalldata_slots {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Ty
   subst hmseq
   exact decodeSlots_map_slot R.E.g1 cd _ _ ms0 cur0 hslots
 
+
+
+theorem exists_split_fr_prefix (ms : List (Msg (Fr p) G₁)) (n : Nat)
+    (rest : List Midfall.Lowering.WireSlot)
+    (h : ms.map Msg.slot = List.replicate n Midfall.Lowering.WireSlot.fr ++ rest) :
+    ∃ (xs : List (Fr p)) (ms' : List (Msg (Fr p) G₁)),
+      xs.length = n ∧ ms = xs.map Msg.fr ++ ms' ∧ ms'.map Msg.slot = rest := by
+  obtain ⟨ms₁, ms₂, hsplit, hpre, hpost⟩ := exists_split_of_slot_prefix ms _ rest h
+  obtain ⟨xs, hms₁, hlen⟩ := eq_map_fr_of_slots ms₁ n hpre
+  exact ⟨xs, ms₂, hlen, by rw [hsplit, hms₁], hpost⟩
+
+theorem ms_split_plan (plan : Midfall.Generator.RepackedProofLayoutPlan)
+    (ms : List (Msg (Fr p) G₁))
+    (h : ms.map Msg.slot = plan.slots) :
+    ∃ (QPre : List G₁) (QEv : List (Fr p)) (fCom : G₁) (qs : List (Fr p)) (pi : G₁),
+      ms = QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          ([Msg.g1 fCom] ++
+            (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 pi]))) ∧
+      QPre.length = plan.prefixG1Count ∧
+      QEv.length = plan.numEvals ∧ qs.length = plan.numPointSets := by
+  rw [Midfall.Generator.RepackedProofLayoutPlan.slots] at h
+  simp only [List.append_assoc] at h
+  obtain ⟨QPre, ms1, hlenPre, hms1, h1⟩ :=
+    exists_split_g1_prefix ms plan.prefixG1Count
+      (List.replicate plan.numEvals Midfall.Lowering.WireSlot.fr ++
+        ([Midfall.Lowering.WireSlot.g1] ++
+          (List.replicate plan.numPointSets Midfall.Lowering.WireSlot.fr ++
+            [Midfall.Lowering.WireSlot.g1]))) h
+  obtain ⟨QEv, ms2, hlenEv, hms2, h2⟩ :=
+    exists_split_fr_prefix ms1 plan.numEvals
+      ([Midfall.Lowering.WireSlot.g1] ++
+        (List.replicate plan.numPointSets Midfall.Lowering.WireSlot.fr ++
+          [Midfall.Lowering.WireSlot.g1])) h1
+  have h3 : ms2.map Msg.slot =
+      List.replicate 1 Midfall.Lowering.WireSlot.g1 ++
+        (List.replicate plan.numPointSets Midfall.Lowering.WireSlot.fr ++
+          [Midfall.Lowering.WireSlot.g1]) := by
+    simpa using h2
+  obtain ⟨Qf, ms3, hlenF, hms3, h3'⟩ :=
+    exists_split_g1_prefix ms2 1
+      (List.replicate plan.numPointSets Midfall.Lowering.WireSlot.fr ++
+        [Midfall.Lowering.WireSlot.g1]) h3
+  obtain ⟨fCom, hfCom⟩ := List.length_eq_one_iff.mp hlenF
+  subst hfCom
+  simp only [List.map_cons, List.map_nil] at hms3
+  obtain ⟨qs, ms4, hlenQs, hms4, h4⟩ :=
+    exists_split_fr_prefix ms3 plan.numPointSets [Midfall.Lowering.WireSlot.g1] h3'
+  have h5 : ms4.map Msg.slot = [Midfall.Lowering.WireSlot.g1] := by simpa using h4
+  obtain ⟨Qpi, ms5, hlenPi, hms5, h5'⟩ :=
+    exists_split_g1_prefix ms4 1 [] h5
+  obtain ⟨pi, hpi⟩ := List.length_eq_one_iff.mp hlenPi
+  subst hpi
+  simp only [List.map_cons, List.map_nil] at hms5
+  have hms5' : ms5 = [] := by
+    have := h5'
+    simpa using this
+  subst hms5'
+  refine ⟨QPre, QEv, fCom, qs, pi, ?_, hlenPre, hlenEv, hlenQs⟩
+  rw [hms1, hms2, hms3, hms4, hms5]
+  rfl
+
+theorem decoded_ms_split (R : Render p G₁ G₂ Gₜ) {cd : Bytes}
+    {ms : List (Msg (Fr p) G₁)} {instW : Array Word256} {inst : Array (Fr p)}
+    (h : Decoded R cd ms instW inst) :
+    ∃ (QPre : List G₁) (QEv : List (Fr p)) (fCom : G₁) (qs : List (Fr p)) (pi : G₁),
+      ms = QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          ([Msg.g1 fCom] ++
+            (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 pi]))) ∧
+      QPre.length = (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count ∧
+      QEv.length = (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals ∧
+      qs.length = (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets :=
+  ms_split_plan _ ms (decodeCalldata_slots h)
+
 /-- **SIM.10 OBLIGATION 3, COMPOSED.** Once the algebra prefix succeeds on the exact wire
     tail, `pcsReads` and `assertEmpty` finish: the whole transcript-only run exists. The
     remaining input is obligation 1 (`snapshotAlgebraRun` on `transcriptOf E H ms`). -/
@@ -6279,6 +7087,91 @@ existence conclusion, and `leanStage_transcript_exists_*` is the existence half 
     wire of `ms`, and the bytes it leaves are the eval tail: a consumed prefix, `fCom`, the `nSets`
     q-eval scalars, and `pi`. The `pos`/`buffer` fields are what `snapshotXcriptRun_of_algebra`
     consumes verbatim. -/
+theorem decodeSlots_g1_inv {c : G1Codec G₁} {cd : Bytes} (rest : List Midfall.Lowering.WireSlot)
+    (cur : Nat) (ms : List (Msg (Fr p) G₁)) (cur' : Nat)
+    (h : decodeSlots (p := p) c cd
+        (Midfall.Lowering.WireSlot.g1 :: rest) cur = some (ms, cur')) :
+    ∃ (b : Bytes) (Q : G₁) (ms0 : List (Msg (Fr p) G₁)) (cur0 : Nat),
+      g1WordsOk cd cur = true ∧ bytesTake cd cur g1EipWidth = some b ∧
+        c.ofEip? b = some Q ∧
+        decodeSlots (p := p) c cd rest (cur + g1EipWidth) = some (ms0, cur0) ∧
+        ms = Msg.g1 Q :: ms0 ∧ cur' = cur0 := by
+  unfold decodeSlots at h
+  simp only [guard] at h
+  by_cases hg : g1WordsOk cd cur = true
+  · rw [if_pos hg] at h
+    cases hb : bytesTake cd cur g1EipWidth with
+    | none =>
+        simp [hb] at h
+    | some b =>
+        simp [hb] at h
+        cases hq : c.ofEip? b with
+        | none =>
+            simp [hq] at h
+        | some Q =>
+            simp [hq] at h
+            cases hrec : decodeSlots (p := p) c cd rest (cur + g1EipWidth) with
+            | none =>
+                simp [hrec] at h
+            | some p =>
+                obtain ⟨ms0, cur0⟩ := p
+                simp [hrec] at h
+                obtain ⟨hms, hcur⟩ := h
+                exact ⟨b, Q, ms0, cur0, hg, rfl, hq, rfl, hms.symm, hcur.symm⟩
+  · rw [if_neg hg] at h
+    simp at h
+
+theorem decodeSlots_g1_provenance {c : G1Codec G₁} {cd : Bytes} (n : Nat)
+    (rest : List Midfall.Lowering.WireSlot) (cur : Nat)
+    (Qs : List G₁) (ms' : List (Msg (Fr p) G₁)) (cur' : Nat)
+    (hlen : Qs.length = n)
+    (h : decodeSlots (p := p) c cd
+        (List.replicate n Midfall.Lowering.WireSlot.g1 ++ rest) cur =
+      some (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ ms', cur')) :
+    ∀ i < n, ∃ (b : Bytes) (Q : G₁),
+      bytesTake cd (cur + g1EipWidth * i) g1EipWidth = some b ∧
+        c.ofEip? b = some Q ∧ Qs[i]? = some Q := by
+  induction n generalizing cur Qs ms' cur' with
+  | zero =>
+      intro i hi
+      omega
+  | succ n ih =>
+      cases Qs with
+      | nil => simp at hlen
+      | cons Q Qs' =>
+          have hlen' : Qs'.length = n := by simpa using hlen
+          have hslot : List.replicate (n + 1) Midfall.Lowering.WireSlot.g1 ++ rest =
+              Midfall.Lowering.WireSlot.g1 ::
+                (List.replicate n Midfall.Lowering.WireSlot.g1 ++ rest) := by
+            rw [List.replicate_succ, List.cons_append]
+          rw [hslot] at h
+          obtain ⟨b, Q0, ms0, cur0, hg, hb, hq, hrec, hms, hcur⟩ :=
+            decodeSlots_g1_inv (List.replicate n Midfall.Lowering.WireSlot.g1 ++ rest) cur ((Q :: Qs').map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ ms') cur' h
+          have hms' : Msg.g1 Q0 :: ms0 =
+              (Msg.g1 Q :: Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ ms' := by
+            simpa using hms.symm
+          have hhead : Q0 = Q := by
+            have h1 := congrArg (fun l => l.head?) hms'
+            simp at h1
+            exact h1
+          have htail : ms0 = Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ ms' := by
+            have h2 := congrArg List.tail hms'
+            simpa using h2
+          rw [htail] at hrec
+          intro i hi
+          cases i with
+          | zero =>
+              exact ⟨b, Q0, hb, hq, by rw [hhead]; rfl⟩
+          | succ k =>
+              have hk : k < n := by omega
+              obtain ⟨b', Q', hb', hq', hidx⟩ :=
+                ih (cur + g1EipWidth) Qs' ms' cur0 hlen' hrec k hk
+              refine ⟨b', Q', ?_, hq', ?_⟩
+              · rw [show cur + g1EipWidth * (k + 1) =
+                    cur + g1EipWidth + g1EipWidth * k by ring]
+                exact hb'
+              · simpa using hidx
+
 def XcriptAlgebraTail (R : Render p G₁ G₂ Gₜ) (H : Hash)
     (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) : Prop :=
   ∃ (s2 : SnapAlgebra p G₁) (t2 : Transcript) (pref : Bytes) (fCom pi : G₁)
@@ -6542,6 +7435,189 @@ theorem xcriptAlgebraRun_of_planReadCounts (R : Render p G₁ G₂ Gₜ)
     (xcriptSchedule_of_planReadCounts R H cd hc) hnum
 
 /-- `xcript_total` at one fixed decoded message list, directly from the tail clause. -/
+theorem bytes_prefix_cancel {A B C D : Bytes} (h : A ++ C = B ++ D)
+    (hsize : A.size = B.size) : A = B := by
+  have hL : bytesTake (A ++ C) 0 A.size = some A := by
+    rw [Midfall.bytesTake_append_left A C 0 A.size (by omega), bytesTake_whole]
+  have hR : bytesTake (B ++ D) 0 A.size = some B := by
+    rw [Midfall.bytesTake_append_left B D 0 A.size (by omega)]
+    exact Midfall.Lowering.bytesTake_whole_of_size (by omega)
+  have := congrArg (fun x => bytesTake x 0 A.size) h
+  rw [hL, hR] at this
+  exact Option.some.inj this
+
+theorem bytes_append_cancel_left {A C D : Bytes} (h : A ++ C = A ++ D) : C = D := by
+  apply ByteArray.ext
+  apply Array.toList_inj.mp
+  have hh := congrArg (fun x => x.data.toList) h
+  rw [ByteArray.data_append, ByteArray.data_append,
+    Array.toList_append, Array.toList_append] at hh
+  exact List.append_cancel_left hh
+
+theorem bytes_suffix_cancel {A B C D : Bytes} (h : A ++ C = B ++ D)
+    (hsize : C.size = D.size) : C = D := by
+  have htot : A.size + C.size = B.size + D.size := by
+    have := congrArg ByteArray.size h
+    rw [ByteArray.size_append, ByteArray.size_append] at this
+    exact this
+  have hpref : A.size = B.size := by omega
+  have htake := congrArg (fun x => bytesTake x A.size C.size) h
+  have hL : bytesTake (A ++ C) A.size C.size = some C := by
+    rw [show A.size = A.size + 0 by omega]
+    rw [Midfall.bytesTake_append_right A C 0 C.size (by omega)]
+    exact bytesTake_whole C
+  have hR : bytesTake (B ++ D) A.size C.size = some D := by
+    rw [show A.size = B.size + 0 by omega]
+    rw [Midfall.bytesTake_append_right B D 0 C.size (by omega)]
+    exact Midfall.Lowering.bytesTake_whole_of_size (by omega)
+  rw [hL, hR] at htake
+  exact Option.some.inj htake
+
+theorem snapshotAlgebraRun_buffer (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (ms : List (Msg (Fr p) G₁)) (s2 : SnapAlgebra p G₁) (t2 : Transcript)
+    (h : snapshotAlgebraRun E H vk inst ms = .ok (s2, t2)) :
+    t2.buffer = (transcriptOf E H ms).buffer := by
+  obtain ⟨t1, htrace, hread⟩ :=
+    Midfall.Lowering.snapshotAlgebraRun_readAlgebra E H vk inst ms s2 t2 h
+  obtain hparse :=
+    Midfall.Lowering.snapshotTraceRun_parseTrace E H vk inst ms s2.toSnapTrace t1 htrace
+  have hread1 : StateT.run
+      (Midfall.Halo2.Verifier.readAlgebra (p := p) E.g1 Features.solidity vk
+        s2.trace.permutations s2.trace.lookups s2.trace.trashcans 1
+        (instanceShape inst).size (instanceShape inst)) t1 = .ok (s2.alg, t2) := by
+    simpa [committedShape] using hread
+  have hpresPT : Midfall.Halo2.Pres (Midfall.Halo2.parseTrace (p := p) E.g1
+      Features.solidity vk (committedShape (G₁ := G₁)) (instanceShape inst)) :=
+    Midfall.Halo2.pres_parseTrace (p := p) E.g1 Features.solidity vk
+      (committedShape (G₁ := G₁)) (instanceShape inst)
+  have ht0 : (transcriptOf E H ms).Tiled :=
+    Transcript.tiled_initWithHash H _
+  have ht1 : t1.Tiled := Midfall.Halo2.Pres.of_run hpresPT ht0 hparse
+  have hb1 : t1.buffer = (transcriptOf E H ms).buffer :=
+    Midfall.Halo2.Pres.buffer hpresPT ht0 hparse
+  have hpresRA : Midfall.Halo2.Pres (Midfall.Halo2.Verifier.readAlgebra (p := p) E.g1
+      Features.solidity vk s2.trace.permutations s2.trace.lookups s2.trace.trashcans 1
+      (instanceShape inst).size (instanceShape inst)) :=
+    Midfall.Halo2.pres_readAlgebra (p := p) E.g1 Features.solidity vk
+      s2.trace.permutations s2.trace.lookups s2.trace.trashcans 1
+      (instanceShape inst).size (instanceShape inst)
+  have hb2 : t2.buffer = t1.buffer :=
+    Midfall.Halo2.Pres.buffer hpresRA ht1 hread1
+  exact hb2.trans hb1
+
+theorem snapshotXcriptRun_fields_of_tail (R : Render p G₁ G₂ Gₜ) (H : Hash)
+    {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    (hTail : XcriptAlgebraTail R H inst ms)
+    {x : SnapXcript p G₁}
+    (hx : snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x)
+    (henc : ∀ Q, R.E.g1.ofCompressed? (R.E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (R.E.g1.toCompressed Q).size = g1CompressedWidth)
+    (hp : p ≤ 2 ^ 256) :
+    ∃ (s2 : SnapAlgebra p G₁) (t2 : Transcript) (pref : Bytes) (fCom pi : G₁) (qs : List (Fr p)),
+      snapshotAlgebraRun R.E H R.vk inst ms = .ok (s2, t2) ∧
+      t2.buffer = pref ++ R.E.g1.toCompressed fCom ++ wireOf (p := p) qs ++
+        R.E.g1.toCompressed pi ∧
+      t2.pos = pref.size ∧ qs.length = R.nSets ∧
+      x.trace = s2.trace ∧ x.alg = s2.alg ∧
+      x.r.fCom = fCom ∧ x.r.pi = pi := by
+  obtain ⟨s2, t2, pref, fCom, pi, qs, hAlg, hbuf, hpos, hlen⟩ := hTail
+  obtain ⟨r, t5, hrun, hf, hpi, hq, hpos5, hbuf5⟩ :=
+    pcsReads_run_ok R.E.g1 R.E.field Features.solidity R.nSets t2 pref fCom pi qs
+      hlen hbuf hpos henc hwidth hp
+  unfold snapshotXcriptRun at hx
+  simp only [StateT.run_bind, StateT.run_pure] at hx
+  rw [hAlg] at hx
+  simp only [Except.bind, Except.pure, bind, pure] at hx
+  rw [hrun] at hx
+  simp only [Except.bind, Except.pure, bind, pure] at hx
+  rw [assertEmpty_run_ok t5 (by rw [hbuf5, hpos5])] at hx
+  simp only [Except.bind, Except.pure, bind, pure] at hx
+  have hxeq : x = ({ toSnapAlgebra := s2, r := r } : SnapXcript p G₁) := (Except.ok.inj hx).symm
+  subst hxeq
+  exact ⟨s2, t2, pref, fCom, pi, qs, hAlg, hbuf, hpos, hlen, rfl, rfl, hf, hpi⟩
+
+theorem xcript_tail_fCom_pi (R : Render p G₁ G₂ Gₜ) (H : Hash)
+    {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    (hTail : XcriptAlgebraTail R H inst ms)
+    {x : SnapXcript p G₁}
+    (hx : snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x)
+    (henc : ∀ Q, R.E.g1.ofCompressed? (R.E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (R.E.g1.toCompressed Q).size = g1CompressedWidth)
+    (hp : p ≤ 2 ^ 256)
+    {QPre : List G₁} {QEv : List (Fr p)} {fComD : G₁} {qsD : List (Fr p)} {piD : G₁}
+    (hsplit : ms = QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        ([Msg.g1 fComD] ++
+          (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD]))))
+    (hlenD : qsD.length = R.nSets) :
+    x.r.fCom = fComD ∧ x.r.pi = piD := by
+  obtain ⟨s2, t2, pref, fCom, pi, qs, hAlg, hbuf, hpos, hlen, hxtr, hxalg, hf, hpi⟩ :=
+    snapshotXcriptRun_fields_of_tail R H hTail hx henc hwidth hp
+  have hbufFull : t2.buffer = wireMsgs R.E ms := by
+    rw [snapshotAlgebraRun_buffer R.E H R.vk inst ms s2 t2 hAlg]
+    exact (transcriptOf_buffer R.E H ms).1
+  have hwire : wireMsgs R.E ms =
+      wireMsgs R.E (QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) ++
+      R.E.g1.toCompressed fComD ++ wireOf (p := p) qsD ++ R.E.g1.toCompressed piD := by
+    rw [hsplit]
+    simp [List.append_assoc, ByteArray.append_assoc, wireMsgs, wireMsgs_append,
+      wireMsgs_cons, msgWire, wireMsgs_g1_singleton, wireMsgs_map_fr,
+      bytes_append_empty_local]
+  let prefD := wireMsgs R.E (QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+    QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+  let X := wireOf (p := p) qs
+  let XD := wireOf (p := p) qsD
+  let C := R.E.g1.toCompressed fCom
+  let D := R.E.g1.toCompressed fComD
+  let Z := R.E.g1.toCompressed pi
+  let W := R.E.g1.toCompressed piD
+  have hEq : pref ++ C ++ X ++ Z = prefD ++ D ++ XD ++ W := by
+    calc
+      pref ++ C ++ X ++ Z = t2.buffer := hbuf.symm
+      _ = wireMsgs R.E ms := hbufFull
+      _ = prefD ++ D ++ XD ++ W := hwire
+  have hXsize : X.size = XD.size := by
+    simp only [X, XD, wireOf_size, hlen, hlenD]
+  have hZsize : Z.size = W.size := by
+    simp only [Z, W]
+    rw [hwidth pi, hwidth piD]
+  have hCsize : C.size = D.size := by
+    simp only [C, D]
+    rw [hwidth fCom, hwidth fComD]
+  have hAsize : (pref ++ C).size = (prefD ++ D).size := by
+    have hL : (pref ++ C ++ X ++ Z).size =
+        pref.size + C.size + X.size + Z.size := by
+      simp only [ByteArray.size_append]
+    have hR : (prefD ++ D ++ XD ++ W).size =
+        prefD.size + D.size + XD.size + W.size := by
+      simp only [ByteArray.size_append]
+    have h := congrArg ByteArray.size hEq
+    rw [hL, hR] at h
+    rw [ByteArray.size_append, ByteArray.size_append]
+    omega
+  have hEq' : (pref ++ C) ++ (X ++ Z) = (prefD ++ D) ++ (XD ++ W) := by
+    simpa only [ByteArray.append_assoc] using hEq
+  have hA : pref ++ C = prefD ++ D := bytes_prefix_cancel hEq' hAsize
+  have htailEq : X ++ Z = XD ++ W := by
+    rw [hA] at hEq'
+    exact bytes_append_cancel_left hEq'
+  have hX : X = XD := bytes_prefix_cancel htailEq hXsize
+  have hZ : Z = W := by
+    rw [hX] at htailEq
+    exact bytes_append_cancel_left htailEq
+  have hCD : C = D := bytes_suffix_cancel hA hCsize
+  have hfcom : fCom = fComD := by
+    have h := congrArg R.E.g1.ofCompressed? hCD
+    rw [henc fCom, henc fComD] at h
+    exact Option.some.inj h
+  have hpi' : pi = piD := by
+    have h := congrArg R.E.g1.ofCompressed? hZ
+    rw [henc pi, henc piD] at h
+    exact Option.some.inj h
+  exact ⟨hf.trans hfcom, hpi.trans hpi'⟩
+
 theorem xcript_total_at (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
     {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
@@ -7002,6 +8078,406 @@ theorem foldlM_take_prefix (protocol : ProtocolPlan) (expected : CommitmentRead)
       · simp [hlen]
 
 /-- The i-th section of the fold has the i-th count (with the initial-list offset). -/
+theorem takeCommitmentSection_cursor (protocol : ProtocolPlan) (readIdx cursor : Nat)
+    (expected : CommitmentRead) (count : Nat) (label : String)
+    {sect : ProofSection} {ri cur : Nat}
+    (h : ProofCalldataLayout.takeCommitmentSection protocol readIdx cursor expected count label
+      = .ok (sect, ri, cur)) :
+    cur = cursor + sect.byteLen := by
+  unfold ProofCalldataLayout.takeCommitmentSection at h
+  obtain ⟨ri', _, h⟩ := except_bind_ok _ _ h
+  cases h
+  rfl
+
+theorem foldlM_take_cursor (protocol : ProtocolPlan) (expected : CommitmentRead) (label : String) :
+    ∀ (counts : List Nat) (init res : List ProofSection × Nat × Nat),
+      counts.foldlM
+        (fun st count =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2 expected count label).bind
+            fun x => Except.ok (st.1 ++ [x.1], x.2.1, x.2.2)) init = .ok res →
+      res.2.2 = init.2.2 +
+        Midfall.Lowering.sumNat ((res.1.drop init.1.length).map ProofSection.byteLen) := by
+  intro counts
+  induction counts with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      simp [Midfall.Lowering.sumNat]
+  | cons c rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst⟩ := except_bind_ok _ _ h1
+      have hst_eq : st1 = (init.1 ++ [x.1], x.2.1, x.2.2) := by cases hst; rfl
+      have hcur : x.2.2 = init.2.2 + x.1.byteLen :=
+        takeCommitmentSection_cursor protocol init.2.1 init.2.2 expected c label hx
+      obtain ⟨suffix, hres, _⟩ := foldlM_take_prefix protocol expected label rest st1 res h2
+      have hst_snd : st1.2.2 = x.2.2 := by cases hst; rfl
+      have hdrop : res.1.drop init.1.length = [x.1] ++ suffix := by
+        rw [hres, hst_eq, List.append_assoc, List.drop_append,
+          List.drop_eq_nil_of_le (Nat.le_refl _), Nat.sub_self, List.drop_zero,
+          List.nil_append]
+      have hdrop2 : (st1.1 ++ suffix).drop st1.1.length = suffix := by
+        rw [List.drop_append, List.drop_eq_nil_of_le (by omega), List.nil_append, Nat.sub_self, List.drop_zero]
+      rw [hdrop, List.map_append, List.map_cons, List.map_nil,
+        Midfall.Lowering.sumNat_append, Midfall.Lowering.sumNat_cons,
+        Midfall.Lowering.sumNat_nil]
+      have ih' := ih st1 res h2
+      rw [hres, hdrop2] at ih'
+      rw [ih', hst_snd, hcur]
+      omega
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+
+theorem foldlM_lookups_prefix (protocol : ProtocolPlan) :
+    ∀ (pairs : List (Nat × Nat))
+      (init res : List ProofLookupCommitmentsLayout × Nat × Nat),
+      pairs.foldlM
+        (fun st pair =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2
+              CommitmentRead.lookupHelper pair.2 "lookup helper").bind
+            fun x =>
+          (ProofCalldataLayout.takeCommitmentSection protocol x.2.1 x.2.2
+              CommitmentRead.lookupAccumulator 1 "lookup accumulator").bind
+            fun y =>
+          Except.ok (st.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+            y.2.1, y.2.2)) init = .ok res →
+      ∃ extra, res.1 = init.1 ++ extra ∧ extra.length = pairs.length := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      exact ⟨[], by simp, rfl⟩
+  | cons pair rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, h1'⟩ := except_bind_ok _ _ h1
+      obtain ⟨y, hy, hst⟩ := except_bind_ok _ _ h1'
+      have hst1 : st1.1 = init.1 ++
+          [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }] := by cases hst; rfl
+      obtain ⟨extra, hres, hlen⟩ := ih st1 res h2
+      refine ⟨{ lookup := pair.1, helpers := x.1, accumulator := y.1 } :: extra, ?_, ?_⟩
+      · simp [hres, hst1, List.append_assoc]
+      · simp [hlen]
+
+theorem foldlM_lookups_cursor (protocol : ProtocolPlan) :
+    ∀ (pairs : List (Nat × Nat))
+      (init res : List ProofLookupCommitmentsLayout × Nat × Nat),
+      pairs.foldlM
+        (fun st pair =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2
+              CommitmentRead.lookupHelper pair.2 "lookup helper").bind
+            fun x =>
+          (ProofCalldataLayout.takeCommitmentSection protocol x.2.1 x.2.2
+              CommitmentRead.lookupAccumulator 1 "lookup accumulator").bind
+            fun y =>
+          Except.ok (st.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+            y.2.1, y.2.2)) init = .ok res →
+      res.2.2 = init.2.2 +
+        Midfall.Lowering.sumNat ((res.1.drop init.1.length).map
+          (fun lk => lk.helpers.byteLen + lk.accumulator.byteLen)) := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      simp [Midfall.Lowering.sumNat]
+  | cons pair rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, h1'⟩ := except_bind_ok _ _ h1
+      obtain ⟨y, hy, hst⟩ := except_bind_ok _ _ h1'
+      have hst_eq : st1 = (init.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+          y.2.1, y.2.2) := by cases hst; rfl
+      have hcur1 : x.2.2 = init.2.2 + x.1.byteLen :=
+        takeCommitmentSection_cursor protocol init.2.1 init.2.2
+          CommitmentRead.lookupHelper pair.2 "lookup helper" hx
+      have hcur2 : y.2.2 = x.2.2 + y.1.byteLen :=
+        takeCommitmentSection_cursor protocol x.2.1 x.2.2
+          CommitmentRead.lookupAccumulator 1 "lookup accumulator" hy
+      obtain ⟨suffix, hres, _⟩ := foldlM_lookups_prefix protocol rest st1 res h2
+      have hst_snd : st1.2.2 = y.2.2 := by cases hst; rfl
+      have hdrop : res.1.drop init.1.length =
+          [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }] ++ suffix := by
+        rw [hres, hst_eq, List.append_assoc, List.drop_append,
+          List.drop_eq_nil_of_le (Nat.le_refl _), Nat.sub_self, List.drop_zero,
+          List.nil_append]
+      have hdrop2 : (st1.1 ++ suffix).drop st1.1.length = suffix := by
+        rw [List.drop_append, List.drop_eq_nil_of_le (by omega), List.nil_append,
+          Nat.sub_self, List.drop_zero]
+      rw [hdrop, List.map_append, List.map_cons, List.map_nil,
+        Midfall.Lowering.sumNat_append, Midfall.Lowering.sumNat_cons,
+        Midfall.Lowering.sumNat_nil]
+      have ih' := ih st1 res h2
+      rw [hres, hdrop2] at ih'
+      rw [ih', hst_snd, hcur2, hcur1]
+      simp
+      omega
+
+theorem foldlM_take_sum_byteLen (protocol : ProtocolPlan) (expected : CommitmentRead)
+    (label : String) :
+    ∀ (counts : List Nat) (init res : List ProofSection × Nat × Nat),
+      counts.foldlM
+        (fun st count =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2 expected count label).bind
+            fun x => Except.ok (st.1 ++ [x.1], x.2.1, x.2.2)) init = .ok res →
+      Midfall.Lowering.sumNat
+          ((res.1.drop init.1.length).map ProofSection.byteLen) =
+        Midfall.Lowering.sumNat
+          ((res.1.drop init.1.length).map
+            (fun s => s.itemCount * Midfall.Generator.g1Bytes)) := by
+  intro counts
+  induction counts with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      simp
+  | cons c rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst⟩ := except_bind_ok _ _ h1
+      have hst_eq : st1 = (init.1 ++ [x.1], x.2.1, x.2.2) := by cases hst; rfl
+      have hshape := takeCommitmentSection_shape protocol init.2.1 init.2.2 expected c label hx
+      obtain ⟨suffix, hres, _⟩ := foldlM_take_prefix protocol expected label rest st1 res h2
+      have hdrop : res.1.drop init.1.length = [x.1] ++ suffix := by
+        rw [hres, hst_eq, List.append_assoc, List.drop_append,
+          List.drop_eq_nil_of_le (Nat.le_refl _), Nat.sub_self, List.drop_zero,
+          List.nil_append]
+      have hdrop2 : (st1.1 ++ suffix).drop st1.1.length = suffix := by
+        rw [List.drop_append, List.drop_eq_nil_of_le (by omega), List.nil_append,
+          Nat.sub_self, List.drop_zero]
+      rw [hdrop]
+      simp only [List.singleton_append, List.map_cons, List.map_nil,
+        Midfall.Lowering.sumNat_cons, Midfall.Lowering.sumNat_nil]
+      simp only [hshape.2.2]
+      have ih' := ih st1 res h2
+      rw [hres, hdrop2] at ih'
+      rw [ih']
+      have hc : x.1.itemCount = c := hshape.1
+      rw [hc]
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem foldlM_lookups_sum_byteLen (protocol : ProtocolPlan) :
+    ∀ (pairs : List (Nat × Nat))
+      (init res : List ProofLookupCommitmentsLayout × Nat × Nat),
+      pairs.foldlM
+        (fun st pair =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2
+              CommitmentRead.lookupHelper pair.2 "lookup helper").bind
+            fun x =>
+          (ProofCalldataLayout.takeCommitmentSection protocol x.2.1 x.2.2
+              CommitmentRead.lookupAccumulator 1 "lookup accumulator").bind
+            fun y =>
+          Except.ok (st.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+            y.2.1, y.2.2)) init = .ok res →
+      Midfall.Lowering.sumNat
+          ((res.1.drop init.1.length).map
+            (fun lk => lk.helpers.byteLen + lk.accumulator.byteLen)) =
+        Midfall.Lowering.sumNat
+          ((res.1.drop init.1.length).map
+            (fun lk => lk.helpers.itemCount * Midfall.Generator.g1Bytes +
+              lk.accumulator.itemCount * Midfall.Generator.g1Bytes)) := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      simp
+  | cons pair rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, h1'⟩ := except_bind_ok _ _ h1
+      obtain ⟨y, hy, hst⟩ := except_bind_ok _ _ h1'
+      have hst_eq : st1 = (init.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+          y.2.1, y.2.2) := by cases hst; rfl
+      have hxshape := takeCommitmentSection_shape protocol init.2.1 init.2.2
+        CommitmentRead.lookupHelper pair.2 "lookup helper" hx
+      have hyshape := takeCommitmentSection_shape protocol x.2.1 x.2.2
+        CommitmentRead.lookupAccumulator 1 "lookup accumulator" hy
+      obtain ⟨suffix, hres, _⟩ := foldlM_lookups_prefix protocol rest st1 res h2
+      have hdrop : res.1.drop init.1.length =
+          [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }] ++ suffix := by
+        rw [hres, hst_eq, List.append_assoc, List.drop_append,
+          List.drop_eq_nil_of_le (Nat.le_refl _), Nat.sub_self, List.drop_zero,
+          List.nil_append]
+      have hdrop2 : (st1.1 ++ suffix).drop st1.1.length = suffix := by
+        rw [List.drop_append, List.drop_eq_nil_of_le (by omega), List.nil_append,
+          Nat.sub_self, List.drop_zero]
+      rw [hdrop]
+      simp only [List.singleton_append, List.map_cons, List.map_nil,
+        Midfall.Lowering.sumNat_cons, Midfall.Lowering.sumNat_nil, hxshape.2.2, hyshape.2.2]
+      simp only [hxshape.1, hyshape.1]
+      have ih' := ih st1 res h2
+      rw [hres, hdrop2] at ih'
+      rw [ih']
+
+theorem takeCommitmentSection_start (protocol : ProtocolPlan) (readIdx cursor : Nat)
+    (expected : CommitmentRead) (count : Nat) (label : String)
+    {sect : ProofSection} {ri cur : Nat}
+    (h : ProofCalldataLayout.takeCommitmentSection protocol readIdx cursor expected count label
+      = .ok (sect, ri, cur)) :
+    sect.start = cursor := by
+  unfold ProofCalldataLayout.takeCommitmentSection at h
+  obtain ⟨ri', _, h⟩ := except_bind_ok _ _ h
+  cases h
+  rfl
+
+theorem wordSection_start_end (cursor itemCount : Nat) :
+    (ProofCalldataLayout.wordSection cursor itemCount).1.start = cursor ∧
+      (ProofCalldataLayout.wordSection cursor itemCount).2 =
+        cursor + (ProofCalldataLayout.wordSection cursor itemCount).1.byteLen := by
+  unfold ProofCalldataLayout.wordSection ProofSection.new ProofSection.end
+  simp [ProofSection.byteLen, ProofSection.start]
+
+theorem fromProtocol_starts (protocol : ProtocolPlan) (numEvals numPointSets : Nat)
+    {L : ProofCalldataLayout}
+    (hL : ProofCalldataLayout.fromProtocol protocol abiVerifyProofProofCptr numEvals numPointSets
+      = .ok L) :
+    L.quotientLimbs.start = L.quotientCommCptr ∧
+    L.evalCptr = L.quotientCommCptr + L.quotientLimbs.byteLen ∧
+    L.evals.start = L.evalCptr ∧
+    L.wCptr = L.evalCptr + L.evals.byteLen ∧
+    L.fCom.start = L.wCptr ∧
+    L.qEvalCptr = L.wCptr + L.fCom.byteLen ∧
+    L.qEvals.start = L.qEvalCptr ∧
+    L.pi.start = L.qEvalCptr + L.qEvals.byteLen ∧
+    L.fCom.byteLen = Midfall.Generator.g1Bytes ∧
+    L.pi.byteLen = Midfall.Generator.g1Bytes ∧
+    L.fCom.itemCount = 1 ∧ L.pi.itemCount = 1 := by
+  unfold ProofCalldataLayout.fromProtocol at hL
+  simp only [Bind.bind, Except.bind] at hL
+  obtain ⟨adv, hAdv, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨lm, hLM, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨pp, hPP, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨lks, hLksFold, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨tr, hTr, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨ql, hQl, hL⟩ := except_bind_ok _ _ hL
+  split at hL
+  · cases hL
+  cases hL
+  have hQlStart := takeCommitmentSection_start protocol tr.2.1 tr.2.2
+    CommitmentRead.quotient protocol.numQuotients "quotient limb" hQl
+  have hQlCur := takeCommitmentSection_cursor protocol tr.2.1 tr.2.2
+    CommitmentRead.quotient protocol.numQuotients "quotient limb" hQl
+  have hEv := wordSection_start_end ql.2.2 numEvals
+  have hQE := wordSection_start_end (ProofSection.new (ProofCalldataLayout.wordSection ql.2.2 numEvals).2 1 Midfall.Generator.g1Bytes).end numPointSets
+  refine ⟨hQlStart, hQlCur, hEv.1, ?_, ?_, ?_, hQE.1, ?_, ?_, ?_, ?_, ?_⟩
+  · exact hEv.2
+  · rfl
+  · rfl
+  · exact hQE.2
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+
+theorem fromProtocol_quotientComm (protocol : ProtocolPlan) (numEvals numPointSets : Nat)
+    {L : ProofCalldataLayout}
+    (hL : ProofCalldataLayout.fromProtocol protocol abiVerifyProofProofCptr numEvals numPointSets
+      = .ok L) :
+    L.quotientCommCptr = L.proofCptr + Midfall.Generator.g1Bytes * L.nonQuotientG1Count := by
+  unfold ProofCalldataLayout.fromProtocol at hL
+  simp only [Bind.bind, Except.bind] at hL
+  obtain ⟨adv, hAdv, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨lm, hLM, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨pp, hPP, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨lks, hLksFold, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨tr, hTr, hL⟩ := except_bind_ok _ _ hL
+  obtain ⟨ql, hQl, hL⟩ := except_bind_ok _ _ hL
+  split at hL
+  · cases hL
+  cases hL
+  have hAdvCur := foldlM_take_cursor protocol CommitmentRead.advice "advice phase"
+    protocol.numUserAdvices ([], 0, abiVerifyProofProofCptr) adv hAdv
+  have hAdvShape := foldlM_take_sum_byteLen protocol CommitmentRead.advice "advice phase"
+    protocol.numUserAdvices ([], 0, abiVerifyProofProofCptr) adv hAdv
+  have hLMCur := takeCommitmentSection_cursor protocol adv.2.1 adv.2.2
+    CommitmentRead.lookupMultiplicity protocol.numLookups "lookup multiplicity" hLM
+  have hLMShape := takeCommitmentSection_shape protocol adv.2.1 adv.2.2
+    CommitmentRead.lookupMultiplicity protocol.numLookups "lookup multiplicity" hLM
+  have hPPCur := takeCommitmentSection_cursor protocol lm.2.1 lm.2.2
+    CommitmentRead.permutationProduct protocol.numPermutationZs "permutation product" hPP
+  have hPPShape := takeCommitmentSection_shape protocol lm.2.1 lm.2.2
+    CommitmentRead.permutationProduct protocol.numPermutationZs "permutation product" hPP
+  have hLksCur := foldlM_lookups_cursor protocol
+    ((List.range protocol.lookupChunks.length).zip protocol.lookupChunks)
+    ([], pp.2.1, pp.2.2) lks hLksFold
+  have hLksShape := foldlM_lookups_sum_byteLen protocol
+    ((List.range protocol.lookupChunks.length).zip protocol.lookupChunks)
+    ([], pp.2.1, pp.2.2) lks hLksFold
+  have hTrCur := takeCommitmentSection_cursor protocol lks.2.1 lks.2.2
+    CommitmentRead.trash protocol.numTrashcans "trash" hTr
+  have hTrShape := takeCommitmentSection_shape protocol lks.2.1 lks.2.2
+    CommitmentRead.trash protocol.numTrashcans "trash" hTr
+  simp only [Midfall.Generator.g1Bytes, ProofCalldataLayout.nonQuotientG1Count]
+  rw [hTrCur, hLksCur, hPPCur, hLMCur, hAdvCur]
+  simp only [Prod.fst, List.length_nil, List.drop_zero, List.map_append, List.map_cons,
+    List.map_nil, List.nil_append, Midfall.Lowering.sumNat_nil,
+    Midfall.Lowering.sumNat_cons, Midfall.Lowering.sumNat_append]
+  simp only [Prod.fst, List.length_nil, List.drop_zero] at hAdvShape hLksShape
+  rw [hAdvShape, hLksShape]
+  have hAdvFactor : Midfall.Lowering.sumNat
+      (List.map (fun s => s.itemCount * Midfall.Generator.g1Bytes) adv.1) =
+      Midfall.Generator.g1Bytes *
+        Midfall.Lowering.sumNat (List.map (fun s => s.itemCount) adv.1) := by
+    rw [show (fun s : ProofSection => s.itemCount * Midfall.Generator.g1Bytes) =
+        (fun c : Nat => c * Midfall.Generator.g1Bytes) ∘
+          (fun s : ProofSection => s.itemCount) by rfl]
+    rw [← List.map_map, Midfall.Lowering.sumNat_map_mul]
+  have hLkFactor : Midfall.Lowering.sumNat
+      (List.map (fun lk => lk.helpers.itemCount * Midfall.Generator.g1Bytes +
+        lk.accumulator.itemCount * Midfall.Generator.g1Bytes) lks.1) =
+      Midfall.Generator.g1Bytes *
+        Midfall.Lowering.sumNat
+          (List.map (fun lk => lk.helpers.itemCount + lk.accumulator.itemCount) lks.1) := by
+    rw [show (fun lk : ProofLookupCommitmentsLayout =>
+        lk.helpers.itemCount * Midfall.Generator.g1Bytes +
+          lk.accumulator.itemCount * Midfall.Generator.g1Bytes) =
+      (fun c : Nat => c * Midfall.Generator.g1Bytes) ∘
+        (fun lk : ProofLookupCommitmentsLayout =>
+          lk.helpers.itemCount + lk.accumulator.itemCount) by
+      funext lk
+      simp only [Function.comp_apply]
+      ring]
+    rw [← List.map_map, Midfall.Lowering.sumNat_map_mul]
+  rw [hAdvFactor, hLkFactor]
+  rw [hLMShape.2.2, hPPShape.2.2, hTrShape.2.2]
+  rw [hLMShape.1, hPPShape.1, hTrShape.1]
+  simp only [Midfall.Generator.g1Bytes, Midfall.Generator.g1WordsCount, Midfall.Generator.wordBytes,
+    Midfall.Lowering.sumNat]
+  ring
+
 theorem foldlM_take_nth (protocol : ProtocolPlan) (expected : CommitmentRead) (label : String) :
     ∀ (counts : List Nat) (init res : List ProofSection × Nat × Nat) (i : Nat)
       (s : ProofSection),
@@ -7840,6 +9316,131 @@ theorem cdSlice_append (cd : Bytes) (a n m : Nat) :
   apply ByteArray.ext
   simp
 
+theorem cdSlice_eq_of_bytesTake {cd b : Bytes} {a n : Nat}
+    (h : bytesTake cd a n = some b) : cdSlice cd a n = b := by
+  unfold bytesTake at h
+  split at h
+  · rename_i hle
+    injection h with hb
+    subst hb
+    unfold cdSlice
+    apply ByteArray.ext
+    apply Array.toList_inj.mp
+    show (ByteArray.mk ((cd.data.toList.drop a).take n).toArray).data.toList
+      = (ByteArray.mk (cd.data.extract a (a + n))).data.toList
+    rw [Array.toList_extract, List.extract_eq_take_drop,
+      show a + n - a = n by omega]
+  · cases h
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem holdsG1_of_mirrorsSection (E : VerifierEnv p G₁ G₂ Gₜ) {st : EvmState} {cd : Bytes}
+    {a : Nat} {s : Midfall.Generator.ProofSection} {Q : G₁}
+    (hm : mirrorsSection st a cd s) (hlen : s.byteLen = g1EipWidth)
+    {b : Bytes} (hb : bytesTake cd s.start g1EipWidth = some b)
+    (hq : E.g1.ofEip? b = some Q) (hc : E.g1.eipRoundtrip) :
+    holdsG1 E st a Q = true := by
+  unfold holdsG1
+  have hlen' : s.byteLen = 128 := by simpa [g1EipWidth] using hlen
+  have hb' : bytesTake cd s.start 128 = some b := by simpa [g1EipWidth] using hb
+  have hm' : bytesAt st a 128 = cdSlice cd s.start 128 := by
+    simpa [mirrorsSection, hlen'] using hm
+  have hbytes : bytesAt st a 128 = E.g1.toEip Q := by
+    rw [hm', cdSlice_eq_of_bytesTake hb']
+    exact (hc b Q hq).symm
+  rw [hbytes]
+  exact beq_self_eq_true _
+
+theorem bytesAt_size_local (st : EvmState) (a n : Nat) : (bytesAt st a n).size = n := by
+  unfold bytesAt
+  show (List.map (fun i => st.memory (a + i)) (List.range n)).toArray.size = n
+  simp [List.size_toArray, List.length_map, List.length_range]
+
+theorem cdSlice_size_of_le {cd : Bytes} {a n : Nat} (h : a + n ≤ cd.size) :
+    (cdSlice cd a n).size = n := by
+  unfold cdSlice
+  show (List.take n (List.drop a cd.data.toList)).toArray.size = n
+  simp [List.size_toArray, List.length_take, List.length_drop]
+  omega
+
+theorem bytesAt_frame_eq_of_window (st : EvmState) (cd : Bytes) (base start n : Nat)
+    (h : bytesAt st base (g1EipWidth * n) = cdSlice cd start (g1EipWidth * n))
+    (hcd : start + g1EipWidth * n ≤ cd.size) :
+    ∀ i < n, bytesAt st (base + g1EipWidth * i) g1EipWidth =
+      cdSlice cd (start + g1EipWidth * i) g1EipWidth := by
+  induction n generalizing base start with
+  | zero => intro i hi; omega
+  | succ n ih =>
+      have h128 : g1EipWidth * (n + 1) = g1EipWidth + g1EipWidth * n := by ring
+      rw [h128] at h hcd
+      have hsplit : bytesAt st base (g1EipWidth + g1EipWidth * n) =
+          bytesAt st base g1EipWidth ++ bytesAt st (base + g1EipWidth) (g1EipWidth * n) :=
+        bytesAt_append st base g1EipWidth (g1EipWidth * n)
+      have hcdsplit : cdSlice cd start (g1EipWidth + g1EipWidth * n) =
+          cdSlice cd start g1EipWidth ++
+            cdSlice cd (start + g1EipWidth) (g1EipWidth * n) :=
+        cdSlice_append cd start g1EipWidth (g1EipWidth * n)
+      rw [hsplit, hcdsplit] at h
+      have hstart : start + g1EipWidth ≤ cd.size := by omega
+      have hX : bytesAt st base g1EipWidth = cdSlice cd start g1EipWidth :=
+        bytes_prefix_cancel h (by rw [bytesAt_size_local, cdSlice_size_of_le hstart])
+      have hY : bytesAt st (base + g1EipWidth) (g1EipWidth * n) =
+          cdSlice cd (start + g1EipWidth) (g1EipWidth * n) := by
+        rw [hX] at h
+        exact bytes_append_cancel_left h
+      have hcd' : start + g1EipWidth + g1EipWidth * n ≤ cd.size := by omega
+      intro i hi
+      cases i with
+      | zero => simpa using hX
+      | succ k =>
+          have hk : k < n := by omega
+          have := ih (base + g1EipWidth) (start + g1EipWidth) hY hcd' k hk
+          simpa [show base + g1EipWidth * (k + 1) = base + g1EipWidth + g1EipWidth * k by ring,
+            show start + g1EipWidth * (k + 1) = start + g1EipWidth + g1EipWidth * k by ring]
+            using this
+
+theorem holdsG1s_section (E : VerifierEnv p G₁ G₂ Gₜ) (st : EvmState) (cd : Bytes)
+    (base start : Nat) (Qs : List G₁)
+    (h : bytesAt st base (g1EipWidth * Qs.length) = cdSlice cd start (g1EipWidth * Qs.length))
+    (hcd : start + g1EipWidth * Qs.length ≤ cd.size)
+    (hprov : ∀ i (hi : i < Qs.length), ∃ b : Bytes,
+      bytesTake cd (start + g1EipWidth * i) g1EipWidth = some b ∧
+        E.g1.ofEip? b = some (Qs[i]'hi))
+    (hc : E.g1.eipRoundtrip) :
+    holdsG1s E st base Qs.toArray = true := by
+  have hframes := bytesAt_frame_eq_of_window st cd base start Qs.length h hcd
+  unfold holdsG1s
+  rw [List.all_eq_true]
+  intro pair hp
+  obtain ⟨Q, i⟩ := pair
+  have hmem : (Q, i) ∈ Qs.toArray.toList.zipIdx 0 := by
+    simpa using hp
+  have hinfo := List.mem_zipIdx hmem
+  have hi : i < Qs.length := by
+    simpa using hinfo.2.1
+  have hQ : Q = Qs[i] := by simpa using hinfo.2.2
+  subst hQ
+  have hframe := hframes i hi
+  obtain ⟨b, hb, hq⟩ := hprov i hi
+  have hslice : cdSlice cd (start + g1EipWidth * i) g1EipWidth =
+      E.g1.toEip (Qs[i]'hi) := by
+    rw [cdSlice_eq_of_bytesTake hb]
+    exact (hc b (Qs[i]'hi) hq).symm
+  change (bytesAt st (base + g1EipWidth * i) g1EipWidth ==
+    E.g1.toEip (Qs[i]'hi)) = true
+  rw [hframe, hslice]
+  exact beq_self_eq_true _
+
 /-- **THE COORDINATE RANGE CHECK AS A `Nat` FACT.** `common_uncompressed_g1` writes
     its two coordinate checks as `iszero(or(lt(hi, BLS_P_HI), and(eq(hi, BLS_P_HI),
     iszero(gt(lo, BLS_P_MINUS_ONE_LO)))))`; at `BitVec 256` the *passing* check (the
@@ -8559,9 +10160,621 @@ theorem g1WalkCT_sound {c : ExternalCalls} {g : ExternalGas} (cd : Bytes) (err h
         · rw [if_neg hfn] at hT
           cases hT
       | cons a3 rest3 => cases hT
+theorem stepOp_add_evm (a b : U256) (st : EvmState) :
+    stepOp Op.add [a, b] st = some (.ok [a + b] st) := rfl
+
+theorem stepOp_calldatacopy_evm (dst src n : U256) (st : EvmState) :
+    stepOp Op.calldatacopy [dst, src, n] st =
+      some (.ok [] { touchMemory st dst.toNat n.toNat with
+        memory := copyInto st.memory dst.toNat src.toNat n.toNat st.env.calldata }) := rfl
+
+theorem t_setMany_one {D : YulSemantics.Dialect} [DecidableEq D.Value] (V : VEnv D)
+    (x : Ident) (v : D.Value) : VEnv.setMany V [x] [v] = VEnv.set V x v := rfl
+
+/-- A `calldatacopy` window disjoint from a read leaves the read alone. -/
+theorem bytesAt_calldatacopy_outside (st : EvmState) (dat : List UInt8)
+    (dst src n a m : Nat) (h : a + m ≤ dst ∨ dst + n ≤ a) :
+    bytesAt { touchMemory st dst n with memory := copyInto st.memory dst src n dat } a m
+      = bytesAt st a m := by
+  unfold bytesAt readBytes
+  apply ByteArray.ext
+  apply congrArg List.toArray
+  apply List.map_congr_left
+  intro i hi
+  have him : i < m := List.mem_range.mp hi
+  show (if dst ≤ a + i ∧ a + i < dst + n then byteFrom dat (src + (a + i - dst))
+      else st.memory (a + i)) = st.memory (a + i)
+  have hc : ¬ (dst ≤ a + i ∧ a + i < dst + n) := by omega
+  rw [if_neg hc]
+
+/-- A `bytesAt` window is unchanged where the memory is pointwise unchanged. -/
+theorem bytesAt_congr_mem {st st' : EvmState} {a m : Nat}
+    (h : ∀ x, a ≤ x → x < a + m → st'.memory x = st.memory x) :
+    bytesAt st' a m = bytesAt st a m := by
+  unfold bytesAt readBytes
+  apply ByteArray.ext
+  apply congrArg List.toArray
+  apply List.map_congr_left
+  intro i hi
+  have him : i < m := List.mem_range.mp hi
+  exact h (a + i) (by omega) (by omega)
+
+set_option maxHeartbeats 20000000 in
+theorem g1WalkTail_contract (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (cd : Bytes) (walk : String) (hwalk : walk ≠ "proof_cptr" ∧ walk ≠ "buf_len" ∧ walk ≠ "end")
+    (j a w b : Nat) (ha : a + 128 * j ≤ cd.size) (hcds : cd.size < 2 ^ 256)
+    (hw : w + 128 * j < 2 ^ 256) (hb : b + 128 * j < 2 ^ 256)
+    (hdisj : w + 128 * j ≤ b ∨ b + 128 * j ≤ w)
+    (st0 : EvmState) (k : Nat) (hklt : k < j) :
+    StmtsContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) ::
+        hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+          [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] ::
+        R.scope c g)
+      [GenAst.yexpr (GenAst.yop Op.calldatacopy
+          [GenAst.yvar walk, GenAst.yvar "proof_cptr", GenAst.ylit 128]),
+        GenAst.yset walk (GenAst.yop Op.add [GenAst.yvar walk, GenAst.ylit 128]),
+        GenAst.yset "proof_cptr" (GenAst.yop Op.add [GenAst.yvar "proof_cptr", GenAst.ylit 128])]
+      (fun V st =>
+        VEnv.get V walk = some (BitVec.ofNat 256 (w + 128 * k)) ∧
+        VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) ∧
+        st.env.calldata = cd.data.toList ∧ st.halted = st0.halted ∧
+        bytesAt st b (128 * k) = cdSlice cd a (128 * k) ∧
+        bytesAt st w (128 * k) = cdSlice cd a (128 * k) ∧
+        bytesAt st (b + 128 * k) 128 = cdSlice cd (a + 128 * k) 128 ∧
+        g1WordsOk cd (a + 128 * k) = true ∧
+        (∀ i, i < k → g1WordsOk cd (a + 128 * i) = true) ∧
+        (∀ x, (x < w ∨ w + 128 * k ≤ x) → (x < b ∨ b + 128 * (k + 1) ≤ x) →
+          st.memory x = st0.memory x))
+      (fun V st V' st' o => Hold (
+        (o = .normal ∧
+          V' = VEnv.set (VEnv.set V walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+            "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1))) ∧
+          st'.env = st.env ∧ st'.halted = st.halted ∧
+          bytesAt st' b (128 * (k + 1)) = cdSlice cd a (128 * (k + 1)) ∧
+          bytesAt st' w (128 * (k + 1)) = cdSlice cd a (128 * (k + 1)) ∧
+          (∀ i, i < k + 1 → g1WordsOk cd (a + 128 * i) = true) ∧
+          (∀ x, (x < w ∨ w + 128 * (k + 1) ≤ x) → (x < b ∨ b + 128 * (k + 1) ≤ x) →
+            st'.memory x = st0.memory x)) ∨
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st'))) := by
+  intro V st hpre
+  obtain ⟨hwv, hpc, hcd, hhalt, hbB, hbW, hBframe, hBwords, hwords, hmem⟩ := hpre
+  have hk_le : k ≤ j := Nat.le_of_lt hklt
+  have hmul : 128 * k ≤ 128 * j := Nat.mul_le_mul_left 128 hk_le
+  have hwlt : w + 128 * k < 2 ^ 256 := by omega
+  have hblt : b + 128 * k < 2 ^ 256 := by omega
+  have hal : a + 128 * k < 2 ^ 256 := by omega
+  have hszEq : cd.data.toList.length = cd.size := by
+    show cd.data.toList.length = cd.data.size
+    exact Array.length_toList
+  have hcdlen : (a + 128 * k) + 128 ≤ cd.data.toList.length := by
+    have := hszEq
+    omega
+  refine allRuns_of_wp (c := c) (g := g) (n := 40) ?_
+  set_option wpLets false in
+  wp_run
+  rw [hpc]
+  set_option wpLets false in
+  wp_run
+  rw [hwv]
+  set_option wpLets false in
+  wp_run
+  rw [hwv]
+  set_option wpLets false in
+  wp_run
+  have hpc2 : VEnv.get (VEnv.setMany V [walk]
+      [(fun x1 x2 : U256 => x1 + x2) (BitVec.ofNat 256 (w + 128 * k))
+        ((Bridge.Dialect c g).litValue (Literal.number 128))]) "proof_cptr" =
+      some (BitVec.ofNat 256 (a + 128 * k)) := by
+    rw [t_setMany_one (D := Bridge.Dialect c g)]
+    rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := walk) (y := "proof_cptr") (by
+      obtain ⟨h1, h2, h3⟩ := hwalk
+      exact Ne.symm h1)]
+    exact hpc
+  rw [hpc2]
+  set_option wpLets false in
+  wp_run
+  have hWk1 : (fun x1 x2 : U256 => x1 + x2) (BitVec.ofNat 256 (w + 128 * k))
+      ((Bridge.Dialect c g).litValue (Literal.number 128)) =
+      BitVec.ofNat 256 (w + 128 * (k + 1)) := by
+    change BitVec.ofNat 256 (w + 128 * k) + BitVec.ofNat 256 128 =
+      BitVec.ofNat 256 (w + 128 * (k + 1))
+    calc BitVec.ofNat 256 (w + 128 * k) + BitVec.ofNat 256 128
+        = BitVec.ofNat 256 ((w + 128 * k) + 128) := (BitVec.ofNat_add _ _).symm
+      _ = BitVec.ofNat 256 (w + 128 * (k + 1)) := by
+          rw [show (w + 128 * k) + 128 = w + 128 * (k + 1) from by omega]
+  have hPk1 : (fun x1 x2 : U256 => x1 + x2) (BitVec.ofNat 256 (a + 128 * k))
+      ((Bridge.Dialect c g).litValue (Literal.number 128)) =
+      BitVec.ofNat 256 (a + 128 * (k + 1)) := by
+    change BitVec.ofNat 256 (a + 128 * k) + BitVec.ofNat 256 128 =
+      BitVec.ofNat 256 (a + 128 * (k + 1))
+    calc BitVec.ofNat 256 (a + 128 * k) + BitVec.ofNat 256 128
+        = BitVec.ofNat 256 ((a + 128 * k) + 128) := (BitVec.ofNat_add _ _).symm
+      _ = BitVec.ofNat 256 (a + 128 * (k + 1)) := by
+          rw [show (a + 128 * k) + 128 = a + 128 * (k + 1) from by omega]
+  refine Hold.intro (Or.inl ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩)
+  · -- environment: the two assignments, with the normalized add results
+    rw [t_setMany_one (D := Bridge.Dialect c g), t_setMany_one (D := Bridge.Dialect c g)]
+    rw [hWk1, hPk1]
+  · rfl
+  · rfl
+  · -- buffer window: the k-window is untouched, the new frame is the helper's copy
+    rw [show 128 * (k + 1) = 128 * k + 128 by omega, bytesAt_append]
+    dsimp only
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hwlt, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hal,
+      show (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number 128))) = 128 from rfl]
+    rw [bytesAt_calldatacopy_outside st st.env.calldata (w + 128 * k) (a + 128 * k) 128
+      b (128 * k) (by omega)]
+    rw [bytesAt_calldatacopy_outside st st.env.calldata (w + 128 * k) (a + 128 * k) 128
+      (b + 128 * k) 128 (by omega)]
+    rw [hbB, hBframe, cdSlice_append]
+  · -- walk window: the k-window is untouched, the new frame is the loop's copy
+    rw [show 128 * (k + 1) = 128 * k + 128 by omega, bytesAt_append]
+    dsimp only
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hwlt, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hal,
+      show (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number 128))) = 128 from rfl]
+    rw [bytesAt_calldatacopy_outside st st.env.calldata (w + 128 * k) (a + 128 * k) 128
+      w (128 * k) (by omega)]
+    rw [bytesAt_calldatacopy_cdSlice st cd (w + 128 * k) (a + 128 * k) 128 hcd hcdlen]
+    rw [hbW, cdSlice_append]
+  · -- the frame's range check
+    intro i hi
+    by_cases hik : i < k
+    · exact hwords i hik
+    · have hik' : i = k := by omega
+      subst i
+      exact hBwords
+  · -- memory outside both windows
+    intro x hxw hxb
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hwlt, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hal,
+      show (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number 128))) = 128 from rfl]
+    show copyInto st.memory (w + 128 * k) (a + 128 * k) 128 st.env.calldata x = st0.memory x
+    have hxc : copyInto st.memory (w + 128 * k) (a + 128 * k) 128 st.env.calldata x = st.memory x := by
+      unfold copyInto
+      rw [if_neg]
+      omega
+    rw [hxc]
+    exact hmem x (by omega) (by omega)
+
+set_option maxHeartbeats 20000000 in
+theorem g1Call_contract (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (cd : Bytes) (walk : String) (hwalk : walk ≠ "proof_cptr" ∧ walk ≠ "buf_len" ∧ walk ≠ "end")
+    (j a w b : Nat) (ha : a + 128 * j ≤ cd.size) (hcds : cd.size < 2 ^ 256)
+    (hb : b + 128 * j < 2 ^ 256)
+    (err hi lo : Nat)
+    (hcommon : lookupFun (R.scope c g) "common_uncompressed_g1" =
+      some ({ params := ["buf_len", "cptr"], rets := ["ret"],
+              body := commonG1Inline err hi lo }, R.scope c g))
+    (hkey : hi * 2^256 + lo + 1 = Midfall.Assumptions.pBase)
+    (st0 : EvmState) (k : Nat) (hklt : k < j) :
+    StmtContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) ::
+        hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+          [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] ::
+        R.scope c g)
+      (Stmt.assign ["buf_len"] (Expr.call "common_uncompressed_g1"
+        [Expr.var "buf_len", Expr.var "proof_cptr"]))
+      (fun V st =>
+        VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) ∧
+        VEnv.get V walk = some (BitVec.ofNat 256 (w + 128 * k)) ∧
+        VEnv.get V "buf_len" = some (BitVec.ofNat 256 (b + 128 * k)) ∧
+        st.env.calldata = cd.data.toList ∧ st.halted = st0.halted)
+      (fun V st V' st' o => Hold (
+        (o = .normal ∧
+          V' = VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * (k + 1))) ∧
+          st'.env = st.env ∧ st'.halted = st.halted ∧
+          bytesAt st' (b + 128 * k) 128 = cdSlice cd (a + 128 * k) 128 ∧
+          g1WordsOk cd (a + 128 * k) = true ∧
+          (∀ x, (x < b + 128 * k ∨ b + 128 * k + 128 ≤ x) → st'.memory x = st.memory x)) ∨
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st'))) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hpc, hwv, hbuf, hcd, hhalt⟩ := hpre
+  have hk_le : k ≤ j := Nat.le_of_lt hklt
+  have hmul : 128 * k ≤ 128 * j := Nat.mul_le_mul_left 128 hk_le
+  have hclt : a + 128 * k < 2 ^ 256 := by omega
+  have hszEq : cd.data.toList.length = cd.size := by
+    show cd.data.toList.length = cd.data.size
+    exact Array.length_toList
+  have hlen : (BitVec.ofNat 256 (a + 128 * k)).toNat + 128 ≤ cd.data.toList.length := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hclt, hszEq]
+    omega
+  have hfail : ∃ cenv, lookupFun (R.scope c g) "fail" =
+      some (TraceReturn.failFDecl, cenv) := by
+    have h := fail_lookupV3 (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ) R (c := c) (g := g)
+    rw [show scopeV3 R c g = R.scope c g from rfl] at h
+    exact ⟨R.scope c g, h⟩
+  have hhB : hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) = [] := rfl
+  have hhI : hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+      [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] = [] := rfl
+  have hlook0 : lookupFun (hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) ::
+      hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+        [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] ::
+      R.scope c g) "common_uncompressed_g1" =
+      some ({ params := ["buf_len", "cptr"], rets := ["ret"],
+              body := commonG1Inline err hi lo }, R.scope c g) := by
+    rw [hhB, hhI]
+    change lookupFun (R.scope c g) "common_uncompressed_g1" = _
+    exact hcommon
+  have hfail' : ∃ cf, lookupFun (hoist (Bridge.Dialect c g) (commonG1Inline err hi lo) ::
+      R.scope c g) "fail" = some (TraceReturn.failFDecl, cf) := by
+    have hhC : hoist (Bridge.Dialect c g) (commonG1Inline err hi lo) = [] := rfl
+    obtain ⟨cf, hcf⟩ := hfail
+    refine ⟨cf, ?_⟩
+    rw [hhC]
+    change lookupFun (R.scope c g) "fail" = some (TraceReturn.failFDecl, cf)
+    exact hcf
+  have hcallee : ((["buf_len", "cptr"] : List String).zip
+      [BitVec.ofNat 256 (b + 128 * k), BitVec.ofNat 256 (a + 128 * k)]) ++
+      bindZeros (Bridge.Dialect c g) ["ret"] =
+      [("buf_len", BitVec.ofNat 256 (b + 128 * k)),
+        ("cptr", BitVec.ofNat 256 (a + 128 * k)),
+        ("ret", (Bridge.Dialect c g).zero)] := by
+    simp [bindZeros]
+  cases hrun with
+  | assignVal he hlenV =>
+      cases he with
+      | callOk hargs hlook harglen hbodyrun hnorm =>
+          cases hargs with
+          | argsCons hrest hhead2 =>
+            cases hrest with
+            | argsCons hrest2 hhead1 =>
+              cases hrest2 with
+              | argsNil =>
+                cases hhead2 with
+                | var hget2 =>
+                  cases hhead1 with
+                  | var hget1 =>
+                    rename_i v2 v1
+                    have hv2 : v2 = BitVec.ofNat 256 (b + 128 * k) := by
+                      have h := hget2
+                      rw [hbuf] at h
+                      exact (Option.some.inj h).symm
+                    have hv1 : v1 = BitVec.ofNat 256 (a + 128 * k) := by
+                      have h := hget1
+                      rw [hpc] at h
+                      exact (Option.some.inj h).symm
+                    rw [hlook0] at hlook
+                    cases hlook
+                    rw [hv2, hv1] at hbodyrun
+                    rw [hcallee] at hbodyrun
+                    cases hbodyrun with
+                    | block hstmts =>
+                      have hsum := commonG1Inline_runs
+                        (hoist (Bridge.Dialect c g) (commonG1Inline err hi lo) :: R.scope c g)
+                        st cd (BitVec.ofNat 256 (b + 128 * k)) (BitVec.ofNat 256 (a + 128 * k))
+                        err hi lo hfail' hcd hlen hcds hkey
+                      have hres := hsum _ _ _ hstmts
+                      rcases hres.elim with ⟨hobh, hrev⟩ |
+                          ⟨hobn, hret, hretR, henv, hhalt', hbytes, hmem', hwords⟩
+                      · rcases hnorm with h | h <;> rw [h] at hobh <;> cases hobh
+                      · have hBk1 : BitVec.ofNat 256 (b + 128 * k) + 128 =
+                            BitVec.ofNat 256 (b + 128 * (k + 1)) := by
+                          calc BitVec.ofNat 256 (b + 128 * k) + BitVec.ofNat 256 128
+                              = BitVec.ofNat 256 ((b + 128 * k) + 128) :=
+                                (BitVec.ofNat_add _ _).symm
+                            _ = BitVec.ofNat 256 (b + 128 * (k + 1)) := by
+                                rw [show (b + 128 * k) + 128 = b + 128 * (k + 1) from by omega]
+                        have hBkNat : (BitVec.ofNat 256 (b + 128 * k)).toNat = b + 128 * k := by
+                          rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
+                        have hPkNat : (BitVec.ofNat 256 (a + 128 * k)).toNat = a + 128 * k := by
+                          rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hclt]
+                        refine Hold.intro (Or.inl ⟨rfl, ?_, henv, hhalt', ?_, ?_, ?_⟩)
+                        · simp only [List.map_cons, List.map_nil]
+                          rw [show (Bridge.Dialect c g).zero = (0 : U256) from rfl]
+                          rw [t_setMany_one (D := Bridge.Dialect c g), hretR]
+                          simp only [Option.getD_some]
+                          rw [hBk1]
+                        · rw [hBkNat, hPkNat] at hbytes
+                          exact hbytes
+                        · rw [hPkNat] at hwords
+                          exact hwords
+                        · intro x hx
+                          exact hmem' x (by simpa [hBkNat] using hx)
+  | assignHalt he =>
+      cases he with
+      | callHalt hargs hlook harglen hbodyrun =>
+          cases hargs with
+          | argsCons hrest hhead2 =>
+            cases hrest with
+            | argsCons hrest2 hhead1 =>
+              cases hrest2 with
+              | argsNil =>
+                cases hhead2 with
+                | var hget2 =>
+                  cases hhead1 with
+                  | var hget1 =>
+                    rename_i v2 v1
+                    have hv2 : v2 = BitVec.ofNat 256 (b + 128 * k) := by
+                      have h := hget2
+                      rw [hbuf] at h
+                      exact (Option.some.inj h).symm
+                    have hv1 : v1 = BitVec.ofNat 256 (a + 128 * k) := by
+                      have h := hget1
+                      rw [hpc] at h
+                      exact (Option.some.inj h).symm
+                    rw [hlook0] at hlook
+                    cases hlook
+                    rw [hv2, hv1] at hbodyrun
+                    rw [hcallee] at hbodyrun
+                    cases hbodyrun with
+                    | block hstmts =>
+                      have hsum := commonG1Inline_runs
+                        (hoist (Bridge.Dialect c g) (commonG1Inline err hi lo) :: R.scope c g)
+                        st cd (BitVec.ofNat 256 (b + 128 * k)) (BitVec.ofNat 256 (a + 128 * k))
+                        err hi lo hfail' hcd hlen hcds hkey
+                      have hres := hsum _ _ _ hstmts
+                      rcases hres.elim with ⟨hobh, hrev⟩ |
+                          ⟨hobn, hret, hretR, henv, hhalt', hbytes, hmem', hwords⟩
+                      · exact Hold.intro (Or.inr ⟨rfl, hrev⟩)
+                      · cases hobn
+      | callArgsHalt hargs =>
+          exact (Midfall.LoweringV2.Blocks.EcPairing.args_vars_ne_halt
+            (D := Bridge.Dialect c g) ["buf_len", "proof_cptr"] hargs).elim
+
+
+
 end G1Walk
 
 
+open Midfall.Yul.Wp Midfall.Yul.WpBridge Midfall.Yul.WpTac Midfall.Yul.VKP
+open Midfall.LoweringV2.Blocks Midfall.LoweringV2.Blocks.TraceReturn Midfall.Yul.Word
+open Midfall.Yul.LoopRule
+
+set_option maxHeartbeats 20000000 in
+theorem g1WalkBody_step (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (cd : Bytes) (walk : String) (hwalk : walk ≠ "proof_cptr" ∧ walk ≠ "buf_len" ∧ walk ≠ "end")
+    (j a w b : Nat) (ha : a + 128 * j ≤ cd.size) (hcds : cd.size < 2 ^ 256)
+    (hw : w + 128 * j < 2 ^ 256) (hb : b + 128 * j < 2 ^ 256)
+    (hdisj : w + 128 * j ≤ b ∨ b + 128 * j ≤ w)
+    (err hi lo : Nat)
+    (hcommon : lookupFun (R.scope c g) "common_uncompressed_g1" =
+      some ({ params := ["buf_len", "cptr"], rets := ["ret"],
+              body := commonG1Inline err hi lo }, R.scope c g))
+    (hkey : hi * 2^256 + lo + 1 = Midfall.Assumptions.pBase)
+    (st0 : EvmState) (k : Nat) (hklt : k < j) :
+    StmtsContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) ::
+        hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+          [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] ::
+        R.scope c g)
+      (GenAst.g1WalkBody walk)
+      (fun V st =>
+        VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) ∧
+        VEnv.get V walk = some (BitVec.ofNat 256 (w + 128 * k)) ∧
+        VEnv.get V "buf_len" = some (BitVec.ofNat 256 (b + 128 * k)) ∧
+        st.env.calldata = cd.data.toList ∧ st.halted = st0.halted ∧
+        bytesAt st b (128 * k) = cdSlice cd a (128 * k) ∧
+        bytesAt st w (128 * k) = cdSlice cd a (128 * k) ∧
+        (∀ i, i < k → g1WordsOk cd (a + 128 * i) = true) ∧
+        (∀ x, (x < w ∨ w + 128 * k ≤ x) → (x < b ∨ b + 128 * k ≤ x) →
+          st.memory x = st0.memory x))
+      (fun V st V' st' o =>
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+        (o = .normal ∧
+          V' = VEnv.set (VEnv.set (VEnv.set V "buf_len"
+              (BitVec.ofNat 256 (b + 128 * (k + 1)))) walk
+              (BitVec.ofNat 256 (w + 128 * (k + 1)))) "proof_cptr"
+              (BitVec.ofNat 256 (a + 128 * (k + 1))) ∧
+          st'.env = st.env ∧ st'.halted = st.halted ∧
+          bytesAt st' b (128 * (k + 1)) = cdSlice cd a (128 * (k + 1)) ∧
+          bytesAt st' w (128 * (k + 1)) = cdSlice cd a (128 * (k + 1)) ∧
+          (∀ i, i < k + 1 → g1WordsOk cd (a + 128 * i) = true) ∧
+          (∀ x, (x < w ∨ w + 128 * (k + 1) ≤ x) → (x < b ∨ b + 128 * (k + 1) ≤ x) →
+            st'.memory x = st.memory x))) := by
+  let Mid : VEnv (Bridge.Dialect c g) → EvmState →
+      VEnv (Bridge.Dialect c g) → EvmState → Prop := fun V0 st1 Vm stm =>
+    Vm = VEnv.set V0 "buf_len" (BitVec.ofNat 256 (b + 128 * (k + 1))) ∧
+    stm.env = st1.env ∧ stm.halted = st1.halted ∧
+    bytesAt stm (b + 128 * k) 128 = cdSlice cd (a + 128 * k) 128 ∧
+    g1WordsOk cd (a + 128 * k) = true ∧
+    (∀ x, (x < b + 128 * k ∨ b + 128 * k + 128 ≤ x) → stm.memory x = st1.memory x)
+  refine StmtsContractAll.head_tail_ex (D := Bridge.Dialect c g) (Mid := Mid) ?_ ?_
+  · -- the helper call
+    intro V0 st1 hpre0 V1 st1' o1 h1
+    obtain ⟨hpc0, hwv0, hbuf0, hcd0, hhalt0, _⟩ := hpre0
+    have hc := g1Call_contract (R := R) (c := c) (g := g) cd walk hwalk j a w b ha hcds hb
+      err hi lo hcommon hkey st0 k hklt V0 st1 ⟨hpc0, hwv0, hbuf0, hcd0, hhalt0⟩ V1 st1' o1 h1
+    rcases hc.elim with ⟨ho, hmid⟩ | ⟨hoh, hrev⟩
+    · exact Or.inl ⟨ho, hmid⟩
+    · refine Or.inr ⟨?_, Or.inl ⟨hoh, hrev⟩⟩
+      intro h
+      rw [hoh] at h
+      cases h
+  · -- the copy and the two cursor updates
+    intro V0 st1 Vm stm hpre0 hmid
+    obtain ⟨hpc0, hwv0, hbuf0, hcd0, hhalt0, hbB0, hbW0, hwords0, hmem0⟩ := hpre0
+    obtain ⟨hVm, hmEnv, hmHalt, hmBytes, hmWords, hmFrame⟩ := hmid
+    intro Vm' stm' hpre' V' st' o hrun'
+    obtain ⟨hVmeq, hstmeq⟩ := hpre'
+    rw [hVmeq, hstmeq] at hrun'
+    have hwalkM : VEnv.get Vm walk = some (BitVec.ofNat 256 (w + 128 * k)) := by
+      rw [hVm]
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (y := walk)
+        (by obtain ⟨h1, h2, h3⟩ := hwalk; exact h2)]
+      exact hwv0
+    have hpcM : VEnv.get Vm "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) := by
+      rw [hVm]
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (y := "proof_cptr")
+        (by decide)]
+      exact hpc0
+    have hmemTail : ∀ x, (x < w ∨ w + 128 * k ≤ x) → (x < b ∨ b + 128 * (k + 1) ≤ x) →
+        stm.memory x = st1.memory x := by
+      intro x hx1 hx2
+      exact hmFrame x (by omega)
+    have hbBTail : bytesAt stm b (128 * k) = cdSlice cd a (128 * k) :=
+      (bytesAt_congr_mem (fun x h1 h2 => by rw [hmFrame x (by omega)])).trans hbB0
+    have hbWTail : bytesAt stm w (128 * k) = cdSlice cd a (128 * k) :=
+      (bytesAt_congr_mem (fun x h1 h2 => by rw [hmFrame x (by omega)])).trans hbW0
+    have hp := g1WalkTail_contract (R := R) (c := c) (g := g) cd walk hwalk j a w b
+      ha hcds hw hb hdisj st1 k hklt Vm stm
+      ⟨hwalkM, hpcM, by simpa [hmEnv] using hcd0, by simpa [hmHalt] using hhalt0,
+        hbBTail, hbWTail, hmBytes, hmWords, hwords0, hmemTail⟩
+    have hp' := hp V' st' o hrun'
+    rcases hp'.elim with ⟨ho, henvEq, hse, hsh, hbB', hbW', hwords', hmem'⟩ |
+        ⟨hoh, hrev⟩
+    · refine Or.inr ⟨ho, ?_, ?_, ?_, hbB', hbW', hwords', hmem'⟩
+      · rw [henvEq, hVm]
+      · rw [hse, hmEnv]
+      · rw [hsh, hmHalt]
+    · exact Or.inl ⟨hoh, hrev⟩
+
+
+/-! ### Local inversions for the walk loop's guard and init -/
+
+theorem g1Walk_list_length_one {α : Type} {l : List α} (h : l.length = 1) : ∃ a, l = [a] := by
+  cases l with
+  | nil => simp at h
+  | cons a rest =>
+      cases rest with
+      | nil => exact ⟨a, rfl⟩
+      | cons b rest => simp at h
+
+theorem g1Walk_eval_var_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : Ident} {av : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.var x) (.vals [av] st')) :
+    VEnv.get V x = some av ∧ st' = st := by
+  cases h with
+  | var hget => exact ⟨hget, rfl⟩
+
+theorem g1Walk_eval_lit_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {n : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (.number n)) (.vals [cv] st')) :
+    cv = BitVec.ofNat 256 n ∧ st' = st := by
+  cases h
+  exact ⟨rfl, rfl⟩
+
+theorem g1Walk_eval_builtin_vals_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {op : EVM.Op} {args : List (Expr EVM.Op)}
+    {vals : List U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.builtin op args) (.vals vals st')) :
+    ∃ argvals st1, EvalArgs (Bridge.Dialect c g) funs V st args (.vals argvals st1) ∧
+      (Bridge.Dialect c g).Builtin op argvals st1 (.ok vals st') := by
+  cases h with
+  | builtinOk hargs hbi => exact ⟨_, _, hargs, hbi⟩
+
+theorem g1Walk_eval_add_var_lit_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : String} {k : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.add [Expr.var x, Expr.lit (Literal.number k)]) (.vals [cv] st')) :
+    ∃ a, VEnv.get V x = some a ∧ cv = a + BitVec.ofNat 256 k ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := g1Walk_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil hlit =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hk, rfl⟩ := g1Walk_eval_lit_inv hlit
+              obtain ⟨ha, rfl⟩ := g1Walk_eval_var_inv hhead
+              simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin, hk] at hbi
+              cases hbi
+              exact ⟨_, ha, rfl, rfl⟩
+
+theorem g1Walk_eval_lt_vars_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x y : String} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.lt [Expr.var x, Expr.var y]) (.vals [cv] st')) :
+    ∃ xv yv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      cv = b2w (xv.ult yv) ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := g1Walk_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil htail =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hyv, rfl⟩ := g1Walk_eval_var_inv htail
+              obtain ⟨hxv, rfl⟩ := g1Walk_eval_var_inv hhead
+              simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨_, _, hxv, hyv, rfl, rfl⟩
+
+theorem g1Walk_eval_add_var_lit_halt_false {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : String} {k : Nat} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.add [Expr.var x, Expr.lit (Literal.number k)]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := Op.add)
+    (fun a b st r hr => by
+      simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh)
+    h
+
+theorem g1Walk_eval_lt_vars_halt_false {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x y : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.lt [Expr.var x, Expr.var y]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := Op.lt)
+    (fun a b st r hr => by
+      simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    h
+
+theorem g1Walk_exec_block_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {body : Block EVM.Op} {o : Outcome}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.block body) V' st' o) :
+    ∃ Vb stb, ExecStmts (Bridge.Dialect c g) (hoist (Bridge.Dialect c g) body :: funs)
+      V st body Vb stb o ∧ V' = restore V Vb ∧ st' = stb := by
+  cases h with
+  | block hb => exact ⟨_, _, hb, rfl, rfl⟩
+
+theorem t_venv_set_cons_ne {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V : VEnv D} {x y : Ident} {v a : D.Value} (h : x ≠ y) :
+    VEnv.set ((x, v) :: V) y a = (x, v) :: VEnv.set V y a := by
+  simp [VEnv.set, h]
+
+theorem stmtsContractAll_single {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {s : Stmt D.Op} {pre : VEnv D → D.State → Prop}
+    {post : VEnv D → D.State → VEnv D → D.State → Outcome → Prop}
+    (h : StmtContractAll funs s pre post) : StmtsContractAll funs [s] pre post := by
+  intro V st hpre V' st' o hrun
+  cases hrun with
+  | seqCons h1 h2 =>
+      cases h2 with
+      | seqNil => exact h V st hpre V' st' .normal h1
+  | seqStop h1 _ => exact h V st hpre V' st' o h1
+
+/-- The init run of the walk loop: `let end := proof_cptr + 128*j`. -/
+theorem g1WalkInit_run {c : ExternalCalls} {g : ExternalGas} (j : Nat)
+    {funs : FunEnv (Bridge.Dialect c g)} {V Vinit : VEnv (Bridge.Dialect c g)}
+    {st stinit : EvmState}
+    (h : Step (Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g)
+          [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+            [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] :: funs)
+      V st
+      (.stmts [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+        [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))])
+      (.sres Vinit stinit .normal)) :
+    ∃ ev, VEnv.get V "proof_cptr" = some ev ∧
+      Vinit = ("end", ev + BitVec.ofNat 256 (128 * j)) :: V ∧ stinit = st := by
+  cases h with
+  | seqCons h1 h2 =>
+      cases h2 with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := g1Walk_list_length_one hlen
+              obtain ⟨ev, hget, hv, hst⟩ := g1Walk_eval_add_var_lit_inv he
+              exact ⟨ev, hget, by simp [hv], hst⟩
+  | seqStop h1 hne =>
+      cases h1 with
+      | letVal _ _ => exact absurd rfl hne
+
+set_option maxHeartbeats 20000000 in
 /-- **THE WALK LOOP (all runs), ONE LEMMA FOR SIX SECTIONS.** Bound = `j`, the section's frame
     count. Every run reverts (a frame fails the range check), or ends normally having absorbed the
     `j` frames, copied them to the walk window, and advanced the three cursors; every frame passed
@@ -8593,7 +10806,261 @@ theorem g1walk_loop_sem (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : E
     StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) [GenAst.g1WalkLoop walk (128 * j)]
       (g1WalkPre cd walk a w b)
       (fun V st V' st' o => g1WalkPost V st cd walk j a w b V' st' o) := by
-  sorry
+  apply stmtsContractAll_single
+  intro V st hpre V' st' o hrun
+  obtain ⟨hcdat, hpc0, hwv0, hbuf0⟩ := hpre
+  let init : Block EVM.Op :=
+    [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+      [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))]
+  let cond : Expr EVM.Op := Expr.builtin Op.lt [Expr.var "proof_cptr", Expr.var "end"]
+  let body : Block EVM.Op := GenAst.g1WalkBody walk
+  let funsI : FunEnv (Bridge.Dialect c g) := hoist (Bridge.Dialect c g) init :: R.scope c g
+  have hinitEx : init = [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+      [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] := rfl
+  let endv : U256 := BitVec.ofNat 256 (a + 128 * j)
+  let Ve : Nat → VEnv (Bridge.Dialect c g) := fun k =>
+    VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * k)))
+      walk (BitVec.ofNat 256 (w + 128 * k))) "proof_cptr" (BitVec.ofNat 256 (a + 128 * k))
+  let Inv : VEnv (Bridge.Dialect c g) → EvmState → Prop := fun Vh sth =>
+    ∃ k, k ≤ j ∧ Vh = ("end", endv) :: Ve k ∧
+      VEnv.get Vh "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) ∧
+      VEnv.get Vh walk = some (BitVec.ofNat 256 (w + 128 * k)) ∧
+      VEnv.get Vh "buf_len" = some (BitVec.ofNat 256 (b + 128 * k)) ∧
+      VEnv.get Vh "end" = some endv ∧
+      sth.env = st.env ∧ sth.halted = st.halted ∧
+      bytesAt sth b (128 * k) = cdSlice cd a (128 * k) ∧
+      bytesAt sth w (128 * k) = cdSlice cd a (128 * k) ∧
+      (∀ i, i < k → g1WordsOk cd (a + 128 * i) = true) ∧
+      (∀ x, (x < w ∨ w + 128 * k ≤ x) → (x < b ∨ b + 128 * k ≤ x) →
+        sth.memory x = st.memory x)
+  let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop := fun Vend stend o =>
+    g1WalkPost V st cd walk j a w b (restore V Vend) stend o
+  change ExecStmt (Bridge.Dialect c g) (R.scope c g) V st
+    (Stmt.forLoop init cond [] body) V' st' o at hrun
+  have hVe0 : Ve 0 = V := by
+    have hg : VEnv.get (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * 0)))
+        walk (BitVec.ofNat 256 (w + 128 * 0))) "proof_cptr" =
+        some (BitVec.ofNat 256 (a + 128 * 0)) := by
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := walk)
+        (h := fun h => hwalk.1 h.symm)]
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (h := by decide)]
+      simpa using hpc0
+    show VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * 0)))
+      walk (BitVec.ofNat 256 (w + 128 * 0))) "proof_cptr" (BitVec.ofNat 256 (a + 128 * 0)) = V
+    have hgw : VEnv.get (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * 0)))
+        walk = some (BitVec.ofNat 256 (w + 128 * 0)) := by
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (h := hwalk.2.1)]
+      exact hwv0
+    have hgb : VEnv.get V "buf_len" = some (BitVec.ofNat 256 (b + 128 * 0)) := by
+      simpa using hbuf0
+    rw [t_venv_set_self hg]
+    rw [t_venv_set_self hgw]
+    rw [t_venv_set_self hgb]
+  have hVeLen : ∀ k, (Ve k).length = V.length := by
+    intro k
+    show (VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * k)))
+      walk (BitVec.ofNat 256 (w + 128 * k))) "proof_cptr"
+      (BitVec.ofNat 256 (a + 128 * k))).length = V.length
+    rw [t_venv_set_length (D := Bridge.Dialect c g),
+      t_venv_set_length (D := Bridge.Dialect c g),
+      t_venv_set_length (D := Bridge.Dialect c g)]
+  have hstep : ∀ Vh sth, Inv Vh sth →
+      IterAll (D := Bridge.Dialect c g) funsI cond [] body Inv Q Vh sth := by
+    intro Vh sth hInv
+    obtain ⟨k, hk_le, hVh, hpc, hwv, hbuf, hend, hEnv, hHalt, hbB, hbW, hWords, hMem⟩ := hInv
+    refine ⟨?condHalt, ?exit, ?iter⟩
+    · intro st1 hc
+      exact (g1Walk_eval_lt_vars_halt_false hc).elim
+    · intro cv st1 hc hz
+      obtain ⟨xv, yv, hxget, hyget, hcv, hst1⟩ := g1Walk_eval_lt_vars_inv hc
+      have hxv : xv = BitVec.ofNat 256 (a + 128 * k) :=
+        Option.some.inj (hxget.symm.trans hpc)
+      have hyv : yv = endv := Option.some.inj (hyget.symm.trans hend)
+      rw [hxv, hyv] at hcv
+      have h0 : b2w ((BitVec.ofNat 256 (a + 128 * k)).ult
+          (BitVec.ofNat 256 (a + 128 * j))) = (0 : U256) := by
+        rw [← hcv]; exact hz
+      have hipos : a + 128 * k < 2 ^ 256 := by omega
+      have hnpos : a + 128 * j < 2 ^ 256 := by omega
+      have hkj : j ≤ k := by
+        have := lt_guard_false (i := a + 128 * k) (n := a + 128 * j) hipos hnpos h0
+        omega
+      have hkeq : k = j := Nat.le_antisymm hk_le hkj
+      rw [hkeq] at hVh hpc hwv hbuf hbB hbW hWords hMem
+      have hlen : (Ve j).length = V.length := hVeLen j
+      have hrest : restore V Vh = Ve j := by
+        rw [hVh]
+        exact t_restore_cons V (Ve j) endv hlen
+      change g1WalkPost V st cd walk j a w b (restore V Vh) st1 .normal
+      rw [hst1, hrest]
+      refine Or.inr ⟨rfl, hEnv, hHalt, rfl, hbW, hbB, hWords, ?_⟩
+      intro x hx1 hx2
+      exact hMem x hx1 hx2
+    · intro cv st1 hc hnz Vb stb ob hbody
+      obtain ⟨xv, yv, hxget, hyget, hcv, hst1⟩ := g1Walk_eval_lt_vars_inv hc
+      have hxv : xv = BitVec.ofNat 256 (a + 128 * k) :=
+        Option.some.inj (hxget.symm.trans hpc)
+      have hyv : yv = endv := Option.some.inj (hyget.symm.trans hend)
+      rw [hxv, hyv] at hcv
+      have h0 : b2w ((BitVec.ofNat 256 (a + 128 * k)).ult
+          (BitVec.ofNat 256 (a + 128 * j))) ≠ (0 : U256) := by
+        rw [← hcv]; exact hnz
+      have hipos : a + 128 * k < 2 ^ 256 := by omega
+      have hnpos : a + 128 * j < 2 ^ 256 := by omega
+      have hklt : k < j := by
+        have := lt_guard_true (i := a + 128 * k) (n := a + 128 * j) hipos hnpos h0
+        omega
+      obtain ⟨Vbin, stbb, hbrun, hVbEq, hstbEq⟩ := g1Walk_exec_block_inv hbody
+      rw [hVbEq, hstbEq]
+      have hbp := g1WalkBody_step (R := R) (c := c) (g := g) cd walk hwalk j a w b
+        ha hcd hw hb hdisj err hi lo hcommon hkey (st0 := st) k hklt Vh st1
+        ⟨hpc, hwv, hbuf, by rw [hst1, hEnv]; exact hcdat, by rw [hst1]; exact hHalt,
+          by rw [hst1]; exact hbB, by rw [hst1]; exact hbW, hWords,
+          by intro x hx1 hx2; rw [hst1]; exact hMem x hx1 hx2⟩
+      rcases hbp Vbin stbb ob hbrun with ⟨hob, hrev⟩ | ⟨hob, hVbin, hse, hsh, hbB', hbW', hWords', hMem'⟩
+      · subst hob
+        change g1WalkPost V st cd walk j a w b (restore V (restore Vh Vbin)) stbb .halt
+        exact Or.inl ⟨rfl, hrev⟩
+      · subst hob
+        have hVbin' : Vbin = ("end", endv) :: Ve (k + 1) := by
+          rw [hVbin, hVh]
+          rw [t_venv_set_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          rw [t_venv_set_cons_ne (D := Bridge.Dialect c g)
+            (h := fun h' => hwalk.2.2 h'.symm)]
+          rw [t_venv_set_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          show ("end", endv) :: VEnv.set (VEnv.set (VEnv.set (VEnv.set (VEnv.set (VEnv.set V
+              "buf_len" (BitVec.ofNat 256 (b + 128 * k)))
+              walk (BitVec.ofNat 256 (w + 128 * k)))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * k)))
+              "buf_len" (BitVec.ofNat 256 (b + 128 * (k + 1))))
+              walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1))) =
+            ("end", endv) :: Ve (k + 1)
+          rw [t_venv_set_overwrite V "buf_len" walk "proof_cptr"
+            (BitVec.ofNat 256 (b + 128 * k)) (BitVec.ofNat 256 (w + 128 * k))
+            (BitVec.ofNat 256 (a + 128 * k))
+            (BitVec.ofNat 256 (b + 128 * (k + 1)))
+            (BitVec.ofNat 256 (w + 128 * (k + 1)))
+            (BitVec.ofNat 256 (a + 128 * (k + 1)))
+            (fun h => hwalk.2.1 h.symm) (by decide) (fun h => hwalk.1 h)]
+        have hlenVbin : Vbin.length = Vh.length := by
+          rw [hVbin', hVh]
+          simp [hVeLen]
+        have hVb : restore Vh Vbin = ("end", endv) :: Ve (k + 1) := by
+          rw [hVbin', hVh]
+          simp [restore, hVeLen]
+        have hpc1 : VEnv.get (("end", endv) :: Ve (k + 1)) "proof_cptr" =
+            some (BitVec.ofNat 256 (a + 128 * (k + 1))) := by
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          change VEnv.get (VEnv.set (VEnv.set (VEnv.set V "buf_len"
+              (BitVec.ofNat 256 (b + 128 * (k + 1)))) walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1)))) "proof_cptr" =
+            some (BitVec.ofNat 256 (a + 128 * (k + 1)))
+          rw [t_venv_get_set_same (D := Bridge.Dialect c g)]
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := walk) (h := fun h => hwalk.1 h.symm)]
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (h := by decide)]
+          exact hpc0
+        have hwv1 : VEnv.get (("end", endv) :: Ve (k + 1)) walk =
+            some (BitVec.ofNat 256 (w + 128 * (k + 1))) := by
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := fun h => hwalk.2.2 h)]
+          change VEnv.get (VEnv.set (VEnv.set (VEnv.set V "buf_len"
+              (BitVec.ofNat 256 (b + 128 * (k + 1)))) walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1)))) walk =
+            some (BitVec.ofNat 256 (w + 128 * (k + 1)))
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "proof_cptr") (h := fun h => hwalk.1 h)]
+          rw [t_venv_get_set_same (D := Bridge.Dialect c g)]
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (h := hwalk.2.1)]
+          exact hwv0
+        have hbuf1 : VEnv.get (("end", endv) :: Ve (k + 1)) "buf_len" =
+            some (BitVec.ofNat 256 (b + 128 * (k + 1))) := by
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          change VEnv.get (VEnv.set (VEnv.set (VEnv.set V "buf_len"
+              (BitVec.ofNat 256 (b + 128 * (k + 1)))) walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1)))) "buf_len" =
+            some (BitVec.ofNat 256 (b + 128 * (k + 1)))
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "proof_cptr") (h := by decide)]
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := walk) (h := fun h => hwalk.2.1 h.symm)]
+          rw [t_venv_get_set_same (D := Bridge.Dialect c g)]
+          exact hbuf0
+        have hend1 : VEnv.get (("end", endv) :: Ve (k + 1)) "end" = some endv := by
+          simp [VEnv.get, List.find?]
+        have hmem1 : ∀ x, (x < w ∨ w + 128 * (k + 1) ≤ x) →
+            (x < b ∨ b + 128 * (k + 1) ≤ x) →
+            stbb.memory x = st.memory x := by
+          intro x hx1 hx2
+          have hx1' : x < w ∨ w + 128 * k ≤ x := by
+            rcases hx1 with h | h
+            · exact Or.inl h
+            · exact Or.inr (by omega)
+          have hx2' : x < b ∨ b + 128 * k ≤ x := by
+            rcases hx2 with h | h
+            · exact Or.inl h
+            · exact Or.inr (by omega)
+          rw [hMem' x hx1 hx2, hst1]
+          exact hMem x hx1' hx2'
+        have hInvNext : Inv (restore Vh Vbin) stbb := by
+          refine ⟨k + 1, by omega, hVb, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hWords', hmem1⟩
+          · rw [hVb]; exact hpc1
+          · rw [hVb]; exact hwv1
+          · rw [hVb]; exact hbuf1
+          · rw [hVb]; exact hend1
+          · rw [hse, hst1]; exact hEnv
+          · rw [hsh, hst1]; exact hHalt
+          · exact hbB'
+          · exact hbW'
+        intro Vp stp op hpost
+        obtain ⟨Vpb, stpb, hpb, hVpEq, hstpEq⟩ := g1Walk_exec_block_inv hpost
+        cases hpb with
+        | seqNil =>
+            constructor
+            · intro _
+              rw [hVpEq, hstpEq]
+              rw [show restore (restore Vh Vbin) (restore Vh Vbin) =
+                  restore Vh Vbin from by simp [restore]]
+              exact hInvNext
+            · intro hop
+              cases hop
+  cases hrun with
+  | forLoop hinit hloop =>
+      rw [hinitEx] at hinit
+      obtain ⟨ev, hget, hVinit, hstinit⟩ := g1WalkInit_run (c := c) (g := g) j
+        (funs := R.scope c g) hinit
+      have hev : ev = BitVec.ofNat 256 a := Option.some.inj (hget.symm.trans hpc0)
+      have hendv : ev + BitVec.ofNat 256 (128 * j) = endv := by
+        rw [hev]
+        exact (BitVec.ofNat_add _ _).symm
+      rw [hVinit, hstinit] at hloop
+      have hInv0 : Inv (("end", ev + BitVec.ofNat 256 (128 * j)) :: V) st := by
+        refine ⟨0, Nat.zero_le _, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [hendv, hVe0]
+        · rw [hendv]
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          simpa using hpc0
+        · rw [hendv]
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := fun h => hwalk.2.2 h)]
+          simpa using hwv0
+        · rw [hendv]
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          simpa using hbuf0
+        · rw [hendv]
+          simp [VEnv.get, List.find?]
+        · rfl
+        · rfl
+        · simp [bytesAt, readBytes, cdSlice]
+        · simp [bytesAt, readBytes, cdSlice]
+        · intro i hi; omega
+        · intro x _ _; rfl
+      exact allRuns_loop (D := Bridge.Dialect c g) (funs := funsI) (c := cond)
+        (post := []) (body := body) Inv Q hstep (("end", ev + BitVec.ofNat 256 (128 * j)) :: V)
+        st hInv0 _ _ _ hloop
+  | forInitHalt hinit =>
+      rw [hinitEx] at hinit
+      exfalso
+      cases hinit with
+      | seqCons h1 h2 => cases h2
+      | seqStop h1 hne =>
+          cases h1 with
+          | letHalt he => exact g1Walk_eval_add_var_lit_halt_false he
 
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
@@ -9050,7 +11517,27 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_calldatacopy_cdSlice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_append [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_eq_of_bytesTake [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.holdsG1_of_mirrorsSection [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_inv [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_provenance [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.takeCommitmentSection_cursor [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_take_cursor [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_lookups_prefix [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_lookups_cursor [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_take_sum_byteLen [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_lookups_sum_byteLen [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.takeCommitmentSection_start [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.wordSection_start_end [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.fromProtocol_starts [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.fromProtocol_quotientComm [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_size_local [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_size_of_le [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_frame_eq_of_window [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.holdsG1s_section [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1WalkCT_sound [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1WalkTail_contract [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1Call_contract [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_venv_set_overwrite [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSize_of_envelope [propext, Classical.choice, Quot.sound] native []
@@ -9158,6 +11645,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceTail [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceTail_advice [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceWireBody_advice [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTrace_advice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceWireBody_sizes [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTrace_one_sizes [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTrace_run_of_ms_sizes [propext, Classical.choice, Quot.sound] native []
@@ -9200,6 +11690,28 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupsEvaluated [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashcansEvaluated [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebra [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.readN_g1_wire_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_tmReadN_g1_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.length_flatMap_phaseCols [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhase_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhases_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_readAlgebra_quotient_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.scatStep_fold_range_shift [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.scatStep_fold_zip_range [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.mapM_id_map_some [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.scatterIndexed_zip_range [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_adviceScatter_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdviceBlock_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.exists_split_fr_prefix [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.ms_split_plan [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_ms_split [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytes_prefix_cancel [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytes_append_cancel_left [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytes_suffix_cancel [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotAlgebraRun_buffer [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotXcriptRun_fields_of_tail [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_tail_fCom_pi [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.advicePhaseTotal_not_columnOrder [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.bind_nil [propext, Classical.choice, Quot.sound] native []
@@ -9246,5 +11758,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.invAt_transcript_of_xcriptG1 [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcriptG1 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1WalkBody_step [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1walk_loop_sem [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows

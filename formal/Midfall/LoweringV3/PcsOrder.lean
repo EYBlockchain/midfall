@@ -259,3 +259,62 @@ theorem fromConstraintSystem_pcsQueries {F : Type} (feat : Features)
   ProtocolPlan.fromConstraintSystem_pcsQueries feat cs nb plan h
 
 end Midfall.LoweringV3
+
+namespace Midfall.Generator
+open Midfall Midfall.Halo2
+
+theorem pcsAdviceBlock_length {F : Type} (cs : ConstraintSystem F) :
+    (pcsAdviceBlock cs).length = cs.adviceQueries.toList.length := by
+  simp [pcsAdviceBlock]
+
+theorem pcsCommittedInstanceBlock_length {F : Type} (cs : ConstraintSystem F) (nb : Nat) :
+    (pcsCommittedInstanceBlock cs nb).length =
+      ((cs.instanceQueries.toList.map fun (column, rotation) =>
+        QueryKey.new column.index rotation.int).filter
+        fun q => q.column < nb).length := by
+  simp [pcsCommittedInstanceBlock]
+
+theorem pcsFixedBlock_length {F : Type} (cs : ConstraintSystem F) :
+    (pcsFixedBlock cs).length =
+      ((cs.fixedQueries.toList.map fun (column, rotation) =>
+        QueryKey.new column.index rotation.int).filter
+        fun q => !(q.column ∈ (List.range cs.numFixedColumns).filter
+          (fun idx => cs.hasSimpleSelectorCol idx))).length := by
+  simp [pcsFixedBlock]
+
+theorem pcsPermutationCommonBlock_length {F : Type} (cs : ConstraintSystem F) :
+    (pcsPermutationCommonBlock cs).length = cs.permutation.getColumns.toList.length := by
+  simp [pcsPermutationCommonBlock]
+
+theorem pcsTrashBlock_length {F : Type} (cs : ConstraintSystem F) :
+    (pcsTrashBlock cs).length = cs.trashcans.size := by
+  simp [pcsTrashBlock]
+
+theorem pcsLookupBlock_length {F : Type} (cs : ConstraintSystem F) (dg : Nat) (lc : List Nat) :
+    (pcsLookupBlock cs dg lc).length = (lc.map fun chunks => chunks + 3).sum := by
+  unfold pcsLookupBlock
+  rw [List.length_flatten]
+  rw [List.map_map]
+  simp only [Function.comp_def]
+  have hmap : (List.map (fun a : Nat × Nat =>
+        List.length ([PcsQuerySource.lookupMultiplicity a.1] ++
+          (List.range a.2).map (fun chunk => PcsQuerySource.lookupHelper a.1 chunk) ++
+          [PcsQuerySource.lookupAccumulator a.1 0, PcsQuerySource.lookupAccumulator a.1 1]))
+      (List.zip (List.range lc.length) lc)) =
+      List.map (fun chunks => chunks + 3) lc := by
+    rw [show (List.map (fun a : Nat × Nat => List.length
+        ([PcsQuerySource.lookupMultiplicity a.1] ++
+          (List.range a.2).map (fun chunk => PcsQuerySource.lookupHelper a.1 chunk) ++
+          [PcsQuerySource.lookupAccumulator a.1 0, PcsQuerySource.lookupAccumulator a.1 1]))
+        (List.zip (List.range lc.length) lc)) =
+        List.map (fun chunks => chunks + 3) ((List.zip (List.range lc.length) lc).map Prod.snd) from by
+      rw [List.map_map]
+      apply List.map_congr_left
+      intro a _ha
+      simp]
+    rw [List.map_snd_zip (by simp)]
+  rw [hmap]
+
+
+
+end Midfall.Generator
