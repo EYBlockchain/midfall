@@ -5097,6 +5097,33 @@ theorem t_restore_cons {D : YulSemantics.Dialect} [DecidableEq D.Value]
 
 /-! ### The walk's environment family -/
 
+/-- `List.append`'s compiled worker at the empty list: the kernel leaves this form in goals
+    that have been through `whnf`, where `List.nil_append` no longer matches syntactically. -/
+theorem list_append_nil_f {α : Type} (l : List α) : List.append._f [] PUnit.unit l = l := rfl
+
+/-- The walk loop's pre: the calldata and the three cursors. -/
+def g1WalkPre {c : ExternalCalls} {g : ExternalGas} (cd : Bytes) (walk : String)
+    (a w b : Nat) : VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+  fun V st => st.env.calldata = cd.data.toList ∧
+    VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 a) ∧
+    VEnv.get V walk = some (BitVec.ofNat 256 w) ∧
+    VEnv.get V "buf_len" = some (BitVec.ofNat 256 b)
+
+/-- The walk loop's post: every run reverts, or absorbs the `j` frames into both windows, advances
+    the three cursors, and leaves memory outside both windows alone. -/
+def g1WalkPost {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) (cd : Bytes) (walk : String) (j a w b : Nat) :
+    VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
+  fun V' st' o => (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+    (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+      V' = VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * j)))
+        walk (BitVec.ofNat 256 (w + 128 * j))) "proof_cptr" (BitVec.ofNat 256 (a + 128 * j)) ∧
+      bytesAt st' w (128 * j) = cdSlice cd a (128 * j) ∧
+      bytesAt st' b (128 * j) = cdSlice cd a (128 * j) ∧
+      (∀ i, i < j → g1WordsOk cd (a + 128 * i) = true) ∧
+      (∀ x, (x < w ∨ w + 128 * j ≤ x) → (x < b ∨ b + 128 * j ≤ x) →
+        st'.memory x = st.memory x))
+
 /-- The loop-head environment at `k` frames: `end` at the head, the three cursors updated in
     place on the caller's environment. -/
 def g1WalkEnv {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g))
@@ -5215,30 +5242,34 @@ end G1Walk
 /-- **THE WALK LOOP (all runs), ONE LEMMA FOR SIX SECTIONS.** Bound = `j`, the section's frame
     count. Every run reverts (a frame fails the range check), or ends normally having absorbed the
     `j` frames, copied them to the walk window, and advanced the three cursors; every frame passed
-    `g1WordsOk`. LEAF ROW.TP.2 (loop rule GEN.3 + the `common_uncompressed_g1` summary). Evidence
-    :737-760, statement verbatim.
+    `g1WordsOk`. LEAF ROW.TP.2 (loop rule GEN.3 + the `common_uncompressed_g1` summary).
 
-    DEPENDENCY, NAMED AND OPEN: ROW.TP.3's `common_uncompressed_g1` helper summary (issued only by
-    ROW.TP step 1, QUEUE row 95h) and T3.5's `cdSlice` arithmetic. Neither is in the tree. -/
+    RESTATED AT THE CONSUMER BOUNDARY (A6 follow-up). The helper is the INLINED function of
+    `R.scope`, so the loop cannot execute its call without knowing the declaration at `R.scope`:
+    the two added facts are (a) `hcommon`, the resolution of `common_uncompressed_g1` to the
+    three-parameter inlined body, and (b) `hkey`, its `BLS_P_HI`/`BLS_P_MINUS_ONE_LO` split.
+    These are consumer-side, not row weakenings: `tp_computes` has `hR : ValidV3 R` and discharges
+    them from `programOkB` (`constsCoherent`) + `expectedConsts` + `commonG1_inline`, with
+    `err`/`hi`/`lo` the table's `ERR_BAD_POINT_ENCODING`/`BLS_P_HI`/`BLS_P_MINUS_ONE_LO`.
+
+    PROOF PLAN (rest of the row). `allRuns_for_cons_wp_count` under `g1WalkCT` (already sound,
+    `g1WalkCT_sound`) with the invariant `g1WalkEnv V end walk a w b k` + the three cursor reads +
+    the two `bytesAt` windows + `g1WordsOk` below `k` + the outside-window memory clause + `k ≤ j`;
+    the body is `commonG1Inline_runs` at `(ofNat (a+128k))` with `hh = hcommon`; the windows are
+    `bytesAt_append`/`cdSlice_append`; the exit is `t_restore_cons`/`t_venv_set_overwrite`. -/
 theorem g1walk_loop_sem (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
     (cd : Bytes) (walk : String) (hwalk : walk ≠ "proof_cptr" ∧ walk ≠ "buf_len" ∧ walk ≠ "end")
     (j a w b : Nat) (ha : a + 128 * j ≤ cd.size) (hcd : cd.size < 2 ^ 256)
     (hw : w + 128 * j < 2 ^ 256) (hb : b + 128 * j < 2 ^ 256)
-    (hdisj : w + 128 * j ≤ b ∨ b + 128 * j ≤ w) :
+    (hdisj : w + 128 * j ≤ b ∨ b + 128 * j ≤ w)
+    (err hi lo : Nat)
+    (hcommon : lookupFun (R.scope c g) "common_uncompressed_g1" =
+      some ({ params := ["buf_len", "cptr"], rets := ["ret"],
+              body := commonG1Inline err hi lo }, R.scope c g))
+    (hkey : hi * 2^256 + lo + 1 = Midfall.Assumptions.pBase) :
     StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) [GenAst.g1WalkLoop walk (128 * j)]
-      (fun V st => st.env.calldata = cd.data.toList ∧
-        VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 a) ∧
-        VEnv.get V walk = some (BitVec.ofNat 256 w) ∧
-        VEnv.get V "buf_len" = some (BitVec.ofNat 256 b))
-      (fun V st V' st' o => (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
-        (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
-          V' = VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * j)))
-            walk (BitVec.ofNat 256 (w + 128 * j))) "proof_cptr" (BitVec.ofNat 256 (a + 128 * j)) ∧
-          bytesAt st' w (128 * j) = cdSlice cd a (128 * j) ∧
-          bytesAt st' b (128 * j) = cdSlice cd a (128 * j) ∧
-          (∀ i, i < j → g1WordsOk cd (a + 128 * i) = true) ∧
-          (∀ x, (x < w ∨ w + 128 * j ≤ x) → (x < b ∨ b + 128 * j ≤ x) →
-            st'.memory x = st.memory x))) := by
+      (g1WalkPre cd walk a w b)
+      (fun V st V' st' o => g1WalkPost V st cd walk j a w b V' st' o) := by
   sorry
 
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
