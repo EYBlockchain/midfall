@@ -75,6 +75,29 @@ not any character-level fact:
 free variables; the concrete F1 and poseidon instances above are the
 kernel-checked witnesses, not a substitution for the generic line lemma.
 
+## This round's exact obstruction (measured)
+
+The generic line decomposition was attacked directly. The obstruction is
+structural rather than a missing character fact:
+
+- `renderConstants` is a 195-line Lean definition of concatenated string
+  segments; the rendered table has 90 entries plus comment lines.
+- The toolchain has `String.intercalate_nil`, `intercalate_singleton`,
+  `intercalate_cons_cons`, `intercalate_cons_append`,
+  `intercalate_cons_of_ne_nil`, and `intercalate_append_of_ne_nil`, but no
+  inverse theorem for `String.splitOn`.
+- Writing `renderConstantsLines` as a proof-only list requires transcribing
+  every segment and its four optional arms; a `splitOn`-defined list is
+  circular and does not reduce symbolically.
+- `ConstText`'s character lemmas are complete for the interpolation values
+  (`toString`, `hexFilter`, `hexPaddedFilter`, numeric `printPtr`). What is
+  still missing is exactly the `renderConstantsLines` list plus the
+  `solConstantLine?`/`natOfLiteral` per-line round-trip. This is what the
+  concrete `poseidon`/F1 theorems above bypass at the fixture.
+
+No target statement was weakened, and the generic `prog_constLinesLiteral` /
+`prog_constTable` sorries remain.
+
 ## Build
 
 `lake build Midfall.Generator.ConstText Midfall.Instances.ConstsCert6
