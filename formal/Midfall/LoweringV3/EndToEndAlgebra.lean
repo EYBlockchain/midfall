@@ -5318,8 +5318,24 @@ theorem xcript_qs_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   rfl
 
 
-end Midfall.LoweringV3
+theorem xcript_prefix_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (Qg : List G₁)
+    (hQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else R.vk.domain.getQuotientPolyDegree)) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).prefixG1Count =
+      R.plan.proofLayout.nonQuotientG1Count + Qg.length := by
+  rw [Midfall.Lowering.sum_commitmentReadGroups R.plan.proofLayout,
+    ProofCalldataLayout.commitmentG1Count, xcript_quotient_count R hR Qg hQ]
 
 #assert_axioms Midfall.LoweringV3.xcript_advice_count [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.xcript_quotient_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.xcript_prefix_count [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.xcript_qs_count [propext, Classical.choice, Quot.sound] native []
+
+end Midfall.LoweringV3
+
