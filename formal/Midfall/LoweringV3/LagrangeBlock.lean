@@ -318,6 +318,7 @@ theorem batchArgs_ne_halt {consts : Inline.Consts} {D aS : Nat}
 
 #assert_axioms batchArgs_ne_halt [propext, Classical.choice, Quot.sound]
 
+
 /-- **`BatchInvertPost → BatchInvertCallPost` THROUGH `VEnv.setMany`.** The A5 summary is stated
     over the callee environment (`ret` / `precompile_failed`); the caller binds those two words to
     `success` / `lagrange_precompile_failed`. This lemma is the whole environment conversion: the
@@ -3683,6 +3684,84 @@ theorem lag_poison {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
 #assert_axioms lag_poison [propext, Classical.choice, Quot.sound]
 #assert_axioms lag_inner_contract_post_of_fits [propext, Classical.choice, Quot.sound]
 #assert_axioms lagDenomEnd_of_countBound [propext, Classical.choice, Quot.sound]
+
+/-- The top-level names of the inlined `batch_invert` body. -/
+theorem helperBody_topNames (consts : Inline.Consts) :
+    List.flatMap Stmt.topNames (BatchInvert.helperBody consts GenAst.emitBatchInvertAt) =
+      ["count_bytes", "gp_mptr", "gp", "mptr", "x_last", "all_inv",
+       "first_mptr", "second_mptr", "inv_first", "inv_second"] := by
+  kernel_rfl
+
+/-- `ret` is not a top-level `let` of the inlined helper body: it is assigned, not bound. -/
+theorem helperBody_ret_notMem (consts : Inline.Consts) :
+    "ret" ∉ Code.boundNames (.stmts (BatchInvert.helperBody consts GenAst.emitBatchInvertAt)) := by
+  rw [boundNames_stmts, helperBody_topNames]
+  decide
+
+/-- Same for the second MF-4 return word. -/
+theorem helperBody_pf_notMem (consts : Inline.Consts) :
+    "precompile_failed" ∉
+      Code.boundNames (.stmts (BatchInvert.helperBody consts GenAst.emitBatchInvertAt)) := by
+  rw [boundNames_stmts, helperBody_topNames]
+  decide
+
+/-- **THE BODY-RUN SUMMARY AT THE BLOCK'S RESTORE.** Apply A5 at the hoisted function scope and
+    move its post from the body environment `Vb` to `restore Vc Vb`. The two return words are
+    assigned, not bound, so `venv_get_restore_of_names` keeps them. -/
+theorem batchInvertPost_of_bodyrun
+    {consts : Inline.Consts} {product : PairingProduct} {g : ExternalGas}
+    {n m D aS : Nat} {cenv : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    {succ : U256}
+    (hgas : consts.lookup "MODEXP_GAS" = some (0 : Nat))
+    (hfit : D + 32 * (n + m) + 32 < 2 ^ 256)
+    (hsp : 32 ≤ aS)
+    (hscratch : aS + (32 * (n + m) + 32) + 192 < 2 ^ 256)
+    (hdisj : D + 32 * (n + m) + 32 ≤ aS ∨
+      aS + (32 * (n + m) + 32) + 192 ≤ D)
+    (hcanon : ∀ st : EvmState, (loadWord st.memory D).toNat < Midfall.Yul.blsR)
+    {Vb : VEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    {st st' : EvmState} {o : Outcome}
+    (hbody : Step (Bridge.Dialect (permissive (callsOf product)) g)
+      (hoist (Bridge.Dialect (permissive (callsOf product)) g)
+        (BatchInvert.helperBody consts GenAst.emitBatchInvertAt) :: cenv)
+      ([("success", succ),
+        ("mptr_start", BitVec.ofNat 256 D),
+        ("mptr_end", BitVec.ofNat 256 (D + 32 * (n + m) + 32)),
+        ("scratch_mptr", BitVec.ofNat 256 aS),
+        ("r", BitVec.ofNat 256 Midfall.Yul.blsR)] ++
+       [("ret", (0 : U256)), ("precompile_failed", (0 : U256))])
+      st (Code.stmts (BatchInvert.helperBody consts GenAst.emitBatchInvertAt))
+      (Res.sres Vb st' o)) :
+    (o = .normal ∨ o = .leave) ∧
+      BatchInvertPost (c := permissive (callsOf product)) (g := g) st succ D
+        (D + 32 * (n + m) + 32) aS (BitVec.ofNat 256 Midfall.Yul.blsR)
+        (restore ([("success", succ),
+          ("mptr_start", BitVec.ofNat 256 D),
+          ("mptr_end", BitVec.ofNat 256 (D + 32 * (n + m) + 32)),
+          ("scratch_mptr", BitVec.ofNat 256 aS),
+          ("r", BitVec.ofNat 256 Midfall.Yul.blsR)] ++
+         [("ret", (0 : U256)), ("precompile_failed", (0 : U256))]) Vb) st' := by
+  have hsum := Midfall.LoweringV3.ModexpGeneral.batch_invert_summary consts product g
+    (hoist (Bridge.Dialect (permissive (callsOf product)) g)
+      (BatchInvert.helperBody consts GenAst.emitBatchInvertAt) :: cenv) 0 hgas succ D
+    (D + 32 * (n + m) + 32) aS (by omega) (by omega) (by omega) (by omega)
+    (by omega) (by omega) hsp
+  obtain ⟨hor, hpost⟩ := hsum _ _
+    (by
+      dsimp only
+      simp [VEnv.get, List.find?, hcanon st]) _ _ _ hbody
+  obtain ⟨ret, pf, hret, hpf, henv, hhalt, hout, hszero, hpfzero, hinv⟩ := hpost
+  obtain ⟨extra, hnames, hbound⟩ := Step.sres_names hbody rfl
+  have hretExtra : "ret" ∉ extra := fun hx =>
+    helperBody_ret_notMem consts (hbound "ret" hx)
+  have hpfExtra : "precompile_failed" ∉ extra := fun hx =>
+    helperBody_pf_notMem consts (hbound "precompile_failed" hx)
+  exact ⟨hor, ret, pf,
+    Midfall.LoweringV2.Blocks.EcPairing.venv_get_restore_of_names hnames hretExtra hret,
+    Midfall.LoweringV2.Blocks.EcPairing.venv_get_restore_of_names hnames hpfExtra hpf,
+    henv, hhalt, hout, hszero, hpfzero, hinv⟩
+
+#assert_axioms batchInvertPost_of_bodyrun [propext, Classical.choice, Quot.sound]
 
 -- Downstream `lag_poison` reads the two facts above; keep the closed 14-name list opaque so that
 -- later `decide`/`simp` does not try to unfold `lagInner` at a general table.
