@@ -2695,4 +2695,54 @@ theorem lag_outer_guard_run {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Typ
           exact absurd hc (Midfall.LoweringV3.ScalarInv.expr_iszero_var_ne_halts funs V "success")
 
 
+
+set_option maxHeartbeats 8000000 in
+/-- **THE INNER CONTRACT AT THE `LagInnerPost` POST.** `lag_inner_contract`'s `LagP15` post
+    projected to the block vocabulary: the `LagRel`/slot facts via `lag_inner_post_of_p15`. -/
+theorem lag_inner_contract_post {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) (product : PairingProduct) (g : ExternalGas)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (hr : consts.lookup "r" = none)
+    (hX : consts.lookup "X_MPTR" = some C.aX) (haX : C.aX < 2 ^ 256)
+    (hO : consts.lookup "OMEGA_MPTR" = some C.aO) (haO : C.aO < 2 ^ 256)
+    (hL : consts.lookup "OMEGA_INV_TO_L_MPTR" = some C.aL) (haL : C.aL < 2 ^ 256)
+    (hN : consts.lookup "N_INV_MPTR" = some C.aN) (haN : C.aN < 2 ^ 256)
+    (hI : consts.lookup "INSTANCE_CPTR" = some C.aI) (hIb : C.aI + 32 * n < 2 ^ 256)
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D)
+    (hfitD : C.D + 32 * (n + m) < 2 ^ 256)
+    (hfitm : C.D + 32 * m < 2 ^ 256) (hm32 : m * 32 < 2 ^ 256)
+    (haDm : C.D + m * 32 < 2 ^ 256) (haD32 : C.D + 32 < 2 ^ 256) (haD : C.D < 2 ^ 256)
+    (hLD : C.aL + 32 ≤ C.D ∨ C.D + 32 * (n + m) ≤ C.aL)
+    (haLne : C.aL + 32 ≤ C.D ∨ C.D + 32 * (n + m) + 32 ≤ C.aL)
+    (haLs : C.aL + 32 ≤ C.s ∨ C.s + (32 * (n + m + 1) + 0xc0) ≤ C.aL)
+    (haNne : C.aN + 32 ≤ C.D ∨ C.D + 32 * (n + m) + 32 ≤ C.aN)
+    (haNs : C.aN + 32 ≤ C.s ∨ C.s + (32 * (n + m + 1) + 0xc0) ≤ C.aN)
+    (haNslot : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      C.aN + 32 ≤ q ∨ q + 32 ≤ C.aN)
+    (hXN : consts.lookup "X_N_MPTR" = some C.aXN)
+    (hXN1 : consts.lookup "X_N_MINUS_1_INV_MPTR" = some C.aXN1)
+    (hLL : consts.lookup "L_LAST_MPTR" = some C.aLL)
+    (hLB : consts.lookup "L_BLIND_MPTR" = some C.aLB)
+    (hL0 : consts.lookup "L_0_MPTR" = some C.aL0)
+    (hIE : consts.lookup "INSTANCE_EVAL_MPTR" = some C.aIE)
+    (hfitXN : C.aXN + 32 < 2 ^ 256) (hfitXN1 : C.aXN1 + 32 < 2 ^ 256)
+    (hfitLL : C.aLL + 32 < 2 ^ 256) (hfitLB : C.aLB + 32 < 2 ^ 256)
+    (hfitL0 : C.aL0 + 32 < 2 ^ 256) (hfitIE : C.aIE + 32 < 2 ^ 256)
+    (hslotD : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      q + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ q)
+    (hpair : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      ∀ q' ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+        q + 32 ≤ q' ∨ q' + 32 ≤ q)
+    (hm : 2 ≤ m) (hn : 1 ≤ n) (hk : k < 2 ^ 256)
+    (hcall : BatchInvertCallSegment consts product g k n m C.D C.s funs C.succ C.rw) :
+    LagInnerContract C funs := by
+  intro V st hp V' st' o hrun
+  obtain ⟨ho, ret, pf, inv, mem, h15⟩ :=
+    lag_inner_contract C product g funs hr hX haX hO haO hL haL hN haN hI hIb hD hfitD hfitm
+      hm32 haDm haD32 haD hLD haLne haLs haNne haNs haNslot hXN hXN1 hLL hLB hL0 hIE
+      hfitXN hfitXN1 hfitLL hfitLB hfitL0 hfitIE hslotD hpair hm hn hk hcall
+      V st hp V' st' o hrun
+  exact ⟨ho, lag_inner_post_of_p15 (mem0 := mem) (mem := LagM6 C mem) hm hn h15⟩
+
+
 end Midfall.LoweringV3.LagrangeBlock
