@@ -4313,6 +4313,62 @@ theorem lagBlockPoisonContract_of_fits_zero (R : Render p G₁ G₂ Gₜ)
 
 #assert_axioms lagBlockPoisonContract_of_fits_zero [propext, Classical.choice, Quot.sound]
 
+/-! ## 6d. THE CLEAN INNER CONTRACT FROM THE SUMMARY -/
+
+/-- **THE CLEAN INNER CONTRACT FROM THE A5 SUMMARY.** The 14 render lookups, PG-LAG-FITS and
+    the two counts are `lag_inner_contract_post_of_fits`'s inputs; the statement-10 segment is
+    `batchInvertCallSegment_of_summary`, so the only extra batch inputs are its canonical word,
+    scratch floor/end and the denom/scratch disjointness. -/
+theorem lagInnerContract_of_summary
+    {consts : Inline.Consts} {product : PairingProduct} {g : ExternalGas}
+    {k n m : Nat} {cd : Bytes}
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (C : LagCfg consts cd k n m)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (hr : consts.lookup "r" = none)
+    (hX : consts.lookup "X_MPTR" = some C.aX)
+    (hO : consts.lookup "OMEGA_MPTR" = some C.aO)
+    (hL : consts.lookup "OMEGA_INV_TO_L_MPTR" = some C.aL)
+    (hN : consts.lookup "N_INV_MPTR" = some C.aN)
+    (hI : consts.lookup "INSTANCE_CPTR" = some C.aI)
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some C.s)
+    (hXN : consts.lookup "X_N_MPTR" = some C.aXN)
+    (hXN1 : consts.lookup "X_N_MINUS_1_INV_MPTR" = some C.aXN1)
+    (hLL : consts.lookup "L_LAST_MPTR" = some C.aLL)
+    (hLB : consts.lookup "L_BLIND_MPTR" = some C.aLB)
+    (hL0 : consts.lookup "L_0_MPTR" = some C.aL0)
+    (hIE : consts.lookup "INSTANCE_EVAL_MPTR" = some C.aIE)
+    (hfits : LagWindowFits C)
+    (hm : 2 ≤ m) (hn : 1 ≤ n) (hk : k < 2 ^ 256)
+    (hlook : lookupFun funs "batch_invert" = some (decl, cenv))
+    (hbody : decl.body = BatchInvert.helperBody consts GenAst.emitBatchInvertAt)
+    (hparams : decl.params = ["success", "mptr_start", "mptr_end", "scratch_mptr", "r"])
+    (hrets : decl.rets = ["ret", "precompile_failed"])
+    (hgas : consts.lookup "MODEXP_GAS" = some (0 : Nat))
+    (hsuccNone : consts.lookup "success" = none)
+    (hrw : C.rw = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hcanon : ∀ st : EvmState, (loadWord st.memory C.D).toNat < Midfall.Yul.blsR)
+    (hsp : 32 ≤ C.s)
+    (hscratch : C.s + (32 * (n + m) + 32) + 192 < 2 ^ 256)
+    (hdisj : C.D + 32 * (n + m) + 32 ≤ C.s ∨
+      C.s + (32 * (n + m) + 32) + 192 ≤ C.D) :
+    LagInnerContract C funs := by
+  have hfit : C.D + 32 * (n + m) + 32 < 2 ^ 256 := by
+    have := hfits.denomEnd
+    omega
+  have hcall : BatchInvertCallSegment consts product g k n m C.D C.s funs C.succ C.rw :=
+    batchInvertCallSegment_of_summary (consts := consts) (product := product) (g := g)
+      (k := k) (n := n) (m := m) (D := C.D) (aS := C.s)
+      (funs := funs) (succ := C.succ) (rw := C.rw)
+      (decl := decl) (cenv := cenv)
+      hlook hbody hparams hrets hsuccNone hr hgas hD hS hrw hfit hsp hscratch hdisj hcanon
+  exact lag_inner_contract_post_of_fits (C := C) (product := product) (g := g)
+    (funs := funs) hr hX hO hL hN hI hD hXN hXN1 hLL hLB hL0 hIE hfits hm hn hk hcall
+
+#assert_axioms lagInnerContract_of_summary [propext, Classical.choice, Quot.sound]
+
 -- Downstream `lag_poison` reads the two facts above; keep the closed 14-name list opaque so that
 -- later `decide`/`simp` does not try to unfold `lagInner` at a general table.
 attribute [local irreducible] lagInner
