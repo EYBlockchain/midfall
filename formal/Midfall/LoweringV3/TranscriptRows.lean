@@ -5490,6 +5490,100 @@ theorem runsAllP_parseTraceLookupMultiplicities_one_both (E : VerifierEnv p G₁
     exact hb2
   simpa only [inner, f1, Post, bind_assoc, pure_bind] using hb
 
+theorem runsAllP_parseTraceTail (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (adviceCommitments : Array (Array G₁)) (challenges : Array (Fr p))
+    (QMult QPerm QLook QTrash : List G₁)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E
+      (do let theta ← tmSqueezeChallenge
+          let lookupMultiplicities ← parseTraceLookupMultiplicities E vk 1
+          let beta ← tmSqueezeChallenge
+          let gamma ← tmSqueezeChallenge
+          let permutations ← parseTracePermutations E vk 1
+          let lookups ← parseTraceLookupCommitments E lookupMultiplicities
+          let trashChallenge ← tmSqueezeChallenge
+          let trashcans ← parseTraceTrashcans E vk 1
+          let y ← tmSqueezeChallenge
+          pure ({ adviceCommitments := adviceCommitments, lookups := lookups, trashcans := trashcans, permutations := permutations, challenges := challenges, beta := beta, gamma := gamma, theta := theta, trashChallenge := trashChallenge, y := y } : VerifierTrace (Fr p) G₁))
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+      (fun tr =>
+        (tr.permutations.toList.map (fun pc =>
+          3 * pc.permutationProductCommitments.size - 1)).sum =
+          3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+        (tr.lookups.toList.map (fun row => (row.toList.map
+          (fun c => c.helperPolys.size + 3)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+        (tr.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size) := by
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAllP.squeeze E) ?_
+  intro theta _
+  refine RunsAllP.bind E (m := parseTraceLookupMultiplicities E vk 1)
+    (ms₁ := QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (runsAllP_parseTraceLookupMultiplicities_one_both E vk hs QMult hlenMult) ?_
+  intro rows hrows
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (RunsAllP.squeeze E) ?_
+  intro beta _
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (RunsAllP.squeeze E) ?_
+  intro gamma _
+  refine RunsAllP.bind E (m := parseTracePermutations E vk 1)
+    (ms₁ := QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))
+    (runsAllP_parseTracePermutations_one E vk hdeg QPerm hlenPerm) ?_
+  intro permutations hperm
+  have hlenLook' : QLook.length = (rows.toList.map
+      (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum := by
+    rw [hlenLook]
+    exact hrows.1.symm
+  refine RunsAllP.bind E (m := parseTraceLookupCommitments E rows)
+    (ms₁ := QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])
+    (runsAllP_parseTraceLookupCommitments_count E vk rows QLook hlenLook' hrows.1 hrows.2) ?_
+  intro lookups hlook
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])
+    (RunsAllP.squeeze E) ?_
+  intro trashChallenge _
+  refine RunsAllP.bind E (m := parseTraceTrashcans E vk 1)
+    (ms₁ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := ([] : List (Msg (Fr p) G₁)))
+    (runsAllP_parseTraceTrashcans_one E vk QTrash hlenTrash) ?_
+  intro trashcans htrash
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := ([] : List (Msg (Fr p) G₁)))
+    (RunsAllP.squeeze E) ?_
+  intro y _
+  exact RunsAllP.pure E _ _ ⟨hperm, hlook, htrash⟩
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -8178,6 +8272,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_count [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one_both [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceTail [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
