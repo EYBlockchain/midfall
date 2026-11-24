@@ -6259,6 +6259,103 @@ theorem pcsBlock4_store_contract {funs : FunEnv (Bridge.Dialect c g)} (fp fv : U
   · rw [hst]; rfl
 
 
+theorem pcsRot_name_inj {i j : Nat}
+    (h : "rot_pt_" ++ toString i = "rot_pt_" ++ toString j) : i = j := by
+  apply Nat.repr_inj.mp
+  exact (String.append_right_inj _).mp h
+
+theorem pcsRot_name_ne_points (i : Nat) : ("rot_pt_" ++ toString i) ≠ "ROT_POINTS_MPTR" := by
+  intro h
+  have hc := congrArg (fun s : String => s.toList.take 1) h
+  simp at hc
+
+theorem pcsRotLets_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (pairs : List (Nat × Int)) (rotVals : Nat → U256) (rotp : U256)
+    (hnd : (pairs.map Prod.fst).Nodup) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (pairs.map fun p => GenAst.ylet ("rot_pt_" ++ toString p.1)
+        (GenAst.yop EVM.Op.mload
+          [GenAst.yop EVM.Op.add [GenAst.yvar "ROT_POINTS_MPTR",
+            GenAst.ylit (p.1 * Midfall.Generator.wordBytes)]]))
+      (fun V st => VEnv.get V "ROT_POINTS_MPTR" = some rotp ∧
+        (∀ p ∈ pairs, p.1 * Midfall.Generator.wordBytes < 2 ^ 256) ∧
+        (∀ p ∈ pairs, rotp.toNat + p.1 * Midfall.Generator.wordBytes < 2 ^ 256) ∧
+        ∀ p ∈ pairs, loadWord st.memory
+          (rotp.toNat + p.1 * Midfall.Generator.wordBytes) = rotVals p.1)
+      (fun V st V' st' o => o = .normal ∧
+        (∀ p ∈ pairs, VEnv.get V' ("rot_pt_" ++ toString p.1) = some (rotVals p.1)) ∧
+        (∀ y, (∀ p ∈ pairs, y ≠ "rot_pt_" ++ toString p.1) → VEnv.get V' y = VEnv.get V y) ∧
+        st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted) := by
+  induction pairs with
+  | nil =>
+      intro V st hpre V' st' o hrun
+      cases hrun
+      exact ⟨rfl, (by intro p hp; simp at hp), (by intro y _; rfl), rfl, rfl, rfl⟩
+  | cons p rest ih =>
+      intro V st hpre V' st' o hrun
+      obtain ⟨hrotp, hmulLt, haddrLt, hload⟩ := hpre
+      have hnd' : (rest.map Prod.fst).Nodup := (List.nodup_cons.mp hnd).2
+      have hpnot : p.1 ∉ rest.map Prod.fst := (List.nodup_cons.mp hnd).1
+      rw [List.map_cons] at hrun
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with ⟨V1, st1, h1, hrest⟩ | ⟨h1, hne⟩
+      · obtain ⟨_, pv, hpv, hV1, hmem1, henv1, hhalt1⟩ :=
+          b1_exec_ylet_mload_add_var (x := "rot_pt_" ++ toString p.1)
+            (p := "ROT_POINTS_MPTR") (off := p.1 * Midfall.Generator.wordBytes) h1
+        rw [hrotp] at hpv
+        have hpv' : pv = rotp := (Option.some.inj hpv).symm
+        rw [hpv'] at hV1
+        have hval : loadWord st.memory
+            (rotp.toNat + p.1 * Midfall.Generator.wordBytes) = rotVals p.1 :=
+          hload p (by simp)
+        have hpaddr : (rotp + BitVec.ofNat 256
+            (p.1 * Midfall.Generator.wordBytes)).toNat =
+            rotp.toNat + p.1 * Midfall.Generator.wordBytes := by
+          rw [BitVec.toNat_add, BitVec.toNat_ofNat,
+            Nat.mod_eq_of_lt (hmulLt p (by simp)),
+            Nat.mod_eq_of_lt (haddrLt p (by simp))]
+        rw [hpaddr] at hV1
+        have hV1' : V1 = ("rot_pt_" ++ toString p.1, rotVals p.1) :: V := by
+          rw [hV1, hval]
+        rw [hV1'] at hrest
+        have hpre' : VEnv.get (("rot_pt_" ++ toString p.1, rotVals p.1) :: V)
+            "ROT_POINTS_MPTR" = some rotp ∧
+            (∀ q ∈ rest, q.1 * Midfall.Generator.wordBytes < 2 ^ 256) ∧
+            (∀ q ∈ rest, rotp.toNat + q.1 * Midfall.Generator.wordBytes < 2 ^ 256) ∧
+            ∀ q ∈ rest, loadWord st1.memory
+              (rotp.toNat + q.1 * Midfall.Generator.wordBytes) = rotVals q.1 := by
+          refine ⟨?_, ?_, ?_, ?_⟩
+          · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "rot_pt_" ++ toString p.1)
+              (y := "ROT_POINTS_MPTR") (by exact (pcsRot_name_ne_points p.1).symm)]
+            exact hrotp
+          · intro q hq; exact hmulLt q (by simp [hq])
+          · intro q hq; exact haddrLt q (by simp [hq])
+          · intro q hq; rw [hmem1]; exact hload q (by simp [hq])
+        obtain ⟨ho, hget, hframe, hmem, henv, hhalt⟩ :=
+          ih hnd' (("rot_pt_" ++ toString p.1, rotVals p.1) :: V) st1 hpre' V' st' o hrest
+        refine ⟨ho, ?_, ?_, by rw [hmem, hmem1], by rw [henv, henv1], by rw [hhalt, hhalt1]⟩
+        · intro q hq
+          by_cases hqp : q = p
+          · subst hqp
+            rw [hframe ("rot_pt_" ++ toString q.1) (by
+              intro r hr hname
+              have hpq : q.1 = r.1 := pcsRot_name_inj hname
+              exact hpnot (hpq ▸ List.mem_map_of_mem hr))]
+            exact venv_get_cons_self V ("rot_pt_" ++ toString q.1) (rotVals q.1)
+          · have hqrest : q ∈ rest := by
+              rw [List.mem_cons] at hq; rcases hq with hq | hq
+              · exact absurd hq hqp
+              · exact hq
+            exact hget q hqrest
+        · intro y hy
+          rw [hframe y (by
+            intro r hr hname
+            exact hy r (by simp [hr]) hname)]
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g)
+            (x := "rot_pt_" ++ toString p.1) (y := y) (v := rotVals p.1) (by
+              intro h; exact hy p (by simp) h)]
+      · exact absurd (b1_exec_ylet_mload_add_var h1).1 hne
+
+
 theorem pcsBlock4_walk_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
     {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
