@@ -5941,4 +5941,247 @@ theorem pcs_b1_sem {funs : FunEnv (Bridge.Dialect c g)} (rots : List Int)
 #assert_axioms Midfall.LoweringV3.PcsRows.readBytes_storeWord_outside
   [propext, Classical.choice, Quot.sound] native []
 
+open Midfall.Lowering.GenAstPcs in
+set_option maxHeartbeats 1600000 in
+theorem computationsAst_ok_shape (meta_ : ConstraintSystemMeta) (dat : Midfall.Generator.Data)
+    (memory : VerifierMemoryLayout) (trunc trace : Bool) (blocks : List (Block EVM.Op))
+    (h : computationsAst meta_ dat memory trunc trace = Except.ok blocks) (hn : blocks ≠ []) :
+    ∃ (sets : IntermediateSets) (bySet : List (List CommitmentEntry))
+      (traceBlock block5 : Block EVM.Op),
+      intermediateSets meta_ dat = Except.ok sets ∧
+      sets.pointSets.length ≠ 0 ∧
+      commitmentsBySet sets sets.pointSets.length = Except.ok bySet ∧
+      pcsTraceBlockAst meta_ dat bySet memory.pcsQComTraceScratchMptr = Except.ok traceBlock ∧
+      pcsBlock5Ast meta_ dat bySet sets.pointSets.length memory.pcsFinalMsmScratchMptr trunc =
+        Except.ok block5 ∧
+      blocks =
+        (([pcsBlock1Ast (btreeSetFromList intCmp (List.flatMap id sets.pointSets))
+              (intMaxOr 0 (btreeSetFromList intCmp (List.flatMap id sets.pointSets)))
+              (intMinOr 0 (btreeSetFromList intCmp (List.flatMap id sets.pointSets))) trace
+              sets.pointSets] ++
+            (if List.foldl max 0 (List.map List.length bySet) > 0 then
+              [pcsBlock2Ast (List.foldl max 0 (List.map List.length bySet)) trunc] else [])) ++
+          (enumIdx bySet).map (fun x => pcsBlock3Ast x.1 x.2 sets memory.pcsQEvalSourceTableMptr) ++
+          (if trace = true then [traceBlock] else [])) ++
+        [pcsBlock4Ast sets.pointSets.length
+            (btreeSetFromList intCmp (List.flatMap id sets.pointSets)) sets.pointSets,
+          block5, pcsBlock6Ast memory.pcsPairingScratchMptr] := by
+  simp only [computationsAst] at h
+  cases hs : intermediateSets meta_ dat with
+  | error e => rw [hs] at h; cases h
+  | ok sets =>
+    rw [hs] at h
+    simp only [Bind.bind, Except.bind] at h
+    by_cases hz : (sets.pointSets.length == 0) = true
+    · rw [if_pos hz] at h
+      cases h
+      exact absurd rfl hn
+    · rw [if_neg hz] at h
+      cases hb : commitmentsBySet sets sets.pointSets.length with
+      | error e => rw [hb] at h; cases h
+      | ok bySet =>
+        rw [hb] at h
+        simp only [Bind.bind, Except.bind] at h
+        rw [show List.mapM (fun x => pure (pcsBlock3Ast x.1 x.2 sets memory.pcsQEvalSourceTableMptr))
+            (enumIdx bySet) =
+            Except.ok ((enumIdx bySet).map
+              (fun x => pcsBlock3Ast x.1 x.2 sets memory.pcsQEvalSourceTableMptr)) from
+          List.mapM_pure] at h
+        simp only [Bind.bind, Except.bind] at h
+        cases ht : pcsTraceBlockAst meta_ dat bySet memory.pcsQComTraceScratchMptr with
+        | error e => rw [ht] at h; cases h
+        | ok traceBlock =>
+          rw [ht] at h
+          simp only [Bind.bind, Except.bind] at h
+          cases h5 : pcsBlock5Ast meta_ dat bySet sets.pointSets.length
+              memory.pcsFinalMsmScratchMptr trunc with
+          | error e => rw [h5] at h; cases h
+          | ok block5 =>
+            rw [h5] at h
+            simp only [Bind.bind, Except.bind, Except.pure, Except.ok.injEq] at h
+            refine ⟨sets, bySet, traceBlock, block5, rfl, ?_, hb, ht, h5, ?_⟩
+            · intro h0
+              rw [h0] at hz
+              simp at hz
+            · injection h with hh
+              exact hh.symm
+
+
+/-! ## 10. The `.pcs` slice-body assembly interface (ROW.PCS.8/.11 residual map)
+
+  The `.pcs` slice is ONE outer `Stmt.block` whose body is the inlined emitter blocks
+  (`pcs_slice_of_ok`, section 8.1). The four §10 lemmas are the assembly half the row owner
+  needs; they are PROVED and add no premise.
+
+  * `inlineContractConstantsAt_blocks`: the inliner distributes over a list of block
+    statements, so the emitted body is the list of per-block inlined terms at fuel 62.
+  * `stmtsContractAll_list` / `stmtsContractAll_map_block`: sequential composition of a list
+    of `StmtContractAll` contracts, with a position-indexed predicate `P`.
+  * `pcs_slice_body_contract_of_blocks`: a `StmtsContractAll` for the inlined body from the
+    per-block contracts at exactly the fuel/scope the slice carries.
+
+  WHAT IS STILL MISSING FOR `Rows.pcs_blockSim` / `pcs_blockProgS` (measured at this HEAD).
+  None of these is a hypothesis of a row; each is a named child:
+
+  * **PG-PCS-EMIT**: `GenAstPcs.computationsAst` must be `.ok blocks` with `blocks ≠ []`.
+    Not implied by `ValidV3`; the fault arms are `GenAstPcs.lean:407` (`listGetMut`),
+    `:433` and `:461` (the two `pcsBlock5Ast` panics), plus the empty-plan arm (excluded by
+    `ValidV3.hasMultiPointSet`, but no `GeneratedBy → fault-freedom` projection exists).
+  * **ROW.PCS.4/.5 (block 3)**: the whole `pcsBlock3Ast` per set, straight and rolled arms.
+    Only the components are landed (`b3_seeds_contract`, `b3_folds_contract`,
+    `b3_persist_contract`, `b3_rolled_forLoop_contract`); no block-level contract.
+  * **ROW.PCS.8 (block 5)**: `pcsBlock5Ast`'s success arm: `pcsX4PowersAst`, `pcsVLinesAst`,
+    the MSM/linearization staging, and the `0x0c` call. Missing.
+  * **ROW.PCS.11 (block 6)**: `pcsBlock6Ast`: two `0x0c` MSM-1 and two `0x0b` G1ADD calls.
+    Missing.
+  * **Fuel-62 inlined faces of blocks 1 and 4**: the landed `pcs_b1_sem` is over the raw
+    `pcsBlock1Ast` and `pcsBlock_contract` over the raw `pcsBlock4Ast`; the slice carries
+    `inlineContractConstantsAt 62` of each. There is no inliner semantic transport
+    (`inlineContractConstantsAt` appears in no `ExecStmt`/`EvalExpr` lemma), so each needs
+    either an inlined restatement or that transport. Block 2's `pcs_b2_sem_inline` is at
+    `inlineContractConstants` (fuel 64); the fuel-62 face needs an exhaustion bridge (no
+    `inlineScan` monotonicity lemma exists yet).
+  * **ROW.PCS.10 coverage** and **.13 ALG**: the staging list covers every `MirrorAt` G1
+    window, and the emitted `fEval`/`v`/`finalCom`/`dual` equal `snapshotOf`'s.
+  * **.14 glue and poison**, the unconditional progress row and `x = 0` (`.12`).
+
+  No `sorry` is introduced here and no row statement changes. -/
+
+theorem foldl_stepAcc_blocks_blks (fuel : Nat) (consts : Inline.Consts) :
+    ∀ (blocks : List (Block EVM.Op)) (acc : Inline.Acc), acc.sh = [] →
+      ((blocks.map Stmt.block).foldl (Inline.stepAcc (Inline.inlineScan fuel consts) consts) acc).blks =
+        acc.blks ++ blocks.map (fun b =>
+          Stmt.block (Inline.inlineScan fuel consts [] b).blks) := by
+  intro blocks
+  induction blocks with
+  | nil => intro acc hsh; simp
+  | cons b bs ih =>
+      intro acc hsh
+      rw [List.map_cons, List.foldl_cons]
+      have hstep : (Inline.stepAcc (Inline.inlineScan fuel consts) consts acc (Stmt.block b)).sh = [] := by
+        rw [Inline.stepAcc_sh]
+        simp [Inline.boundOf, hsh]
+      have hblk : (Inline.stepAcc (Inline.inlineScan fuel consts) consts acc (Stmt.block b)).blks =
+          acc.blks ++ [Stmt.block (Inline.inlineScan fuel consts [] b).blks] := by
+        rw [Inline.stepAcc_blks]
+        simp [Inline.inlineStmtStep, hsh]
+      rw [ih (Inline.stepAcc (Inline.inlineScan fuel consts) consts acc (Stmt.block b)) hstep]
+      rw [hblk]
+      simp [List.append_assoc]
+
+theorem inlineContractConstantsAt_blocks (fuel : Nat) (consts : Inline.Consts)
+    (blocks : List (Block EVM.Op)) :
+    Inline.inlineContractConstantsAt (fuel + 1) consts (blocks.map Stmt.block) =
+      blocks.map (fun b => Stmt.block (Inline.inlineContractConstantsAt fuel consts b)) := by
+  unfold Inline.inlineContractConstantsAt
+  change (Inline.inlineStep (Inline.inlineScan fuel consts) consts [] (blocks.map Stmt.block)).blks = _
+  change ((blocks.map Stmt.block).foldl (Inline.stepAcc (Inline.inlineScan fuel consts) consts)
+    (Inline.initAcc [])).blks = _
+  rw [foldl_stepAcc_blocks_blks fuel consts blocks (Inline.initAcc []) rfl]
+  simp [Inline.initAcc]
+
+theorem stmtsContractAll_list {funs : FunEnv (Bridge.Dialect c g)}
+    (stmts : List (Stmt EVM.Op))
+    (P : Nat → VEnv (Bridge.Dialect c g) → EvmState → Prop)
+    (h : ∀ i (hi : i < stmts.length),
+      StmtContractAll (D := Bridge.Dialect c g) funs (stmts[i]'hi) (P i)
+        (fun _V _st V' st' o => (o = .normal ∧ P (i + 1) V' st') ∨
+          (o = .halt ∧ Midfall.LoweringV2.Reverted st'))) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs stmts (P 0)
+      (fun _V _st V' st' o => (o = .normal ∧ P stmts.length V' st') ∨
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+  induction stmts generalizing P with
+  | nil =>
+      intro V st hpre V' st' o hrun
+      cases hrun
+      exact Or.inl ⟨rfl, hpre⟩
+  | cons b bs ih =>
+      have hhead : StmtContractAll (D := Bridge.Dialect c g) funs b (P 0)
+          (fun _V _st V' st' o => (o = .normal ∧ P 1 V' st') ∨
+            (o ≠ .normal ∧ ((o = .normal ∧ P (b :: bs).length V' st') ∨
+              (o = .halt ∧ Midfall.LoweringV2.Reverted st')))) := by
+        intro V st hp V' st' o hr
+        rcases h 0 (by simp) V st hp V' st' o hr with ⟨ho, hmid⟩ | ⟨ho, hrev⟩
+        · exact Or.inl ⟨ho, hmid⟩
+        · exact Or.inr ⟨by rw [ho]; decide, Or.inr ⟨ho, hrev⟩⟩
+      have htail : ∀ V st, P 0 V st →
+          StmtsContractAll (D := Bridge.Dialect c g) funs bs (P 1)
+            (fun _ _ V' st' o => (o = .normal ∧ P (b :: bs).length V' st') ∨
+              (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+        intro V st hp
+        have hb := ih (fun i => P (i + 1)) (by
+          intro i hi
+          have hh := h (i + 1) (by simp; omega)
+          simpa [List.getElem_cons_succ, Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using hh)
+        exact hb
+      exact StmtsContractAll.cons_split hhead htail
+
+theorem stmtsContractAll_map_block {funs : FunEnv (Bridge.Dialect c g)}
+    (blocks : List (Block EVM.Op))
+    (P : Nat → VEnv (Bridge.Dialect c g) → EvmState → Prop)
+    (h : ∀ i (hi : i < blocks.length),
+      StmtContractAll (D := Bridge.Dialect c g) funs (Stmt.block (blocks[i]'hi)) (P i)
+        (fun _V _st V' st' o => (o = .normal ∧ P (i + 1) V' st') ∨
+          (o = .halt ∧ Midfall.LoweringV2.Reverted st'))) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (blocks.map Stmt.block) (P 0)
+      (fun _V _st V' st' o => (o = .normal ∧ P blocks.length V' st') ∨
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+  simpa only [List.length_map] using stmtsContractAll_list (blocks.map Stmt.block) P (by
+    intro i hi
+    have hi' : i < blocks.length := by simpa using hi
+    simpa [List.getElem_map] using h i hi')
+
+theorem pcs_slice_body_contract_of_blocks
+    (R : Render p G₁ G₂ Gₜ) (blocks : List (Block EVM.Op))
+    (P : Nat → VEnv (Bridge.Dialect c g) → EvmState → Prop)
+    (hblocks : ∀ i (hi : i < blocks.length),
+      StmtContractAll (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g)
+          (Inline.inlineContractConstantsAt 63 R.consts (blocks.map Stmt.block)) :: R.scope c g)
+        (Stmt.block (Inline.inlineContractConstantsAt 62 R.consts (blocks[i]'hi)))
+        (P i)
+        (fun _V _st V' st' o => (o = .normal ∧ P (i + 1) V' st') ∨
+          (o = .halt ∧ Midfall.LoweringV2.Reverted st'))) :
+    StmtsContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g)
+        (Inline.inlineContractConstantsAt 63 R.consts (blocks.map Stmt.block)) :: R.scope c g)
+      (Inline.inlineContractConstantsAt 63 R.consts (blocks.map Stmt.block))
+      (P 0)
+      (fun _V _st V' st' o => (o = .normal ∧ P blocks.length V' st') ∨
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+  rw [show Inline.inlineContractConstantsAt 63 R.consts (blocks.map Stmt.block) =
+      blocks.map (fun b => Stmt.block (Inline.inlineContractConstantsAt 62 R.consts b)) from
+    inlineContractConstantsAt_blocks 62 R.consts blocks]
+  have hblocks' : ∀ i (hi : i < (blocks.map (fun b =>
+      Stmt.block (Inline.inlineContractConstantsAt 62 R.consts b))).length),
+      StmtContractAll (D := Bridge.Dialect c g)
+        (hoist (Bridge.Dialect c g)
+          (blocks.map (fun b => Stmt.block (Inline.inlineContractConstantsAt 62 R.consts b))) ::
+          R.scope c g)
+        ((blocks.map (fun b =>
+          Stmt.block (Inline.inlineContractConstantsAt 62 R.consts b)))[i]'hi) (P i)
+        (fun _V _st V' st' o => (o = .normal ∧ P (i + 1) V' st') ∨
+          (o = .halt ∧ Midfall.LoweringV2.Reverted st')) := by
+    intro i hi
+    have hi' : i < blocks.length := by simpa using hi
+    have hh := hblocks i hi'
+    simpa only [List.getElem_map, show Inline.inlineContractConstantsAt 63 R.consts (blocks.map Stmt.block) =
+        blocks.map (fun b => Stmt.block (Inline.inlineContractConstantsAt 62 R.consts b)) from
+      inlineContractConstantsAt_blocks 62 R.consts blocks] using hh
+  simpa only [List.length_map] using
+    stmtsContractAll_list (blocks.map (fun b =>
+      Stmt.block (Inline.inlineContractConstantsAt 62 R.consts b))) P hblocks'
+
+#assert_axioms Midfall.LoweringV3.PcsRows.computationsAst_ok_shape
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.inlineContractConstantsAt_blocks
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.stmtsContractAll_list
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.stmtsContractAll_map_block
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.PcsRows.pcs_slice_body_contract_of_blocks
+  [propext, Classical.choice, Quot.sound] native []
+
+
 end Midfall.LoweringV3.PcsRows

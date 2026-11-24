@@ -271,7 +271,19 @@ theorem lag_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) 
 
 /-! ## 4. pcs (owner ROW.PCS, WP A9/A10) -/
 
-/-- **LEAF (ROW.PCS, WP A10): the pcs simulation row.** Evidence `GeneratorRows.lean:1013`. -/
+/-- **LEAF (ROW.PCS, WP A10): the pcs simulation row.** Evidence `GeneratorRows.lean:1013`.
+
+    THE ASSEMBLY SIDE IS IN `PcsRows`. `PcsRows.pcs_slice_of_ok` gives the one-outer-block
+    shape; `PcsRows.computationsAst_ok_shape` names the exact emitted block list (block 1,
+    optional block 2, the per-set block-3 list, block 4, block 5, block 6);
+    `PcsRows.pcs_slice_body_contract_of_blocks` composes per-block `StmtContractAll`s at the
+    fuel-62 inlined terms the slice carries. What is still missing is semantics, not glue:
+    the whole `pcsBlock3Ast` contract (straight + rolled), `pcsBlock5Ast` (x4 powers, v fold,
+    MSM/linearization staging, the `0x0c` call), `pcsBlock6Ast` (two `0x0c` MSM-1 and two
+    `0x0b` G1ADD calls), the fuel-62 inlined faces of blocks 1 and 4 (the landed `pcs_b1_sem`
+    and `pcsBlock_contract` are the raw ASTs), the coverage/ALG leaves, and PG-PCS-EMIT
+    (fault-freedom/non-emptiness of `computationsAst`, not implied by `ValidV3`). No row
+    hypothesis is taken here. -/
 theorem pcs_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
@@ -280,7 +292,9 @@ theorem pcs_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (h
   sorry
 
 /-- **LEAF (ROW.PCS, WP A10): the pcs progress row.** Evidence `GeneratorRows.lean:1019`; its decode
-    half is ROW.PCS's `decode_exists`. -/
+    half is ROW.PCS's `decode_exists`. The unconditional progress half additionally needs the
+    explicit whole-slice run (block 5/6 included) and the `StageInv .pcs` transfer; see the
+    `pcs_blockSim` docstring for the exact missing children. -/
 theorem pcs_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash) (vkAddr : U256) (cd : Bytes)
