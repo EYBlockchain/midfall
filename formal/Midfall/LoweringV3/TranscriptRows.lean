@@ -8845,6 +8845,122 @@ theorem commonWord_stmt_var_contract {c : ExternalCalls} {g : ExternalGas}
             (D := Bridge.Dialect c g) ["buf_len", name] hargs).elim
 
 
+theorem args_var_lit_ne_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {x : String} {n : Nat}
+    (h : Step (Bridge.Dialect c g) funs V st
+      (.args [Expr.var x, Expr.lit (Literal.number n)]) (.eres (.halt st'))) : False := by
+  cases h with
+  | argsRestHalt h' =>
+      cases h' with
+      | argsRestHalt h'' => cases h''
+      | argsHeadHalt _ hh => cases hh
+  | argsHeadHalt _ hh => cases hh
+
+theorem eval_args_var_lit_exists {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {x : String} {n : Nat} {vals : List U256}
+    (h : EvalArgs (Bridge.Dialect c g) funs V st
+      [Expr.var x, Expr.lit (Literal.number n)] (.vals vals st')) :
+    ∃ xv, VEnv.get V x = some xv ∧ vals = [xv, BitVec.ofNat 256 n] ∧ st' = st := by
+  cases h with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil hlit =>
+          cases hnil with
+          | argsNil =>
+              cases hhead with
+              | var hxv =>
+                  cases hlit with
+                  | lit =>
+                      exact ⟨_, hxv, rfl, rfl⟩
+
+theorem commonWord_stmt_lit_contract {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {decl : FDecl (Bridge.Dialect c g)}
+    {cenv : FunEnv (Bridge.Dialect c g)} {n : Nat} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {buf : U256}
+    (hlook : lookupFun funs "common_word" = some (decl, cenv))
+    (hbody : decl.body = commonWordBody)
+    (hparams : decl.params = ["buf_len", "word"])
+    (hrets : decl.rets = ["ret"])
+    (hbuf : VEnv.get V "buf_len" = some buf) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.assign ["buf_len"] (Expr.call "common_word" [Expr.var "buf_len", Expr.lit (Literal.number n)]))
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun V0 st0 V' st' o => o = .normal ∧
+        V' = VEnv.set V "buf_len" (buf + BitVec.ofNat 256 32) ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ x, st'.memory x = storeWord st.memory buf.toNat (BitVec.ofNat 256 n) x)) := by
+  intro V0 st0 hpre V' st' o hrun
+  obtain ⟨hV0, hst0⟩ := hpre
+  cases hrun with
+  | assignVal he hlen =>
+      cases he with
+      | callOk hargs hlook' harglen hbodyrun ho =>
+          rw [hlook] at hlook'
+          cases hlook'
+          obtain ⟨buf0, hbuf0, hvals, hst1⟩ :=
+            eval_args_var_lit_exists hargs
+          subst hvals
+          have hbuf0' : buf0 = buf := by
+            rw [hV0] at hbuf0
+            exact Option.some.inj (hbuf0.symm.trans hbuf)
+          obtain ⟨Vb, stb, hstmts, hVend, hstb⟩ := g1Walk_exec_block_inv hbodyrun
+          rw [hparams, hrets] at hVend
+          simp only [List.zip_cons_cons, List.zip_nil_left, bindZeros, List.map_cons,
+            List.map_nil, List.cons_append, List.nil_append] at hVend
+          have hb := commonWordBody_runs_env (c := c) (g := g)
+            (funs := hoist (Bridge.Dialect c g) commonWordBody :: cenv) st0 buf0 (BitVec.ofNat 256 n)
+          rw [hbody, hparams, hrets] at hstmts
+          rw [hst1] at hstmts
+          simp only [List.zip_cons_cons, List.zip_nil_left, bindZeros, List.map_cons,
+            List.map_nil, List.cons_append, List.nil_append] at hstmts
+          obtain ⟨-, hVb, hret, henv, hhalt, hmem⟩ := hb Vb stb _ hstmts
+          rw [hst0] at henv hhalt hmem
+          rw [← hstb] at henv hhalt hmem
+          have hVb' : Vb = VEnv.set [("buf_len", buf0), ("word", (BitVec.ofNat 256 n)),
+              ("ret", (Bridge.Dialect c g).zero)] "ret" (buf0 + BitVec.ofNat 256 32) := hVb
+          have hrestore : restore [("buf_len", buf0), ("word", (BitVec.ofNat 256 n)),
+              ("ret", (Bridge.Dialect c g).zero)] Vb = Vb := by
+            rw [hVb']
+            exact t_restore_set
+          refine ⟨rfl, ?_, ?_, ?_, ?_⟩
+          · rw [hV0, hVend, hrestore, hrets]
+            simp only [List.map_cons, List.map_nil]
+            rw [hret]
+            simp only [Option.getD_some]
+            rw [hbuf0']
+            exact t_setMany_one (D := Bridge.Dialect c g) V "buf_len" _
+          · exact henv
+          · exact hhalt
+          · rw [← hbuf0']
+            exact hmem
+  | assignHalt he =>
+      cases he with
+      | callHalt hargs hlook' harglen hbodyrun =>
+          rw [hlook] at hlook'
+          cases hlook'
+          obtain ⟨buf0, hbuf0, hvals, hst1⟩ :=
+            eval_args_var_lit_exists hargs
+          subst hvals
+          obtain ⟨Vb, stb, hstmts, hVend, hstb⟩ := g1Walk_exec_block_inv hbodyrun
+          rw [hparams, hrets] at hVend
+          simp only [List.zip_cons_cons, List.zip_nil_left, bindZeros, List.map_cons,
+            List.map_nil, List.cons_append, List.nil_append] at hVend
+          have hb := commonWordBody_runs_env (c := c) (g := g)
+            (funs := hoist (Bridge.Dialect c g) commonWordBody :: cenv) st0 buf0 (BitVec.ofNat 256 n)
+          rw [hbody, hparams, hrets] at hstmts
+          rw [hst1] at hstmts
+          simp only [List.zip_cons_cons, List.zip_nil_left, bindZeros, List.map_cons,
+            List.map_nil, List.cons_append, List.nil_append] at hstmts
+          obtain ⟨hon, -⟩ := hb Vb stb Outcome.halt hstmts
+          cases hon
+      | callArgsHalt hargs =>
+          exact (args_var_lit_ne_halt hargs).elim
+
+
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9446,5 +9562,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonWordBody_runs_env [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.eval_args_two_vars_exists [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_stmt_var_contract [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.args_var_lit_ne_halt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.eval_args_var_lit_exists [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_stmt_lit_contract [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
