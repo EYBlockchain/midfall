@@ -725,4 +725,113 @@ theorem funSigs_emitPcsFromPlan (pv : PlanView) :
   split <;> simp [Midfall.LoweringV3.funSigsOf]
 
 
+
+/-! ## 4. THE COMPOSITION OVER `mainAsmRaw`
+
+  `mainAsmRaw` is the guard, the helper blocks, the two main locals, and the seven slices in
+  include order. The lemmas below split each scan at exactly that boundary, so every residual is a
+  statement about ONE emitter group. They are the shape the CERT.5 leaves cite: substitute the
+  per-group facts of §2-§3 and the numerator's facts, and the composition is a rewrite. -/
+
+/-- The `quotientLin` slice as `mainAsmRaw` splices it: helper definitions, the parsed numerator,
+    then the linearization scope. This is the one group whose text is not a tree. -/
+def qlinSlice (pv : PlanView) (c : PartialCtx) : YulBlock :=
+  GenAst.emitQuotientHelpersAt c.quotientPow5Helper ++ GenAst.emitQuotientNumerator c ++
+    GenAst.emitQuotientLin pv
+
+/-- `mainAsmRaw` unfolded to its nine parts. Left-nested like the `foldl` that builds it. -/
+theorem mainAsmRaw_decomp (pv : PlanView) (m : Model) :
+    mainAsmRaw pv m =
+      ((((((mainGuardBlock ++ GenAst.emitHelpers pv ++ GenAst.emitAccumulatorHelpers ++ mainLocals)
+        ++ GenAst.emitVkLoading pv) ++ GenAst.emitTranscriptParser pv) ++ GenAst.emitLagrange pv)
+        ++ qlinSlice pv (partialCtxOfVerifier m)) ++ GenAst.emitPcsFromPlan pv)
+        ++ GenAst.emitFinalPairing pv ++ GenAst.emitTraceReturn pv := rfl
+
+/-- The top-level binder scan splits at the same boundaries. -/
+theorem topBinders_mainAsmRaw (pv : PlanView) (m : Model) :
+    LoweringV2.topBinders (mainAsmRaw pv m) =
+      LoweringV2.topBinders (mainGuardBlock ++ GenAst.emitHelpers pv ++
+        GenAst.emitAccumulatorHelpers ++ mainLocals) ++
+      LoweringV2.topBinders (GenAst.emitVkLoading pv) ++
+      LoweringV2.topBinders (GenAst.emitTranscriptParser pv) ++
+      LoweringV2.topBinders (GenAst.emitLagrange pv) ++
+      LoweringV2.topBinders (qlinSlice pv (partialCtxOfVerifier m)) ++
+      LoweringV2.topBinders (GenAst.emitPcsFromPlan pv) ++
+      LoweringV2.topBinders (GenAst.emitFinalPairing pv) ++
+      LoweringV2.topBinders (GenAst.emitTraceReturn pv) := by
+  rw [mainAsmRaw_decomp]
+  simp only [topBinders_append, List.append_assoc]
+
+theorem topBinders_qlinSlice (pv : PlanView) (c : PartialCtx) :
+    LoweringV2.topBinders (qlinSlice pv c) =
+      LoweringV2.topBinders (GenAst.emitQuotientHelpersAt c.quotientPow5Helper) ++
+        LoweringV2.topBinders (GenAst.emitQuotientNumerator c) := by
+  simp [qlinSlice, topBinders_append, topBinders_emitQuotientLin]
+
+theorem funSigs_mainGuardBlock :
+    Midfall.LoweringV3.funSigsOf mainGuardBlock = [] := by
+  simp [mainGuardBlock, Midfall.LoweringV3.funSigsOf, List.filterMap_cons, List.filterMap_nil]
+
+theorem funSigs_mainLocals :
+    Midfall.LoweringV3.funSigsOf mainLocals = [] := by
+  simp [mainLocals, Midfall.LoweringV3.funSigsOf, List.filterMap_cons, List.filterMap_nil]
+
+/-- The function-signature table splits the same way; `funSigsOf` of every slice except the
+    quotient helpers is empty (`funSigs_*` above), and the numerator's is the residual. -/
+theorem funSigsOf_mainAsmRaw (pv : PlanView) (m : Model)
+    (hnum : Midfall.LoweringV3.funSigsOf
+      (GenAst.emitQuotientNumerator (partialCtxOfVerifier m)) = [])
+    (hparser : Midfall.LoweringV3.funSigsOf (GenAst.emitTranscriptParser pv) = []) :
+    Midfall.LoweringV3.funSigsOf (mainAsmRaw pv m) =
+      ([("fail", 1), ("scalar_inv", 1), ("transcript_init", 0), ("common_word", 2),
+        ("common_uncompressed_g1", 2), ("squeeze_to", 2), ("batch_invert", 5),
+        ("ec_pairing", 3)] ++
+       [("load_acc_coord_shifted", 5), ("is_bls_p_minus_one", 2),
+        ("check_acc_coord_packing", 4), ("load_acc_coord", 5), ("load_acc_point", 5)] ++
+       (if (partialCtxOfVerifier m).quotientPow5Helper then
+          [("q_program_fail", 0), ("q_pow5", 1)] else [("q_program_fail", 0)])) := by
+  rw [mainAsmRaw_decomp]
+  simp only [funSigsOf_append, funSigs_emitHelpers, funSigs_emitAccumulatorHelpers,
+    funSigs_mainGuardBlock, funSigs_mainLocals,
+    funSigs_emitVkLoading, hparser, funSigs_emitLagrange, funSigs_emitPcsFromPlan,
+    funSigs_emitFinalPairing, funSigs_emitTraceReturn, funSigs_emitQuotientLin,
+    qlinSlice, funSigs_emitQuotientHelpersAt,
+    hnum, List.append_nil, List.nil_append]
+
+/-- A list of blocks flattened: `NoWriters` of the concatenation from the parts. -/
+theorem NoWriters_flatten (l : List YulBlock) (h : ∀ b ∈ l, NoWriters b) :
+    NoWriters l.flatten := by
+  induction l with
+  | nil => exact ⟨1, rfl⟩
+  | cons a as ih =>
+      rw [List.flatten_cons]
+      exact NoWriters_append (h a (by simp))
+        (ih (fun b hb => h b (by simp [hb])))
+
+/-- **`NoWriters` COMPOSITION.** One hypothesis per group; the append closure does the rest. -/
+theorem noWriters_mainAsmRaw (pv : PlanView) (m : Model)
+    (hguard : NoWriters mainGuardBlock)
+    (hhelp : NoWriters (GenAst.emitHelpers pv))
+    (hacc : NoWriters GenAst.emitAccumulatorHelpers)
+    (hloc : NoWriters mainLocals)
+    (hvk : NoWriters (GenAst.emitVkLoading pv))
+    (hparser : NoWriters (GenAst.emitTranscriptParser pv))
+    (hlag : NoWriters (GenAst.emitLagrange pv))
+    (hqlin : NoWriters (qlinSlice pv (partialCtxOfVerifier m)))
+    (hpcs : NoWriters (GenAst.emitPcsFromPlan pv))
+    (hfp : NoWriters (GenAst.emitFinalPairing pv))
+    (htr : NoWriters (GenAst.emitTraceReturn pv)) :
+    NoWriters (mainAsmRaw pv m) := by
+  rw [mainAsmRaw_decomp]
+  refine NoWriters_append ?_ htr
+  refine NoWriters_append ?_ hfp
+  refine NoWriters_append ?_ hpcs
+  refine NoWriters_append ?_ hqlin
+  refine NoWriters_append ?_ hlag
+  refine NoWriters_append ?_ hparser
+  refine NoWriters_append ?_ hvk
+  refine NoWriters_append ?_ hloc
+  refine NoWriters_append ?_ hacc
+  exact NoWriters_append hguard hhelp
+
 end Midfall.Generator.CertScan
