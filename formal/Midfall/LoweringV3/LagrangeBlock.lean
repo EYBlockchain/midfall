@@ -3878,6 +3878,237 @@ theorem batchInvertCallSegment_of_summary
 
 #assert_axioms batchInvertCallSegment_of_summary [propext, Classical.choice, Quot.sound]
 
+/-! ## 6b. THE ZERO-SUCCESS BATCH-INVERT SEGMENT
+
+Statement 10 at `success = 0` never reaches the A5 sum's windows: the helper body's two-statement
+prelude assigns `ret := success = 0`, the `iszero` guard fires, and the `leave` exits the body.
+`helperBody_zero_run` is that inversion; `batchInvertCallSegment_zero` wraps it into the same
+segment post as the summary path, with no `hcanon`, `LagWindowFits` or scratch-window inputs. -/
+
+theorem prelude_zero_run {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {Vc V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome}
+    (h : Step (Bridge.Dialect c g) funs Vc st
+      (Code.stmts
+        [GenAst.yset "ret" (GenAst.yvar "success"),
+         GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"]) [Stmt.leave]])
+      (Res.sres V' st' o))
+    (hsucc : VEnv.get Vc "success" = some (0 : U256))
+    (hret : VEnv.get Vc "ret" = some (0 : U256)) :
+    o = .leave ∧ V' = VEnv.set Vc "ret" 0 ∧ st' = st := by
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h with
+    ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨v, he, hV1⟩ := exec_assign_inv h1
+    obtain ⟨hsv, rfl⟩ := eval_var_inv he
+    rw [hsucc] at hsv
+    injection hsv with hv
+    subst hv
+    subst hV1
+    have hget : VEnv.get (VEnv.set Vc "ret" 0) "ret" = some (0 : U256) :=
+      venv_get_set_same (D := Bridge.Dialect c g) hret
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with
+      ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · cases hrest2
+      have hz := (exec_guard_iszero_var (x := "ret") hget h2).2 rfl
+      exact absurd hz.1 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+    · obtain ⟨ho, hV2, hst2⟩ := (exec_guard_iszero_var (x := "ret") hget h2).2 rfl
+      subst hV2
+      subst hst2
+      exact ⟨ho, rfl, rfl⟩
+  · cases h1 with
+    | assignVal he hl => exact absurd rfl hne1
+    | assignHalt he => cases he
+
+#assert_axioms prelude_zero_run [propext, Classical.choice, Quot.sound]
+
+theorem helperBody_zero_run {c : ExternalCalls} {g : ExternalGas} {consts : Inline.Consts}
+    {cenv : FunEnv (Bridge.Dialect c g)} {Vc Vb : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome}
+    (h : Step (Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g)
+        (BatchInvert.helperBody consts GenAst.emitBatchInvertAt) :: cenv)
+      Vc st (Code.stmts (BatchInvert.helperBody consts GenAst.emitBatchInvertAt))
+      (Res.sres Vb st' o))
+    (hsucc : VEnv.get Vc "success" = some (0 : U256))
+    (hret : VEnv.get Vc "ret" = some (0 : U256)) :
+    o = .leave ∧ Vb = VEnv.set Vc "ret" 0 ∧ st' = st := by
+  generalize hB : BatchInvert.helperBody consts GenAst.emitBatchInvertAt = B at h
+  have hlen : B.length = 34 := by
+    rw [← hB]
+    exact Midfall.LoweringV3.BatchInvert.helperBody_length consts
+  have hfull : B = seg B 0 34 := by
+    simp only [seg, List.drop_zero]
+    rw [← hlen, List.take_length]
+  have hsplit : seg B 0 34 = seg B 0 2 ++ seg B 2 32 := by
+    have hs := seg_split B 0 2 32
+    simpa only [show 2 + 32 = 34 by norm_num] using hs
+  rw [hfull, hsplit] at h
+  rcases Step.stmts_append_inv (D := Bridge.Dialect c g) h with
+    ⟨Vb1, stb1, hhead, hrest⟩ | ⟨hhead, hne⟩
+  · rw [show seg B 0 2 =
+      [GenAst.yset "ret" (GenAst.yvar "success"),
+       GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"]) [Stmt.leave]] by
+    rw [← hB]; exact bi_head_form consts] at hhead
+    have hz := prelude_zero_run hhead hsucc hret
+    exact absurd hz.1 (by decide : (Outcome.normal : Outcome) ≠ Outcome.leave)
+  · rw [show seg B 0 2 =
+      [GenAst.yset "ret" (GenAst.yvar "success"),
+       GenAst.yif (GenAst.yop EVM.Op.iszero [GenAst.yvar "ret"]) [Stmt.leave]] by
+    rw [← hB]; exact bi_head_form consts] at hhead
+    exact prelude_zero_run hhead hsucc hret
+
+#assert_axioms helperBody_zero_run [propext, Classical.choice, Quot.sound]
+
+/-- The zero-success branch of the statement-10 segment: the helper body leaves at its prelude,
+    so neither the A5 windows nor the canonical first denominator word are read. -/
+theorem batchInvertCallSegment_zero
+    {consts : Inline.Consts} {product : PairingProduct} {g : ExternalGas}
+    {k n m D aS : Nat} {funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    {succ rw : U256}
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (hlook : lookupFun funs "batch_invert" = some (decl, cenv))
+    (hbody : decl.body = BatchInvert.helperBody consts GenAst.emitBatchInvertAt)
+    (hparams : decl.params = ["success", "mptr_start", "mptr_end", "scratch_mptr", "r"])
+    (hrets : decl.rets = ["ret", "precompile_failed"])
+    (hsuccNone : consts.lookup "success" = none)
+    (hrNone : consts.lookup "r" = none)
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (hrw : rw = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hsucc0 : succ = 0) :
+    BatchInvertCallSegment consts product g k n m D aS funs succ rw := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hsuccV, hrV, hpfV, hmpeV⟩ := hpre
+  rw [lagInner_10_form_var consts k n m hsuccNone hrNone] at hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrun with
+    ⟨V1, st1, hstmt, hnil⟩ | ⟨hstmt, hne⟩
+  · cases hnil with
+    | seqNil =>
+      cases hstmt with
+      | assignVal hcall hlenVars =>
+        cases hcall with
+        | callOk hargs hlook' hlenCall hbodyrun hor =>
+          obtain ⟨rfl, rfl⟩ := Prod.mk.inj (Option.some.inj (hlook.symm.trans hlook'))
+          obtain ⟨hargvals, hst1⟩ := batchArgs_vals hD hS funs V st hsuccV hrV hmpeV hargs
+          subst hst1
+          have hword : (BitVec.ofNat 256 (D + 32 * (n + m)) + BitVec.ofNat 256 0x20) =
+              BitVec.ofNat 256 (D + 32 * (n + m) + 32) := by
+            rw [← BitVec.ofNat_add]
+          have hz : (Bridge.Dialect (permissive (callsOf product)) g).zero = (0 : U256) := rfl
+          have hVc : (decl.params.zip
+                [succ, BitVec.ofNat 256 D,
+                 BitVec.ofNat 256 (D + 32 * (n + m)) + BitVec.ofNat 256 0x20,
+                 BitVec.ofNat 256 aS, rw]) ++
+              bindZeros (Bridge.Dialect (permissive (callsOf product)) g) decl.rets =
+              ([("success", succ),
+                ("mptr_start", BitVec.ofNat 256 D),
+                ("mptr_end", BitVec.ofNat 256 (D + 32 * (n + m) + 32)),
+                ("scratch_mptr", BitVec.ofNat 256 aS),
+                ("r", rw)] ++
+               [("ret", (0 : U256)), ("precompile_failed", (0 : U256))]) := by
+            rw [hparams, hrets]
+            simp [List.zip, bindZeros, hword, hz]
+          rw [hargvals, hVc] at hbodyrun
+          cases hbodyrun with
+          | block hbodyrun =>
+            rename_i Vb
+            rw [hbody] at hbodyrun
+            let Vc0 : VEnv (Bridge.Dialect (permissive (callsOf product)) g) :=
+              [("success", succ), ("mptr_start", BitVec.ofNat 256 D),
+               ("mptr_end", BitVec.ofNat 256 (D + 32 * (n + m) + 32)),
+               ("scratch_mptr", BitVec.ofNat 256 aS), ("r", rw)] ++
+              [("ret", (0 : U256)), ("precompile_failed", (0 : U256))]
+            have hsuccVc0 : VEnv.get Vc0 "success" = some 0 := by
+              dsimp only [Vc0]
+              rw [← hsucc0]
+              simp [VEnv.get, List.find?]
+            have hretVc0 : VEnv.get Vc0 "ret" = some 0 := by
+              dsimp only [Vc0]
+              simp [VEnv.get, List.find?]
+            have hpfVc0 : VEnv.get Vc0 "precompile_failed" = some 0 := by
+              dsimp only [Vc0]
+              simp [VEnv.get, List.find?]
+            obtain ⟨ho, hVb, hst'⟩ := helperBody_zero_run hbodyrun hsuccVc0 hretVc0
+            rw [hst']
+            rw [hVb]
+            have hlen : (VEnv.set Vc0 "ret" 0).length = Vc0.length := by
+              have hnames := venv_set_names (D := Bridge.Dialect (permissive (callsOf product)) g)
+                Vc0 "ret" 0
+              simpa [List.length_map] using congrArg List.length hnames
+            have hrest : restore Vc0 (VEnv.set Vc0 "ret" 0) = VEnv.set Vc0 "ret" 0 := by
+              show (VEnv.set Vc0 "ret" 0).drop
+                ((VEnv.set Vc0 "ret" 0).length - Vc0.length) = _
+              rw [hlen, Nat.sub_self, List.drop_zero]
+            have hretR : VEnv.get (restore Vc0 (VEnv.set Vc0 "ret" 0)) "ret" = some 0 := by
+              rw [hrest]
+              exact venv_get_set_same (D := Bridge.Dialect (permissive (callsOf product)) g) hretVc0
+            have hpfR : VEnv.get (restore Vc0 (VEnv.set Vc0 "ret" 0)) "precompile_failed" =
+                some 0 := by
+              rw [hrest]
+              rw [venv_get_set_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+                (x := "ret") (y := "precompile_failed") (by decide)]
+              exact hpfVc0
+            refine ⟨rfl, batchInvertCallPost_of_post
+              (Vc := restore Vc0 (VEnv.set Vc0 "ret" 0)) ?_ hrw hsuccV hpfV ?_⟩
+            · exact BatchInvertPost_head0 (c := permissive (callsOf product)) (g := g)
+                succ (BitVec.ofNat 256 Midfall.Yul.blsR) D
+                (D + 32 * (n + m) + 32) aS hretR hpfR rfl rfl rfl
+            · intro ret0 pf0 hret0 hpf0
+              have hret0' : ret0 = 0 := Option.some.inj (hret0.symm.trans hretR)
+              have hpf0' : pf0 = 0 := Option.some.inj (hpf0.symm.trans hpfR)
+              subst ret0
+              subst pf0
+              rw [hrets]
+              simp only [List.map_cons, List.map_nil]
+              rw [hretR, hpfR]
+              simp only [Option.getD_some]
+  · exfalso
+    cases hstmt with
+    | assignVal _ _ => exact hne rfl
+    | assignHalt hcall =>
+      cases hcall with
+      | callArgsHalt hh => exact batchArgs_ne_halt hD hS funs V st _ hh
+      | callHalt hargs hlook' hlenCall hbodyrun =>
+        obtain ⟨rfl, rfl⟩ := Prod.mk.inj (Option.some.inj (hlook.symm.trans hlook'))
+        obtain ⟨hargvals, hst1⟩ := batchArgs_vals hD hS funs V st hsuccV hrV hmpeV hargs
+        subst hst1
+        have hword : (BitVec.ofNat 256 (D + 32 * (n + m)) + BitVec.ofNat 256 0x20) =
+            BitVec.ofNat 256 (D + 32 * (n + m) + 32) := by rw [← BitVec.ofNat_add]
+        have hz : (Bridge.Dialect (permissive (callsOf product)) g).zero = (0 : U256) := rfl
+        have hVc : (decl.params.zip
+              [succ, BitVec.ofNat 256 D,
+               BitVec.ofNat 256 (D + 32 * (n + m)) + BitVec.ofNat 256 0x20,
+               BitVec.ofNat 256 aS, rw]) ++
+            bindZeros (Bridge.Dialect (permissive (callsOf product)) g) decl.rets =
+            ([("success", succ), ("mptr_start", BitVec.ofNat 256 D),
+              ("mptr_end", BitVec.ofNat 256 (D + 32 * (n + m) + 32)),
+              ("scratch_mptr", BitVec.ofNat 256 aS),
+              ("r", rw)] ++
+             [("ret", (0 : U256)), ("precompile_failed", (0 : U256))]) := by
+          rw [hparams, hrets]
+          simp [List.zip, bindZeros, hword, hz]
+        rw [hargvals, hVc] at hbodyrun
+        cases hbodyrun with
+        | block hbodyrun =>
+          rw [hbody] at hbodyrun
+          let Vc : VEnv (Bridge.Dialect (permissive (callsOf product)) g) :=
+            [("success", succ), ("mptr_start", BitVec.ofNat 256 D),
+             ("mptr_end", BitVec.ofNat 256 (D + 32 * (n + m) + 32)),
+             ("scratch_mptr", BitVec.ofNat 256 aS), ("r", rw)] ++
+            [("ret", (0 : U256)), ("precompile_failed", (0 : U256))]
+          have hsuccVc : VEnv.get Vc "success" = some 0 := by
+            dsimp only [Vc]
+            rw [← hsucc0]
+            simp [VEnv.get, List.find?]
+          have hretVc : VEnv.get Vc "ret" = some 0 := by
+            dsimp only [Vc]
+            simp [VEnv.get, List.find?]
+          obtain ⟨ho, -, -⟩ := helperBody_zero_run hbodyrun hsuccVc hretVc
+          cases ho
+
+#assert_axioms batchInvertCallSegment_zero [propext, Classical.choice, Quot.sound]
+
 -- Downstream `lag_poison` reads the two facts above; keep the closed 14-name list opaque so that
 -- later `decide`/`simp` does not try to unfold `lagInner` at a general table.
 attribute [local irreducible] lagInner
