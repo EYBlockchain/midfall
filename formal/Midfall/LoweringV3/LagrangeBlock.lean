@@ -2813,4 +2813,18 @@ theorem restore_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
   exact List.drop_left
 
 
+
+/-- The names a code fragment can bind in the CURRENT environment. Scopes (`block`, `cond`,
+    `forLoop`, `loop`) restore their bindings, so only the top-level `let`s of a sequence count;
+    the run-shape lemma threads nested cases with an empty local prefix. -/
+def Code.boundNames {Op : Type} : Code Op → List Ident
+  | .expr _ => []
+  | .args _ => []
+  | .stmt (.letDecl vars _) => vars
+  | .stmt _ => []
+  | .stmts [] => []
+  | .stmts (s :: ss) => Code.boundNames (.stmt s) ++ Code.boundNames (.stmts ss)
+  | .loop _ _ _ => []
+
+
 end Midfall.LoweringV3.LagrangeBlock
