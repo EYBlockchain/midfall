@@ -227,7 +227,7 @@ theorem topBinders_singleton (s : Stmt EVM.Op) :
     LoweringV2.topBinders [s] = Inline.boundOf s := by
   simp [LoweringV2.topBinders]
 
-theorem topBinders_flatten_map {α : Type} (l : List α) (f : α → YulBlock) :
+theorem topBinders_flatten_map {α : Type _} (l : List α) (f : α → YulBlock) :
     LoweringV2.topBinders (List.flatten (l.map f)) =
       l.flatMap (fun a => LoweringV2.topBinders (f a)) := by
   induction l with
@@ -235,7 +235,7 @@ theorem topBinders_flatten_map {α : Type} (l : List α) (f : α → YulBlock) :
   | cons a as ih =>
       simp only [List.map_cons, List.flatten_cons, topBinders_append, ih, List.flatMap_cons]
 
-theorem topBinders_map {α : Type} (l : List α) (g : α → Stmt EVM.Op) :
+theorem topBinders_map {α : Type _} (l : List α) (g : α → Stmt EVM.Op) :
     LoweringV2.topBinders (l.map g) =
       l.flatMap (fun a => Inline.boundOf (g a)) := by
   induction l with
@@ -246,7 +246,7 @@ theorem topBinders_map {α : Type} (l : List α) (g : α → Stmt EVM.Op) :
       rw [show List.flatMap Inline.boundOf (List.map g as) =
         List.flatMap (fun a => Inline.boundOf (g a)) as from ih]
 
-theorem mem_topBinders_map {α : Type} {l : List α} {g : α → Stmt EVM.Op} {x : String} :
+theorem mem_topBinders_map {α : Type _} {l : List α} {g : α → Stmt EVM.Op} {x : String} :
     x ∈ LoweringV2.topBinders (l.map g) ↔
       ∃ a ∈ l, x ∈ Inline.boundOf (g a) := by
   rw [topBinders_map, List.mem_flatMap]
@@ -283,7 +283,7 @@ theorem mem_topBinders_append {a b : YulBlock} {x : String} :
       x ∈ LoweringV2.topBinders a ∨ x ∈ LoweringV2.topBinders b := by
   rw [topBinders_append, List.mem_append]
 
-theorem mem_topBinders_flatten_map {α : Type} {l : List α} {f : α → YulBlock} {x : String} :
+theorem mem_topBinders_flatten_map {α : Type _} {l : List α} {f : α → YulBlock} {x : String} :
     x ∈ LoweringV2.topBinders (List.flatten (l.map f)) ↔
       ∃ a ∈ l, x ∈ LoweringV2.topBinders (f a) := by
   rw [topBinders_flatten_map, List.mem_flatMap]
@@ -736,7 +736,7 @@ theorem topBinders_append_subset {S : List String} {a b : YulBlock}
   · exact ha x h
   · exact hb x h
 
-theorem mem_topBinders_flatten_map_subset {α : Type} {S : List String} {l : List α}
+theorem mem_topBinders_flatten_map_subset {α : Type _} {S : List String} {l : List α}
     {f : α → YulBlock}
     (h : ∀ a ∈ l, ∀ x ∈ LoweringV2.topBinders (f a), x ∈ S) :
     ∀ x ∈ LoweringV2.topBinders (List.flatten (l.map f)), x ∈ S := by
@@ -998,6 +998,419 @@ theorem noWriters_mainAsmRaw_of (pv : PlanView) (m : Model)
     noWriters_emitAccumulatorHelpers noWriters_mainLocals (noWriters_emitVkLoading pv)
     hparser (noWriters_emitLagrange pv) (noWriters_qlinSlice pv _ hnum) hpcs
     (noWriters_emitFinalPairing pv) (noWriters_emitTraceReturn pv)
+
+
+/-! ## 6. ALL-NAMES ALGEBRA: the scans as Boolean `all`s
+
+  `noShadowProg` is `(boundSs prog).all (not contains)`, `mainClosed` is the same over free names,
+  and `callsResolved` starts from `(callSitesSs main).all (sigs.contains ·)`. This section states
+  the three name predicates in that `all` form, so that the list-mapped emitters compose by
+  `List.all_append` / `List.all_flatMap` and the per-element facts are literal computations. -/
+
+/-- Every top-level binder of `b` is in `S`. -/
+def TopNamesOK (S : List String) (b : YulBlock) : Prop :=
+  (LoweringV2.topBinders b).all (fun x => S.contains x) = true
+
+/-- Every binder of `b`, at any depth, is in `S`. -/
+def BindersOK (S : List String) (b : YulBlock) : Prop :=
+  (LoweringV2.boundSs b).all (fun x => S.contains x) = true
+
+/-- Every user call site of `b` is in `S`. -/
+def CallsOK (S : List (String × Nat)) (b : YulBlock) : Prop :=
+  (Midfall.LoweringV3.callSitesSs b).all (fun c => S.contains c) = true
+
+theorem TopNamesOK_of_forall {S : List String} {b : YulBlock}
+    (h : ∀ x ∈ LoweringV2.topBinders b, x ∈ S) : TopNamesOK S b := by
+  unfold TopNamesOK
+  rw [List.all_eq_true]
+  intro x hx
+  exact List.contains_iff_mem.mpr (h x hx)
+
+theorem BindersOK_of_forall {S : List String} {b : YulBlock}
+    (h : ∀ x ∈ LoweringV2.boundSs b, x ∈ S) : BindersOK S b := by
+  unfold BindersOK
+  rw [List.all_eq_true]
+  intro x hx
+  exact List.contains_iff_mem.mpr (h x hx)
+
+theorem CallsOK_of_forall {S : List (String × Nat)} {b : YulBlock}
+    (h : ∀ c ∈ Midfall.LoweringV3.callSitesSs b, c ∈ S) : CallsOK S b := by
+  unfold CallsOK
+  rw [List.all_eq_true]
+  intro c hc
+  exact List.contains_iff_mem.mpr (h c hc)
+
+theorem boundSs_map {α : Type _} (l : List α) (g : α → Stmt EVM.Op) :
+    LoweringV2.boundSs (l.map g) = l.flatMap (fun a => LoweringV2.boundS (g a)) := by
+  induction l with
+  | nil => simp [LoweringV2.boundSs]
+  | cons a as ih =>
+      rw [List.map_cons, LoweringV2.boundSs.eq_2, ih, List.flatMap_cons]
+
+theorem boundSs_flatten_map {α : Type _} (l : List α) (f : α → YulBlock) :
+    LoweringV2.boundSs ((l.map f).flatten) =
+      l.flatMap (fun a => LoweringV2.boundSs (f a)) := by
+  induction l with
+  | nil => simp [LoweringV2.boundSs]
+  | cons a as ih =>
+      simp only [List.map_cons, List.flatten_cons, boundSs_append, ih, List.flatMap_cons]
+
+theorem callSitesSs_map {α : Type _} (l : List α) (g : α → Stmt EVM.Op) :
+    Midfall.LoweringV3.callSitesSs (l.map g) =
+      l.flatMap (fun a => Midfall.LoweringV3.callSitesS (g a)) := by
+  induction l with
+  | nil => simp [Midfall.LoweringV3.callSitesSs]
+  | cons a as ih =>
+      rw [List.map_cons, Midfall.LoweringV3.callSitesSs.eq_2, ih, List.flatMap_cons]
+
+theorem callSitesSs_flatten_map {α : Type _} (l : List α) (f : α → YulBlock) :
+    Midfall.LoweringV3.callSitesSs ((l.map f).flatten) =
+      l.flatMap (fun a => Midfall.LoweringV3.callSitesSs (f a)) := by
+  induction l with
+  | nil => simp [Midfall.LoweringV3.callSitesSs]
+  | cons a as ih =>
+      simp only [List.map_cons, List.flatten_cons, callSitesSs_append, ih, List.flatMap_cons]
+
+theorem TopNamesOK_append {S : List String} {a b : YulBlock}
+    (ha : TopNamesOK S a) (hb : TopNamesOK S b) : TopNamesOK S (a ++ b) := by
+  unfold TopNamesOK at *
+  rw [topBinders_append, List.all_append, ha, hb]
+  rfl
+
+theorem BindersOK_append {S : List String} {a b : YulBlock}
+    (ha : BindersOK S a) (hb : BindersOK S b) : BindersOK S (a ++ b) := by
+  unfold BindersOK at *
+  rw [boundSs_append, List.all_append, ha, hb]
+  rfl
+
+theorem CallsOK_append {S : List (String × Nat)} {a b : YulBlock}
+    (ha : CallsOK S a) (hb : CallsOK S b) : CallsOK S (a ++ b) := by
+  unfold CallsOK at *
+  rw [callSitesSs_append, List.all_append, ha, hb]
+  rfl
+
+theorem TopNamesOK_flatten_map {α : Type _} {S : List String} {l : List α} {f : α → YulBlock}
+    (h : ∀ a ∈ l, TopNamesOK S (f a)) : TopNamesOK S ((l.map f).flatten) := by
+  unfold TopNamesOK at *
+  rw [topBinders_flatten_map, List.all_flatMap, List.all_eq_true]
+  exact h
+
+theorem BindersOK_flatten_map {α : Type _} {S : List String} {l : List α} {f : α → YulBlock}
+    (h : ∀ a ∈ l, BindersOK S (f a)) : BindersOK S ((l.map f).flatten) := by
+  unfold BindersOK at *
+  rw [boundSs_flatten_map, List.all_flatMap, List.all_eq_true]
+  exact h
+
+theorem CallsOK_flatten_map {α : Type _} {S : List (String × Nat)} {l : List α}
+    {f : α → YulBlock} (h : ∀ a ∈ l, CallsOK S (f a)) :
+    CallsOK S ((l.map f).flatten) := by
+  unfold CallsOK at *
+  rw [callSitesSs_flatten_map, List.all_flatMap, List.all_eq_true]
+  exact h
+
+theorem BindersOK_map {α : Type _} {S : List String} {l : List α} {g : α → Stmt EVM.Op}
+    (h : ∀ a ∈ l, (LoweringV2.boundS (g a)).all (fun x => S.contains x) = true) :
+    BindersOK S (l.map g) := by
+  unfold BindersOK
+  rw [boundSs_map, List.all_flatMap, List.all_eq_true]
+  exact h
+
+theorem CallsOK_map {α : Type _} {S : List (String × Nat)} {l : List α}
+    {g : α → Stmt EVM.Op}
+    (h : ∀ a ∈ l,
+      (Midfall.LoweringV3.callSitesS (g a)).all (fun c => S.contains c) = true) :
+    CallsOK S (l.map g) := by
+  unfold CallsOK
+  rw [callSitesSs_map, List.all_flatMap, List.all_eq_true]
+  exact h
+
+theorem NoWriters_map {α : Type _} {l : List α} {g : α → Stmt EVM.Op}
+    (h : ∀ a ∈ l, NoWriters [g a]) : NoWriters (l.map g) := by
+  induction l with
+  | nil => exact ⟨1, rfl⟩
+  | cons a as ih =>
+      rw [List.map_cons]
+      exact NoWriters_append (h a (by simp)) (ih (fun b hb => h b (by simp [hb])))
+
+
+/-! ## 7. THE TRANSCRIPT-PARSER GROUP, CLOSED
+
+  `emitTranscriptParserAt` is the largest list-mapped group: per `UserPhase` it emits a G1 walk
+  loop plus one squeeze per challenge, per `ProofLookupCommitmentsLayout` a helper walk plus the
+  z walk, and around them a fixed prologue and four flag-guarded sections. The per-element facts
+  are `phase_*`/`lookup_*` below; the assembly splits the five flags and composes through
+  `TopNamesOK_append` / `BindersOK_append` / `CallsOK_append` / `NoWriters_append`, with the two
+  `flatten (map …)` families handed to their `_flatten_map` lemmas. -/
+
+def parserBinderNames : List String :=
+  parserTopNames ++ ["instance_cptr", "instance_cptr_end", "inst_be", "success", "end",
+    "eval_buf", "eval"]
+
+def parserCallNames : List (String × Nat) :=
+  [("transcript_init", 0), ("common_word", 2), ("common_uncompressed_g1", 2),
+   ("squeeze_to", 2), ("fail", 1)]
+
+def phaseBlock (ph : UserPhase) : YulBlock :=
+  [GenAst.g1WalkLoop "advice_walk" ph.adviceBytes] ++
+    (List.map (fun j => GenAst.yset "buf_len"
+      (GenAst.ycall "squeeze_to" [GenAst.yvar "buf_len",
+        GenAst.yop Op.add [GenAst.yvar "CHALLENGE_MPTR",
+          GenAst.ylit ((ph.challengeOffset + j) * 32)]]))
+      (List.range ph.numChallenges))
+
+def lookupBlock (lk : ProofLookupCommitmentsLayout) : YulBlock :=
+  [GenAst.g1WalkLoop "lookup_helper_walk" lk.helpers.byteLen] ++ GenAst.g1WalkBody "lookup_z_walk"
+
+/-- A flattened family of blocks: `NoWriters` from the parts. -/
+theorem NoWriters_flatten_map {α : Type _} {l : List α} {f : α → YulBlock}
+    (h : ∀ a ∈ l, NoWriters (f a)) : NoWriters ((l.map f).flatten) := by
+  apply NoWriters_flatten
+  intro b hb
+  rw [List.mem_map] at hb
+  obtain ⟨a, ha, rfl⟩ := hb
+  exact h a ha
+
+theorem phase_top (ph : UserPhase) : TopNamesOK parserTopNames (phaseBlock ph) := by
+  apply TopNamesOK_of_forall
+  unfold phaseBlock
+  intro x hx
+  rw [topBinders_append] at hx
+  rcases List.mem_append.mp hx with h | h
+  · rw [topBinders_singleton] at h
+    simp [GenAst.g1WalkLoop, GenAst.yfor, boundOf_forLoop] at h
+  · rw [topBinders_map] at h
+    obtain ⟨j, _, hj⟩ := List.mem_flatMap.mp h
+    simp [GenAst.yset, boundOf_assign, parserTopNames] at hj
+    subst hj
+    simp [parserTopNames]
+
+theorem lookup_top (lk : ProofLookupCommitmentsLayout) :
+    TopNamesOK parserTopNames (lookupBlock lk) := by
+  apply TopNamesOK_of_forall
+  unfold lookupBlock
+  intro x hx
+  rw [topBinders_append] at hx
+  rcases List.mem_append.mp hx with h | h
+  · rw [topBinders_singleton] at h
+    simp [GenAst.g1WalkLoop, GenAst.yfor, boundOf_forLoop] at h
+  · simp [LoweringV2.topBinders, GenAst.g1WalkBody, GenAst.yset, GenAst.yexpr, GenAst.yop,
+      GenAst.yvar, GenAst.ylit, GenAst.ycall, boundOf_assign, boundOf_exprStmt,
+      List.mem_append, List.mem_singleton, parserTopNames] at h
+    rcases h with h | h | h <;> subst h <;> simp [parserTopNames]
+
+theorem phase_binders (ph : UserPhase) : BindersOK parserBinderNames (phaseBlock ph) := by
+  apply BindersOK_of_forall
+  unfold phaseBlock
+  intro x hx
+  rw [boundSs_append] at hx
+  rcases List.mem_append.mp hx with h | h
+  · have hl : LoweringV2.boundSs [GenAst.g1WalkLoop "advice_walk" ph.adviceBytes]
+        = ["end", "buf_len", "advice_walk", "proof_cptr"] := by
+      simp only [LoweringV2.boundSs.eq_2, LoweringV2.boundSs.eq_1, LoweringV2.boundS.eq_1,
+        GenAst.g1WalkLoop, GenAst.yfor, GenAst.g1WalkBody, GenAst.ylet,
+        LoweringV2.boundS.eq_3, LoweringV2.boundS.eq_5, LoweringV2.boundS.eq_9,
+        LoweringV2.boundS.eq_10, LoweringV2.boundE, GenAst.yset, GenAst.yexpr,
+        GenAst.ycall, GenAst.yvar, GenAst.yop, GenAst.ylit, List.append_nil,
+        List.nil_append, List.cons_append]
+    rw [hl] at h
+    simp [parserBinderNames, parserTopNames] at h ⊢
+    tauto
+  · rw [boundSs_map] at h
+    obtain ⟨j, _, hj⟩ := List.mem_flatMap.mp h
+    simp [GenAst.yset, Midfall.LoweringV2.boundS, Midfall.LoweringV2.boundE] at hj
+    rcases hj with rfl | hj <;> simp_all [parserBinderNames, parserTopNames,
+      Midfall.LoweringV2.boundE]
+
+theorem lookup_binders (lk : ProofLookupCommitmentsLayout) :
+    BindersOK parserBinderNames (lookupBlock lk) := by
+  apply BindersOK_of_forall
+  unfold lookupBlock
+  intro x hx
+  rw [boundSs_append] at hx
+  rcases List.mem_append.mp hx with h | h
+  · have hl : LoweringV2.boundSs [GenAst.g1WalkLoop "lookup_helper_walk" lk.helpers.byteLen]
+        = ["end", "buf_len", "lookup_helper_walk", "proof_cptr"] := by
+      simp only [LoweringV2.boundSs.eq_2, LoweringV2.boundSs.eq_1, LoweringV2.boundS.eq_1,
+        GenAst.g1WalkLoop, GenAst.yfor, GenAst.g1WalkBody, GenAst.ylet,
+        LoweringV2.boundS.eq_3, LoweringV2.boundS.eq_5, LoweringV2.boundS.eq_9,
+        LoweringV2.boundS.eq_10, LoweringV2.boundE, GenAst.yset, GenAst.yexpr,
+        GenAst.ycall, GenAst.yvar, GenAst.yop, GenAst.ylit, List.append_nil,
+        List.nil_append, List.cons_append]
+    rw [hl] at h
+    simp [parserBinderNames, parserTopNames] at h ⊢
+    tauto
+  · simp [LoweringV2.boundSs, LoweringV2.boundS, LoweringV2.boundE, GenAst.g1WalkBody,
+      GenAst.yset, GenAst.yexpr, GenAst.yop, GenAst.yvar, GenAst.ylit, GenAst.ycall,
+      List.mem_append, List.mem_singleton, parserBinderNames, parserTopNames] at h
+    simp [parserBinderNames, parserTopNames] at h ⊢
+    tauto
+
+theorem phase_calls (ph : UserPhase) : CallsOK parserCallNames (phaseBlock ph) := by
+  apply CallsOK_of_forall
+  unfold phaseBlock
+  intro c hc
+  rw [callSitesSs_append] at hc
+  rcases List.mem_append.mp hc with h | h
+  · have hl : Midfall.LoweringV3.callSitesSs
+        [GenAst.g1WalkLoop "advice_walk" ph.adviceBytes] = [("common_uncompressed_g1", 2)] := by
+      simp only [Midfall.LoweringV3.callSitesSs.eq_1, Midfall.LoweringV3.callSitesSs.eq_2,
+        Midfall.LoweringV3.callSitesS.eq_1, Midfall.LoweringV3.callSitesS.eq_3,
+        Midfall.LoweringV3.callSitesS.eq_4, Midfall.LoweringV3.callSitesS.eq_5,
+        Midfall.LoweringV3.callSitesS.eq_6, Midfall.LoweringV3.callSitesS.eq_7,
+        Midfall.LoweringV3.callSitesS.eq_8, Midfall.LoweringV3.callSitesS.eq_9,
+        Midfall.LoweringV3.callSitesS.eq_10, Midfall.LoweringV3.callSitesE.eq_1,
+        Midfall.LoweringV3.callSitesE.eq_2, Midfall.LoweringV3.callSitesE.eq_3,
+        callSitesE_lit, callSitesE_var, Midfall.LoweringV3.callSitesEs.eq_1,
+        Midfall.LoweringV3.callSitesEs.eq_2, GenAst.g1WalkLoop, GenAst.yfor,
+        GenAst.g1WalkBody, GenAst.ylet, GenAst.yset, GenAst.yexpr, GenAst.ycall,
+        GenAst.yvar, GenAst.yop, GenAst.ylit, List.append_nil, List.nil_append,
+        List.cons_append, List.length_cons, List.length_nil, List.length_map,
+        List.map_cons, List.map_nil, Nat.zero_add, Nat.reduceAdd]
+    rw [hl] at h
+    simp [parserCallNames] at h ⊢
+    tauto
+  · rw [callSitesSs_map] at h
+    obtain ⟨j, _, hj⟩ := List.mem_flatMap.mp h
+    simp [GenAst.yset, GenAst.ycall, GenAst.yvar, GenAst.yop, GenAst.ylit,
+      Midfall.LoweringV3.callSitesS, Midfall.LoweringV3.callSitesE,
+      Midfall.LoweringV3.callSitesEs, parserCallNames] at hj
+    subst hj
+    simp [parserCallNames]
+
+theorem lookup_calls (lk : ProofLookupCommitmentsLayout) :
+    CallsOK parserCallNames (lookupBlock lk) := by
+  apply CallsOK_of_forall
+  unfold lookupBlock
+  intro c hc
+  rw [callSitesSs_append] at hc
+  rcases List.mem_append.mp hc with h | h
+  · have hl : Midfall.LoweringV3.callSitesSs
+        [GenAst.g1WalkLoop "lookup_helper_walk" lk.helpers.byteLen]
+        = [("common_uncompressed_g1", 2)] := by
+      simp only [Midfall.LoweringV3.callSitesSs.eq_1, Midfall.LoweringV3.callSitesSs.eq_2,
+        Midfall.LoweringV3.callSitesS.eq_1, Midfall.LoweringV3.callSitesS.eq_3,
+        Midfall.LoweringV3.callSitesS.eq_4, Midfall.LoweringV3.callSitesS.eq_5,
+        Midfall.LoweringV3.callSitesS.eq_6, Midfall.LoweringV3.callSitesS.eq_7,
+        Midfall.LoweringV3.callSitesS.eq_8, Midfall.LoweringV3.callSitesS.eq_9,
+        Midfall.LoweringV3.callSitesS.eq_10, Midfall.LoweringV3.callSitesE.eq_1,
+        Midfall.LoweringV3.callSitesE.eq_2, Midfall.LoweringV3.callSitesE.eq_3,
+        callSitesE_lit, callSitesE_var, Midfall.LoweringV3.callSitesEs.eq_1,
+        Midfall.LoweringV3.callSitesEs.eq_2, GenAst.g1WalkLoop, GenAst.yfor,
+        GenAst.g1WalkBody, GenAst.ylet, GenAst.yset, GenAst.yexpr, GenAst.ycall,
+        GenAst.yvar, GenAst.yop, GenAst.ylit, List.append_nil, List.nil_append,
+        List.cons_append, List.length_cons, List.length_nil, List.length_map,
+        List.map_cons, List.map_nil, Nat.zero_add, Nat.reduceAdd]
+    rw [hl] at h
+    simp [parserCallNames] at h ⊢
+    tauto
+  · simp [Midfall.LoweringV3.callSitesSs, Midfall.LoweringV3.callSitesS,
+      Midfall.LoweringV3.callSitesE, Midfall.LoweringV3.callSitesEs, callSitesE_lit,
+      callSitesE_var, GenAst.g1WalkBody, GenAst.yset, GenAst.yexpr, GenAst.ycall,
+      GenAst.yvar, GenAst.yop, GenAst.ylit, List.mem_append, List.mem_singleton,
+      parserCallNames] at h
+    simp [parserCallNames] at h ⊢
+    tauto
+
+theorem phase_noWriters (ph : UserPhase) : NoWriters (phaseBlock ph) := by
+  unfold phaseBlock
+  apply NoWriters_append
+  · exact ⟨100, rfl⟩
+  · apply NoWriters_map
+    intro j _
+    exact ⟨100, rfl⟩
+
+theorem lookup_noWriters (lk : ProofLookupCommitmentsLayout) :
+    NoWriters (lookupBlock lk) := by
+  unfold lookupBlock
+  exact NoWriters_append ⟨100, rfl⟩ ⟨100, rfl⟩
+
+set_option maxHeartbeats 1000000 in
+theorem parser_topOK (pv : PlanView) :
+    TopNamesOK parserTopNames (GenAst.emitTranscriptParser pv) := by
+  unfold GenAst.emitTranscriptParser GenAst.emitTranscriptParserAt
+  dsimp only
+  by_cases h1 : (pv.numLookups != 0) = true <;>
+  by_cases h2 : (pv.numPermutationZs != 0) = true <;>
+  by_cases h3 : (pv.lookupHPlusAcc != 0) = true <;>
+  by_cases h4 : (pv.numTrashcans != 0) = true <;>
+  by_cases h5 : pv.truncatedChallenges = true <;>
+  all_goals try simp only [h1, h2, h3, h4, h5, if_true, if_false]
+  all_goals
+    repeat' first
+      | apply TopNamesOK_append
+      | apply TopNamesOK_flatten_map
+      | (intro a _; exact phase_top a)
+      | (intro a _; exact lookup_top a)
+      | (unfold TopNamesOK; rfl)
+
+
+set_option maxHeartbeats 1000000 in
+theorem parser_bindersOK (pv : PlanView) :
+    BindersOK parserBinderNames (GenAst.emitTranscriptParser pv) := by
+  unfold GenAst.emitTranscriptParser GenAst.emitTranscriptParserAt
+  dsimp only
+  by_cases h1 : (pv.numLookups != 0) = true <;>
+  by_cases h2 : (pv.numPermutationZs != 0) = true <;>
+  by_cases h3 : (pv.lookupHPlusAcc != 0) = true <;>
+  by_cases h4 : (pv.numTrashcans != 0) = true <;>
+  by_cases h5 : pv.truncatedChallenges = true <;>
+  all_goals try simp only [h1, h2, h3, h4, h5, if_true, if_false]
+  all_goals
+    repeat' first
+      | apply BindersOK_append
+      | apply BindersOK_flatten_map
+      | (intro a _; exact phase_binders a)
+      | (intro a _; exact lookup_binders a)
+      | (unfold BindersOK
+         simp [LoweringV2.boundSs, LoweringV2.boundS, LoweringV2.boundE, GenAst.ylet,
+           GenAst.yset, GenAst.yblock, GenAst.yfor, GenAst.yif, GenAst.yexpr, GenAst.yop,
+           GenAst.yvar, GenAst.ylit, GenAst.ycall, GenAst.g1WalkLoop, GenAst.g1WalkBody,
+           GenAst.g1AbsorbCopy, parserBinderNames, parserTopNames])
+
+set_option maxHeartbeats 1000000 in
+theorem parser_callsOK (pv : PlanView) :
+    CallsOK parserCallNames (GenAst.emitTranscriptParser pv) := by
+  unfold GenAst.emitTranscriptParser GenAst.emitTranscriptParserAt
+  dsimp only
+  by_cases h1 : (pv.numLookups != 0) = true <;>
+  by_cases h2 : (pv.numPermutationZs != 0) = true <;>
+  by_cases h3 : (pv.lookupHPlusAcc != 0) = true <;>
+  by_cases h4 : (pv.numTrashcans != 0) = true <;>
+  by_cases h5 : pv.truncatedChallenges = true <;>
+  all_goals try simp only [h1, h2, h3, h4, h5, if_true, if_false]
+  all_goals
+    repeat' first
+      | apply CallsOK_append
+      | apply CallsOK_flatten_map
+      | (intro a _; exact phase_calls a)
+      | (intro a _; exact lookup_calls a)
+      | (unfold CallsOK
+         simp [Midfall.LoweringV3.callSitesSs, Midfall.LoweringV3.callSitesS,
+           Midfall.LoweringV3.callSitesE, Midfall.LoweringV3.callSitesEs, callSitesE_lit,
+           callSitesE_var, GenAst.ylet, GenAst.yset, GenAst.yblock, GenAst.yfor, GenAst.yif,
+           GenAst.yexpr, GenAst.yop, GenAst.yvar, GenAst.ylit, GenAst.ycall,
+           GenAst.g1WalkLoop, GenAst.g1WalkBody, GenAst.g1AbsorbCopy, parserCallNames])
+
+set_option maxHeartbeats 1000000 in
+theorem parser_noWriters (pv : PlanView) :
+    NoWriters (GenAst.emitTranscriptParser pv) := by
+  unfold GenAst.emitTranscriptParser GenAst.emitTranscriptParserAt
+  dsimp only
+  by_cases h1 : (pv.numLookups != 0) = true <;>
+  by_cases h2 : (pv.numPermutationZs != 0) = true <;>
+  by_cases h3 : (pv.lookupHPlusAcc != 0) = true <;>
+  by_cases h4 : (pv.numTrashcans != 0) = true <;>
+  by_cases h5 : pv.truncatedChallenges = true <;>
+  all_goals try simp only [h1, h2, h3, h4, h5, if_true, if_false]
+  all_goals
+    repeat' first
+      | apply NoWriters_append
+      | apply NoWriters_flatten_map
+      | (intro a _; exact phase_noWriters a)
+      | (intro a _; exact lookup_noWriters a)
+      | (apply NoWriters_map; intro a _; exact ⟨100, rfl⟩)
+      | exact ⟨1000, rfl⟩
+
 
 /-! ## 5. WHY THE NUMERATOR RESIDUAL IS NOT A TREE LEMMA (reproduction record)
 
