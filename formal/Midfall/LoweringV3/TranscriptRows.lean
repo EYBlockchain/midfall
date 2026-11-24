@@ -8710,6 +8710,141 @@ theorem tpSqueezeState_memory (c : ExternalCalls) (g : ExternalGas)
   rfl
 
 
+theorem t_restore_set {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V : VEnv D} {x : Ident} {a : D.Value} :
+    restore V (VEnv.set V x a) = VEnv.set V x a := by
+  unfold restore
+  rw [t_venv_set_length]
+  simp
+
+set_option maxHeartbeats 4000000 in
+theorem commonWordBody_runs_env {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState) (buf word : U256) :
+    AllRuns funs [("buf_len", buf), ("word", word), ("ret", (0 : U256))] st commonWordBody
+      (fun V' st' o => o = .normal ∧
+        V' = VEnv.set [("buf_len", buf), ("word", word), ("ret", (0 : U256))] "ret"
+          (buf + BitVec.ofNat 256 32) ∧
+        VEnv.get V' "ret" = some (buf + BitVec.ofNat 256 32) ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ x, st'.memory x = storeWord st.memory buf.toNat word x)) := by
+  refine allRuns_of_wp 20 ?_
+  set_option wpLets false in
+  wp_run
+  all_goals
+    first
+    | rfl
+    | (dsimp only []; rfl)
+    | (dsimp only []; simp [VEnv.get, List.find?, touchMemory])
+
+theorem eval_args_two_vars_exists {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {x y : String} {vals : List U256}
+    (h : EvalArgs (Bridge.Dialect c g) funs V st
+      [Expr.var x, Expr.var y] (.vals vals st')) :
+    ∃ xv yv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      vals = [xv, yv] ∧ st' = st := by
+  cases h with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil htail =>
+          cases hnil with
+          | argsNil =>
+              cases hhead with
+              | var hxv =>
+                  cases htail with
+                  | var hyv =>
+                      exact ⟨_, _, hxv, hyv, rfl, rfl⟩
+
+set_option maxHeartbeats 4000000 in
+theorem commonWord_stmt_var_contract {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {decl : FDecl (Bridge.Dialect c g)}
+    {cenv : FunEnv (Bridge.Dialect c g)} {name : String} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {buf word : U256}
+    (hlook : lookupFun funs "common_word" = some (decl, cenv))
+    (hbody : decl.body = commonWordBody)
+    (hparams : decl.params = ["buf_len", "word"])
+    (hrets : decl.rets = ["ret"])
+    (hbuf : VEnv.get V "buf_len" = some buf)
+    (hword : VEnv.get V name = some word) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.assign ["buf_len"] (Expr.call "common_word" [Expr.var "buf_len", Expr.var name]))
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun V0 st0 V' st' o => o = .normal ∧
+        V' = VEnv.set V "buf_len" (buf + BitVec.ofNat 256 32) ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ x, st'.memory x = storeWord st.memory buf.toNat word x)) := by
+  intro V0 st0 hpre V' st' o hrun
+  obtain ⟨hV0, hst0⟩ := hpre
+  cases hrun with
+  | assignVal he hlen =>
+      cases he with
+      | callOk hargs hlook' harglen hbodyrun ho =>
+          rw [hlook] at hlook'
+          cases hlook'
+          obtain ⟨buf0, word0, hbuf0, hword0, hvals, hst1⟩ :=
+            eval_args_two_vars_exists hargs
+          subst hvals
+          have hbuf0' : buf0 = buf := by
+            rw [hV0] at hbuf0
+            exact Option.some.inj (hbuf0.symm.trans hbuf)
+          have hword0' : word0 = word := by
+            rw [hV0] at hword0
+            exact Option.some.inj (hword0.symm.trans hword)
+          obtain ⟨Vb, stb, hstmts, hVend, hstb⟩ := g1Walk_exec_block_inv hbodyrun
+          rw [hparams, hrets] at hVend
+          simp only [List.zip_cons_cons, List.zip_nil_left, bindZeros, List.map_cons,
+            List.map_nil, List.cons_append, List.nil_append] at hVend
+          have hb := commonWordBody_runs_env (c := c) (g := g)
+            (funs := hoist (Bridge.Dialect c g) commonWordBody :: cenv) st0 buf0 word0
+          rw [hbody, hparams, hrets] at hstmts
+          rw [hst1] at hstmts
+          simp only [List.zip_cons_cons, List.zip_nil_left, bindZeros, List.map_cons,
+            List.map_nil, List.cons_append, List.nil_append] at hstmts
+          obtain ⟨-, hVb, hret, henv, hhalt, hmem⟩ := hb Vb stb _ hstmts
+          rw [hst0] at henv hhalt hmem
+          rw [← hstb] at henv hhalt hmem
+          have hVb' : Vb = VEnv.set [("buf_len", buf0), ("word", word0),
+              ("ret", (Bridge.Dialect c g).zero)] "ret" (buf0 + BitVec.ofNat 256 32) := hVb
+          have hrestore : restore [("buf_len", buf0), ("word", word0),
+              ("ret", (Bridge.Dialect c g).zero)] Vb = Vb := by
+            rw [hVb']
+            exact t_restore_set
+          refine ⟨rfl, ?_, ?_, ?_, ?_⟩
+          · rw [hV0, hVend, hrestore, hrets]
+            simp only [List.map_cons, List.map_nil]
+            rw [hret]
+            simp only [Option.getD_some]
+            rw [hbuf0']
+            exact t_setMany_one (D := Bridge.Dialect c g) V "buf_len" _
+          · exact henv
+          · exact hhalt
+          · rw [← hbuf0', ← hword0']
+            exact hmem
+  | assignHalt he =>
+      cases he with
+      | callHalt hargs hlook' harglen hbodyrun =>
+          rw [hlook] at hlook'
+          cases hlook'
+          obtain ⟨buf0, word0, hbuf0, hword0, hvals, hst1⟩ :=
+            eval_args_two_vars_exists hargs
+          subst hvals
+          obtain ⟨Vb, stb, hstmts, hVend, hstb⟩ := g1Walk_exec_block_inv hbodyrun
+          rw [hparams, hrets] at hVend
+          simp only [List.zip_cons_cons, List.zip_nil_left, bindZeros, List.map_cons,
+            List.map_nil, List.cons_append, List.nil_append] at hVend
+          have hb := commonWordBody_runs_env (c := c) (g := g)
+            (funs := hoist (Bridge.Dialect c g) commonWordBody :: cenv) st0 buf0 word0
+          rw [hbody, hparams, hrets] at hstmts
+          rw [hst1] at hstmts
+          simp only [List.zip_cons_cons, List.zip_nil_left, bindZeros, List.map_cons,
+            List.map_nil, List.cons_append, List.nil_append] at hstmts
+          obtain ⟨hon, -⟩ := hb Vb stb Outcome.halt hstmts
+          cases hon
+      | callArgsHalt hargs =>
+          exact (Midfall.LoweringV2.Blocks.EcPairing.args_vars_ne_halt
+            (D := Bridge.Dialect c g) ["buf_len", name] hargs).elim
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9307,5 +9442,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.squeezeToBody_runs [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.toNat_sub_ofNat_of_le [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tpSqueezeState_memory [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_set [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.commonWordBody_runs_env [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.eval_args_two_vars_exists [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_stmt_var_contract [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
