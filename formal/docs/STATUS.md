@@ -1,10 +1,14 @@
 # STATUS - midfall
 
-**As of:** `41a19a71` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
-PlanMeta later re-pinned the closure at **5252 declarations / digest `fa2cfd35f9d64826`**; a final
-full gate is owed on the current tree. Current report: root **11 / sound 5**, register
-**94 rows / 11 ROOT / 21 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
-260 modules.
+**As of:** `35544b4d` (2026-11-24). **Quick gate GREEN at `35544b4d`**; the last full gate is
+`7e1e7a29` (`verify.sh: ok (full)`, KAT 1648/119) and a final full gate is owed on the current
+tree. Current report: root **11 / sound 5**, register **88 rows / 11 ROOT / 17 CERT / 5 TP**,
+0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**; 267 modules, closure
+**5253 declarations / digest `a99a95e0ec07d6bc`**.
+
+**CERT leaves closed since the last status:** `prog_transcriptFloor` (CERT.4, from the generated
+layout), `supported_layout` (CERT.4, from `validateGeneratorInvariants` + `MemoryMap.validate`
+implies `WellFormed`), and `v3_pins_of_valid` (CERT.6, from `ValidV3`/`GeneratedBy`).
 
 ## 1. Verified - PROGRESS
 
