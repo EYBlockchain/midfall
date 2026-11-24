@@ -145,7 +145,15 @@ owner() {
     Midfall.LoweringV3.runBody_gas_oblivious)
       echo 'V3 TOT.1.a (WP A12) - a gas-free program has the same runs under every gas oracle; one Step induction in the shape of Bridge.Run_worldEq_of_noWriters (Totality.lean; evidence GeneratorRows.lean:1266)' ;;
     Midfall.LoweringV3.block_live)
-      echo 'V3 TOT.1 (WP A12) - per-block existence from a boundary a run can actually be at (LivePre, Totality.lean); leaves TOT.1.b-h, one per block (evidence GeneratorRows.lean:1335)' ;;
+      echo 'V3 TOT.1 (WP A12) - per-block existence from a boundary a run can actually be at (LivePre, BlockLive.lean); PROVED from the seven-block case table; owner kept for the historical row' ;;
+    Midfall.LoweringV3.block_live_case_transcriptParser)
+      echo 'V3 TOT.1.b (WP A12/A6) - the transcriptParser CASE of block_live: the unconditional progress row over StageInv (BlockLive.lean). Reduction ready: block_live_transcriptParser_of_prog; the landed Rows.tp_blockProgS still carries LeanAccepts/CompleteSide, which block_live cannot supply' ;;
+    Midfall.LoweringV3.block_live_case_lagrange)
+      echo 'V3 TOT.1.c (WP A12/A4) - the lagrange CASE of block_live: the unconditional progress row over StageInv (BlockLive.lean). Reduction ready: block_live_of_blockProgS; the landed Rows.lag_blockProgS still carries LeanAccepts/CompleteSide, which block_live cannot supply' ;;
+    Midfall.LoweringV3.block_live_case_quotientLin)
+      echo 'V3 TOT.1.d (WP A12/QVM) - the quotientLin CASE of block_live: the unconditional progress row over StageInv (BlockLive.lean). Reduction ready: block_live_quotientLin_of_prog; the landed q_blockProgS still carries LeanAccepts/CompleteSide, which block_live cannot supply' ;;
+    Midfall.LoweringV3.block_live_case_pcs)
+      echo 'V3 TOT.1.e (WP A12/A9-A10) - the pcs CASE of block_live: the unconditional progress row over StageInv (BlockLive.lean). Reduction ready: block_live_pcs; the landed Rows.pcs_blockProgS still carries LeanAccepts/CompleteSide, which block_live cannot supply' ;;
     Midfall.LoweringV3.prefix_live)
       echo 'V3 TOT.1 with SIM.6 (WP A12/A1) - prefix existence: the ABI guard and the memory guard each revert or pass and both are runs (Totality.lean; evidence GeneratorRows.lean:1342)' ;;
     Midfall.LoweringV2.prog_slices_decomp)

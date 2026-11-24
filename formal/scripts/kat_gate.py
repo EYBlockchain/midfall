@@ -424,8 +424,11 @@ EVAL = re.compile(
 # CERT.0 (D2) adds Midfall/Instances/CertMeasure.lean: ONE unannotated `#eval report` (a
 # measurement, not a gate), so the FILE count moves 119 -> 120 and the annotated TOTAL does not
 # move. The orchestrator reconciles this pin at merge.
-EXPECTED_KAT_TOTAL = 1648
-EXPECTED_KAT_FILES = 120
+# MOONLIGHT.1 adds Midfall/Generator/MoonlightPartialKats.lean: FOUR annotated gates
+# (context read-back, VK header, deployed runtime tie, seven-partial status), so
+# TOTAL 1648 -> 1652 and FILES 120 -> 121. No existing gate was deleted or re-spelled.
+EXPECTED_KAT_TOTAL = 1652
+EXPECTED_KAT_FILES = 121
 
 # Only these shapes count as #eval output.
 #
