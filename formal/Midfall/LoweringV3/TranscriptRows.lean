@@ -5205,6 +5205,139 @@ theorem runsAllP_readAlgebra_quotient_values (E : VerifierEnv p G₁ G₂ Gₜ)
         simpa using hq)
 
 
+theorem scatStep_fold_range_shift {α : Type} (n : Nat) :
+    ∀ (k : Nat) (pref : List (Option α)) (Qs : List α),
+      pref.length = k → k + Qs.length ≤ n →
+      (List.zip ((List.range Qs.length).map (fun i => k + i)) Qs).foldl
+        (scatStep n) (pref ++ List.replicate (n - k) none) =
+      pref ++ Qs.map some ++ List.replicate (n - k - Qs.length) none := by
+  intro k pref Qs
+  induction Qs generalizing k pref with
+  | nil =>
+      intro hk hle
+      simp
+  | cons Q Qs ih =>
+      intro hk hle
+      simp only [List.length_cons] at hle
+      have hklt : k < n := by omega
+      have htake : (pref ++ List.replicate (n - k) none).take k = pref := by
+        rw [List.take_append_of_le_length (by omega), List.take_of_length_le (by omega)]
+      have hdrop : (pref ++ List.replicate (n - k) none).drop (k + 1) =
+          List.replicate (n - k - 1) none := by
+        rw [List.drop_append, List.drop_eq_nil_of_le (by omega), List.drop_replicate,
+          List.nil_append, hk]
+        congr 1
+        omega
+      have hstep : scatStep n (pref ++ List.replicate (n - k) none) (k, Q) =
+          (pref ++ [some Q]) ++ List.replicate (n - (k + 1)) none := by
+        unfold scatStep
+        rw [if_pos hklt, htake, hdrop, List.append_assoc,
+          show n - k - 1 = n - (k + 1) by omega]
+        simp only [List.append_assoc]
+      have hzip : List.zip ((List.range (Qs.length + 1)).map (fun i => k + i)) (Q :: Qs) =
+          (k, Q) :: List.zip ((List.range Qs.length).map (fun i => (k + 1) + i)) Qs := by
+        rw [List.range_succ_eq_map]
+        simp only [List.map_cons, List.map_map, List.zip_cons_cons]
+        congr 1
+        rw [show ((fun i => k + i) ∘ Nat.succ) = (fun i => (k + 1) + i) by
+          funext x
+          simp only [Function.comp_apply]
+          omega]
+      rw [show (Q :: Qs).length = Qs.length + 1 by rfl]
+      rw [hzip, List.foldl_cons, hstep]
+      have hlenpref : (pref ++ [some Q]).length = k + 1 := by simp [hk]
+      have hmain := ih (k + 1) (pref ++ [some Q]) hlenpref (by omega)
+      rw [hmain, List.map_cons]
+      simp only [List.append_assoc]
+      rw [show n - (k + 1) - Qs.length = n - k - (Qs.length + 1) by omega]
+      rfl
+
+theorem scatStep_fold_zip_range {α : Type} (n : Nat) (Qs : List α)
+    (hlen : Qs.length = n) :
+    (List.zip (List.range n) Qs).foldl (scatStep n) (List.replicate n none) =
+      Qs.map some := by
+  have h := scatStep_fold_range_shift (α := α) n 0 [] Qs rfl (by omega)
+  rw [hlen] at h
+  simpa using h
+
+theorem mapM_id_map_some {α : Type} (Qs : List α) :
+    List.mapM (fun x => x) (Qs.map some) = some Qs := by
+  induction Qs with
+  | nil => rfl
+  | cons q qs ih => simp [ih]
+
+theorem scatterIndexed_zip_range {α : Type} (n : Nat) (Qs : List α)
+    (hlen : Qs.length = n) (site : String) :
+    Midfall.Halo2.scatterIndexed n (List.zip (List.range n) Qs) site = .ok Qs.toArray := by
+  have hfold := scatStep_fold_zip_range n Qs hlen
+  unfold Midfall.Halo2.scatterIndexed
+  change (match (List.zip (List.range n) Qs).foldl (scatStep n)
+      (List.replicate n (none : Option α)) with
+    | placed =>
+      match placed.mapM (fun x => x) with
+      | some xs => Except.ok xs.toArray
+      | none => Except.error (Midfall.Halo2.Fault.panic site)) = Except.ok Qs.toArray
+  rw [hfold]
+  simp only [mapM_id_map_some]
+
+theorem runsAllP_adviceScatter_values (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (Qs : List G₁)
+    (hlen : Qs.length = vk.cs.numAdviceColumns) :
+    RunsAllP E
+      (([(List.zip (List.range vk.cs.numAdviceColumns) Qs)] :
+          List (List (Nat × G₁))).foldlM (init := (#[] : Array (Array G₁)))
+        fun acc pairs => do
+          let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+            "proofs/src/plonk/verifier.rs:118")
+          pure (acc.push row))
+      ([] : List (Msg (Fr p) G₁)) (fun acc => acc.toList = [Qs.toArray]) := by
+  have hsingle :
+      List.foldlM (fun acc pairs => (do
+        let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+          "proofs/src/plonk/verifier.rs:118")
+        pure (acc.push row) : TranscriptM (Array (Array G₁))))
+        (#[] : Array (Array G₁))
+        [(List.zip (List.range vk.cs.numAdviceColumns) Qs)] =
+      ((StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns
+          (List.zip (List.range vk.cs.numAdviceColumns) Qs)
+          "proofs/src/plonk/verifier.rs:118")) >>= fun row => pure (#[].push row)) := by
+    simp [List.foldlM_cons]
+  rw [hsingle]
+  rw [scatterIndexed_zip_range vk.cs.numAdviceColumns Qs hlen
+    "proofs/src/plonk/verifier.rs:118"]
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := [])
+    (RunsAllP.lift_ok E Qs.toArray (fun row => row = Qs.toArray) rfl) ?_
+  intro row hrow
+  subst hrow
+  exact RunsAllP.pure E (#[].push Qs.toArray) (fun acc => acc.toList = [Qs.toArray]) (by simp)
+
+theorem runsAllP_parseTraceAdviceBlock_values (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0)
+    (horder : AdvicePhasesColumnOrder vk) (Qs : List G₁)
+    (hlen : Qs.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum) :
+    RunsAllP E
+      (do let st ← parseTraceAdvicePhases E vk
+          st.1.foldlM (init := (#[] : Array (Array G₁))) fun acc pairs => do
+            let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+              "proofs/src/plonk/verifier.rs:118")
+            pure (acc.push row))
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun acc => acc.toList = [Qs.toArray]) := by
+  have hlen' : Qs.length = (vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph)).length := by
+    rw [length_flatMap_phaseCols, hlen]
+  have hlenN : Qs.length = vk.cs.numAdviceColumns := by
+    rw [hlen', horder, List.length_range]
+  have hph := runsAllP_parseTraceAdvicePhases_values E vk hsp vk.cs.phases [] Qs
+    (by simpa using hlen)
+  rw [show (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) =
+      Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []
+      from (List.append_nil _).symm]
+  refine RunsAllP.bind E (m := parseTraceAdvicePhases E vk)
+    (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := []) hph ?_
+  intro st hst
+  rw [hst, horder]
+  simpa using runsAllP_adviceScatter_values E vk Qs hlenN
+
 theorem wireMsgs_map_fr (E : VerifierEnv p G₁ G₂ Gₜ) :
     ∀ (qs : List (Fr p)),
       wireMsgs E (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) = wireOf (p := p) qs
@@ -8164,6 +8297,12 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhase_values [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhases_values [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_readAlgebra_quotient_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.scatStep_fold_range_shift [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.scatStep_fold_zip_range [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.mapM_id_map_some [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.scatterIndexed_zip_range [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_adviceScatter_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdviceBlock_values [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.advicePhaseTotal_not_columnOrder [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
