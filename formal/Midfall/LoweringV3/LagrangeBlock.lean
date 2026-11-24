@@ -294,7 +294,8 @@ theorem args_ne_halt_of {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.D
 theorem batchArgs_ne_halt {consts : Inline.Consts} {D aS : Nat}
     (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
     (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
-    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (st st' : EvmState) :
     ¬ Step (Bridge.Dialect c g) funs V st
       (Code.args
         [Expr.var "success",
@@ -302,7 +303,7 @@ theorem batchArgs_ne_halt {consts : Inline.Consts} {D aS : Nat}
          Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
          Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
          Expr.var "r"])
-      (Res.eres (EResult.halt st)) := by
+      (Res.eres (EResult.halt st')) := by
   apply args_ne_halt_of
   intro e he st0 st1 h
   simp only [List.mem_cons, List.not_mem_nil, or_false] at he
@@ -3762,6 +3763,120 @@ theorem batchInvertPost_of_bodyrun
     henv, hhalt, hout, hszero, hpfzero, hinv⟩
 
 #assert_axioms batchInvertPost_of_bodyrun [propext, Classical.choice, Quot.sound]
+
+/-- **STATEMENT 10, DISCHARGED FROM THE A5 SUMMARY.** The `batch_invert` call segment: the
+    five arguments evaluate through `batchArgs_vals`, the callee body runs through
+    `batchInvertPost_of_bodyrun` (A5 at the hoisted scope, transported through the block
+    `restore`), and the caller's two-word assignment converts the callee post into
+    `BatchInvertCallPost` by `batchInvertCallPost_of_post`. The `seqStop` side is impossible:
+    `assignVal` forces `.normal`, `callArgsHalt` is ruled out by `batchArgs_ne_halt`, and a
+    halting body contradicts the summary's `(normal ∨ leave)` post. -/
+theorem batchInvertCallSegment_of_summary
+    {consts : Inline.Consts} {product : PairingProduct} {g : ExternalGas}
+    {k n m D aS : Nat} {funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    {succ rw : U256}
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (hlook : lookupFun funs "batch_invert" = some (decl, cenv))
+    (hbody : decl.body = BatchInvert.helperBody consts GenAst.emitBatchInvertAt)
+    (hparams : decl.params = ["success", "mptr_start", "mptr_end", "scratch_mptr", "r"])
+    (hrets : decl.rets = ["ret", "precompile_failed"])
+    (hsuccNone : consts.lookup "success" = none)
+    (hrNone : consts.lookup "r" = none)
+    (hgas : consts.lookup "MODEXP_GAS" = some (0 : Nat))
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (hrw : rw = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hfit : D + 32 * (n + m) + 32 < 2 ^ 256)
+    (hsp : 32 ≤ aS)
+    (hscratch : aS + (32 * (n + m) + 32) + 192 < 2 ^ 256)
+    (hdisj : D + 32 * (n + m) + 32 ≤ aS ∨
+      aS + (32 * (n + m) + 32) + 192 ≤ D)
+    (hcanon : ∀ st : EvmState, (loadWord st.memory D).toNat < Midfall.Yul.blsR) :
+    BatchInvertCallSegment consts product g k n m D aS funs succ rw := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hsuccV, hrV, hpfV, hmpeV⟩ := hpre
+  rw [lagInner_10_form_var consts k n m hsuccNone hrNone] at hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrun with
+    ⟨V1, st1, hstmt, hnil⟩ | ⟨hstmt, hne⟩
+  · cases hnil with
+    | seqNil =>
+      cases hstmt with
+      | assignVal hcall hlenVars =>
+        cases hcall with
+        | callOk hargs hlook' hlenCall hbodyrun hor =>
+          obtain ⟨rfl, rfl⟩ := Prod.mk.inj (Option.some.inj (hlook.symm.trans hlook'))
+          obtain ⟨hargvals, hst1⟩ := batchArgs_vals hD hS funs V st hsuccV hrV hmpeV hargs
+          subst hst1
+          have hword : (BitVec.ofNat 256 (D + 32 * (n + m)) + BitVec.ofNat 256 0x20) =
+              BitVec.ofNat 256 (D + 32 * (n + m) + 32) := by
+            rw [← BitVec.ofNat_add]
+          have hVc : (decl.params.zip
+                [succ, BitVec.ofNat 256 D,
+                 BitVec.ofNat 256 (D + 32 * (n + m)) + BitVec.ofNat 256 0x20,
+                 BitVec.ofNat 256 aS, rw]) ++
+              bindZeros (Bridge.Dialect (permissive (callsOf product)) g) decl.rets =
+              ([("success", succ),
+                ("mptr_start", BitVec.ofNat 256 D),
+                ("mptr_end", BitVec.ofNat 256 (D + 32 * (n + m) + 32)),
+                ("scratch_mptr", BitVec.ofNat 256 aS),
+                ("r", BitVec.ofNat 256 Midfall.Yul.blsR)] ++
+               [("ret", (0 : U256)), ("precompile_failed", (0 : U256))]) := by
+            rw [hparams, hrets]
+            have hz : (Bridge.Dialect (permissive (callsOf product)) g).zero = (0 : U256) := rfl
+            simp [List.zip, bindZeros, hword, hrw, hz]
+          rw [hargvals, hVc] at hbodyrun
+          cases hbodyrun with
+          | block hbodyrun =>
+            rw [hbody] at hbodyrun
+            obtain ⟨hor, hpost⟩ :=
+              batchInvertPost_of_bodyrun hgas hfit hsp hscratch hdisj hcanon hbodyrun
+            refine ⟨rfl, batchInvertCallPost_of_post hpost hrw hsuccV hpfV ?_⟩
+            intro ret0 pf0 hret0 hpf0
+            obtain ⟨ret, pf, hret, hpf, -⟩ := hpost
+            have hret0' : ret0 = ret := Option.some.inj (hret0.symm.trans hret)
+            have hpf0' : pf0 = pf := Option.some.inj (hpf0.symm.trans hpf)
+            subst ret0
+            subst pf0
+            rw [hrets]
+            simp only [List.map_cons, List.map_nil]
+            rw [hret, hpf]
+            simp only [Option.getD_some]
+  · exfalso
+    cases hstmt with
+    | assignVal _ _ => exact hne rfl
+    | assignHalt hcall =>
+      cases hcall with
+      | callArgsHalt hh => exact batchArgs_ne_halt hD hS funs V st _ hh
+      | callHalt hargs hlook' hlenCall hbodyrun =>
+        obtain ⟨rfl, rfl⟩ := Prod.mk.inj (Option.some.inj (hlook.symm.trans hlook'))
+        obtain ⟨hargvals, hst1⟩ := batchArgs_vals hD hS funs V st hsuccV hrV hmpeV hargs
+        subst hst1
+        have hword : (BitVec.ofNat 256 (D + 32 * (n + m)) + BitVec.ofNat 256 0x20) =
+            BitVec.ofNat 256 (D + 32 * (n + m) + 32) := by rw [← BitVec.ofNat_add]
+        have hVc : (decl.params.zip
+              [succ, BitVec.ofNat 256 D,
+               BitVec.ofNat 256 (D + 32 * (n + m)) + BitVec.ofNat 256 0x20,
+               BitVec.ofNat 256 aS, rw]) ++
+            bindZeros (Bridge.Dialect (permissive (callsOf product)) g) decl.rets =
+            ([("success", succ), ("mptr_start", BitVec.ofNat 256 D),
+              ("mptr_end", BitVec.ofNat 256 (D + 32 * (n + m) + 32)),
+              ("scratch_mptr", BitVec.ofNat 256 aS),
+              ("r", BitVec.ofNat 256 Midfall.Yul.blsR)] ++
+             [("ret", (0 : U256)), ("precompile_failed", (0 : U256))]) := by
+          rw [hparams, hrets]
+          have hz : (Bridge.Dialect (permissive (callsOf product)) g).zero = (0 : U256) := rfl
+          simp [List.zip, bindZeros, hword, hrw, hz]
+        rw [hargvals, hVc] at hbodyrun
+        cases hbodyrun with
+        | block hbodyrun =>
+          rw [hbody] at hbodyrun
+          obtain ⟨hor, -⟩ :=
+            batchInvertPost_of_bodyrun hgas hfit hsp hscratch hdisj hcanon hbodyrun
+          rcases hor with h | h <;> cases h
+
+
+#assert_axioms batchInvertCallSegment_of_summary [propext, Classical.choice, Quot.sound]
 
 -- Downstream `lag_poison` reads the two facts above; keep the closed 14-name list opaque so that
 -- later `decide`/`simp` does not try to unfold `lagInner` at a general table.
