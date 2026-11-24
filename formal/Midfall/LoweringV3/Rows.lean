@@ -36,6 +36,7 @@ import Midfall.LoweringV3.FpConsts
 import Midfall.LoweringV3.FpClean
 import Midfall.LoweringV3.FpG2Width
 import Midfall.LoweringV3.FpFit
+import Midfall.LoweringV3.LagrangeAlg
 import Midfall.LoweringV3.LagrangeBlock
 import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.LoweringV2.Blocks.FinalPairing
@@ -1752,6 +1753,104 @@ theorem readAlgebra_run_xn {g1 : G1Codec G₁} {feat : Features}
     | simp_all
 
 #assert_axioms readAlgebra_run_xn [propext, Classical.choice, Quot.sound]
+
+theorem snapshotAlgebraRun_xn
+    {E : VerifierEnv p G₁ G₂ Gₜ} {H : Hash} {vk : VerifyingKey (Fr p) G₁}
+    {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    {s2 : SnapAlgebra p G₁} {t2 : Transcript}
+    (h : snapshotAlgebraRun E H vk inst ms = .ok (s2, t2)) :
+    s2.alg.xn = s2.alg.splittingFactor * s2.alg.x ∧
+      s2.alg.splittingFactor = powVartime s2.alg.x (vk.n - 1) := by
+  unfold snapshotAlgebraRun at h
+  simp only [Bind.bind, Except.bind] at h
+  repeat' (first | split at h | simp at *)
+  all_goals
+    try
+      unfold snapshotAlgebraStep at h
+      simp only [Bind.bind, Except.bind] at h
+      repeat' (first | split at h | simp at *)
+  all_goals
+    try
+      rename_i heq
+      simp only [pure, Except.pure] at h
+      obtain ⟨rfl, rfl⟩ := h
+      exact readAlgebra_run_xn heq
+
+#assert_axioms snapshotAlgebraRun_xn [propext, Classical.choice, Quot.sound]
+
+/-- Every generated render's model reads `k` off the build inputs (Certified's
+    `model_k_of_generated`, re-derived below `GeneratorTheorem`). -/
+theorem model_k_of_generated_lag {R : Render p G₁ G₂ Gₜ} (h : GeneratedBy R) :
+    R.model.k = R.inputs.k := by
+  have hg := Midfall.LoweringV3.MemoryPairs.gvfp_of_generated h
+  simp only [Midfall.Generator.generateVerifierFromPlan, Bind.bind, Except.bind] at hg
+  split at hg
+  · cases hg
+  · cases hg
+  · obtain ⟨_a1, _, h1⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp hg
+    obtain ⟨_a2, _, h2⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h1
+    obtain ⟨_a3, _, h3⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h2
+    obtain ⟨_a4, _, h4⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h3
+    obtain ⟨_a5, _, h5⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h4
+    obtain ⟨_a6, _, h6⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h5
+    obtain ⟨_a7, _, h7⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h6
+    have hrec := Except.ok.inj h7
+    simpa using (congrArg (fun x => x.k) hrec).symm
+
+theorem pv_k_eq_vk_domain_k {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    R.pv.k = R.vk.domain.k := by
+  have hmodel := model_k_of_generated_lag hR.generated
+  have hpv : R.pv.k = R.model.k := rfl
+  rw [hpv, hmodel, hR.inputs.2.2.1]
+
+theorem snapshotAlgebraRun_xn_pow {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
+    {H : Hash} {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    {s2 : SnapAlgebra p G₁} {t2 : Transcript}
+    (h : snapshotAlgebraRun R.E H R.vk inst ms = .ok (s2, t2)) :
+    s2.alg.xn = s2.alg.x ^ (2 ^ R.pv.k) := by
+  obtain ⟨hxn, hsf⟩ := snapshotAlgebraRun_xn h
+  rw [hxn, hsf, Midfall.LoweringV3.LagrangeAlg.powVartime_eq_pow]
+  have hn : 1 ≤ R.vk.n := by
+    rw [show R.vk.n = R.vk.domain.n from rfl, hR.supported.wf.domainConsistent.1]
+    have hpos : 0 < 2 ^ R.vk.domain.k := pow_pos (by norm_num : (0 : Nat) < 2) _
+    omega
+  rw [← pow_succ, Nat.sub_add_cancel hn]
+  congr 1
+  rw [show R.vk.n = R.vk.domain.n from rfl, hR.supported.wf.domainConsistent.1,
+    ← pv_k_eq_vk_domain_k hR]
+
+#assert_axioms snapshotAlgebraRun_xn_pow [propext, Classical.choice, Quot.sound]
+
+theorem lag_agrees_of_run (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hm : 2 ≤ R.pv.numNegLagranges) (hn : 1 ≤ R.pv.numInstances)
+    {H : Hash} {ms : List (Msg (Fr p) G₁)} {t2 : Transcript}
+    (s2 : SnapAlgebra p G₁) (l : SnapLagrange p G₁)
+    (hl : snapshotLagrangeStep (G₁ := G₁) R.vk s2 = .ok l)
+    (inst : Array (Fr p))
+    (hrun : snapshotAlgebraRun R.E H R.vk inst ms = .ok (s2, t2))
+    (W : LagWords)
+    (hinst : s2.alg.instanceEvals.getD 0 #[] = inst)
+    (hW : LagRel (BitVec.ofNat 256 p) (Midfall.Halo2.frWord s2.alg.x)
+      (Midfall.Halo2.frWord R.vk.domain.omega)
+      (Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges))
+      (Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹)) R.pv.k R.pv.numInstances
+      R.pv.numNegLagranges (fun j => Midfall.Halo2.frWord (inst.getD j 0)) W)
+    (bf : Nat) (hbf : R.vk.cs.blindingFactors = .ok bf)
+    (Lw : Nat → U256)
+    (hval : ∀ i, i ≤ bf + 1 →
+      Midfall.Halo2.frWord ((lagList R.vk.domain s2.alg.x s2.alg.xn (bf + 1))[i]!) = Lw i)
+    (hBlindW : W.lBlind = wSum (BitVec.ofNat 256 p : U256)
+      (fun i => Lw (2 + i)) (bf - 1) (Lw 1))
+    (hInstEval : ∀ e, l.instanceEval = some e → W.instEval = Midfall.Halo2.frWord e) :
+    W.xn = Midfall.Halo2.frWord s2.alg.xn ∧
+    W.lLast = Midfall.Halo2.frWord l.lagrange.lLast ∧
+    W.lBlind = Midfall.Halo2.frWord l.lagrange.lBlind ∧
+    W.l0 = Midfall.Halo2.frWord l.lagrange.l0 ∧
+    ∀ e, l.instanceEval = some e → W.instEval = Midfall.Halo2.frWord e :=
+  lag_agrees R hR hm hn s2 l hl (snapshotAlgebraRun_xn_pow hR hrun) inst W hinst hW
+    bf hbf Lw hval hBlindW hInstEval
+
+#assert_axioms lag_agrees_of_run [propext, Classical.choice, Quot.sound]
 /-- The table's `MODEXP_GAS` is the model's scheduled modexp gas. -/
 theorem consts_lookup_MODEXP_GAS (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
     R.consts.lookup "MODEXP_GAS" = some R.model.templateConstants.gas.modexp := by
