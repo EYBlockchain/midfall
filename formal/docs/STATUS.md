@@ -1,20 +1,30 @@
 # STATUS - midfall
 
-**As of:** `35544b4d` + final-assembly merge (2026-11-24). **Quick gate GREEN at `35544b4d`**; the
-last full gate is `7e1e7a29` (`verify.sh: ok (full)`, KAT 1648/119) and a final full gate is owed.
+**As of:** `2f7377d2` (2026-11-24). **Quick gate GREEN**; a full `verify.sh` is running/owed on
+this tree. Register **90 rows / 14 ROOT**, 0 REFUTED, 1 legacy VACUOUS; closure re-pinned after
+D-GATE18 at **5253 declarations / 620 external leaves / digest `25e18768ad636231`**; KAT pin
+**1652 gates / 121 files** (the four new Moonlight gates are the delta from 1648/120).
+`lake build Midfall` is green across 273 reachable modules.
+
 The final assembly moved `block_live` and `totalV3_correct` to
 `Midfall/LoweringV3/BlockLive.lean` with a seven-block case table: three cases are closed
 (`vkLoading`, `finalPairing`, `traceReturn`) and the four open inputs are
 `block_live_case_transcriptParser`, `block_live_case_lagrange`, `block_live_case_quotientLin`,
 `block_live_case_pcs`. The generic claim surface is `Midfall/LoweringV3/FinalClaims.lean`; the
 F1-real `DoneAt` stays in `Midfall/Instances/GeneratorDoneAt.lean` with its index in
-`Instances/FinalClaimsF1.lean`. Register after this merge is regenerated in `SORRY.md`; the
-remaining CERT leaves are unchanged. The targeted
-`lake build Midfall.LoweringV3.BlockLive Midfall` is green.
+`Instances/FinalClaimsF1.lean`.
 
 **CERT leaves closed since the prior status:** `prog_transcriptFloor` (CERT.4, from the generated
 layout), `supported_layout` (CERT.4, from `validateGeneratorInvariants` + `MemoryMap.validate`
 implies `WellFormed`), and `v3_pins_of_valid` (CERT.6, from `ValidV3`/`GeneratedBy`).
+
+**Moonlight artifact status:** the tracked Sepolia Moonlight VK/verifier source and fetched
+runtime are internally byte-exact (`scripts/check_moonlight_artifacts.py`); the deployed source is
+a superseded-generator artifact and does **not** byte-match the current Lean render. The current
+generator’s accumulator/batched-pairing partials match the current IVC decider dump
+(`IvcPartialKats`, 7/7). The seven-partial probe at the deployed Moonlight context and the exact
+line diffs are in `docs/MOONLIGHT-ARTIFACT.md` and `docs/MOONLIGHT-PARTIAL-DIFFS.md`; a fresh
+Moonlight render still needs its `vk.json`/`cs.json` and a dump hook.
 
 ## 1. Verified - PROGRESS
 
