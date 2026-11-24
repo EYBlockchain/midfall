@@ -2083,6 +2083,11 @@ theorem NoWriters_filterMap {α : Type _} {l : List α} {g : α → Option (Stmt
             (ih (fun b hb => h b (by simp [hb])))
 
 
+/-- `planViewOf` at the no-accumulator arm has `hasAccumulator = false`; the
+    `SupportedInput.noAcc` hypothesis reaches the callsResolved residual this way. -/
+theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan Program Layout)
+    (m : Model) : (planViewOf L m none).hasAccumulator = false := rfl
+
 /-! ## 5. THE BLOCKERS, AND THE EXACT RESIDUAL OF EACH TARGET
 
   **BLOCKER 1: the parsed numerator.** `emitQuotientNumerator` is
