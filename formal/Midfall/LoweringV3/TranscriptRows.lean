@@ -254,6 +254,26 @@ theorem tp_slice (R : Render p G₁ G₂ Gₜ) :
           R.pv.truncatedChallenges R.pv.proofLayout) := rfl
 
 
+/-- **THE PARSER SLICE'S HEAD.** The first emitted statement is the `transcript_init()` binder.
+    This is the anchor for the existence walk: the helper leaf `commonWord_call_run` below is the
+    second call's shape, and the remaining segments are the emitted loop blocks. -/
+theorem tp_slice_head (R : Render p G₁ G₂ Gₜ) :
+    ∃ rest, R.slice Partial.transcriptParser =
+      Inline.inlineContractConstants R.consts
+        (ylet "buf_len" (ycall "transcript_init" []) :: rest) :=
+  ⟨_, tp_slice R⟩
+
+/-- **THE PARSER SLICE'S FIRST TWO STATEMENTS.** The head is `transcript_init`, then the VK-digest
+    `common_word`; the rest is the emitted instance/eval/walk sequence. -/
+theorem tp_slice_two (R : Render p G₁ G₂ Gₜ) :
+    ∃ rest, R.slice Partial.transcriptParser =
+      Inline.inlineContractConstants R.consts
+        (ylet "buf_len" (ycall "transcript_init" []) ::
+         yset "buf_len" (ycall "common_word"
+           [yvar "buf_len", yop Op.mload [yvar "VK_DIGEST_MPTR"]]) :: rest) :=
+  ⟨_, tp_slice R⟩
+
+
 /-- `shadowed` is monotone under appending on the right: if a name is owned by the enclosing
     binders, an inner binder added later cannot un-own it (the walk's shadow list is
     `sh ++ ["end"]`, the loop's own init binder). -/
@@ -550,6 +570,164 @@ theorem commonG1_lookup (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : E
     ∃ decl, lookupFun (R.scope c g) "common_uncompressed_g1" = some (decl, R.scope c g) ∧
       decl.params = ["buf_len", "cptr"] ∧ decl.rets = ["ret"] := by
   exact ⟨_, rfl, rfl, rfl⟩
+
+
+/-- **A LOCAL `mstore` STEP.** The executable `stepOp` of the Bridge dialect on `mstore`,
+    definitional; the parser's `common_word` helper and the eval spill both start with it. -/
+theorem stepOp_mstore_evm (p v : U256) (st : EvmState) :
+    stepOp Op.mstore [p, v] st =
+      some (.ok [] { touchMemory st p.toNat 32 with memory := storeWord st.memory p.toNat v }) := rfl
+
+/-- The emitted `common_word` body, as `inlineContractConstants` leaves it: the template's
+    `mstore(buf_len, word); ret := add(buf_len, 32)`. -/
+def commonWordBody : Block EVM.Op :=
+  [ Stmt.exprStmt (Expr.builtin Op.mstore [Expr.var "buf_len", Expr.var "word"])
+  , Stmt.assign ["ret"] (Expr.builtin Op.add [Expr.var "buf_len", Expr.lit (Literal.number 32)]) ]
+
+/-- `VEnv.set` preserves the length; local copy of the generic fact so this leaf does not reach
+    the Lagrange vocabulary. -/
+theorem venv_set_length_local {D : YulSemantics.Dialect} [DecidableEq D.Value] (V : VEnv D)
+    (x : Ident) (a : D.Value) : (VEnv.set V x a).length = V.length := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x <;> simp [VEnv.set, hy, ih]
+
+/-- A block whose body only assigns leaves the environment unchanged at `restore`. -/
+theorem restore_set_local {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x : Ident} {a : D.Value} : restore V (VEnv.set V x a) = VEnv.set V x a := by
+  simp [restore, venv_set_length_local]
+
+/-- **THE `common_word` CALL RESOLVES.** `R.scope` resolves `common_word` to the emitted
+    two-parameter/one-return helper with the `mstore`/`add` body. PROVED by `rfl`. -/
+theorem commonWord_lookup_body (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} :
+    ∃ decl, lookupFun (R.scope c g) "common_word" = some (decl, R.scope c g) ∧
+      decl.params = ["buf_len", "word"] ∧ decl.rets = ["ret"] ∧
+      decl.body = commonWordBody := by
+  exact ⟨_, rfl, rfl, rfl, rfl⟩
+
+/-- **THE `common_word` BODY HAS AN ACTUAL RUN.** From the callee environment's `buf_len` and
+    `word`, the two emitted statements execute normally and leave `ret = buf_len + 32` and the
+    `mstore` state. This is the existence leaf the parser's instance and eval loops consume;
+    it is not an all-runs contract. -/
+theorem commonWordBody_run {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (b w : U256) (hb : VEnv.get V "buf_len" = some b) (hw : VEnv.get V "word" = some w) :
+    ∃ st', ExecStmts (D := Bridge.Dialect c g) funs V st commonWordBody
+      (VEnv.setMany V ["ret"] [b + BitVec.ofNat 256 32]) st' .normal ∧
+      st' = { touchMemory st b.toNat 32 with memory := storeWord st.memory b.toNat w } := by
+  let stM : EvmState :=
+    { touchMemory st b.toNat 32 with memory := storeWord st.memory b.toNat w }
+  have hms : Step (Bridge.Dialect c g) funs V st
+      (.stmt (.exprStmt (Expr.builtin Op.mstore [Expr.var "buf_len", Expr.var "word"])))
+      (.sres V stM .normal) := by
+    apply Step.exprStmt
+    apply Step.builtinOk
+    · exact Step.argsCons (Step.argsCons Step.argsNil (Step.var hw)) (Step.var hb)
+    · show (Bridge.Dialect c g).Builtin Op.mstore [b, w] st (.ok [] stM)
+      rfl
+  have has : Step (Bridge.Dialect c g) funs V stM
+      (.stmt (.assign ["ret"] (Expr.builtin Op.add
+        [Expr.var "buf_len", Expr.lit (Literal.number 32)])))
+      (.sres (VEnv.setMany V ["ret"] [b + BitVec.ofNat 256 32]) stM .normal) := by
+    apply Step.assignVal
+    · apply Step.builtinOk
+      · exact Step.argsCons (Step.argsCons Step.argsNil Step.lit) (Step.var hb)
+      · show (Bridge.Dialect c g).Builtin Op.add [b, BitVec.ofNat 256 32] stM
+          (.ok [b + BitVec.ofNat 256 32] stM)
+        rfl
+    · rfl
+  exact ⟨_, Step.seqCons hms (Step.seqCons has Step.seqNil), rfl⟩
+
+/-- **A `common_word` CALL HAS AN ACTUAL RUN.** With the resolved declaration and its body
+    equation, any caller environment holding `buf_len = b` and `word = w` executes the call
+    normally and leaves `out = b + 32` and the `mstore` state. -/
+theorem commonWord_call_run {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (decl : FDecl (Bridge.Dialect c g)) (cenv : FunEnv (Bridge.Dialect c g))
+    (hlook : lookupFun funs "common_word" = some (decl, cenv))
+    (hparams : decl.params = ["buf_len", "word"]) (hrets : decl.rets = ["ret"])
+    (hbody : decl.body = commonWordBody) (b w : U256)
+    (hb : VEnv.get V "buf_len" = some b) (hw : VEnv.get V "word" = some w) :
+    ∃ st', ExecStmt (D := Bridge.Dialect c g) funs V st
+      (Stmt.assign ["out"] (Expr.call "common_word" [Expr.var "buf_len", Expr.var "word"]))
+      (VEnv.setMany V ["out"] [b + BitVec.ofNat 256 32]) st' .normal ∧
+      st' = { touchMemory st b.toNat 32 with memory := storeWord st.memory b.toNat w } := by
+  let Vc : VEnv (Bridge.Dialect c g) :=
+    (decl.params.zip [b, w]) ++ bindZeros (Bridge.Dialect c g) decl.rets
+  have hbc : VEnv.get Vc "buf_len" = some b := by
+    simp [Vc, hparams, hrets, VEnv.get, bindZeros]
+  have hwc : VEnv.get Vc "word" = some w := by
+    simp [Vc, hparams, hrets, VEnv.get, bindZeros]
+  obtain ⟨st2, hbodyrun, hst2⟩ :=
+    commonWordBody_run (funs := hoist (Bridge.Dialect c g) commonWordBody :: cenv)
+      (V := Vc) (st := st) (b := b) (w := w) hbc hwc
+  have hrest : restore Vc (Vc.setMany ["ret"] [b + BitVec.ofNat 256 32]) =
+      Vc.setMany ["ret"] [b + BitVec.ofNat 256 32] := by
+    show restore Vc (VEnv.set Vc "ret" (b + BitVec.ofNat 256 32)) = _
+    exact restore_set_local
+  have hbodystep : Step (Bridge.Dialect c g) cenv Vc st (.stmt (.block commonWordBody))
+      (.sres (Vc.setMany ["ret"] [b + BitVec.ofNat 256 32]) st2 .normal) := by
+    simpa [Vc, hbody, hst2, hrest] using Step.block (D := Bridge.Dialect c g) hbodyrun
+  have hcall : Step (Bridge.Dialect c g) funs V st
+      (.expr (.call "common_word" [Expr.var "buf_len", Expr.var "word"]))
+      (.eres (.vals [b + BitVec.ofNat 256 32] st2)) := by
+    have h := Step.callOk (Vend := Vc.setMany ["ret"] [b + BitVec.ofNat 256 32])
+      (st2 := st2) (o := .normal)
+      (Step.argsCons (Step.argsCons Step.argsNil (Step.var hw)) (Step.var hb))
+      hlook (by rw [hparams]; rfl) (by simpa [Vc, hbody] using hbodystep) (Or.inl rfl)
+    simpa [hrets, hparams, VEnv.get, VEnv.set, VEnv.setMany, Vc, bindZeros, List.find?] using h
+  exact ⟨_, Step.assignVal hcall rfl, hst2⟩
+
+/-- **THE PARSER HEAD RUN, GIVEN THE `transcript_init` BODY EQUATION.** The first emitted
+    statement is `buf_len := transcript_init()`. Once the emitted helper's body is known to be
+    the single constant assignment `buf_len := TRANSCRIPT_MPTR`, the call, its callee block, and
+    the caller's `let` are a real `ExecStmts` run. This is the first executable leaf of the
+    parser; the body equation is the exact inliner bridge still to be proved from
+    `emitTranscriptInit` and `constTableOf-`lookup coherence. -/
+theorem tp_head_run_of_transcriptInitBody {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (decl : FDecl (Bridge.Dialect c g)) (cenv : FunEnv (Bridge.Dialect c g))
+    (hlook : lookupFun funs "transcript_init" = some (decl, cenv))
+    (hparams : decl.params = []) (hrets : decl.rets = ["buf_len"]) (t : Nat)
+    (hbody : decl.body = [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))]) :
+    ∃ V' st', ExecStmts (D := Bridge.Dialect c g) funs V st
+      [Stmt.letDecl ["buf_len"] (some (Expr.call "transcript_init" []))] V' st' .normal := by
+  let Vc : VEnv (Bridge.Dialect c g) :=
+    decl.params.zip [] ++ bindZeros (Bridge.Dialect c g) decl.rets
+  have hbodyrun : ExecStmts (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))] :: cenv)
+      Vc st [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))]
+      (VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t]) st .normal := by
+    exact Step.seqCons (Step.assignVal (D := Bridge.Dialect c g) (V := Vc) (st := st)
+      (Step.lit (D := Bridge.Dialect c g)) rfl) Step.seqNil
+  have hbodystep : Step (Bridge.Dialect c g) cenv Vc st (.stmt (.block decl.body))
+      (.sres (VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t]) st .normal) := by
+    have hrest : restore Vc (VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t]) =
+        VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t] := by
+      show restore Vc (VEnv.set Vc "buf_len" (BitVec.ofNat 256 t)) = _
+      exact restore_set_local
+    simpa [hbody, hrest] using Step.block (D := Bridge.Dialect c g) hbodyrun
+  have hcall : Step (Bridge.Dialect c g) funs V st
+      (.expr (.call "transcript_init" []))
+      (.eres (.vals [BitVec.ofNat 256 t] st)) := by
+    have h := Step.callOk (V := V) (Vend := VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t])
+      (st2 := st) (o := .normal) (Step.argsNil (D := Bridge.Dialect c g)) hlook
+      (by rw [hparams]; rfl) (by simpa [Vc, hbody] using hbodystep) (Or.inl rfl)
+    simpa [hrets, hparams, Vc, VEnv.get, VEnv.set, VEnv.setMany, bindZeros, List.find?] using h
+  exact ⟨_, _, Step.seqCons
+    (Step.letVal (vars := ["buf_len"]) (vals := [BitVec.ofNat 256 t]) hcall rfl) Step.seqNil⟩
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_head_run_of_transcriptInitBody
+  [propext, Classical.choice, Quot.sound] native []
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_lookup_body
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.commonWordBody_run
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_call_run
+  [propext, Classical.choice, Quot.sound] native []
 
 /-- **THE TRANSCRIPT READ STEP (a SIM.10 prerequisite).** A read whose bytes are present and
     whose repr decodes succeeds, advances the cursor by `width`, and leaves the buffer alone.
@@ -13225,6 +13403,35 @@ theorem tp_blockProgS (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (
     (hacc : LeanAccepts R H cd) (hcomp : CompleteSide R H cd) :
     BlockProgS R Partial.transcriptParser H vkAddr product cd := by
   sorry
+
+
+/-- **THE `BlockProgS` ASSEMBLY POINT.** `BlockProgS` is exactly `StmtsTotal`, so it is the
+    existence half (`StmtsContract`) plus the all-runs half (`StmtsContractAll`), both at the
+    parser's `.vk`-to-`.transcript` boundary. This names the two facts the emitted-AST existence
+    walk and A6's normal all-runs rows must supply; it does not weaken the row. -/
+theorem tp_blockProgS_of_exists_and_all (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (hex : StmtsContract
+      (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope _ _) (R.slice Partial.transcriptParser)
+      (fun V st => StageInv R H vkAddr cd Checkpoint.vk V st)
+      (fun _ _ V' st' o => exitProgAt R H vkAddr cd
+        (fun k V st => StageInv R H vkAddr cd k V st) Partial.transcriptParser V' st' o))
+    (hall : StmtsContractAll
+      (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope _ _) (R.slice Partial.transcriptParser)
+      (fun V st => StageInv R H vkAddr cd Checkpoint.vk V st)
+      (fun _ _ V' st' o => exitProgAt R H vkAddr cd
+        (fun k V st => StageInv R H vkAddr cd k V st) Partial.transcriptParser V' st' o)) :
+    BlockProgS R Partial.transcriptParser H vkAddr product cd :=
+  ⟨hex, hall⟩
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_slice_head
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_slice_two
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_blockProgS_of_exists_and_all
+  [propext, Classical.choice, Quot.sound] native []
 
 /-! ## 5. W12 - THE WITNESSES AND FALSIFIERS -/
 
