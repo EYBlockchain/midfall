@@ -1470,6 +1470,21 @@ theorem RunsAllP.bind (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
   · rw [hpos2, ByteArray.size_append, wireMsgs_size, List.map_append, List.sum_append]
     omega
 
+/-- `RunsAllP.bind` with an empty second message list, stated at the first list. -/
+theorem RunsAllP.bind_nil (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    {m : TranscriptM α} {f : α → TranscriptM β} {ms : List (Msg (Fr p) G₁)}
+    {P : α → Prop} {Q : β → Prop}
+    (hm : RunsAllP E m ms P) (hf : ∀ a, P a → RunsAllP E (f a) [] Q) :
+    RunsAllP E (m >>= f) ms Q := by
+  simpa only [List.append_nil] using RunsAllP.bind E (ms₁ := ms) (ms₂ := []) hm hf
+
+/-- `RunsAll.bind` with an empty second message list, stated at the first list. -/
+theorem RunsAll.bind_nil (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    {m : TranscriptM α} {f : α → TranscriptM β} {ms : List (Msg (Fr p) G₁)}
+    (hm : RunsAll E m ms) (hf : ∀ a, RunsAll E (f a) []) :
+    RunsAll E (m >>= f) ms := by
+  simpa only [List.append_nil] using RunsAll.bind E (ms₁ := ms) (ms₂ := []) hm hf
+
 /-- Read a list of homogeneous G1 groups in order. -/
 def readG1Groups (E : VerifierEnv p G₁ G₂ Gₜ) : List Nat → TranscriptM Unit
   | [] => pure ()
@@ -4674,6 +4689,197 @@ theorem runsAll_trashcansEvaluated (E : VerifierEnv p G₁ G₂ Gₜ)
     obtain ⟨q, rfl⟩ := List.length_eq_one_iff.mp hqs
     simpa using runsAll_trashEval E t q
 
+set_option maxHeartbeats 4000000 in
+set_option maxRecDepth 10000 in
+theorem runsAll_readAlgebra (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p))))
+    (hmax : maxInstanceLen instances < 2 ^ 31)
+    (hrows : ∀ row ∈ instances.toList, ∀ q ∈ vk.cs.instanceQueries.toList,
+      ¬ q.1.index < nbCommitted → ∃ col, row[q.1.index - nbCommitted]? = some col)
+    (Qg : List G₁) (Qi Qa Qf Qc Qp Ql Qt : List (Fr p))
+    (hlenQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else vk.domain.getQuotientPolyDegree))
+    (hlenI : Qi.length = instances.size *
+      (vk.cs.instanceQueries.toList.filter
+        (fun q => decide (q.1.index < nbCommitted))).length)
+    (hlenA : Qa.length = numProofs * vk.cs.adviceQueries.size)
+    (hlenF : Qf.length = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors)
+    (hlenC : Qc.length = vk.permutation.commitments.size)
+    (hlenP : Qp.length = (permutations.toList.map
+      (fun pc => 3 * pc.permutationProductCommitments.size - 1)).sum)
+    (hlenL : Ql.length = (lookups.toList.map
+      (fun row => (row.toList.map (fun l => l.helperPolys.size + 3)).sum)).sum)
+    (hlenT : Qt.length = (trashcans.toList.map (fun row => row.size)).sum) :
+    RunsAll E (Verifier.readAlgebra (p := p) E.g1 Features.solidity vk permutations lookups
+      trashcans nbCommitted numProofs instances)
+      (Qg.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (Qi.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                  (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                    (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [])))))))) := by
+  unfold Verifier.readAlgebra
+  dsimp only
+  let rest : List (Msg (Fr p) G₁) :=
+    Qi.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+      (Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ []))))))
+  refine RunsAll.bind E (ms₁ := Qg.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := rest) ?_ ?_
+  · exact runsAll_tmReadN_g1 E vk.domain.getQuotientPolyDegree Qg
+      (by simpa [show (if Features.solidity.outerSingleHCommitment = true then 1
+        else vk.domain.getQuotientPolyDegree) = vk.domain.getQuotientPolyDegree from rfl] using hlenQ)
+  · intro quotientLimbComs
+    refine RunsAll.bind E (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := rest)
+      (RunsAll.squeeze E) ?_
+    intro x
+    have hmin : (List.foldl
+        (fun st q =>
+          if q.2.int < st.1 then (q.2.int, st.2)
+          else if q.2.int > st.2 then (st.1, q.2.int) else st)
+        (0, 0) vk.cs.instanceQueries.toList).1 = 0 := by
+      simpa only using congrArg Prod.fst (readAlgebra_rotBounds_zero vk hf)
+    have hm : RunsAllP E
+        (StateT.lift (Verifier.i32Abs
+          (List.foldl
+            (fun st q =>
+              if q.2.int < st.1 then (q.2.int, st.2)
+              else if q.2.int > st.2 then (st.1, q.2.int) else st)
+            (0, 0) vk.cs.instanceQueries.toList).1
+          "proofs/src/plonk/verifier.rs:348")) [] (fun a => a = 0) := by
+      simpa only [hmin, i32Abs_zero] using
+        (RunsAllP.lift_ok E (0 : Int) (fun a => a = 0) rfl)
+    refine (RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+      (ms₂ := rest) (Q := fun _ => True) hm ?_).toRunsAll
+    intro absMin habs
+    subst habs
+    set maxRot : Int := (List.foldl
+      (fun st q =>
+        if q.2.int < st.1 then (q.2.int, st.2)
+        else if q.2.int > st.2 then (st.1, q.2.int) else st)
+      (0, 0) vk.cs.instanceQueries.toList).2 with hmaxRot
+    set lIS : Array (Fr p) :=
+      vk.domain.lIRange x (powVartime x (vk.n - 1) * x) _ with hLIS
+    have hmaxRot0 : maxRot = 0 := by
+      rw [hmaxRot]
+      simpa only using congrArg Prod.snd (readAlgebra_rotBounds_zero vk hf)
+    have hlis0 : lIS = vk.domain.lIRange x (powVartime x (vk.n - 1) * x)
+        (zeroRotations (maxInstanceLen instances)) := by
+      have hfold : List.foldl max 0 (List.flatMap
+          (fun row => List.map (fun col => col.size) row.toList) instances.toList) =
+          maxInstanceLen instances := rfl
+      rw [hLIS, hmaxRot0, hfold,
+        readAlgebra_rotations_zero (maxInstanceLen instances) hmax]
+    refine RunsAllP.bind E (ms₁ := Qi.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+      (ms₂ := (Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [])))))))
+      (RunsAll.toRunsAllP E (runsAll_instanceEvals E vk nbCommitted maxRot lIS
+        instances.toList Qi hlenI ?_)) ?_
+    · intro row hrow q hq hnc
+      obtain ⟨col, hcol⟩ := hrows row hrow q hq hnc
+      refine ⟨col, hcol, ?_⟩
+      rw [hlis0, hmaxRot0]
+      exact readAlgebra_instanceSlice_safe vk hf nbCommitted instances hmax x
+        (powVartime x (vk.n - 1) * x) row hrow q hq col hcol
+    · intro instanceEvalsList _
+      refine RunsAllP.bind E (ms₁ := Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+                (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ []))))))
+        (RunsAll.toRunsAllP E (runsAll_readAlgebraAdviceEvals E vk numProofs Qa hlenA)) ?_
+      intro adviceEvalsList _
+      refine RunsAllP.bind E (ms₁ := Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+              (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [])))))
+        (RunsAll.toRunsAllP E (runsAll_readFixedEvals E vk hf Qf hlenF)) ?_
+      intro fixedEvals _
+      refine RunsAllP.bind E (ms₁ := Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ []))))
+        (RunsAll.toRunsAllP E (runsAll_permutationCommon E vk Qc hlenC)) ?_
+      intro permutationsCommon _
+      refine RunsAllP.bind E (ms₁ := Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [])))
+        (RunsAll.toRunsAllP E (runsAll_permutationsEvaluated E permutations Qp hlenP)) ?_
+      intro permutationsEvaluatedList _
+      refine RunsAllP.bind E (ms₁ := Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ []))
+        (RunsAll.toRunsAllP E (runsAll_lookupsEvaluated E lookups Ql hlenL)) ?_
+      intro lookupsEvaluatedList _
+      refine RunsAllP.bind E (ms₁ := Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := ([] : List (Msg (Fr p) G₁)))
+        (RunsAll.toRunsAllP E (runsAll_trashcansEvaluated E trashcans Qt hlenT)) ?_
+      intro trashcansEvaluatedList _
+      exact RunsAllP.pure E _ _ trivial
+
+theorem wireMsgs_map_fr (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (qs : List (Fr p)),
+      wireMsgs E (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) = wireOf (p := p) qs
+  | [] => by simp [wireMsgs, wireOf]
+  | q :: qs => by
+      simp only [List.map_cons, wireMsgs, wireOf]
+      rw [wireMsgs_map_fr E qs]
+      simp [msgWire]
+
+theorem wireMsgs_g1_singleton (E : VerifierEnv p G₁ G₂ Gₜ) (Q : G₁) :
+    wireMsgs E ([Msg.g1 Q] : List (Msg (Fr p) G₁)) = E.g1.toCompressed Q := by
+  rw [show wireMsgs E ([Msg.g1 Q] : List (Msg (Fr p) G₁)) = msgWire E (Msg.g1 Q) ++ Bytes.empty from rfl]
+  rw [bytes_append_empty_local]
+  rfl
+
+theorem runsAllP_parseTracePermutations_one (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hdeg : 3 ≤ vk.csDegree) (Qs : List G₁)
+    (hlen : Qs.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2)) :
+    RunsAllP E (parseTracePermutations E vk 1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun rows => (rows.toList.map (fun pc =>
+        3 * pc.permutationProductCommitments.size - 1)).sum =
+        3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1) := by
+  have hread := runsAllP_tmReadN_g1 E (Permutation.numChunksOf vk.cs.permutation.columns.size
+    (vk.csDegree - 2)) Qs hlen
+  have hpc : RunsAllP E
+      (Permutation.readProductCommitments vk.cs.permutation vk.csDegree (hashableG1 E.g1))
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun pc => pc.permutationProductCommitments.size =
+        Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2)) := by
+    unfold Permutation.readProductCommitments
+    simp only [show 2 < vk.csDegree from by omega, show vk.csDegree - 2 > 0 from by omega,
+      ↓reduceIte]
+    refine RunsAllP.bind_nil E (m := tmReadN (hashableG1 E.g1)
+      (Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2)))
+      (ms := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) hread ?_
+    intro arr harr
+    exact RunsAllP.pure E _ _ harr
+  rw [parseTracePermutations]
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil, bind_assoc, pure_bind]
+  refine RunsAllP.bind_nil E (m := Permutation.readProductCommitments vk.cs.permutation
+    vk.csDegree (hashableG1 E.g1))
+    (ms := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) hpc ?_
+  intro pc hpc'
+  refine RunsAllP.pure E _ _ ?_
+  simp [hpc']
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -7285,6 +7491,12 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_rowsEvaluated [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupsEvaluated [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashcansEvaluated [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebra [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.bind_nil [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAll.bind_nil [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTracePermutations_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
