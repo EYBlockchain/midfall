@@ -1009,7 +1009,8 @@ theorem stageInv_vk_of_clean (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (H :
     exact h
   -- the Frame transfer
   have hfr : Frame R H vkAddr cd Vb stb := by
-    refine ⟨?_, ?_, ?_, hframe.vkHash, hframe.vkNonEmpty, ?_, ?_, hframe.cdSize⟩
+    refine ⟨?_, ?_, ?_, hframe.vkHash, hframe.vkNonEmpty, ?_, ?_, hframe.cdSize,
+      hframe.cdSize36⟩
     · rw [henv]; exact hframe.calldata
     · rw [henv]; exact hframe.keccak
     · rw [henv]; exact hframe.vkCode

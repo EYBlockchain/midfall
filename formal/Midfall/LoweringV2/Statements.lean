@@ -1133,7 +1133,8 @@ structure DeploymentV2 (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash) (v
     prologue touches memory. Recorded in the trusted-base table (PLAN §1) as a replacement for the
     two solc rows; NOT validated against any compiler output inside Lean. The sixth field,
     `cdSize`, is D-P64/ST.4: the five frozen fields admit a calldata whose length is not a word,
-    and the semantics cannot tell it apart from the short one. -/
+    and the semantics cannot tell it apart from the short one. The seventh field, `cdSize36`, is
+    D-GATE19: the genuine `< 2^36` entry bound (it implies `cdSize` at this entry). -/
 structure EntryFrame (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash)
     (cd : Bytes) (st : EvmState) : Prop where
   shape : ∃ (mem₀ : Nat → UInt8) (aw : U256),
@@ -1149,8 +1150,15 @@ structure EntryFrame (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layo
       `calldataload`/`calldatacopy` - and is rejected by Lean: conjunct 1 is FALSE. THE WEAKEST
       bound that repairs the statement, and a fact about every EVM frame. A tighter
       "realistic" bound (2^32, the gas limit) would shrink the set of covered frames and buy no
-      proof step: every calldata offset the program computes is a constant of the render. -/
+      proof step: every calldata offset the program computes is a constant of the render.
+      `cdSize36` below is stronger and implies this field. -/
   cdSize : cd.size < 2 ^ 256
+  /-- **D-GATE19: the genuine entry calldata bound.** `Decoded` fixes
+      `cd.size = proofEnd + 32 + 32 * numInstances`, so this is exactly the
+      `numInstances < 2^31` premise the transcript schedule needs. It is an entry
+      witness premise, not a row/bundle/`ValidV3` field; `Frame.cdSize36` carries
+      it across every staged boundary. -/
+  cdSize36 : cd.size < 2 ^ 36
 
 /-- The honest precompiles (EIP-2537 G1ADD / G1MSM / PAIRING_CHECK, modexp). No evaluator slot:
     the first headline covers embedded-quotient renders only. -/
@@ -1290,7 +1298,7 @@ def HypothesesInhabited (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
 def EntryFrameInhabited (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash)
     (cd : Bytes) (hsel : bytesTake cd 0 4 = some fnSigVerifyProof) (hcv : W.callvalue = 0)
     (ht : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t)
-    (hcd : cd.size < 2 ^ 256) : Prop :=
+    (hcd : cd.size < 2 ^ 256) (hcd36 : cd.size < 2 ^ 36) : Prop :=
   ∃ st₀, EntryFrame R W Lyt H cd st₀
 
 /-! ## 9. End to end, from the compressed Rust proof -/

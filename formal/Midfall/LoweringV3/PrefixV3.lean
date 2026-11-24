@@ -405,7 +405,7 @@ theorem pfx_stageInv_start {R : Render p G₁ G₂ Gₜ} (hf : PfxFacts R)
         hf.g1Floor]
       simp
   refine ⟨⟨hcal, hkec, hxcd, hdep.vkHash, hdep.vkNonEmpty,
-      ⟨frModulusConstant, hf.cFR, hr⟩, hvk, hentry.cdSize⟩,
+      ⟨frModulusConstant, hf.cFR, hr⟩, hvk, hentry.cdSize, hentry.cdSize36⟩,
     hsucc, hbase, abiHeadOk_of_abiWord_zero hf hentry habih, trivial,
     pfx_agree_start H cd hbase⟩
 

@@ -77,13 +77,14 @@ theorem end_to_end_of_lowering_correct (R : Render p G₁ G₂ Gₜ) (product : 
     (hdep : DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hcd36 : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 36)
     (hside : ∀ cd, calldataOfV3 R π inst = .ok cd →
       SoundSide R keccak256 cd ∧ CompleteSide R keccak256 cd)
     (h : PrepareLogSlots R) :
     EndToEndV3 R product hR (lowering_correct R product hR) W Lyt vkAddr hdep hcv hpc hcodec
-      inst π hn hside :=
+      inst π hn hcd36 hside :=
   end_to_end_of_prepareLogSlots R product hR (lowering_correct R product hR)
-    W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside h
+    W Lyt vkAddr hdep hcv hpc hcodec inst π hn hcd36 hside h
 
 /-! ## 3. The gates -/
 

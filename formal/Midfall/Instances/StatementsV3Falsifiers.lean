@@ -456,7 +456,7 @@ theorem deployment_bump {R : Render p G₁ G₂ Gₜ} {W : ExecEnv} {H : Hash} {
 theorem entryFrame_bump {R : Render p G₁ G₂ Gₜ} {W : ExecEnv} {Lyt : EVM.Layout} {H : Hash}
     {cd : Bytes} {st : EvmState} (h : EntryFrame R W Lyt H cd st) :
     EntryFrame (bumpInst R) W Lyt H cd st :=
-  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize⟩
+  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize, h.cdSize36⟩
 
 /-- But the Lean verifier of the bumped render rejects everything `R` accepts: the expected
     calldata length moved by 32. -/
@@ -504,7 +504,7 @@ section F10
 theorem entryFrameV3_bump {R : Render p G₁ G₂ Gₜ} {W : ExecEnv} {Lyt : EVM.Layout} {H : Hash}
     {cd : Bytes} {st : EvmState} (h : EntryFrameV3 R W Lyt H cd st) :
     EntryFrameV3 (bumpInst R) W Lyt H cd st :=
-  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize⟩
+  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize, h.cdSize36⟩
 
 /-- **FALSIFIER OF THE WEAKENING (rule W12, and the objective's own guard).** Take the root as the
     plan states it and DROP `hR : ValidV3 R`: the headline would then hold of EVERY render. It does

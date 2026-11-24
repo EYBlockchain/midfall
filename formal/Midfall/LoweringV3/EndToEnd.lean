@@ -452,6 +452,7 @@ theorem end_to_end_backward (R : Render p G₁ G₂ Gₜ) (product : PairingProd
     (hdep : DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hcd36 : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 36)
     (hside : ∀ cd, calldataOfV3 R π inst = .ok cd →
       SoundSide R keccak256 cd ∧ CompleteSide R keccak256 cd) :
     (∃ cd, calldataOfV3 R π inst = .ok cd ∧
@@ -520,9 +521,12 @@ theorem end_to_end_backward (R : Render p G₁ G₂ Gₜ) (product : PairingProd
   have hcdSize : cd.size < 2 ^ 256 := by
     rw [hcdSizeEq]
     exact cdBound_of_valid hR
+  have hcdSize36 : cd.size < 2 ^ 36 := by
+    rw [hcdSizeEq]
+    exact hcd36
   obtain ⟨st₀, hentry⟩ :=
     entryFrame_inhabitedV3 R W Lyt keccak256 cd hsel hcv
-      (transcriptMptr_of_valid hR) hcdSize
+      (transcriptMptr_of_valid hR) hcdSize hcdSize36
   obtain ⟨⟨obs, hobs⟩, hviewAll⟩ := hrun st₀ hentry
   have hview := hviewAll obs hobs
   have hret : obs.isReturn := (isReturn_of_view_eq hview).mpr ⟨abiTrue, rfl⟩
@@ -557,13 +561,14 @@ theorem end_to_end_of_readSchedule (R : Render p G₁ G₂ Gₜ) (product : Pair
     (hdep : DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hcd36 : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 36)
     (hside : ∀ cd, calldataOfV3 R π inst = .ok cd →
       SoundSide R keccak256 cd ∧ CompleteSide R keccak256 cd)
     (hsched : ∀ ms : List (Msg (Fr p) G₁),
       decodeRust (Gₜ := Gₜ) R.E Features.solidity R.vk inst π = some ms →
         ms.map Msg.slot =
           (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots) :
-    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside := by
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hcd36 hside := by
   unfold EndToEndV3
   constructor
   · intro hv
@@ -571,7 +576,7 @@ theorem end_to_end_of_readSchedule (R : Render p G₁ G₂ Gₜ) (product : Pair
       hcodec inst π hn hside hsched hv
   · intro hrhs
     exact end_to_end_backward R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
-      inst π hn hside hrhs
+      inst π hn hcd36 hside hrhs
 
 theorem logDispatch_slot (E : VerifierEnv p G₁ G₂ Gₜ) (rec : Nat × Bytes)
     (m : Msg (Fr p) G₁)
@@ -912,12 +917,13 @@ theorem end_to_end_of_prepareLogSlots (R : Render p G₁ G₂ Gₜ) (product : P
     (hdep : DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hcd36 : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 36)
     (hside : ∀ cd, calldataOfV3 R π inst = .ok cd →
       SoundSide R keccak256 cd ∧ CompleteSide R keccak256 cd)
     (h : PrepareLogSlots R) :
-    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hcd36 hside :=
   end_to_end_of_readSchedule R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
-    inst π hn hside (readScheduleAgrees_of_prepareLogSlots R h inst π)
+    inst π hn hcd36 hside (readScheduleAgrees_of_prepareLogSlots R h inst π)
 
 /-! ## 5. W12 FALSIFIER: the KZG partition count is NOT a function of the
     rotation shape at x = 0. -/

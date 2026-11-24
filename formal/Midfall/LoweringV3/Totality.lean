@@ -2366,7 +2366,8 @@ theorem Frame_set_success {R : Render p G₁ G₂ Gₜ} {H : Hash} {vkAddr : U25
     {c : ExternalCalls} {g : ExternalGas} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
     (h : Frame R H vkAddr cd V st) (w : U256) :
     Frame R H vkAddr cd (VEnv.set V "success" w) st := by
-  refine ⟨h.calldata, h.keccak, h.vkCode, h.vkHash, h.vkNonEmpty, ?_, ?_, h.cdSize⟩
+  refine ⟨h.calldata, h.keccak, h.vkCode, h.vkHash, h.vkNonEmpty, ?_, ?_, h.cdSize,
+    h.cdSize36⟩
   · obtain ⟨rv, hlk, hget⟩ := h.r
     refine ⟨rv, hlk, ?_⟩
     rw [venv_get_set_ne_tot (D := Bridge.Dialect c g) (x := "success") (y := "r") (v := w)
@@ -2809,8 +2810,8 @@ theorem Frame_env_congr {R : Render p G₁ G₂ Gₜ} {H : Hash} {vkAddr : U256}
     {c : ExternalCalls} {g : ExternalGas} {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
     (h : Frame R H vkAddr cd V st) (henv : st'.env = st.env) :
     Frame R H vkAddr cd V st' := by
-  obtain ⟨hcd, hk, hvk, hvh, hne, hr, hv, hsz⟩ := h
-  refine ⟨?_, ?_, ?_, hvh, hne, hr, hv, hsz⟩
+  obtain ⟨hcd, hk, hvk, hvh, hne, hr, hv, hsz, hsz36⟩ := h
+  refine ⟨?_, ?_, ?_, hvh, hne, hr, hv, hsz, hsz36⟩
   · rw [henv]; exact hcd
   · rw [henv]; exact hk
   · rw [henv]; exact hvk

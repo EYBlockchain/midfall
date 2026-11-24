@@ -129,6 +129,7 @@ theorem f1_entryFrameV3 :
   · rfl
   · exact poseidonValid_transcriptMptr
   · decide
+  · decide
 
 /-! ## 4. Axiom prints and cone checks -/
 
