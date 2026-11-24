@@ -12,6 +12,24 @@ The only on-chain verifier deployment recorded in this repository is
 Sources and the fetched runtime bytecode are under
 `proofs/solidity-verifier/deployments/sepolia/moonlight-wrap/`.
 
+The checked-in sources **are** the sources of the fetched runtime bytecode.  This
+is checked by `proofs/solidity-verifier/scripts/check_moonlight_artifacts.py`:
+
+```text
+[VK] mstore words=532 built=17025 fetched=17025 exact=True
+[verifier] compiled=21173 fetched=21161 trailer=a164736f6c634300081e000a prefix-exact=True
+[moonlight-artifacts] vk=True verifier=True
+```
+
+The VK constructor's 532 payload `mstore`s rebuild the fetched runtime exactly.
+The verifier compiles with the pinned solc 0.8.30 (`--via-ir --optimize
+--optimize-runs 200 --evm-version cancun --metadata-hash none`) to 21,173 bytes;
+after filling the two `AUTHORIZED_VK` immutable slots and stripping solc's
+12-byte CBOR trailer, the first 21,161 bytes are byte-identical to the fetched
+runtime.  So the deployed artifact is internally consistent; the mismatch with
+the current Lean render is a **generator-version** mismatch, not corrupted
+deployment data.
+
 The deployment is a **Moonlight wrap** circuit: 19 instances, `k = 20`,
 `has_accumulator = 1` (`acc_offset = 11`, 7 × 56-bit limbs), separate VK,
 embedded quotient VM (no `AUTHORIZED_QUOTIENT`), solc 0.8.30, via-IR, optimizer
