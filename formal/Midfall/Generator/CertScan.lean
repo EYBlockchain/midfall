@@ -2038,13 +2038,61 @@ theorem freeNames_program_of (pv : PlanView) (m : Model) (S : List String)
   exact FreeOK_append hguard hmain
 
 
-/-! ## 5. WHY THE NUMERATOR RESIDUAL IS NOT A TREE LEMMA (reproduction record)
 
-  The three hypotheses of `noWriters_mainAsmRaw_of` are not interchangeable. The parser and PCS
-  groups are list-mapped and can be closed by induction over `userPhases` / `lookups` /
-  `computationsAst` (the two `ScanClean` development routes; not landed here). The numerator cannot
-  be closed that way at all. Measured on the F1 render (an `Instances/` probe, `native_decide`
-  territory, so recorded as a comment rather than imported here):
+/-! ### `filterMap` (the PCS set blocks use it to drop the diagonal term)
+
+  A `filterMap` produces a sublist of the `some` results; all three scans are preserved when every
+  produced statement satisfies them. These are the lemmas the PCS set-block inductions consume. -/
+
+theorem CallsOK_filterMap {α : Type _} {S : List (String × Nat)} {l : List α}
+    {g : α → Option (Stmt EVM.Op)}
+    (h : ∀ a ∈ l, ∀ s, g a = some s → CallsOK S [s]) : CallsOK S (l.filterMap g) := by
+  induction l with
+  | nil => simp [CallsOK, Midfall.LoweringV3.callSitesSs]
+  | cons a as ih =>
+      rw [List.filterMap_cons]
+      cases hga : g a with
+      | none => simpa using ih (fun b hb => h b (by simp [hb]))
+      | some s =>
+          simpa using CallsOK_append (h a (by simp) s hga)
+            (ih (fun b hb => h b (by simp [hb])))
+
+theorem BindersOK_filterMap {α : Type _} {S : List String} {l : List α}
+    {g : α → Option (Stmt EVM.Op)}
+    (h : ∀ a ∈ l, ∀ s, g a = some s → BindersOK S [s]) : BindersOK S (l.filterMap g) := by
+  induction l with
+  | nil => simp [BindersOK, LoweringV2.boundSs]
+  | cons a as ih =>
+      rw [List.filterMap_cons]
+      cases hga : g a with
+      | none => simpa using ih (fun b hb => h b (by simp [hb]))
+      | some s =>
+          simpa using BindersOK_append (h a (by simp) s hga)
+            (ih (fun b hb => h b (by simp [hb])))
+
+theorem NoWriters_filterMap {α : Type _} {l : List α} {g : α → Option (Stmt EVM.Op)}
+    (h : ∀ a ∈ l, ∀ s, g a = some s → NoWriters [s]) : NoWriters (l.filterMap g) := by
+  induction l with
+  | nil => exact ⟨1, rfl⟩
+  | cons a as ih =>
+      rw [List.filterMap_cons]
+      cases hga : g a with
+      | none => simpa using ih (fun b hb => h b (by simp [hb]))
+      | some s =>
+          simpa using NoWriters_append (h a (by simp) s hga)
+            (ih (fun b hb => h b (by simp [hb])))
+
+
+/-! ## 5. THE BLOCKERS, AND THE EXACT RESIDUAL OF EACH TARGET
+
+  **BLOCKER 1: the parsed numerator.** `emitQuotientNumerator` is
+  `YulParse.parseLines [renderQuotientNumeratorBlock c]` (`GenAst.lean:789`); `parseLines`
+  (`YulParse.lean:182`) tokenises with `String.splitOn` / `String.replace` / `String.startsWith`
+  (`YulGolden.lean:72-120`), which are `@[extern]`. The kernel cannot reduce them, and
+  `native_decide` cannot evaluate a term with the render's free variables, so for a symbolic model
+  nothing in the tree can say what the parse returns: not that it fails, not that it is a single
+  `Stmt.block`, not its binders, calls, free names or early exits. Measured on the F1 render (an
+  `Instances/` probe, `native_decide` territory, recorded as a comment rather than imported here):
 
     `partialCtxOfVerifier poseidonM` with one extra line in `quotientInlineComputations`
       * `["sstore(0, 1)"]`              -> `noWritersFuel 200000 (mainAsmRaw …) = false`
@@ -2052,11 +2100,51 @@ theorem freeNames_program_of (pv : PlanView) (m : Model) (S : List String)
       * `["let FR_MODULUS := 1"]`       -> `noShadowProg (constTableOf …) (… mainAsmRaw …) = false`
     while the unmutated model answers `true` to all three.
 
-  So the scans are functions of the MODEL'S TEXT, and `Generates` constrains the model only
-  equationally (`generateVerifierFromPlan … = .ok model`). There is no tree-emitter lemma that can
-  remove that dependence: the missing input is a fact about
-  `compactQuotientComputationBlocks` / `renderQuotientNumeratorBlock`, and the bridge from that text
-  to an AST is `YulParse.parseLines`, whose tokenizer is `String`-extern and irreducible in the
-  kernel. -/
+  So these scans are functions of the MODEL'S TEXT; `Generates` constrains the model only
+  equationally (`generateVerifierFromPlan … = .ok model`). The missing fact is about
+  `compactQuotientComputationBlocks` / `renderQuotientNumeratorBlock`, and the text-to-AST bridge is
+  `YulParse.parseLines`.
+
+  **BLOCKER 2: the `constTableOf` names.** The shadow scans compare against
+  `(constTableOf m).map Prod.fst`, i.e. `solConstantLine?` over `renderConstants
+  (partialCtxOfVerifier m)` (`Program.lean:59-61`). The table's NAMES are a `String.splitOn` fact
+  too, so they need CERT.6's `prog_constTable` (or a name-level version) before any binder table can
+  be compared. This is why the shadow reductions below carry a finite-name hypothesis `hS`.
+
+  **WHAT IS NOW CLOSED / REDUCED, PER TARGET.**
+
+  * `v3_noShadow`: the parser's `topBinders` are proved (`parser_topOK`), the fixed groups are
+    discharged from their §2 tables (`fixedTopNames` + `hS`), and `topBinders_emitPcsFromPlan = []`
+    is proved. `noShadowCore_of_residuals` leaves exactly: the wrapper locals (`vk` /
+    `quotientEvaluator`, a `constTableOf` fact) and the parsed numerator's top-level binders.
+  * `prog_noShadow`: `noShadowProg_of_residuals` leaves the wrapper locals, the fixed prefix under
+    `constTableOf` (`hfixed`), the parser under `hSparser`, and the vk/lagrange/qlin/pcs/finalPairing/
+    traceReturn groups' `Avoids` facts. The parser's every-binder table is proved
+    (`parser_bindersOK`); the fixed groups' `boundSs` tables and the PCS binder language are the
+    mechanical remainder.
+  * `prog_callsResolved`: `callsResolved_mainAsmRaw_of` reduces the scan to `CallsOK` of the parsed
+    numerator and of the PCS slice, with `pv.hasAccumulator = false` (which removes
+    `validate_public_accumulator` from the sigs). Every other group's call sites are tabulated and
+    the parser's are proved (`parser_callsOK`); the function table is `mainSigSet`.
+  * `prog_noWriters`: `noWriters_program_of` leaves the PCS slice and the parsed numerator; the
+    parser (`parser_noWriters`) and all fixed groups are proved. The target's `prog` is the INLINED
+    program, so one more child remains: `NoWriters` is invariant under
+    `Inline.inlineContractConstants` (the inliner changes expressions only, and the writer scan
+    reads constructors only).
+  * `prog_constsDeclared`: `freeNames_program_of` reduces the scan to one `FreeOK` hypothesis per
+    emitter group; the guard/prefix facts are `constTableOf`/`expectedConsts` computations, and the
+    numerator's free names are Blocker 1.
+  * `v3_exitDiscipline`: no reduction landed here. The tail is the fixed `traceReturn` shape; the
+    prefix scan is the open child, and its numerator part is Blocker 1.
+  * `prog_closed` / `v3_closed`: additionally need the inliner free-name lemma (`freeNames` after
+    `inlineContractConstants`); the V3 statement records it as the only side condition.
+
+  **PCS, PRECISELY.** Closed: `topBinders_emitPcsFromPlan = []`, `funSigs_emitPcsFromPlan = []`.
+  The remaining inductions are over `computationsAst`'s block functions (`pcsBlock1Ast` …
+  `pcsBlock6Ast`, `pcsSetBlockAst`, `pcsX4PowersAst`, `pcsVLinesAst`). The set block's general arm
+  nests `List.filterMap` (the diagonal term), which is why `CallsOK_filterMap` /
+  `BindersOK_filterMap` / `NoWriters_filterMap` are landed here: with those, the composition is
+  `CallsOK_append`/`_map`/`_flatten_map`/`_filterMap` plus the one-statement leaves. `pcsBlock6Ast`
+  has no binders and no user calls; its `staticcall`s are builtins and non-writers. -/
 
 end Midfall.Generator.CertScan
