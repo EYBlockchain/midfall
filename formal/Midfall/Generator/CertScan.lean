@@ -2144,12 +2144,15 @@ theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan
   * `prog_closed` / `v3_closed`: additionally need the inliner free-name lemma (`freeNames` after
     `inlineContractConstants`); the V3 statement records it as the only side condition.
 
-  **PCS, PRECISELY.** Closed: `topBinders_emitPcsFromPlan = []`, `funSigs_emitPcsFromPlan = []`.
-  The remaining inductions are over `computationsAst`'s block functions (`pcsBlock1Ast` …
-  `pcsBlock6Ast`, `pcsSetBlockAst`, `pcsX4PowersAst`, `pcsVLinesAst`). The set block's general arm
-  nests `List.filterMap` (the diagonal term), which is why `CallsOK_filterMap` /
-  `BindersOK_filterMap` / `NoWriters_filterMap` are landed here: with those, the composition is
-  `CallsOK_append`/`_map`/`_flatten_map`/`_filterMap` plus the one-statement leaves. `pcsBlock6Ast`
-  has no binders and no user calls; its `staticcall`s are builtins and non-writers. -/
+  **PCS, PRECISELY.** `Midfall/Generator/CertScanPcs.lean` lands `callSitesSs`/`NoWriters` for
+  `pcsBlock1Ast`, `pcsBlock2Ast`, `pcsBlock6Ast`, `pcsX4PowersAst`, `pcsVLinesAst`,
+  `pcsSetBlockAst` (both arms, including the diagonal `List.filterMap`), `pcsBlock4Ast` (the
+  per-set `yblock` induction), and `callSitesSs` for `pcsBlock3Ast`; plus the `NoWriters_forLoop`
+  composition. STILL OPEN there, named: `pcsBlock3Ast`'s `NoWriters` (its `for`-body and the
+  `wordExpr`/`ptrExpr` codec leaves — the `NoWriters_forLoop` and the set-block `split` leaf are
+  the two halves), `pcsBlock5Ast`'s scans (the nested monadic `foldlM` over `bySet`/commitments
+  and `pcsLinExpansion`'s folds; the block has no user call and no writer builtin), and the
+  `computationsAst` assembly that extracts the emitted block list from the `Except` chain.
+  `topBinders_emitPcsFromPlan = []` and `funSigs_emitPcsFromPlan = []` are proved in §2/§3 here. -/
 
 end Midfall.Generator.CertScan

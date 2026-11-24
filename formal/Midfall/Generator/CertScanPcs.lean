@@ -508,4 +508,26 @@ theorem block3_calls (setIdx : Nat) (cis : List CommitmentEntry) (sets : Interme
 /-! `pcsBlock3Ast`'s NoWriters fact is NOT proved here: its writer leaves include the
     `wordExpr`/`ptrExpr` codec matches. Its CALLS fact is `block3_calls` above. -/
 
+
+/-- A `for` loop is clean from its parts: the scan splits into init/condition/post/body, and the
+    fuel is the max of the four. Used by the PCS block-3 body. -/
+theorem NoWriters_forLoop {init post body : YulBlock} {c : Expr EVM.Op}
+    (hi : NoWriters init) (hc : ScanClean (.e c)) (hp : NoWriters post)
+    (hb : NoWriters body) : NoWriters [Stmt.forLoop init c post body] := by
+  obtain ⟨ni, hi⟩ := hi
+  obtain ⟨nc, hc⟩ := hc
+  obtain ⟨np, hp⟩ := hp
+  obtain ⟨nb, hb⟩ := hb
+  refine ⟨max (max ni nc) (max np nb) + 2, ?_⟩
+  have hi' : noWritersScan (max (max ni nc) (max np nb)) (.b init) = true :=
+    noWritersScan_mono (by omega) hi
+  have hc' : noWritersScan (max (max ni nc) (max np nb)) (.e c) = true :=
+    noWritersScan_mono (by omega) hc
+  have hp' : noWritersScan (max (max ni nc) (max np nb)) (.b post) = true :=
+    noWritersScan_mono (by omega) hp
+  have hb' : noWritersScan (max (max ni nc) (max np nb)) (.b body) = true :=
+    noWritersScan_mono (by omega) hb
+  simp only [noWritersFuel, noWritersScan, noWritersStep, hi', hc', hp', hb', Bool.and_true,
+    Bool.true_and]
+
 end Midfall.Generator.CertScanPcs
