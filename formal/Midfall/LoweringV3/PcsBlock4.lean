@@ -1944,6 +1944,78 @@ theorem pcsQEvalCanon_chunk {mem : Nat → UInt8} {R off m : Nat} {v : Nat → U
   convert h using 1
   ring
 
+/-- Block 3 seeds, with the canonical-seed conjunct carried explicitly. -/
+theorem b3_seeds_contract_canon {funs : FunEnv (Bridge.Dialect c g)} (n : Nat)
+    (ev : Nat → Midfall.Generator.Word) (val : Nat → U256)
+    (hvalLt : ∀ k, k < n → (val k).toNat < blsR) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      ((List.range n).map fun k => b3SeedStmt k (ev k))
+      (fun V st => ((∀ k, k < n → b3word st V (ev k) = some (val k)) ∧
+        (∀ k, k < n → ∀ (V₁ V₂ : VEnv (Bridge.Dialect c g)) (st₁ : EvmState),
+          b3word st₁ V₁ (ev k) = b3word st₁ V₂ (ev k))) ∧
+        (∀ k, k < n → (val k).toNat < blsR))
+      (fun V st V' st' o => (o = .normal ∧
+        (∀ k, k < n → VEnv.get V' (qkey k) = some (val k)) ∧
+        (∀ x, (∀ k, k < n → x ≠ qkey k) → VEnv.get V' x = VEnv.get V x) ∧
+        st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted) ∧
+        (∀ k, k < n → (val k).toNat < blsR)) := by
+  intro V st hpre V' st' o hrun
+  exact ⟨b3_seeds_contract n ev val V st hpre.1 V' st' o hrun, hpre.2⟩
+
+/-- Block 3 folds, with canonical accumulator values in the pre and post. -/
+theorem b3_folds_contract_canon {funs : FunEnv (Bridge.Dialect c g)} (n : Nat)
+    (xs : List FoldPair) (init : Nat → U256) (f : FoldPair → U256) (x1 : Nat → U256)
+    (pv rv : U256) (hrv : rv = BitVec.ofNat 256 blsR)
+    (hinitLt : ∀ k, k < n → (init k).toNat < blsR) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (xs.map b3FoldStmt)
+      (fun V st =>
+        ((∀ k, k < n → VEnv.get V (qkey k) = some (init k)) ∧
+        VEnv.get V "X1_POWERS_MPTR" = some pv ∧
+        VEnv.get V "r" = some rv ∧
+        (∀ p ∈ xs, b3word st V p.2.2 = some (f p)) ∧
+        (∀ p ∈ xs, ∀ (V₁ V₂ : VEnv (Bridge.Dialect c g)) (st₁ : EvmState),
+          b3word st₁ V₁ p.2.2 = b3word st₁ V₂ p.2.2) ∧
+        (∀ p ∈ xs, p.2.1 < n) ∧
+        (∀ i, x1 i = loadWord st.memory (pv + BitVec.ofNat 256 (i * 32)).toNat)) ∧
+        (∀ k, k < n → (init k).toNat < blsR))
+      (fun V st V' st' o => (o = .normal ∧
+        (∀ k, k < n → VEnv.get V' (qkey k) = some (b3FoldAcc rv f x1 xs k (init k))) ∧
+        (∀ y, (∀ p ∈ xs, y ≠ qkey p.2.1) → VEnv.get V' y = VEnv.get V y) ∧
+        st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted) ∧
+        (∀ k, k < n → (b3FoldAcc rv f x1 xs k (init k)).toNat < blsR)) := by
+  intro V st hpre V' st' o hrun
+  refine ⟨b3_folds_contract n xs init f x1 pv rv V st hpre.1 V' st' o hrun, ?_⟩
+  intro k hk
+  exact b3FoldAcc_toNat_lt hrv (hinitLt k hk)
+
+/-- Block 3 persist, with canonical stored values in the pre and canonical loads in the post. -/
+theorem b3_persist_contract_canon {funs : FunEnv (Bridge.Dialect c g)} (n off R : Nat)
+    (v : Nat → U256) (hR : R < 2 ^ 256)
+    (hoff : (off + n) * 32 < 2 ^ 256) (hsum : R + (off + n) * 32 < 2 ^ 256)
+    (hvLt : ∀ k, k < n → (v k).toNat < blsR) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      ((List.range n).map (b3PersistStmt off))
+      (fun V _ =>
+        (VEnv.get V "Q_EVAL_SET_MPTR" = some (BitVec.ofNat 256 R) ∧
+          ∀ k, k < n → VEnv.get V (qkey k) = some (v k)) ∧
+        (∀ k, k < n → (v k).toNat < blsR))
+      (fun V st V' st' o => (o = .normal ∧ V' = V ∧
+        st'.memory = pcsWriteWords st.memory (R + off * 32) v n ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ a, a < R + off * 32 ∨ R + off * 32 + 32 * n ≤ a →
+          st'.memory a = st.memory a)) ∧
+        (∀ j, j < n →
+          (loadWord st'.memory (R + (off + j) * 32)).toNat < blsR)) := by
+  intro V st hpre V' st' o hrun
+  refine ⟨b3_persist_contract n off R v hR hoff hsum V st hpre.1 V' st' o hrun, ?_⟩
+  intro j hj
+  rcases b3_persist_contract n off R v hR hoff hsum V st hpre.1 V' st' o hrun with
+    ⟨ho, hV, hmem, henv, hhalt, hout⟩
+  rw [hmem]
+  exact pcsQEvalCanon_chunk (mem := st.memory) (R := R) (off := off) (m := n) (v := v)
+    hvLt j hj
+
 /-- `wMulmodAt` by the field one is the identity on canonical words. -/
 theorem pcs_wMulmodAt_one_right {a : U256} (ha : a.toNat < blsR) :
     wMulmodAt a 1 (BitVec.ofNat 256 blsR) = a := by
