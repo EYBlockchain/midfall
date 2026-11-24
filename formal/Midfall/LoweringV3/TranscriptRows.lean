@@ -4941,6 +4941,95 @@ theorem runsAllP_tmReadN_g1_values (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) 
   · simpa only [List.map_map, Function.comp_def] using hpos'
   · simpa using hval
 
+theorem runsAllP_parseTraceAdvicePhase_values (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0)
+    (row : List (Nat × G₁)) (ph : Phase) (Qs : List G₁)
+    (hlen : Qs.length = (phaseCols vk.cs ph).length) :
+    RunsAllP E (parseTraceAdvicePhase E vk ([row], []) ph)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun st => st = ([row ++ List.zip (phaseCols vk.cs ph) Qs], [])) := by
+  rw [parseTraceAdvicePhase_zero_eq E vk hsp row ph]
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨reads, t', hrun, hbuf', hpos', hval⟩ :=
+    runsAllP_tmReadN_g1_values E (phaseCols vk.cs ph).length Qs hlen t pref rest hbuf
+      hpos hp henc hwidth
+  refine ⟨([row ++ List.zip (phaseCols vk.cs ph) reads.toList], []), t', ?_, hbuf', hpos', ?_⟩
+  · simp only [StateT.run_bind, hrun, StateT.run_pure]
+    rfl
+  · rw [hval]
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem length_flatMap_phaseCols (cs : Midfall.Halo2.ConstraintSystem (Fr p)) (phs : List Phase) :
+    (phs.flatMap (fun ph => phaseCols cs ph)).length =
+      (phs.map (fun ph => (phaseCols cs ph).length)).sum := by
+  induction phs with
+  | nil => rfl
+  | cons ph phs ih =>
+      simp only [List.flatMap_cons, List.length_append, List.map_cons, List.sum_cons, ih]
+
+theorem runsAllP_parseTraceAdvicePhases_values (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hsp : vk.cs.numChallenges = 0) :
+    ∀ (phs : List Phase) (row : List (Nat × G₁)) (Qs : List G₁),
+      Qs.length = (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum →
+      RunsAllP E (phs.foldlM (parseTraceAdvicePhase E vk) ([row], []))
+        (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun st => st = ([row ++ List.zip (phs.flatMap (fun ph => phaseCols vk.cs ph)) Qs], [])) := by
+  intro phs
+  induction phs with
+  | nil =>
+      intro row Qs hlen
+      have h0 : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst h0
+      simpa only [List.foldlM_nil, List.flatMap_nil, List.zip_nil_right, List.map_nil] using
+        (RunsAllP.pure E ([row], []) (fun st => st = ([row ++ []], [])) (by simp))
+  | cons ph phs ih =>
+      intro row Qs hlen
+      have hsum : Qs.length = (phaseCols vk.cs ph).length +
+          (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum := by
+        simpa only [List.map_cons, List.sum_cons] using hlen
+      set n := (phaseCols vk.cs ph).length with hn
+      have hlen1 : (Qs.take n).length = n := by rw [List.length_take]; omega
+      have hlen2 : (Qs.drop n).length =
+          (phs.map (fun ph => (phaseCols vk.cs ph).length)).sum := by
+        rw [List.length_drop, hsum]; omega
+      have hsplit : Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.foldlM_cons, hsplit]
+      refine RunsAllP.bind E
+        (ms₁ := (Qs.take n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (ms₂ := (Qs.drop n).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (runsAllP_parseTraceAdvicePhase_values E vk hsp row ph (Qs.take n)
+          (by rw [hlen1, hn])) ?_
+      intro st hst
+      rw [hst]
+      refine RunsAllP.mono E (ih (row ++ List.zip (phaseCols vk.cs ph) (Qs.take n))
+        (Qs.drop n) hlen2) ?_
+      intro st2 hst2
+      rw [hst2]
+      have hzip : List.zip ((phaseCols vk.cs ph) ++
+          (phs.flatMap (fun ph => phaseCols vk.cs ph))) Qs =
+          List.zip (phaseCols vk.cs ph) (Qs.take n) ++
+            List.zip (phs.flatMap (fun ph => phaseCols vk.cs ph)) (Qs.drop n) := by
+        conv_lhs => rw [show Qs = Qs.take n ++ Qs.drop n from
+          (List.take_append_drop n Qs).symm]
+        exact List.zip_append (l₁ := phaseCols vk.cs ph) (l₂ := Qs.take n)
+          (r₁ := phs.flatMap (fun ph => phaseCols vk.cs ph)) (r₂ := Qs.drop n)
+          (hn.symm.trans hlen1.symm)
+      rw [List.flatMap_cons, hzip, List.append_assoc]
+
 theorem wireMsgs_map_fr (E : VerifierEnv p G₁ G₂ Gₜ) :
     ∀ (qs : List (Fr p)),
       wireMsgs E (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) = wireOf (p := p) qs
@@ -7896,6 +7985,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebra [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.readN_g1_wire_values [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_tmReadN_g1_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.length_flatMap_phaseCols [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhase_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdvicePhases_values [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.bind_nil [propext, Classical.choice, Quot.sound] native []
