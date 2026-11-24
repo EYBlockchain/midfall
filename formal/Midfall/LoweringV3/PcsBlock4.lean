@@ -6463,6 +6463,8 @@ def PcsBlock4Pre (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256)
         (rotp.toNat + p.1 * Midfall.Generator.wordBytes) = rotVals p.1) ∧
     PcsQEvalCanon qep pointSets st ∧
     PcsBlock4SetFacts rv x2v x3v cptr qep scratch pointSets distinct pSet ∧
+    -- The walk's `PcsBlock4WalkEnv` needs the `bp_*` and `lbasis_*` locals unbound: block 3's
+    -- set loops restore them, so block 4 starts without them.
     (∀ s, s < pointSets.length →
       ∀ i, i < (pcsBatchInputs (pointSets.getD s []).length).length →
         VEnv.get V (pcsBpName i) = none) ∧
@@ -6486,6 +6488,7 @@ def pcsBlock4Final (rv x2v x3v cptr qep : U256) (st0 : EvmState)
       (qep.toNat + (pcsSetOff pointSets s + j) * Midfall.Generator.wordBytes))
     pointSets distinct pSet pointSets.length 0
 
+/-- The fold with the block's point values already specialised to the `rot_pt_i` table. -/
 def pcsBlock4FinalPSet (rv x2v x3v cptr qep : U256) (st0 : EvmState)
     (pointSets : List (List Int)) (distinct : List Int) (rotVals : Nat → U256) : U256 :=
   pcsBlock4Final rv x2v x3v cptr qep st0 pointSets distinct
