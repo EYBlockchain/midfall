@@ -5359,6 +5359,83 @@ theorem runsAllP_parseTraceLookupCommitments_count (E : VerifierEnv p G₁ G₂ 
   rw [hout, sum_rows_rowEvalSum_eq, hledger, hcount, lookupChunkSum_add_three,
     Array.length_toList]
 
+theorem runsAllP_lookupMultiplicities_fold_both (E : VerifierEnv p G₁ G₂ Gₜ)
+    (deg : Nat) :
+    ∀ (ls : List (LogupBatchedArgument (Fr p)))
+      (acc : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+      (Qs : List G₁),
+      (∀ l ∈ ls, ∃ c, l.chunkByDegree deg = .ok c) →
+      Qs.length = ls.length →
+      RunsAllP E (ls.foldlM (init := acc) fun acc' l => do
+          let chunked ← StateT.lift (l.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc'.push (m, chunked))) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun row => ledgerPairs row = ledgerPairs acc +
+          (ls.map (fun l => lookupChunkNum deg l + 1)).sum ∧
+          row.size = acc.size + ls.length) := by
+  intro ls
+  induction ls with
+  | nil =>
+      intro acc Qs hs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      refine RunsAllP.pure E acc _ ⟨?_, ?_⟩ <;> simp
+  | cons l ls ih =>
+      intro acc Qs hs hlen
+      obtain ⟨Q, Qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      obtain ⟨c, hc⟩ := hs l (by simp)
+      rw [List.foldlM_cons]
+      have hhead : RunsAllP E
+          ((fun acc => do
+            let chunked ← StateT.lift (l.chunkByDegree deg)
+            let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+            pure (acc.push (m, chunked))) acc)
+          ([Msg.g1 Q] : List (Msg (Fr p) G₁))
+          (fun row => ledgerPairs row = ledgerPairs acc + (lookupChunkNum deg l + 1) ∧
+            row.size = acc.size + 1) := by
+        have hstep := RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+          (ms₂ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (RunsAllP.lift_ok E c (fun chunked => l.chunkByDegree deg = .ok chunked) hc)
+          (fun chunked hchunked =>
+            RunsAllP.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁))) (ms₂ := [])
+              (RunsAll.toRunsAllP E (runsAll_logup_readMultiplicities E chunked Q))
+              (fun m _ => RunsAllP.pure E (acc.push (m, chunked))
+                (fun row => ledgerPairs row = ledgerPairs acc + (lookupChunkNum deg l + 1) ∧
+                  row.size = acc.size + 1)
+                (by
+                  refine ⟨?_, ?_⟩
+                  · rw [ledgerPairs_push, chunkNum_eq deg l chunked hchunked]
+                  · simp)))
+        simpa only [List.nil_append, hc] using hstep
+      have hb : RunsAllP E
+          ((fun acc => do
+            let chunked ← StateT.lift (l.chunkByDegree deg)
+            let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+            pure (acc.push (m, chunked))) acc >>= fun acc' =>
+              ls.foldlM (init := acc') fun acc' l => do
+                let chunked ← StateT.lift (l.chunkByDegree deg)
+                let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+                pure (acc'.push (m, chunked)))
+          ([Msg.g1 Q] ++ Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (fun row => ∃ acc', ledgerPairs acc' = ledgerPairs acc +
+              (lookupChunkNum deg l + 1) ∧ acc'.size = acc.size + 1 ∧
+            ledgerPairs row = ledgerPairs acc' +
+              (ls.map (fun l => lookupChunkNum deg l + 1)).sum ∧
+            row.size = acc'.size + ls.length) :=
+        RunsAllP.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (ms₂ := Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          hhead (fun acc' hacc' => by
+            have hb2 := ih acc' Qs' (fun l' hl' => hs l' (by simp [hl'])) (by simpa using hlen)
+            exact RunsAllP.mono E hb2 (fun row hrow =>
+              ⟨acc', hacc'.1, hacc'.2, hrow.1, hrow.2⟩))
+      refine RunsAllP.mono E hb ?_
+      intro row hrow
+      obtain ⟨acc', hled, hsz, hrowl, hrowsz⟩ := hrow
+      refine ⟨?_, ?_⟩
+      · rw [hrowl, hled, List.map_cons, List.sum_cons]; omega
+      · rw [hrowsz, hsz, List.length_cons]
+        omega
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -8045,6 +8122,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.congr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
