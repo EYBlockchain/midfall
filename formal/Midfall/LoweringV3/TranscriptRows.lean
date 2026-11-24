@@ -5781,6 +5781,189 @@ def XcriptAlgebraRun (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Pro
     Decoded R cd ms instW inst → XcriptAlgebraTail R H inst ms
 
 /-- `xcript_total` at one fixed decoded message list, directly from the tail clause. -/
+theorem bytes_prefix_cancel {A B C D : Bytes} (h : A ++ C = B ++ D)
+    (hsize : A.size = B.size) : A = B := by
+  have hL : bytesTake (A ++ C) 0 A.size = some A := by
+    rw [Midfall.bytesTake_append_left A C 0 A.size (by omega), bytesTake_whole]
+  have hR : bytesTake (B ++ D) 0 A.size = some B := by
+    rw [Midfall.bytesTake_append_left B D 0 A.size (by omega)]
+    exact Midfall.Lowering.bytesTake_whole_of_size (by omega)
+  have := congrArg (fun x => bytesTake x 0 A.size) h
+  rw [hL, hR] at this
+  exact Option.some.inj this
+
+theorem bytes_append_cancel_left {A C D : Bytes} (h : A ++ C = A ++ D) : C = D := by
+  apply ByteArray.ext
+  apply Array.toList_inj.mp
+  have hh := congrArg (fun x => x.data.toList) h
+  rw [ByteArray.data_append, ByteArray.data_append,
+    Array.toList_append, Array.toList_append] at hh
+  exact List.append_cancel_left hh
+
+theorem bytes_suffix_cancel {A B C D : Bytes} (h : A ++ C = B ++ D)
+    (hsize : C.size = D.size) : C = D := by
+  have htot : A.size + C.size = B.size + D.size := by
+    have := congrArg ByteArray.size h
+    rw [ByteArray.size_append, ByteArray.size_append] at this
+    exact this
+  have hpref : A.size = B.size := by omega
+  have htake := congrArg (fun x => bytesTake x A.size C.size) h
+  have hL : bytesTake (A ++ C) A.size C.size = some C := by
+    rw [show A.size = A.size + 0 by omega]
+    rw [Midfall.bytesTake_append_right A C 0 C.size (by omega)]
+    exact bytesTake_whole C
+  have hR : bytesTake (B ++ D) A.size C.size = some D := by
+    rw [show A.size = B.size + 0 by omega]
+    rw [Midfall.bytesTake_append_right B D 0 C.size (by omega)]
+    exact Midfall.Lowering.bytesTake_whole_of_size (by omega)
+  rw [hL, hR] at htake
+  exact Option.some.inj htake
+
+theorem snapshotAlgebraRun_buffer (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (ms : List (Msg (Fr p) G₁)) (s2 : SnapAlgebra p G₁) (t2 : Transcript)
+    (h : snapshotAlgebraRun E H vk inst ms = .ok (s2, t2)) :
+    t2.buffer = (transcriptOf E H ms).buffer := by
+  obtain ⟨t1, htrace, hread⟩ :=
+    Midfall.Lowering.snapshotAlgebraRun_readAlgebra E H vk inst ms s2 t2 h
+  obtain hparse :=
+    Midfall.Lowering.snapshotTraceRun_parseTrace E H vk inst ms s2.toSnapTrace t1 htrace
+  have hread1 : StateT.run
+      (Midfall.Halo2.Verifier.readAlgebra (p := p) E.g1 Features.solidity vk
+        s2.trace.permutations s2.trace.lookups s2.trace.trashcans 1
+        (instanceShape inst).size (instanceShape inst)) t1 = .ok (s2.alg, t2) := by
+    simpa [committedShape] using hread
+  have hpresPT : Midfall.Halo2.Pres (Midfall.Halo2.parseTrace (p := p) E.g1
+      Features.solidity vk (committedShape (G₁ := G₁)) (instanceShape inst)) :=
+    Midfall.Halo2.pres_parseTrace (p := p) E.g1 Features.solidity vk
+      (committedShape (G₁ := G₁)) (instanceShape inst)
+  have ht0 : (transcriptOf E H ms).Tiled :=
+    Transcript.tiled_initWithHash H _
+  have ht1 : t1.Tiled := Midfall.Halo2.Pres.of_run hpresPT ht0 hparse
+  have hb1 : t1.buffer = (transcriptOf E H ms).buffer :=
+    Midfall.Halo2.Pres.buffer hpresPT ht0 hparse
+  have hpresRA : Midfall.Halo2.Pres (Midfall.Halo2.Verifier.readAlgebra (p := p) E.g1
+      Features.solidity vk s2.trace.permutations s2.trace.lookups s2.trace.trashcans 1
+      (instanceShape inst).size (instanceShape inst)) :=
+    Midfall.Halo2.pres_readAlgebra (p := p) E.g1 Features.solidity vk
+      s2.trace.permutations s2.trace.lookups s2.trace.trashcans 1
+      (instanceShape inst).size (instanceShape inst)
+  have hb2 : t2.buffer = t1.buffer :=
+    Midfall.Halo2.Pres.buffer hpresRA ht1 hread1
+  exact hb2.trans hb1
+
+theorem snapshotXcriptRun_fields_of_tail (R : Render p G₁ G₂ Gₜ) (H : Hash)
+    {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    (hTail : XcriptAlgebraTail R H inst ms)
+    {x : SnapXcript p G₁}
+    (hx : snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x)
+    (henc : ∀ Q, R.E.g1.ofCompressed? (R.E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (R.E.g1.toCompressed Q).size = g1CompressedWidth)
+    (hp : p ≤ 2 ^ 256) :
+    ∃ (s2 : SnapAlgebra p G₁) (t2 : Transcript) (pref : Bytes) (fCom pi : G₁) (qs : List (Fr p)),
+      snapshotAlgebraRun R.E H R.vk inst ms = .ok (s2, t2) ∧
+      t2.buffer = pref ++ R.E.g1.toCompressed fCom ++ wireOf (p := p) qs ++
+        R.E.g1.toCompressed pi ∧
+      t2.pos = pref.size ∧ qs.length = R.nSets ∧
+      x.trace = s2.trace ∧ x.alg = s2.alg ∧
+      x.r.fCom = fCom ∧ x.r.pi = pi := by
+  obtain ⟨s2, t2, pref, fCom, pi, qs, hAlg, hbuf, hpos, hlen⟩ := hTail
+  obtain ⟨r, t5, hrun, hf, hpi, hq, hpos5, hbuf5⟩ :=
+    pcsReads_run_ok R.E.g1 R.E.field Features.solidity R.nSets t2 pref fCom pi qs
+      hlen hbuf hpos henc hwidth hp
+  unfold snapshotXcriptRun at hx
+  simp only [StateT.run_bind, StateT.run_pure] at hx
+  rw [hAlg] at hx
+  simp only [Except.bind, Except.pure, bind, pure] at hx
+  rw [hrun] at hx
+  simp only [Except.bind, Except.pure, bind, pure] at hx
+  rw [assertEmpty_run_ok t5 (by rw [hbuf5, hpos5])] at hx
+  simp only [Except.bind, Except.pure, bind, pure] at hx
+  have hxeq : x = ({ toSnapAlgebra := s2, r := r } : SnapXcript p G₁) := (Except.ok.inj hx).symm
+  subst hxeq
+  exact ⟨s2, t2, pref, fCom, pi, qs, hAlg, hbuf, hpos, hlen, rfl, rfl, hf, hpi⟩
+
+theorem xcript_tail_fCom_pi (R : Render p G₁ G₂ Gₜ) (H : Hash)
+    {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    (hTail : XcriptAlgebraTail R H inst ms)
+    {x : SnapXcript p G₁}
+    (hx : snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x)
+    (henc : ∀ Q, R.E.g1.ofCompressed? (R.E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (R.E.g1.toCompressed Q).size = g1CompressedWidth)
+    (hp : p ≤ 2 ^ 256)
+    {QPre : List G₁} {QEv : List (Fr p)} {fComD : G₁} {qsD : List (Fr p)} {piD : G₁}
+    (hsplit : ms = QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        ([Msg.g1 fComD] ++
+          (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD]))))
+    (hlenD : qsD.length = R.nSets) :
+    x.r.fCom = fComD ∧ x.r.pi = piD := by
+  obtain ⟨s2, t2, pref, fCom, pi, qs, hAlg, hbuf, hpos, hlen, hxtr, hxalg, hf, hpi⟩ :=
+    snapshotXcriptRun_fields_of_tail R H hTail hx henc hwidth hp
+  have hbufFull : t2.buffer = wireMsgs R.E ms := by
+    rw [snapshotAlgebraRun_buffer R.E H R.vk inst ms s2 t2 hAlg]
+    exact (transcriptOf_buffer R.E H ms).1
+  have hwire : wireMsgs R.E ms =
+      wireMsgs R.E (QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) ++
+      R.E.g1.toCompressed fComD ++ wireOf (p := p) qsD ++ R.E.g1.toCompressed piD := by
+    rw [hsplit]
+    simp [List.append_assoc, ByteArray.append_assoc, wireMsgs, wireMsgs_append,
+      wireMsgs_cons, msgWire, wireMsgs_g1_singleton, wireMsgs_map_fr,
+      bytes_append_empty_local]
+  let prefD := wireMsgs R.E (QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+    QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+  let X := wireOf (p := p) qs
+  let XD := wireOf (p := p) qsD
+  let C := R.E.g1.toCompressed fCom
+  let D := R.E.g1.toCompressed fComD
+  let Z := R.E.g1.toCompressed pi
+  let W := R.E.g1.toCompressed piD
+  have hEq : pref ++ C ++ X ++ Z = prefD ++ D ++ XD ++ W := by
+    calc
+      pref ++ C ++ X ++ Z = t2.buffer := hbuf.symm
+      _ = wireMsgs R.E ms := hbufFull
+      _ = prefD ++ D ++ XD ++ W := hwire
+  have hXsize : X.size = XD.size := by
+    simp only [X, XD, wireOf_size, hlen, hlenD]
+  have hZsize : Z.size = W.size := by
+    simp only [Z, W]
+    rw [hwidth pi, hwidth piD]
+  have hCsize : C.size = D.size := by
+    simp only [C, D]
+    rw [hwidth fCom, hwidth fComD]
+  have hAsize : (pref ++ C).size = (prefD ++ D).size := by
+    have hL : (pref ++ C ++ X ++ Z).size =
+        pref.size + C.size + X.size + Z.size := by
+      simp only [ByteArray.size_append]
+    have hR : (prefD ++ D ++ XD ++ W).size =
+        prefD.size + D.size + XD.size + W.size := by
+      simp only [ByteArray.size_append]
+    have h := congrArg ByteArray.size hEq
+    rw [hL, hR] at h
+    rw [ByteArray.size_append, ByteArray.size_append]
+    omega
+  have hEq' : (pref ++ C) ++ (X ++ Z) = (prefD ++ D) ++ (XD ++ W) := by
+    simpa only [ByteArray.append_assoc] using hEq
+  have hA : pref ++ C = prefD ++ D := bytes_prefix_cancel hEq' hAsize
+  have htailEq : X ++ Z = XD ++ W := by
+    rw [hA] at hEq'
+    exact bytes_append_cancel_left hEq'
+  have hX : X = XD := bytes_prefix_cancel htailEq hXsize
+  have hZ : Z = W := by
+    rw [hX] at htailEq
+    exact bytes_append_cancel_left htailEq
+  have hCD : C = D := bytes_suffix_cancel hA hCsize
+  have hfcom : fCom = fComD := by
+    have h := congrArg R.E.g1.ofCompressed? hCD
+    rw [henc fCom, henc fComD] at h
+    exact Option.some.inj h
+  have hpi' : pi = piD := by
+    have h := congrArg R.E.g1.ofCompressed? hZ
+    rw [henc pi, henc piD] at h
+    exact Option.some.inj h
+  exact ⟨hf.trans hfcom, hpi.trans hpi'⟩
+
 theorem xcript_total_at (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
     {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
@@ -8381,6 +8564,12 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.exists_split_fr_prefix [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.ms_split_plan [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_ms_split [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytes_prefix_cancel [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytes_append_cancel_left [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytes_suffix_cancel [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotAlgebraRun_buffer [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotXcriptRun_fields_of_tail [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_tail_fCom_pi [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.advicePhaseTotal_not_columnOrder [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
