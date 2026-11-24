@@ -2639,36 +2639,34 @@ theorem lag_guard_body_run {c : ExternalCalls} {g : ExternalGas} {consts : Inlin
 
 /-- The outer MF-4 guard: from `success = 0` and `lagrange_precompile_failed = 0` every run
     halts reverted (`ERR_PROOF_REJECTED`). -/
-theorem lag_outer_guard_run {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
-    [Group G₁] [Group G₂] [Group Gₜ] [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p]
-    [PrimeOrderWith Gₜ p] [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
-    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
-    {c : ExternalCalls} {g : ExternalGas} (R : Render p G₁ G₂ Gₜ)
+theorem lag_outer_guard_run {consts : Inline.Consts}
+    {c : ExternalCalls} {g : ExternalGas}
     {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
     {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
     {errPR : Nat}
-    (hPR : R.consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hsuccNone : consts.lookup "success" = none)
     (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
     (hs : VEnv.get V "success" = some (0 : U256))
     (hp : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
-    (h : ExecStmts (Bridge.Dialect c g) funs V st (lagGuard R.consts) V' st' o) :
+    (h : ExecStmts (Bridge.Dialect c g) funs V st (lagGuard consts) V' st' o) :
     o = .halt ∧ Midfall.LoweringV2.Reverted st' := by
   have hfail' : lookupFun (hoist (Bridge.Dialect c g)
       [Stmt.cond (Expr.var "lagrange_precompile_failed")
-        [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
-       Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])]
+        [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+       Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])]
       :: funs) "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv) := by
     have hh : hoist (Bridge.Dialect c g)
         [Stmt.cond (Expr.var "lagrange_precompile_failed")
-          [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
-         Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])] = [] := by
+          [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+         Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])] = [] := by
       rfl
     rw [hh]
     exact hfail
   cases h with
   | seqCons h1 _ =>
       simp only [lagGuard, lagSite,
-        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+        hsuccNone] at h1
       cases h1 with
       | ifTrue hc hnz hbody =>
           have hh := lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
@@ -2681,7 +2679,7 @@ theorem lag_outer_guard_run {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Typ
           exact absurd hz' (by decide)
   | seqStop h1 hne =>
       simp only [lagGuard, lagSite,
-        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+        hsuccNone] at h1
       cases h1 with
       | ifTrue hc hnz hbody =>
           exact lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
@@ -2757,6 +2755,205 @@ theorem lag_inner_contract_zero {consts : Inline.Consts} {cd : Bytes} {k n m : N
   have hip' := hip
   obtain ⟨ret, pf, hsucc, -, -, -, -, hszero, -⟩ := hip'
   exact ⟨ho, hip, by rw [hsucc, (hszero hsucc0).1]⟩
+
+
+/-! ## 5c. THE ENVIRONMENT NAME SHAPE OF A RUN -/
+
+/-- `VEnv.set` preserves the name list. -/
+theorem venv_set_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V : VEnv D) (x : Ident) (v : D.Value) :
+    (VEnv.set V x v).map Prod.fst = V.map Prod.fst := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, w⟩ := p
+      unfold VEnv.set
+      by_cases h : y = x
+      · simp [h]
+      · simp [h, ih]
+
+/-- `VEnv.setMany` preserves the name list. -/
+theorem venv_setMany_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V : VEnv D) (xs : List Ident) (vs : List D.Value) :
+    (VEnv.setMany V xs vs).map Prod.fst = V.map Prod.fst := by
+  unfold VEnv.setMany
+  generalize xs.zip vs = ps
+  induction ps generalizing V with
+  | nil => rfl
+  | cons p ps ih =>
+      obtain ⟨x, v⟩ := p
+      simp only [List.foldl_cons]
+      rw [ih, venv_set_names]
+
+/-- The names of a zip are the prefix of the first list. -/
+theorem zip_fst_names {α β : Type} (xs : List α) (ys : List β) :
+    (xs.zip ys).map Prod.fst = xs.take ys.length := by
+  induction xs generalizing ys with
+  | nil =>
+      cases ys with
+      | nil => rfl
+      | cons b bs => simp [List.zip]
+  | cons a as ih =>
+      cases ys with
+      | nil => rfl
+      | cons b bs =>
+          rw [List.zip_cons_cons, List.map_cons, ih]
+          rfl
+
+/-- A block's `restore` drops the values but keeps the outer name list. -/
+theorem restore_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V W : VEnv D} {e : List Ident}
+    (h : W.map Prod.fst = e ++ V.map Prod.fst) :
+    (restore V W).map Prod.fst = V.map Prod.fst := by
+  have hl : W.length - V.length = e.length := by
+    have hh := congrArg List.length h
+    simp only [List.length_map, List.length_append] at hh
+    omega
+  rw [show restore V W = W.drop (W.length - V.length) from rfl, hl, List.map_drop, h]
+  exact List.drop_left
+
+
+
+/-- The names a code fragment can bind in the CURRENT environment. Scopes (`block`, `cond`,
+    `forLoop`, `loop`) restore their bindings, so only the top-level `let`s of a sequence count;
+    the run-shape lemma threads nested cases with an empty local prefix. -/
+def Code.boundNames {Op : Type} : Code Op → List Ident
+  | .expr _ => []
+  | .args _ => []
+  | .stmt (.letDecl vars _) => vars
+  | .stmt _ => []
+  | .stmts [] => []
+  | .stmts (s :: ss) => Code.boundNames (.stmt s) ++ Code.boundNames (.stmts ss)
+  | .loop _ _ _ => []
+
+
+
+/-- **THE ENVIRONMENT SHAPE OF EVERY RUN.** A `.sres` run's output environment is the input
+    environment with a prefix of locally bound names; every name in that prefix is a top-level
+    `let` of the code. -/
+theorem Step.sres_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {V : VEnv D} {st : D.State} {code : Code D.Op} {r : Res D}
+    (h : Step D funs V st code r) :
+    ∀ {V' : VEnv D} {st' : D.State} {o : Outcome}, r = .sres V' st' o →
+      ∃ extra : List Ident, V'.map Prod.fst = extra ++ V.map Prod.fst ∧
+        ∀ x ∈ extra, x ∈ Code.boundNames code := by
+  induction h with
+  | lit => intro V' st' o hr; cases hr
+  | var => intro V' st' o hr; cases hr
+  | builtinOk => intro V' st' o hr; cases hr
+  | builtinHalt => intro V' st' o hr; cases hr
+  | builtinArgsHalt => intro V' st' o hr; cases hr
+  | callOk => intro V' st' o hr; cases hr
+  | callHalt => intro V' st' o hr; cases hr
+  | callArgsHalt => intro V' st' o hr; cases hr
+  | argsNil => intro V' st' o hr; cases hr
+  | argsCons => intro V' st' o hr; cases hr
+  | argsRestHalt => intro V' st' o hr; cases hr
+  | argsHeadHalt => intro V' st' o hr; cases hr
+  | funDef => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp [Code.boundNames]⟩
+  | block hbody ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨[], restore_names he, by simp⟩
+  | letZero =>
+      intro V' st' o hr; cases hr
+      rename_i vars
+      refine ⟨vars, ?_, ?_⟩
+      · rw [List.map_append]
+        congr 1
+        simp [bindZeros, Function.comp_def]
+      · intro x hx
+        simpa [Code.boundNames, bindZeros] using hx
+  | letVal he hlen ihhe =>
+      intro V' st' o hr; cases hr
+      rename_i vars e vals st1
+      refine ⟨vars.take vals.length, ?_, ?_⟩
+      · rw [List.map_append, zip_fst_names, hlen, List.take_length]
+      · intro x hx
+        simp only [Code.boundNames]
+        exact List.mem_of_mem_take hx
+  | letHalt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp [Code.boundNames]⟩
+  | assignVal he ihhe hlen =>
+      intro V' st' o hr; cases hr
+      exact ⟨[], venv_setMany_names _ _ _, by simp⟩
+  | assignHalt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | exprStmt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | exprStmtHalt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | ifTrue hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | ifFalse hc hz ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | ifHalt hc ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | switchExec hc hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | switchHalt hc ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | forLoop hinit hloop ihinit ihloop =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, h1, _⟩ := ihinit rfl
+      obtain ⟨e2, h2, _⟩ := ihloop rfl
+      exact ⟨[], restore_names (by rw [h2, h1, List.append_assoc]), by simp⟩
+  | forInitHalt hinit ihinit =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, _⟩ := ihinit rfl
+      exact ⟨[], restore_names he, by simp⟩
+  | «break» => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | «continue» => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | «leave» => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | seqNil => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | seqCons h1 h2 ih1 ih2 =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, he1, hb1⟩ := ih1 rfl
+      obtain ⟨e2, he2, hb2⟩ := ih2 rfl
+      refine ⟨e2 ++ e1, by rw [he2, he1, List.append_assoc], ?_⟩
+      intro x hx
+      simp only [Code.boundNames, List.mem_append] at hx ⊢
+      rcases hx with hx | hx
+      · exact Or.inr (hb2 x hx)
+      · exact Or.inl (hb1 x hx)
+  | seqStop h1 hne ih1 =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ih1 rfl
+      refine ⟨e, he, fun x hx => ?_⟩
+      simp only [Code.boundNames, List.mem_append]
+      exact Or.inl (hb x hx)
+  | loopDone hc hz ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | loopCondHalt hc ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | loopStep hc hnz hbody hob hpost hloop ihc ihbody ihpost ihloop =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, h1, hb1⟩ := ihbody rfl
+      obtain ⟨e2, h2, hb2⟩ := ihpost rfl
+      obtain ⟨e3, h3, hb3⟩ := ihloop rfl
+      refine ⟨e3 ++ e2 ++ e1, by rw [h3, h2, h1, List.append_assoc, List.append_assoc], ?_⟩
+      intro x hx
+      simp only [Code.boundNames, List.mem_append] at hx ⊢
+      rcases hx with (hx | hx) | hx
+      · simpa [Code.boundNames] using hb3 x hx
+      · simpa [Code.boundNames] using hb2 x hx
+      · simpa [Code.boundNames] using hb1 x hx
+  | loopPostHalt hc hnz hbody hob hpost ihc ihbody ihpost =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, h1, hb1⟩ := ihbody rfl
+      obtain ⟨e2, h2, hb2⟩ := ihpost rfl
+      refine ⟨e2 ++ e1, by rw [h2, h1, List.append_assoc], ?_⟩
+      intro x hx
+      simp only [Code.boundNames, List.mem_append] at hx ⊢
+      exact hx.elim (fun h => by simpa [Code.boundNames] using hb2 x h)
+        (fun h => by simpa [Code.boundNames] using hb1 x h)
+  | loopBreak hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | loopLeave hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | loopBodyHalt hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
 
 
 end Midfall.LoweringV3.LagrangeBlock
