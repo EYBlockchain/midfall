@@ -1546,4 +1546,129 @@ theorem lagPre_of_inv_transcript_of_payload (R : Render p G₁ G₂ Gₜ) (hR : 
 
 #assert_axioms lagPre_of_inv_transcript_of_payload [propext, Classical.choice, Quot.sound]
 
+/-! ## 10. THE PG-OMEGAINV SLOT AND THE PAYLOAD WINDOW FROM `Inv .vk` -/
+
+/-- The generated model reads `numNegLagranges` off the plan meta (the Certified proof,
+    re-derived below `GeneratorTheorem`). -/
+theorem model_numNegLagranges_of_generated_lag {R : Render p G₁ G₂ Gₜ}
+    (h : GeneratedBy R) :
+    R.model.numNegLagranges = R.plan.meta_.rotationLast.natAbs := by
+  have hg := Midfall.LoweringV3.MemoryPairs.gvfp_of_generated h
+  simp only [Midfall.Generator.generateVerifierFromPlan, Bind.bind, Except.bind] at hg
+  split at hg
+  · cases hg
+  · cases hg
+  · obtain ⟨_a1, _, h1⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp hg
+    obtain ⟨_a2, _, h2⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h1
+    obtain ⟨_a3, _, h3⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h2
+    obtain ⟨_a4, _, h4⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h3
+    obtain ⟨_a5, _, h5⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h4
+    obtain ⟨_a6, _, h6⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h5
+    obtain ⟨_a7, _, h7⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h6
+    have hrec := Except.ok.inj h7
+    simpa [Midfall.Generator.numNegLagrangesOf] using
+      (congrArg (fun x => x.numNegLagranges) hrec).symm
+
+#assert_axioms model_numNegLagranges_of_generated_lag [propext, Classical.choice, Quot.sound]
+
+/-- **PG-OMEGAINV-SLOT**, from the generated model: the plan meta's rotation magnitude is the
+    plan view's `numNegLagranges`. -/
+theorem pg_omegainv_slot {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    R.plan.meta_.rotationLast.natAbs = R.pv.numNegLagranges := by
+  have h := model_numNegLagranges_of_generated_lag hR.generated
+  exact h.symm.trans (by rfl)
+
+#assert_axioms pg_omegainv_slot [propext, Classical.choice, Quot.sound]
+
+theorem blindingFactors_ok_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    ∃ bf, R.vk.cs.blindingFactors = .ok bf := by
+  have hneg := hR.env.negLagranges
+  have hge := negLagranges_of_valid hR
+  cases h : R.vk.cs.blindingFactors with
+  | error e =>
+      simp [h, Except.toOption] at hneg
+      omega
+  | ok bf => exact ⟨bf, rfl⟩
+
+theorem lagrangeTriple_exists_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (s2 : SnapAlgebra p G₁) :
+    ∃ tri, lagrangeTriple (p := p) (G₁ := G₁) R.vk s2.alg.x s2.alg.xn = .ok tri := by
+  obtain ⟨bf, hbf⟩ := blindingFactors_ok_of_valid R hR
+  unfold lagrangeTriple
+  rw [hbf]
+  dsimp only [Bind.bind, Except.bind]
+  let rots : List Int :=
+    List.map (fun i => -((bf + 1 : Nat) : Int) + (i : Int))
+      (List.flatMap (fun a => pure ((a : Nat) : Int)) (List.range (bf + 2)))
+  have hone : ∀ (l : List Nat), (l.map (fun _ => 1)).sum = l.length := by
+    intro l
+    induction l with
+    | nil => rfl
+    | cons a l ih =>
+        simp only [List.map_cons, List.sum_cons, List.length_cons]
+        rw [ih]
+        omega
+  have hsz : (R.vk.domain.lIRange s2.alg.x s2.alg.xn rots).size = bf + 2 := by
+    dsimp only [rots]
+    rw [Midfall.LoweringV3.TranscriptRows.lIRange_size, List.length_map, List.length_flatMap]
+    simp [List.length_range]
+  have hcond : ((R.vk.domain.lIRange s2.alg.x s2.alg.xn rots).size == bf + 2) = true := by
+    rw [hsz]
+    exact beq_self_eq_true _
+  rw [ite_eq_left hcond]
+  exact ⟨_, rfl⟩
+
+#assert_axioms blindingFactors_ok_of_valid [propext, Classical.choice, Quot.sound]
+#assert_axioms lagrangeTriple_exists_of_valid [propext, Classical.choice, Quot.sound]
+
+theorem snapshotLagrangeStep_exists_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (s2 : SnapAlgebra p G₁) :
+    ∃ l, snapshotLagrangeStep (G₁ := G₁) R.vk s2 = .ok l := by
+  obtain ⟨tri, htri⟩ := lagrangeTriple_exists_of_valid R hR s2
+  let l : SnapLagrange p G₁ :=
+    { toSnapAlgebra := s2, lagrange := tri, instanceEval := instanceEvalOf R.vk s2.alg }
+  refine ⟨l, ?_⟩
+  simp only [snapshotLagrangeStep, htri, Bind.bind, Except.bind, pure, Except.pure, l]
+
+#assert_axioms snapshotLagrangeStep_exists_of_valid [propext, Classical.choice, Quot.sound]
+
+/-- The `.vk` payload pin, extracted from `Inv .vk`. -/
+theorem inv_vk_payload {calls : ExternalCalls} {gas : ExternalGas}
+    {E : VerifierEnv p G₁ G₂ Gₜ} {params : ParamsVerifierKZG G₁ G₂}
+    {PV : PlanView} {S : Snapshot p G₁ G₂ Gₜ} {V : VEnv (Bridge.Dialect calls gas)}
+    {st : EvmState}
+    (h : Midfall.Lowering.Inv E params Checkpoint.vk PV S V st) :
+    bytesAt st (ptrAddr PV.memory.vkMptr) PV.vk.len = PV.vk.bytes := by
+  have h1 := h
+  unfold Midfall.Lowering.Inv at h1
+  simp only [InvAt] at h1
+  simp only [Midfall.Lowering.checkpoint_le_def, Checkpoint.idx] at h1
+  have hvv : (1 : Nat) ≤ 1 := by decide
+  have htv : ¬ (2 : Nat) ≤ 1 := by decide
+  have hiv : ¬ (3 : Nat) ≤ 1 := by decide
+  have hlv : ¬ (4 : Nat) ≤ 1 := by decide
+  have hqv : ¬ (5 : Nat) ≤ 1 := by decide
+  simp only [hvv, htv, hiv, hlv, hqv, ite_true, ite_false, Bool.false_eq_true] at h1
+  simp only [Bool.and_eq_true] at h1
+  have hh := h1.1.1.1.1.1.2.1.1
+  change ((bytesAt st (ptrAddr PV.memory.vkMptr) PV.vk.len).data == PV.vk.bytes.data) = true at hh
+  exact ByteArray.ext (beq_iff_eq.mp hh)
+
+/-- `lagPre_of_inv_transcript_of_payload` with the payload window read off `Inv .vk`. -/
+theorem lagPre_of_inv_transcript_of_vk (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hframe : Frame R H vkAddr cd V st)
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (hpf : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (hinv : Midfall.Lowering.Inv (calls := c) (gas := g) R.E R.params Checkpoint.vk
+      R.pv S V st)
+    (hx : loadWord st.memory (lagCfgOf R cd S).aX = (lagCfgOf R cd S).xw) :
+    LagrangeBlock.LagPre (lagCfgOf R cd S) V st :=
+  lagPre_of_inv_transcript_of_payload R hR cd S H vkAddr V st hframe hsucc hpf hx
+    (pg_omegainv_slot hR)
+    (readBytes_of_bytesAt (inv_vk_payload hinv))
+
+
 end Midfall.LoweringV3
