@@ -8779,13 +8779,16 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     named SIM.10 parser-side clause, §3b) plus the `Inv .transcript` assembly, and
     `tp_agrees_of_agree` isolates the latter. THE SCHEDULE LAYER IS NOW LANDED:
     `xcriptSchedule_of_planReadCounts` derives the fine read schedule from the coarse
-    decoded split and `PlanReadCounts` (the three plan-count/VK-schedule equations), and
+    decoded split and `PlanReadCounts` (the two plan-count/VK-schedule equations), and
     `xcriptAlgebraRun_of_planReadCounts` spends it. The key-side instance-query bound is
     now `WellFormed.instanceQueriesBound` (D-GATE15(c)), so the old `hinstQ` premise is
-    gone. THE FIXED STATEMENT'S RESIDUAL is therefore exactly `PlanReadCounts` (two
-    count equations; the point-set count is `rfl`), the calldata bound `hnum` (only
+    gone, and `PlanReadCounts` itself is PROVED downstream in
+    `EndToEndAlgebra.planReadCounts_of_valid` (`planPrefixG1_eq` + `planNumEvals_eq`).
+    THE FIXED STATEMENT'S RESIDUAL is therefore exactly the calldata bound `hnum` (only
     `< 2^64` is available from `SupportedInput.sizeBound`, not `< 2^31`) and Calldata's
-    `XcriptG1` - not `ValidV3` + `Decoded` alone.
+    `XcriptG1`; `EndToEndAlgebra.tp_agrees_of_valid` is the fixed row's fully wired
+    consumer (`ValidV3` + `hnum` + `XcriptG1`). The proof of the fixed statement itself
+    cannot be imported here: `EndToEndAlgebra` imports this file.
     THE `Inv .transcript` HALF IS LANDED as `invAt_transcript_of_xcriptG1`, and
     `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
     decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
