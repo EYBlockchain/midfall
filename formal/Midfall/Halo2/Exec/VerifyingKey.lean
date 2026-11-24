@@ -183,6 +183,15 @@ structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features)
       `inst.size < 2^31` so the `asI32` window does not wrap - is a calldata fact,
       stated at the `readAlgebra` walk, not a key field.) -/
   instanceRotZero : ∀ q ∈ vk.cs.instanceQueries.toList, q.2.int = 0
+  /-- **D-GATE15(c): every instance query names a valid instance column.**
+      `readAlgebra` indexes the instance matrix as
+      `instances[q.1.index - nbCommittedInstances]` (`verifier.rs:366`), a slice
+      index; `parse_trace`'s column-count check is a `zip` and does not cover a
+      query whose column is past `numInstanceColumns`. The interface pins the
+      bound so the read walk's index is always in range (the runtime half,
+      `inst.size < 2^31`, stays at the walk). -/
+  instanceQueriesBound : ∀ q ∈ vk.cs.instanceQueries.toList,
+    q.1.index < vk.cs.numInstanceColumns
 
 /-! rust: plonk/mod.rs:94-120 (write), :124-150 (read), :151-186
     (read_from_cs), :218-221 (bytes_length), :293-300 (pinned), and

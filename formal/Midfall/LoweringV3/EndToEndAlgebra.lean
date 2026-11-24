@@ -4163,6 +4163,236 @@ theorem parseTraceSchedule {G₁ G₂ Gₜ : Type}
     ParseTraceSchedule R :=
   parseTraceSchedule_of_advicePhase R hR (advicePhaseCountFit_of_wellFormed R.vk hR.supported.wf)
 
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+
+variable {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem lookupChunkNum_sum_eq_of_chunkedOf (deg k : Nat) :
+    ∀ (l : List (LogupBatchedArgument (Fr p))) (cl : List (LogupChunkedArgument (Fr p))),
+      chunkedOf deg l = some cl →
+      (l.map (fun x => TranscriptRows.lookupChunkNum deg x + k)).sum
+        = (cl.map (fun c => c.numChunks + k)).sum := by
+  intro l
+  induction l with
+  | nil =>
+      intro cl h
+      simp [chunkedOf] at h
+      cases h
+      rfl
+  | cons a as ih =>
+      intro cl h
+      unfold chunkedOf at h
+      simp only [List.mapM_cons] at h
+      cases ha : (a.chunkByDegree deg).toOption with
+      | none => simp [ha] at h
+      | some c =>
+          simp only [ha, Option.bind_some] at h
+          cases hrest : List.mapM (fun x => (x.chunkByDegree deg).toOption) as with
+          | none => simp [hrest] at h
+          | some cl0 =>
+              rw [hrest] at h
+              simp only [Option.pure_def, Option.bind_some] at h
+              injection h with h
+              subst h
+              simp only [List.map_cons, List.sum_cons]
+              have hok : a.chunkByDegree deg = .ok c := by
+                cases h : a.chunkByDegree deg with
+                | ok c' =>
+                    rw [h] at ha
+                    simp only [Except.toOption, Option.some.injEq] at ha
+                    subst ha
+                    rfl
+                | error e =>
+                    rw [h] at ha
+                    change none = some c at ha
+                    cases ha
+              have hc : c.numChunks = TranscriptRows.lookupChunkNum deg a :=
+                TranscriptRows.chunkNum_eq deg a c hok
+              rw [hc, ih cl0 hrest]
+
+
+
+
+theorem protocol_evalPlanFields {F : Type} (feat : Features) (cs : ConstraintSystem F)
+    (nb : Nat) {plan : ProtocolPlan}
+    (h : ProtocolPlan.fromConstraintSystem feat cs nb = .ok plan) :
+    plan.instanceQueries = cs.instanceQueries.toList.map
+        (fun q => QueryKey.new q.1.index q.2.int) ∧
+    plan.numCommittedInstances = nb ∧
+    plan.adviceQueries = cs.adviceQueries.toList.map
+        (fun q => QueryKey.new q.1.index q.2.int) ∧
+    plan.numFixeds = cs.numFixedColumns ∧
+    plan.simpleSelectorCols = (List.range cs.numFixedColumns).filter
+        (fun idx => cs.hasSimpleSelectorCol idx) ∧
+    plan.numSimpleSelectors = cs.numSimpleSelectors ∧
+    plan.permutationColumns = cs.permutation.getColumns.toList ∧
+    plan.validate = .ok () := by
+  unfold ProtocolPlan.fromConstraintSystem at h
+  simp only [Bind.bind] at h
+  obtain ⟨csDegree, _hdeg, h1⟩ := AlgebraWidths.except_bind_ok h
+  obtain ⟨lookupChunks, _hlu, h2⟩ := AlgebraWidths.except_bind_ok h1
+  obtain ⟨_x1, _hr1, h3⟩ := AlgebraWidths.except_bind_ok h2
+  obtain ⟨_x2, _hr2, h4⟩ := AlgebraWidths.except_bind_ok h3
+  obtain ⟨_bl, _hbl, h5⟩ := AlgebraWidths.except_bind_ok h4
+  split at h5
+  · rename_i hfix
+    split at h5
+    · rename_i hval
+      cases h5
+      refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_⟩
+      simpa using hval
+    · cases h5
+  · cases h5
+
+
+
+
+set_option maxHeartbeats 4000000 in
+theorem planPrefixG1_eq (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count
+      = TranscriptRows.planPrefixG1Count R := by
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hL, _hc1, _hc2, _hc3,
+    _hc4, _hc5, _hc6, _hc7, _hc8, _hup, _huser, _hnInst, _htrunc, _hnLook, _hnPerm,
+    _hnTrash, _hLH⟩ := TranscriptRows.tp_planFacts (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ) hR
+  have facts := TranscriptRows.tp_fromProtocol hL
+  have hcounts := protocol_parseCounts (p := p) R.vk hR.supported.wf
+    (plan_protocol_fromConstraintSystem R hR)
+  rw [hmeta] at hcounts
+  obtain ⟨hLook, ⟨cl, hcl, hChunks⟩, hPerm, hTrash, hQuot, hAdvSum⟩ := hcounts
+  have eA : adviceReadCount R.vk.cs 1
+      = Midfall.Lowering.sumNat (L.advicePhases.map (fun s => s.itemCount)) := by
+    rw [advicePhaseCountFit_of_wellFormed R.vk hR.supported.wf, ← hAdvSum, ← facts.adviceSum]
+  have eM : R.vk.cs.lookups.size = L.lookupMultiplicities.itemCount := by
+    rw [facts.lookupM, hLook]
+  have eP : Permutation.numChunksOf R.vk.cs.permutation.columns.size
+        (R.vk.csDegree - 2) = L.permutationProducts.itemCount := by
+    rw [facts.permZ, hPerm]
+  have eT : R.vk.cs.trashcans.size = L.trash.itemCount := by
+    rw [facts.trash, hTrash]
+  have eQ : readAlgebraQuotientCount Features.solidity R.vk
+      = L.quotientLimbs.itemCount := by
+    rw [facts.quotient, hQuot]
+  have eS : lookupCommitReadCount R.vk.csDegree R.vk.cs.lookups.toList
+      = Midfall.Lowering.sumNat (L.lookups.map (fun lk =>
+          lk.helpers.itemCount + lk.accumulator.itemCount)) := by
+    rw [facts.lookupSum, hChunks]
+    have hmap := zip_range_snd_map (cl.map LogupChunkedArgument.numChunks)
+      (fun c => c + 1)
+    rw [hmap, List.map_map]
+    unfold lookupCommitReadCount
+    rw [hcl]
+    simp only [Option.getD_some]
+    exact (sumNat_eq_sum _).symm
+  have eA' : adviceReadCount R.vk.cs 1
+      = (R.vk.cs.phases.map (fun ph =>
+          (TranscriptRows.phaseCols R.vk.cs ph).length)).sum := by
+    simp [adviceReadCount, TranscriptRows.phaseCols, advicePhaseCols]
+  have eS' : lookupCommitReadCount R.vk.csDegree R.vk.cs.lookups.toList
+      = (R.vk.cs.lookups.toList.map (fun l =>
+          TranscriptRows.lookupChunkNum R.vk.csDegree l + 1)).sum := by
+    unfold lookupCommitReadCount
+    rw [hcl]
+    simp only [Option.getD_some]
+    exact (lookupChunkNum_sum_eq_of_chunkedOf (p := p) R.vk.csDegree 1
+      R.vk.cs.lookups.toList cl hcl).symm
+  have hprefix : (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).prefixG1Count = L.commitmentG1Count := by
+    rw [hlay]
+    show (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).g1Groups.foldl
+      (fun acc n => acc + n) 0 = L.commitmentG1Count
+    rw [show (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).g1Groups
+      = L.commitmentReadGroups from rfl]
+    exact Midfall.Lowering.sum_commitmentReadGroups L
+  rw [hprefix]
+  unfold ProofCalldataLayout.commitmentG1Count ProofCalldataLayout.nonQuotientG1Count
+  dsimp only
+  unfold TranscriptRows.planPrefixG1Count
+  change Midfall.Lowering.sumNat (L.advicePhases.map (fun s => s.itemCount))
+      + L.lookupMultiplicities.itemCount + L.permutationProducts.itemCount
+      + Midfall.Lowering.sumNat (L.lookups.map (fun lk =>
+          lk.helpers.itemCount + lk.accumulator.itemCount))
+      + L.trash.itemCount + L.quotientLimbs.itemCount =
+    (List.map (fun ph => (TranscriptRows.phaseCols R.vk.cs ph).length) R.vk.cs.phases).sum
+      + R.vk.cs.lookups.size
+      + Permutation.numChunksOf R.vk.cs.permutation.columns.size (R.vk.csDegree - 2)
+      + (List.map (fun l => TranscriptRows.lookupChunkNum R.vk.csDegree l + 1)
+          R.vk.cs.lookups.toList).sum
+      + R.vk.cs.trashcans.size
+      + (if Features.solidity.outerSingleHCommitment = true then 1
+          else R.vk.domain.getQuotientPolyDegree)
+  rw [← eA, ← eM, ← eP, ← eS, ← eT, ← eQ, eA', eS']
+  rfl
+
+
+
+
+set_option maxHeartbeats 4000000 in
+theorem planNumEvals_eq (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (inst : Array (Fr p)) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals
+      = TranscriptRows.planNumEvals R inst := by
+  rw [plan_numEvals_eq_protocol R hR]
+  change R.plan.meta_.protocol.proof.evals.length = TranscriptRows.planNumEvals R inst
+  have hplan := plan_protocol_fromConstraintSystem R hR
+  rw [fromConstraintSystem_evals_length Features.solidity R.vk.cs 1 hplan]
+  obtain ⟨hInstQ, hNCI, hAdvQ, hNumFix, hSimpleCols, hNumSimple, hPermCols, hValid⟩ :=
+    protocol_evalPlanFields Features.solidity R.vk.cs 1 hplan
+  obtain ⟨hLook, ⟨cl, hcl, hChunks⟩, hPerm, hTrash, hQuot, hAdvSum⟩ :=
+    protocol_parseCounts (p := p) R.vk hR.supported.wf hplan
+  have hSimpleLen : R.plan.meta_.protocol.simpleSelectorCols.length
+      = R.vk.cs.numSimpleSelectors := by
+    rw [← validate_numSimpleSelectors hValid, hNumSimple]
+  rw [hInstQ, hNCI, hAdvQ, hNumFix, hSimpleLen, hPermCols, hPerm, hChunks, hTrash]
+  unfold TranscriptRows.planNumEvals
+  simp only [List.map_map, Function.comp_def]
+  rw [filter_map_index_length]
+  rw [← lookupChunkNum_sum_eq_of_chunkedOf (p := p) R.vk.csDegree 3
+    R.vk.cs.lookups.toList cl hcl]
+  simp only [Midfall.Halo2.PermutationArgument.getColumns, Array.length_toList]
+  rw [← hR.supported.wf.permutationCommitmentsMatch]
+  simp [instanceShape]
+
+/-- **`PlanReadCounts` FOR THE GENERATED PLAN.** The parse half is
+    `planPrefixG1_eq` (the `protocol_parseCounts` group identifications plus the
+    `fromProtocol` layout peel); the eval half is `planNumEvals_eq`
+    (`fromConstraintSystem_evals_length` plus the same peel). No count premise is
+    assumed. -/
+theorem planReadCounts_of_valid (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) : TranscriptRows.PlanReadCounts R :=
+  ⟨planPrefixG1_eq R hR, fun inst => planNumEvals_eq R hR inst⟩
+
+/-- **`XcriptAlgebraRun` FROM `ValidV3`.** The schedule is `planReadCounts_of_valid`;
+    the only remaining runtime input is `hnum`. -/
+theorem xcriptAlgebraRun_of_valid (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (cd : Bytes)
+    (hnum : R.cfg.numInstances < 2 ^ 31) :
+    TranscriptRows.XcriptAlgebraRun R H cd :=
+  TranscriptRows.xcriptAlgebraRun_of_planReadCounts R hR hcodec H cd
+    (planReadCounts_of_valid R hR) hnum
+
+/-- **THE FIXED `tp_agrees` ROW, WITH ITS TWO REMAINING NAMED INPUTS.** This is the
+    fixed row's conclusion from `ValidV3`, the schedule (now proved), the calldata
+    bound `hnum` and Calldata's `XcriptG1`. The fixed `tp_agrees` itself keeps its
+    original statement (no `hnum`/`XcriptG1` parameters) and is not weakened; this is
+    its schedule-carrying consumer. -/
+theorem tp_agrees_of_valid (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TranscriptRows.TpPost R H vkAddr cd V st)
+    (hnum : R.cfg.numInstances < 2 ^ 31)
+    (hG1 : TranscriptRows.XcriptG1 R H cd st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st :=
+  TranscriptRows.tp_agrees_of_planReadCounts R hR hcodec H vkAddr cd V st hpost
+    (planReadCounts_of_valid R hR) hnum hG1
+
+
 /-- **THE KZG RESIDUAL, REPAIRED (D-GATE10), AT `linearize`'S QUERY VECTOR.**
     `multiPrepare` appends `[g1]`, one scalar per quotient-opening point set, `[g1]`;
     the count is the plan's `numPointSets`. The OLD `∀ queries` form is FALSE at
@@ -5252,6 +5482,25 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 
 end Composition
+
+#check @Midfall.LoweringV3.planReadCounts_of_valid
+#check @Midfall.LoweringV3.xcriptAlgebraRun_of_valid
+#check @Midfall.LoweringV3.tp_agrees_of_valid
+
+#assert_axioms Midfall.LoweringV3.lookupChunkNum_sum_eq_of_chunkedOf
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.protocol_evalPlanFields
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.planPrefixG1_eq
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.planNumEvals_eq
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.planReadCounts_of_valid
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.xcriptAlgebraRun_of_valid
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.tp_agrees_of_valid
+  [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3
 
