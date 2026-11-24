@@ -3019,3 +3019,45 @@ and not a weakening of the accepted language on the well-formed domain.
 **F8/F2.** F8 (`ParamsVerifierKZG.read` sign) is a conformance-bundle provenance pin: record in
 `build.json` which SRS/params produced `params.json`; no Lean change. F2 (`ConstraintSystemMeta.new`
 `numPointSets = 0`) is the known pre-V3/frozen defect repaired by V3 `PlanMeta`; no audit edit.
+
+## D-GATE18 — **Approved: advice-phase column order in `WellFormed`**
+
+> **Status: APPROVED.** Signed 2026-11-24. `WellFormed.advicePhaseTotal` only fixes the *length* of
+> the phase vector. The transcript `scatterIndexed` value bridge needs the phase blocks to flatten
+> in *column order*. The deployed profile satisfies this; the frozen clauses do not imply it.
+
+**Decision.** `VerifyingKey.WellFormed` gains
+
+```lean
+advicePhaseColumnOrder :
+  vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph) =
+    List.range vk.cs.numAdviceColumns
+```
+
+(or the definitionally equal `phaseCols` spelling in the module). All concrete VK witnesses are
+updated. `advicePhaseTotal_not_columnOrder` remains the W12 falsifier showing that
+`advicePhaseTotal` alone does not derive the order. This is a key-side interface clause, not a
+hypothesis on a row, bundle, `ValidV3` or the root. `advicePhaseColumnOrder_of_wellFormed` is its
+projection; `tp_agrees_of_valid_closed` no longer carries the order as an external premise.
+
+## D-GATE19 — **Approved: the entry/calldata size bound for the fixed `tp_agrees`**
+
+> **Status: APPROVED.** Signed 2026-11-24. `Decoded` gives
+> `cd.size = proofEnd + 32 + 32 * numInstances`; the `asI32` instance window needs
+> `numInstances < 2^31`, equivalently `cd.size < 2^36`. The tree has only `cd.size < 2^256`
+> (`EntryFrame`) and generator-input bounds (`< 2^64`), so no existing clause supplies it.
+
+**Decision.** The genuine entry predicate carries
+
+```lean
+cdSize36 : cd.size < 2 ^ 36
+```
+
+on `EntryFrame` and `EntryFrameV3`; the staged `Frame` carries the same field, and
+`pfx_stageInv_start` reads it from the entry witness. `EndToEndV3` carries the corresponding
+encoder-output bound `proofEnd + 32 + 32 * numInstances < 2^36` in its backward direction. This is
+an entry/calldata premise, not a hypothesis on a row, bundle, `ValidV3` or the root. It is what
+closes the fixed `tp_agrees` with its statement unchanged; the consumer-side predicate
+`tp_agrees_of_valid_closed_cdSize` remains as the named alternative for callers that supply
+`cd.size < 2^36` directly. `numInstances_lt_of_cd_size` is the bridge to the `< 2^31` form.
+
