@@ -725,3 +725,30 @@ The plan/count and mapM halves of `LinearizeQueryMap` are now proved:
 The remaining per-pair inputs are exactly the `hpairP`/`hpairC`/`hclass` facts
 of `KzgQueryMapData`, plus the generic key-side clause
 `PermutationColumnsNonempty`; neither is a row, bundle or root hypothesis.
+
+## Generator block lengths and the `alg`-quantification blocker
+
+Generator-side lengths are now formal in `PcsOrder`: advice/instance/fixed/common/
+trash, the lookup sum `Σ (chunks + 3)`, and the permutation block
+`2*k + (k-1)`; `queries_pcsBlocks_lengths` shows a successful
+`Generator.queries` has per-block lengths equal to those source lengths.
+
+A blocking issue remains for the unconditional `LinearizeQueryMap` datum.
+`LinearizeQueryMap` and `KzgMultiPrepareWidths` quantify an arbitrary
+`Verifier.AlgebraRead`, but the generator length is fixed by `R.plan`.  The
+verifier instance block length is
+`(instanceQueries.filter (fun q => q.index < alg.nbCommitted)).length`, while
+the plan's block filters by `R.cfg.numCommittedInstances`; the permutation,
+lookup and common block lengths similarly read `alg.permutationsEvaluated`,
+`alg.lookupsEvaluated` and `alg.permutationsCommon`.  None of these is tied to
+`R.plan.data` by `GeneratedBy`.  Choosing an `alg` with a different
+`nbCommitted` (or different eval helper counts) therefore changes the verifier
+query-vector length while the generator list is unchanged, so no
+`KzgQueryMapData` (which forces equal lengths) can exist.
+
+The unblocking step is to restrict `LinearizeQueryMap` to the algebra read
+actually produced from the parsed trace, or add the explicit side conditions
+`alg.nbCommitted = R.cfg.numCommittedInstances`, the permutationZ/lookup/common
+count equalities, and the commitment-array/pointer correspondence.  The
+blockwise `hpairP`/`hpairC`/`hclass` work cannot be completed unconditionally
+until that premise is fixed.
