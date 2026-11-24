@@ -578,6 +578,10 @@ theorem stepOp_mstore_evm (p v : U256) (st : EvmState) :
     stepOp Op.mstore [p, v] st =
       some (.ok [] { touchMemory st p.toNat 32 with memory := storeWord st.memory p.toNat v }) := rfl
 
+theorem stepOp_mload_evm (p : U256) (st : EvmState) :
+    stepOp Op.mload [p] st =
+      some (.ok [loadWord st.memory p.toNat] (touchMemory st p.toNat 32)) := rfl
+
 /-- The emitted `common_word` body, as `inlineContractConstants` leaves it: the template's
     `mstore(buf_len, word); ret := add(buf_len, 32)`. -/
 def commonWordBody : Block EVM.Op :=
@@ -793,6 +797,23 @@ theorem transcriptInit_lookup_body (R : Render p G₁ G₂ Gₜ) {c : ExternalCa
 #assert_axioms Midfall.LoweringV3.TranscriptRows.transcriptInit_lookup_body
   [propext, Classical.choice, Quot.sound] native []
 
+set_option maxHeartbeats 4000000 in
+/-- **THE `VK_DIGEST_MPTR` CONSTANT.** The render's table resolves the VK-digest pointer to the
+    header slot address. This is the lookup the second emitted statement's `mload` needs. -/
+theorem vkDigestMptr_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    ∃ v, R.consts.lookup "VK_DIGEST_MPTR" = some v := by
+  refine ⟨cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.vkDigest), ?_⟩
+  change (Midfall.LoweringV2.constTableOf R.model).lookup "VK_DIGEST_MPTR" =
+    some (cAddr (Ptr.add R.pv.memory.vkMptr R.model.vkHeader.vkDigest))
+  rw [Midfall.LoweringV3.lookup_expectedConsts_of_programOkB
+    (Midfall.LoweringV3.programOkB_of_valid hR)]
+  cases h1 : R.model.expectedVkCodehash <;> cases h2 : R.model.quotientExternal <;>
+    cases h3 : R.model.expectedQuotientCodehash <;> cases h4 : R.model.expectedHasAccumulator <;>
+    simp [Midfall.LoweringV3.expectedConsts, h1, h2, h3, h4, List.lookup]
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.vkDigestMptr_of_valid
+  [propext, Classical.choice, Quot.sound] native []
+
 /-- **THE `common_word` CALL RESOLVES.** `R.scope` resolves `common_word` to the emitted
     two-parameter/one-return helper with the `mstore`/`add` body. PROVED by `rfl`. -/
 theorem commonWord_lookup_body (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} :
@@ -934,6 +955,101 @@ theorem tp_head_run (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : Exter
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonWordBody_run
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_call_run
+  [propext, Classical.choice, Quot.sound] native []
+
+/-- **THE SECOND PARSER STATEMENT'S INLINER SHAPE.** At the shadow list left by the first
+    `let buf_len`, the inliner leaves `buf_len` alone and substitutes `VK_DIGEST_MPTR` with its
+    table literal. -/
+theorem secondStmt_inlined (R : Render p G₁ G₂ Gₜ) (v : Nat)
+    (h : R.consts.lookup "VK_DIGEST_MPTR" = some v) :
+    (Inline.inlineScan 64 R.consts ["buf_len"]
+      [Stmt.assign ["buf_len"] (Expr.call "common_word"
+        [Expr.var "buf_len", Expr.builtin Op.mload [Expr.var "VK_DIGEST_MPTR"]])]).blks =
+      [Stmt.assign ["buf_len"] (Expr.call "common_word"
+        [Expr.var "buf_len", Expr.builtin Op.mload [Expr.lit (Literal.number v)]])] := by
+  apply inlineScan_single_changed
+  simp only [Inline.inlineStmtStep]
+  congr 1
+  change Inline.inExpr 64 (Expr.call "common_word"
+      [Expr.var "buf_len", Expr.builtin Op.mload [Expr.var "VK_DIGEST_MPTR"]]) R.consts ["buf_len"] =
+    Expr.call "common_word" [Expr.var "buf_len", Expr.builtin Op.mload [Expr.lit (Literal.number v)]]
+  simp [Inline.inExpr, Inline.shadowed, h]
+
+set_option maxHeartbeats 4000000 in
+/-- **THE SECOND PARSER STATEMENT HAS AN ACTUAL RUN.** From a caller with `buf_len = b`, the
+    inlined `buf_len := common_word(buf_len, mload(VK_DIGEST_MPTR))` executes normally; the
+    `mload` advances the active-memory high-water mark, and the `common_word` body leaves
+    `buf_len = b + 32`. -/
+theorem secondStmt_run (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (v : Nat) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (b : U256)
+    (hb : VEnv.get V "buf_len" = some b) :
+    ∃ st', ExecStmt (D := Bridge.Dialect c g) (R.scope c g) V st
+      (Stmt.assign ["buf_len"] (Expr.call "common_word"
+        [Expr.var "buf_len", Expr.builtin Op.mload [Expr.lit (Literal.number v)]]))
+      (VEnv.setMany V ["buf_len"] [b + BitVec.ofNat 256 32]) st' .normal ∧
+      st' = { touchMemory (touchMemory st (BitVec.ofNat 256 v).toNat 32) b.toNat 32 with
+        memory := storeWord (touchMemory st (BitVec.ofNat 256 v).toNat 32).memory b.toNat
+          (loadWord st.memory (BitVec.ofNat 256 v).toNat) } := by
+  obtain ⟨decl, hlook, hparams, hrets, hbody⟩ := commonWord_lookup_body R (c := c) (g := g)
+  let stM : EvmState := touchMemory st (BitVec.ofNat 256 v).toNat 32
+  let w : U256 := loadWord st.memory (BitVec.ofNat 256 v).toNat
+  let Vc : VEnv (Bridge.Dialect c g) :=
+    (decl.params.zip [b, w]) ++ bindZeros (Bridge.Dialect c g) decl.rets
+  have hbc : VEnv.get Vc "buf_len" = some b := by
+    simp [Vc, hparams, hrets, VEnv.get, bindZeros]
+  have hwc : VEnv.get Vc "word" = some w := by
+    simp [Vc, hparams, hrets, VEnv.get, bindZeros]
+  obtain ⟨st2, hbodyrun, hst2⟩ :=
+    commonWordBody_run (funs := hoist (Bridge.Dialect c g) commonWordBody :: R.scope c g)
+      (V := Vc) (st := stM) (b := b) (w := w) hbc hwc
+  have hrest : restore Vc (Vc.setMany ["ret"] [b + BitVec.ofNat 256 32]) =
+      Vc.setMany ["ret"] [b + BitVec.ofNat 256 32] := by
+    show restore Vc (VEnv.set Vc "ret" (b + BitVec.ofNat 256 32)) = _
+    exact restore_set_local
+  have hbodystep : Step (Bridge.Dialect c g) (R.scope c g) Vc stM
+      (.stmt (.block commonWordBody))
+      (.sres (Vc.setMany ["ret"] [b + BitVec.ofNat 256 32]) st2 .normal) := by
+    simpa [Vc, hbody, hst2, hrest] using Step.block (D := Bridge.Dialect c g) hbodyrun
+  have hword : Step (Bridge.Dialect c g) (R.scope c g) V st
+      (.args [Expr.builtin Op.mload [Expr.lit (Literal.number v)]])
+      (.eres (.vals [w] stM)) := by
+    apply Step.argsCons
+    · exact Step.argsNil
+    · apply Step.builtinOk
+      · exact Step.argsCons Step.argsNil Step.lit
+      · show (Bridge.Dialect c g).Builtin Op.mload [BitVec.ofNat 256 v] st (.ok [w] stM)
+        rfl
+  have hcall : Step (Bridge.Dialect c g) (R.scope c g) V st
+      (.expr (.call "common_word" [Expr.var "buf_len",
+        Expr.builtin Op.mload [Expr.lit (Literal.number v)]]))
+      (.eres (.vals [b + BitVec.ofNat 256 32] st2)) := by
+    have h := Step.callOk (V := V) (Vend := Vc.setMany ["ret"] [b + BitVec.ofNat 256 32])
+      (st2 := st2) (o := .normal)
+      (Step.argsCons hword (Step.var hb))
+      hlook (by rw [hparams]; rfl) (by simpa [Vc, hbody] using hbodystep) (Or.inl rfl)
+    simpa [hrets, hparams, VEnv.get, VEnv.set, VEnv.setMany, Vc, bindZeros, List.find?] using h
+  exact ⟨_, Step.assignVal hcall rfl, hst2⟩
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.secondStmt_inlined
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.secondStmt_run
+  [propext, Classical.choice, Quot.sound] native []
+
+/-- **THE SECOND STATEMENT RUN, WITH THE REAL DIGEST LITERAL.** `vkDigestMptr_of_valid` supplies
+    `v`, and `secondStmt_run` gives the inlined statement's actual `ExecStmts` run. -/
+theorem secondStmt_run_of_valid (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (hR : ValidV3 R) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (b : U256)
+    (hb : VEnv.get V "buf_len" = some b) :
+    ∃ v, R.consts.lookup "VK_DIGEST_MPTR" = some v ∧
+      ∃ st', ExecStmts (D := Bridge.Dialect c g) (R.scope c g) V st
+        [Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.builtin Op.mload [Expr.lit (Literal.number v)]])]
+        (VEnv.setMany V ["buf_len"] [b + BitVec.ofNat 256 32]) st' .normal := by
+  obtain ⟨v, hv⟩ := vkDigestMptr_of_valid R hR
+  obtain ⟨st', hrun, -⟩ := secondStmt_run (R := R) v V st b hb
+  exact ⟨v, hv, st', Step.seqCons hrun Step.seqNil⟩
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.secondStmt_run_of_valid
   [propext, Classical.choice, Quot.sound] native []
 
 /-- **THE TRANSCRIPT READ STEP (a SIM.10 prerequisite).** A read whose bytes are present and
