@@ -2131,11 +2131,14 @@ theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan
     numerator and of the PCS slice, with `pv.hasAccumulator = false` (which removes
     `validate_public_accumulator` from the sigs). Every other group's call sites are tabulated and
     the parser's are proved (`parser_callsOK`); the function table is `mainSigSet`.
+    `CertScanPcs.callsResolved_mainAsmRaw_of_pcs` replaces the PCS slice hypothesis by the
+    per-block invariant `∀ blocks, computationsAst … = .ok blocks → ∀ b ∈ blocks, CallsOK … b`.
   * `prog_noWriters`: `noWriters_program_of` leaves the PCS slice and the parsed numerator; the
     parser (`parser_noWriters`) and all fixed groups are proved. The target's `prog` is the INLINED
     program, so one more child remains: `NoWriters` is invariant under
     `Inline.inlineContractConstants` (the inliner changes expressions only, and the writer scan
-    reads constructors only).
+    reads constructors only). `CertScanPcs.noWriters_mainAsmRaw_of_pcs` replaces the PCS slice by
+    the same per-block invariant.
   * `prog_constsDeclared`: `freeNames_program_of` reduces the scan to one `FreeOK` hypothesis per
     emitter group; the guard/prefix facts are `constTableOf`/`expectedConsts` computations, and the
     numerator's free names are Blocker 1.
