@@ -1705,6 +1705,215 @@ theorem callsResolved_mainAsmRaw_of (pv : PlanView) (m : Model)
     exact hnd
 
 
+
+/-! ## 9. `noShadowCore` (v3_noShadow), CONDITIONAL ON THE CONSTANT-NAME AND NUMERATOR RESIDUALS
+
+  `TopAvoids C b` is `noShadowCore`'s per-block predicate: every top-level binder of `b` has a
+  name that `C` (a constant table, compared by name) does not contain. The fixed groups are
+  discharged from their §2 tables plus ONE hypothesis `hS` on the finite name list
+  `fixedTopNames`; the parser is discharged from `parser_topOK`; the PCS slice binds nothing at
+  the top level. What remains is exactly the two blockers: the wrapper locals `vk` /
+  `quotientEvaluator` (a `constTableOf` fact) and the parsed numerator's top-level binders. -/
+
+def TopAvoids (C : List (String × Nat)) (b : YulBlock) : Prop :=
+  (LoweringV2.topBinders b).all (fun x => !((C.map Prod.fst).contains x)) = true
+
+theorem TopAvoids_append {C} {a b} (ha : TopAvoids C a) (hb : TopAvoids C b) :
+    TopAvoids C (a ++ b) := by
+  unfold TopAvoids at *
+  rw [topBinders_append, List.all_append, ha, hb]; rfl
+
+theorem TopAvoids_nil (C : List (String × Nat)) : TopAvoids C [] := by
+  unfold TopAvoids; rw [topBinders, List.flatMap_nil]; rfl
+
+theorem TopAvoids_of_TopNamesOK {C S b} (h : TopNamesOK S b)
+    (hS : ∀ x ∈ S, ((C.map Prod.fst).contains x) = false) : TopAvoids C b := by
+  unfold TopNamesOK at h
+  unfold TopAvoids
+  rw [List.all_eq_true] at h ⊢
+  intro x hx
+  have hmem : x ∈ S := List.contains_iff_mem.mp (h x hx)
+  rw [hS x hmem]; rfl
+
+theorem TopNamesOK_mono {S T : List String} {b : YulBlock}
+    (h : TopNamesOK S b) (hsub : ∀ x ∈ S, x ∈ T) : TopNamesOK T b := by
+  unfold TopNamesOK at *
+  rw [List.all_eq_true] at h ⊢
+  intro x hx
+  exact List.contains_iff_mem.mpr (hsub x (List.contains_iff_mem.mp (h x hx)))
+
+theorem TopNamesOK_of_eq {S T : List String} {b : YulBlock}
+    (h : LoweringV2.topBinders b = T) (hT : ∀ x ∈ T, x ∈ S) : TopNamesOK S b := by
+  unfold TopNamesOK
+  rw [h, List.all_eq_true]
+  intro x hx
+  exact List.contains_iff_mem.mpr (hT x hx)
+
+def fixedTopNames : List String :=
+  helpersTopNames ++ accumulatorTopNames ++ parserTopNames ++
+  ["r", "success", "acc_precompile_failed", "lagrange_precompile_failed", "x", "z"]
+
+example (pv : PlanView) : TopNamesOK fixedTopNames (GenAst.emitHelpers pv) := by
+  apply TopNamesOK_of_eq (T := helpersTopNames)
+  · exact topBinders_emitHelpers pv
+  · intro x hx
+    rw [fixedTopNames]; simp only [List.mem_append]; tauto
+
+example : TopNamesOK fixedTopNames GenAst.emitAccumulatorHelpers := by
+  apply TopNamesOK_of_eq (T := accumulatorTopNames)
+  · exact topBinders_emitAccumulatorHelpers
+  · intro x hx
+    rw [fixedTopNames]; simp only [List.mem_append]; tauto
+
+example (pv : PlanView) : TopNamesOK fixedTopNames (GenAst.emitLagrange pv) := by
+  apply TopNamesOK_of_eq (T := ["lagrange_precompile_failed"])
+  · exact topBinders_emitLagrange pv
+  · intro x hx; simp at hx; subst hx; simp [fixedTopNames]
+
+example (pv : PlanView) : TopNamesOK fixedTopNames (GenAst.emitTranscriptParser pv) :=
+  TopNamesOK_mono (parser_topOK pv) (by
+    intro x hx
+    rw [fixedTopNames]; simp only [List.mem_append]; tauto)
+
+example (pv : PlanView) (hacc : pv.hasAccumulator = false) :
+    TopNamesOK fixedTopNames (GenAst.emitVkLoading pv) := by
+  apply TopNamesOK_of_eq (T := [])
+  · rw [topBinders_emitVkLoading, hacc]; rfl
+  · intro x hx; simp at hx
+
+example (pv : PlanView) : TopNamesOK fixedTopNames (GenAst.emitFinalPairing pv) := by
+  apply TopNamesOK_of_eq (T := ["success"])
+  · exact topBinders_emitFinalPairing pv
+  · intro x hx; simp at hx; subst hx; simp [fixedTopNames]
+
+example (pv : PlanView) : TopNamesOK fixedTopNames (GenAst.emitTraceReturn pv) := by
+  apply TopNamesOK_of_eq (T := [])
+  · exact topBinders_emitTraceReturn pv
+  · intro x hx; simp at hx
+
+example (pv : PlanView) : TopNamesOK fixedTopNames (GenAst.emitQuotientLin pv) := by
+  apply TopNamesOK_of_eq (T := [])
+  · exact topBinders_emitQuotientLin pv
+  · intro x hx; simp at hx
+
+example (pv : PlanView) (c : PartialCtx) :
+    TopNamesOK fixedTopNames (GenAst.emitQuotientHelpersAt c.quotientPow5Helper) := by
+  apply TopNamesOK_of_eq (T := (if c.quotientPow5Helper then ["x", "z"] else []))
+  · exact topBinders_emitQuotientHelpersAt c.quotientPow5Helper
+  · intro x hx
+    by_cases hp : c.quotientPow5Helper
+    · simp [hp] at hx
+      rcases hx with rfl | rfl <;> simp [fixedTopNames] <;> tauto
+    · simp [hp] at hx
+
+
+
+theorem TopAvoids_mainGuard (C : List (String × Nat)) : TopAvoids C mainGuardBlock :=
+  TopAvoids_nil C
+
+theorem TopAvoids_mainLocals (C : List (String × Nat))
+    (hS : ∀ x ∈ fixedTopNames, ((C.map Prod.fst).contains x) = false) :
+    TopAvoids C mainLocals := by
+  unfold TopAvoids
+  rw [topBinders_mainLocals, List.all_eq_true]
+  intro x hx
+  simp at hx
+  rcases hx with rfl | rfl
+  · rw [hS "r" (by simp [fixedTopNames])]; rfl
+  · rw [hS "success" (by simp [fixedTopNames])]; rfl
+
+theorem TopAvoids_emitPcsFromPlan (C : List (String × Nat)) (pv : PlanView) :
+    TopAvoids C (GenAst.emitPcsFromPlan pv) := by
+  unfold TopAvoids; rw [topBinders_emitPcsFromPlan]; rfl
+
+theorem TopAvoids_emitTraceReturn (C : List (String × Nat)) (pv : PlanView) :
+    TopAvoids C (GenAst.emitTraceReturn pv) := by
+  unfold TopAvoids; rw [topBinders_emitTraceReturn]; rfl
+
+theorem TopAvoids_abiGuardBlock (C : List (String × Nat)) (m : Model) :
+    TopAvoids C (abiGuardBlock m) := by
+  unfold TopAvoids; rw [topBinders_abiGuardBlock]; rfl
+
+theorem topAvoids_parser {C} (pv : PlanView)
+    (hS : ∀ x ∈ fixedTopNames, ((C.map Prod.fst).contains x) = false) :
+    TopAvoids C (GenAst.emitTranscriptParser pv) :=
+  TopAvoids_of_TopNamesOK (TopNamesOK_mono (parser_topOK pv) (by
+    intro x hx; rw [fixedTopNames]; simp only [List.mem_append]; tauto)) hS
+
+theorem TopAvoids_mainAsmRaw_of (pv : PlanView) (m : Model)
+    (hacc : pv.hasAccumulator = false)
+    (hS : ∀ x ∈ fixedTopNames, (((constTableOf m).map Prod.fst).contains x) = false)
+    (hnum : TopAvoids (constTableOf m) (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
+    TopAvoids (constTableOf m) (mainAsmRaw pv m) := by
+  have hH : TopAvoids (constTableOf m) (GenAst.emitHelpers pv) :=
+    TopAvoids_of_TopNamesOK (TopNamesOK_of_eq (topBinders_emitHelpers pv) (by
+      intro x hx; rw [fixedTopNames]; simp only [List.mem_append]; tauto)) hS
+  have hA : TopAvoids (constTableOf m) GenAst.emitAccumulatorHelpers :=
+    TopAvoids_of_TopNamesOK (TopNamesOK_of_eq (topBinders_emitAccumulatorHelpers) (by
+      intro x hx; rw [fixedTopNames]; simp only [List.mem_append]; tauto)) hS
+  have hV : TopAvoids (constTableOf m) (GenAst.emitVkLoading pv) := by
+    apply TopAvoids_of_TopNamesOK (S := fixedTopNames) _
+      (by intro x hx; exact hS x hx)
+    apply TopNamesOK_of_eq (T := [])
+    · rw [topBinders_emitVkLoading, hacc]; rfl
+    · intro x hx; simp at hx
+  have hL : TopAvoids (constTableOf m) (GenAst.emitLagrange pv) :=
+    TopAvoids_of_TopNamesOK (TopNamesOK_of_eq (topBinders_emitLagrange pv) (by
+      intro x hx; simp at hx; subst hx; simp [fixedTopNames])) hS
+  have hQ : TopAvoids (constTableOf m) (GenAst.emitQuotientHelpersAt
+      (partialCtxOfVerifier m).quotientPow5Helper) := by
+    apply TopAvoids_of_TopNamesOK (S := fixedTopNames) _
+      (by intro x hx; exact hS x hx)
+    apply TopNamesOK_of_eq (T := (if (partialCtxOfVerifier m).quotientPow5Helper
+      then ["x", "z"] else []))
+    · exact topBinders_emitQuotientHelpersAt _
+    · intro x hx
+      by_cases hp : (partialCtxOfVerifier m).quotientPow5Helper
+      · simp [hp] at hx
+        rcases hx with rfl | rfl <;> simp [fixedTopNames]
+      · simp [hp] at hx
+  have hQL : TopAvoids (constTableOf m) (GenAst.emitQuotientLin pv) :=
+    TopAvoids_of_TopNamesOK (TopNamesOK_of_eq (topBinders_emitQuotientLin pv) (by
+      intro x hx; simp at hx)) hS
+  have hP : TopAvoids (constTableOf m) (GenAst.emitPcsFromPlan pv) :=
+    TopAvoids_emitPcsFromPlan _ pv
+  have hF : TopAvoids (constTableOf m) (GenAst.emitFinalPairing pv) :=
+    TopAvoids_of_TopNamesOK (TopNamesOK_of_eq (topBinders_emitFinalPairing pv) (by
+      intro x hx; simp at hx; subst hx; simp [fixedTopNames])) hS
+  have hT : TopAvoids (constTableOf m) (GenAst.emitTraceReturn pv) :=
+    TopAvoids_emitTraceReturn _ pv
+  rw [mainAsmRaw_decomp]
+  exact TopAvoids_append
+    (TopAvoids_append
+      (TopAvoids_append
+        (TopAvoids_append
+          (TopAvoids_append
+            (TopAvoids_append
+              (TopAvoids_append
+                (TopAvoids_append
+                  (TopAvoids_append (TopAvoids_append (TopAvoids_mainGuard _) hH) hA)
+                  (TopAvoids_mainLocals _ hS)) hV) (topAvoids_parser pv hS))
+              hL)
+            (by
+              change TopAvoids (constTableOf m)
+                (GenAst.emitQuotientHelpersAt (partialCtxOfVerifier m).quotientPow5Helper ++
+                  GenAst.emitQuotientNumerator (partialCtxOfVerifier m) ++
+                  GenAst.emitQuotientLin pv)
+              exact TopAvoids_append (TopAvoids_append hQ hnum) hQL))
+          hP) hF) hT
+
+theorem noShadowCore_of_residuals (pv : PlanView) (m : Model)
+    (hacc : pv.hasAccumulator = false)
+    (hS : ∀ x ∈ fixedTopNames, (((constTableOf m).map Prod.fst).contains x) = false)
+    (hwrap : TopAvoids (constTableOf m) (wrapperLocals m 0 0))
+    (hnum : TopAvoids (constTableOf m) (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
+    Midfall.LoweringV3.noShadowCore pv m = true := by
+  have hm := TopAvoids_mainAsmRaw_of pv m hacc hS hnum
+  have hg : TopAvoids (constTableOf m) (abiGuardBlock m) := TopAvoids_abiGuardBlock _ m
+  change TopAvoids (constTableOf m) (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m)
+  exact TopAvoids_append (TopAvoids_append hg hwrap) hm
+
+
 /-! ## 5. WHY THE NUMERATOR RESIDUAL IS NOT A TREE LEMMA (reproduction record)
 
   The three hypotheses of `noWriters_mainAsmRaw_of` are not interchangeable. The parser and PCS
