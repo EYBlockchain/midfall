@@ -6001,6 +6001,111 @@ theorem pcsSetBlock_contract_frame {g : ExternalGas} (product : PairingProduct)
 
 
 
+theorem b1_exec_ylet_lit {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome} {x : String} {n : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.ylet x (GenAst.ylit n)) V' st' o) :
+    o = .normal ∧ V' = (x, BitVec.ofNat 256 n) :: V ∧ st' = st := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨hcv, hst⟩ := b2_eval_lit_inv he
+      subst hcv; subst hst
+      exact ⟨rfl, rfl, rfl⟩
+  | letHalt he => exact (by
+      cases he with
+      )
+
+theorem b1_exec_ylet_mload_add_var {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {x p : String} {off : Nat}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (GenAst.ylet x (GenAst.yop EVM.Op.mload
+        [GenAst.yop EVM.Op.add [GenAst.yvar p, GenAst.ylit off]])) V' st' o) :
+    o = .normal ∧ ∃ pv, VEnv.get V p = some pv ∧
+      V' = (x, loadWord st.memory (pv + BitVec.ofNat 256 off).toNat) :: V ∧
+      st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted := by
+  cases h with
+  | letVal he hlen =>
+      obtain ⟨cv, rfl⟩ := b2_list_length_one hlen
+      obtain ⟨pv, hpv, hcv, hst⟩ := b1_eval_mload_add_var_lit_inv he
+      subst hcv
+      refine ⟨rfl, pv, hpv, rfl, ?_, ?_, ?_⟩
+      · rw [hst, Midfall.Yul.Word.touchMemory_memory]
+      · rw [hst, Midfall.Yul.Word.touchMemory_env]
+      · rw [hst, Midfall.Yul.Word.touchMemory_halted]
+  | letHalt he => exact (b1_eval_mload_add_var_lit_halt he).elim
+
+
+theorem pcsBlock4_header_contract {funs : FunEnv (Bridge.Dialect c g)}
+    (x2p x3p cptrp x2v x3v cptr : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [ GenAst.ylet "x2" (GenAst.yop EVM.Op.mload [GenAst.yvar "X2_MPTR"]),
+        GenAst.ylet "x3" (GenAst.yop EVM.Op.mload [GenAst.yvar "X3_MPTR"]),
+        GenAst.ylet "f_eval" (GenAst.ylit 0),
+        GenAst.ylet "Q_EVAL_CPTR" (GenAst.yop EVM.Op.mload [GenAst.yvar "Q_EVAL_CPTR_MPTR"]) ]
+      (fun V st => VEnv.get V "X2_MPTR" = some x2p ∧
+        VEnv.get V "X3_MPTR" = some x3p ∧
+        VEnv.get V "Q_EVAL_CPTR_MPTR" = some cptrp ∧
+        loadWord st.memory x2p.toNat = x2v ∧
+        loadWord st.memory x3p.toNat = x3v ∧
+        loadWord st.memory cptrp.toNat = cptr)
+      (fun V st V' st' o => o = .normal ∧
+        V' = ("Q_EVAL_CPTR", cptr) :: ("f_eval", 0) :: ("x3", x3v) :: ("x2", x2v) :: V ∧
+        st'.memory = st.memory ∧ st'.env = st.env ∧ st'.halted = st.halted) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hx2, hx3, hcp, hv2, hv3, hvc⟩ := hpre
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with ⟨V1, st1, h1, hrest1⟩ | ⟨h1, hne1⟩
+  · obtain ⟨_, p1, hp1, hV1, hst1⟩ :=
+      b1_exec_ylet_mload_var (x := "x2") (p := "X2_MPTR") h1
+    rw [hx2] at hp1
+    have hp1' : p1 = x2p := (Option.some.inj hp1).symm
+    rw [hp1'] at hV1
+    rw [hst1] at hrest1
+    have hm1 : (touchMemory st x2p.toNat 32).memory = st.memory := by
+      rw [Midfall.Yul.Word.touchMemory_memory]
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest1 with ⟨V2, st2, h2, hrest2⟩ | ⟨h2, hne2⟩
+    · obtain ⟨_, p2, hp2, hV2, hst2⟩ :=
+        b1_exec_ylet_mload_var (x := "x3") (p := "X3_MPTR") h2
+      rw [hV1] at hp2
+      rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x2") (y := "X3_MPTR") (by decide)] at hp2
+      rw [hx3] at hp2
+      have hp2' : p2 = x3p := (Option.some.inj hp2).symm
+      rw [hp2'] at hV2
+      rw [hst2] at hrest2
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest2 with ⟨V3, st3, h3, hrest3⟩ | ⟨h3, hne3⟩
+      · obtain ⟨_, hV3, hst3⟩ := b1_exec_ylet_lit (x := "f_eval") (n := 0) h3
+        rw [hV2] at hV3
+        rw [hst3] at hrest3
+        rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest3 with ⟨V4, st4, h4, hrest4⟩ | ⟨h4, hne4⟩
+        · obtain ⟨_, p4, hp4, hV4, hst4⟩ :=
+            b1_exec_ylet_mload_var (x := "Q_EVAL_CPTR") (p := "Q_EVAL_CPTR_MPTR") h4
+          rw [hV3] at hp4
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "f_eval") (y := "Q_EVAL_CPTR_MPTR") (by decide)] at hp4
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x3") (y := "Q_EVAL_CPTR_MPTR") (by decide)] at hp4
+          rw [hV1] at hp4
+          rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x2") (y := "Q_EVAL_CPTR_MPTR") (by decide)] at hp4
+          rw [hcp] at hp4
+          have hp4' : p4 = cptrp := (Option.some.inj hp4).symm
+          rw [hp4'] at hV4
+          subst p1
+          subst p2
+          subst p4
+          have hm2 : (touchMemory (touchMemory st x2p.toNat 32) x3p.toNat 32).memory = st.memory := by
+            rw [Midfall.Yul.Word.touchMemory_memory, Midfall.Yul.Word.touchMemory_memory]
+          cases hrest4
+          refine ⟨rfl, ?_, ?_, ?_, ?_⟩
+          · rw [hV4, hV3, hV1]
+            simp [hm1, hm2, hv2, hv3, hvc]
+          · simp [hst4, hst3, hst2, hst1, Midfall.Yul.Word.touchMemory_memory]
+          · simp [hst4, hst3, hst2, hst1, Midfall.Yul.Word.touchMemory_env]
+          · simp [hst4, hst3, hst2, hst1, Midfall.Yul.Word.touchMemory_halted]
+        · exact absurd (b1_exec_ylet_mload_var h4).1 hne4
+      · exact absurd (b1_exec_ylet_lit h3).1 hne3
+    · exact absurd (b1_exec_ylet_mload_var h2).1 hne2
+  · exact absurd (b1_exec_ylet_mload_var h1).1 hne1
+
+
 def pcsBlock4ASet (rv x3v : U256) (pointSets : List (List Int)) (distinct : List Int)
     (pSet : Nat → Nat → U256) (s i : Nat) : U256 :=
   pcsGenBatchVal rv x3v (pSet s) (pcsKs (pointSets.getD s []) distinct)
