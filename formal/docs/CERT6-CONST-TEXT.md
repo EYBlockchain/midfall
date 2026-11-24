@@ -75,6 +75,30 @@ not any character-level fact:
 free variables; the concrete F1 and poseidon instances above are the
 kernel-checked witnesses, not a substitution for the generic line lemma.
 
+## Exact residual interface
+
+`formal/Midfall/Generator/ConstTextResidual.lean` names the missing data:
+
+```lean
+structure ConstTextWitness (pv : PlanView) (m : Model) where
+  lines : List String
+  render_eq : renderConstants (partialCtxOfVerifier m) =
+    String.intercalate "\n" lines
+  split_eq : (renderConstants (partialCtxOfVerifier m)).splitOn "\n" = lines
+  lines_literal : lines.all LineLiteral = true
+  table_eq : (constTableOf m == expectedConsts pv m) = true
+```
+
+`constLinesLiteral_of_witness` and `constTable_of_witness` are the reductions
+from that witness to the two targets. The witness is not used to replace the
+targets.
+
+A concrete inhabitant is `ConstsCert6.poseidonConstTextWitness`: it closes
+`render_eq`, `split_eq`, `lines_literal` and `table_eq` at the tracked
+poseidon fixture (`render_eq`/`lines_literal` by `native_decide` on the
+concrete closed strings). This exercises the exact interface the generic
+proof would have to fill.
+
 ## This round's exact obstruction (measured)
 
 The generic line decomposition was attacked directly. The obstruction is
