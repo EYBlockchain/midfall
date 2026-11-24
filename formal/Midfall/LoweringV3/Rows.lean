@@ -1436,6 +1436,14 @@ theorem lagCfgOf_aL_load (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
   rw [hpay] at h
   simpa [lagCfgOf] using h
 
+/-- `bytesAt` is the `readBytes` window: the equality at `ByteArray` level is the equality of
+    the underlying byte lists. -/
+theorem readBytes_of_bytesAt {st : EvmState} {a n : Nat} {b : Bytes}
+    (h : bytesAt st a n = b) : readBytes st.memory a n = b.data.toList := by
+  unfold bytesAt at h
+  exact congrArg (fun x : Bytes => x.data.toList) h
+
+
 /-- **THE `Inv`/`Frame` → `LagPre` FIELD ASSEMBLY.** `Frame` supplies `r` (its `FR_MODULUS`
     word, `frModulus_of_valid` identifying the literal with `p`) and the calldata; `StageInv`'s
     success conjunct supplies `success = 1`; the prologue supplies `pf = 0`; the four explicit
@@ -1466,5 +1474,28 @@ theorem lagPre_of_inv_transcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
 #assert_axioms lagCfgOf_aN_load [propext, Classical.choice, Quot.sound]
 #assert_axioms lagCfgOf_aL_load [propext, Classical.choice, Quot.sound]
 #assert_axioms lagPre_of_inv_transcript [propext, Classical.choice, Quot.sound]
+
+/-- **THE BRIDGE WITH THE PG-LOADWORD SLOTS SPENT.** Only three inputs remain: the payload
+    window (`hpayload`, a projection of `Inv .vk`), the x-slot word (`hx`, the named SIM.10 /
+    parser pin) and the `PG-OMEGAINV-SLOT` exponent equality. Everything else is
+    `lagPre_of_inv_transcript` plus the three `lagCfgOf` slot lemmas. -/
+theorem lagPre_of_inv_transcript_of_payload (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hframe : Frame R H vkAddr cd V st)
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (hpf : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (hx : loadWord st.memory (lagCfgOf R cd S).aX = (lagCfgOf R cd S).xw)
+    (hrot : R.plan.meta_.rotationLast.natAbs = R.pv.numNegLagranges)
+    (hpayload : readBytes st.memory (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len =
+      R.pv.vk.bytes.data.toList) :
+    LagrangeBlock.LagPre (lagCfgOf R cd S) V st :=
+  lagPre_of_inv_transcript R hR cd S H vkAddr V st hframe hsucc hpf hx
+    (lagCfgOf_aO_load R hR st cd S hpayload)
+    (lagCfgOf_aL_load R hR st cd S hrot hpayload)
+    (lagCfgOf_aN_load R hR st cd S hpayload)
+
+#assert_axioms lagPre_of_inv_transcript_of_payload [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3
