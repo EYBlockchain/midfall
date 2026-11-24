@@ -7262,6 +7262,51 @@ theorem cdSlice_append (cd : Bytes) (a n m : Nat) :
   apply ByteArray.ext
   simp
 
+theorem cdSlice_eq_of_bytesTake {cd b : Bytes} {a n : Nat}
+    (h : bytesTake cd a n = some b) : cdSlice cd a n = b := by
+  unfold bytesTake at h
+  split at h
+  · rename_i hle
+    injection h with hb
+    subst hb
+    unfold cdSlice
+    apply ByteArray.ext
+    apply Array.toList_inj.mp
+    show (ByteArray.mk ((cd.data.toList.drop a).take n).toArray).data.toList
+      = (ByteArray.mk (cd.data.extract a (a + n))).data.toList
+    rw [Array.toList_extract, List.extract_eq_take_drop,
+      show a + n - a = n by omega]
+  · cases h
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem holdsG1_of_mirrorsSection (E : VerifierEnv p G₁ G₂ Gₜ) {st : EvmState} {cd : Bytes}
+    {a : Nat} {s : Midfall.Generator.ProofSection} {Q : G₁}
+    (hm : mirrorsSection st a cd s) (hlen : s.byteLen = g1EipWidth)
+    {b : Bytes} (hb : bytesTake cd s.start g1EipWidth = some b)
+    (hq : E.g1.ofEip? b = some Q) (hc : E.g1.eipRoundtrip) :
+    holdsG1 E st a Q = true := by
+  unfold holdsG1
+  have hlen' : s.byteLen = 128 := by simpa [g1EipWidth] using hlen
+  have hb' : bytesTake cd s.start 128 = some b := by simpa [g1EipWidth] using hb
+  have hm' : bytesAt st a 128 = cdSlice cd s.start 128 := by
+    simpa [mirrorsSection, hlen'] using hm
+  have hbytes : bytesAt st a 128 = E.g1.toEip Q := by
+    rw [hm', cdSlice_eq_of_bytesTake hb']
+    exact (hc b Q hq).symm
+  rw [hbytes]
+  exact beq_self_eq_true _
+
 /-- **THE COORDINATE RANGE CHECK AS A `Nat` FACT.** `common_uncompressed_g1` writes
     its two coordinate checks as `iszero(or(lt(hi, BLS_P_HI), and(eq(hi, BLS_P_HI),
     iszero(gt(lo, BLS_P_MINUS_ONE_LO)))))`; at `BitVec 256` the *passing* check (the
@@ -8432,6 +8477,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_calldatacopy_cdSlice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_append [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_eq_of_bytesTake [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.holdsG1_of_mirrorsSection [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1WalkCT_sound [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_venv_set_overwrite [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons [propext, Classical.choice, Quot.sound] native []
