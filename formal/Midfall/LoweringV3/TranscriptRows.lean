@@ -6892,6 +6892,20 @@ theorem instOfWords?_size {p : ℕ} [Fact (Nat.Prime p)]
   obtain ⟨l, hl, rfl⟩ := h
   rw [List.size_toArray, mapM_option_length (Midfall.LoweringV2.frOfWord? (p := p)) instW.toList l hl, Array.length_toList]
 
+/-- **THE EXACT CALADATA BOUND THAT WOULD SUPPLY `hnum`.** `Decoded` fixes
+    `cd.size = proofEnd + 32 + 32 * numInstances`; a calldata-size bound
+    `cd.size < 2^36` therefore gives `numInstances < 2^31`. No such bound is in
+    the tree: `EntryFrameV3.cdSize` is `< 2^256`, and
+    `SupportedInput.sizeBound` is `< 2^64` on the generator input, not on `cd`. -/
+theorem numInstances_lt_of_cd_size {R : Render p G₁ G₂ Gₜ} {cd : Bytes}
+    {ms : List (Msg (Fr p) G₁)} {instW : Array Word256} {inst : Array (Fr p)}
+    (h : Decoded R cd ms instW inst) (hcd : cd.size < 2 ^ 36) :
+    R.cfg.numInstances < 2 ^ 31 := by
+  obtain ⟨hdec, -⟩ := h
+  obtain ⟨_, _, _, _, _, _, _, hsz, _, _⟩ :=
+    decodeCalldata_facts R.plan.proofLayout R.cfg.numInstances R.E.g1 cd ms instW hdec
+  omega
+
 set_option maxHeartbeats 1000000 in
 theorem decoded_inst_size {R : Render p G₁ G₂ Gₜ} {cd : Bytes} {ms : List (Msg (Fr p) G₁)}
     {instW : Array Word256} {inst : Array (Fr p)}
@@ -11519,11 +11533,14 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     now `WellFormed.instanceQueriesBound` (D-GATE15(c)), so the old `hinstQ` premise is
     gone, and `PlanReadCounts` itself is PROVED downstream in
     `EndToEndAlgebra.planReadCounts_of_valid` (`planPrefixG1_eq` + `planNumEvals_eq`).
-    THE FIXED STATEMENT'S RESIDUAL is therefore exactly the calldata bound `hnum` (only
-    `< 2^64` is available from `SupportedInput.sizeBound`, not `< 2^31`) and Calldata's
-    `XcriptG1`; `EndToEndAlgebra.tp_agrees_of_valid` is the fixed row's fully wired
-    consumer (`ValidV3` + `hnum` + `XcriptG1`). The proof of the fixed statement itself
-    cannot be imported here: `EndToEndAlgebra` imports this file.
+    THE FIXED STATEMENT'S RESIDUAL is therefore exactly the calldata bound `hnum` and
+    Calldata's `XcriptG1`; `EndToEndAlgebra.tp_agrees_of_valid` is the fixed row's fully
+    wired consumer (`ValidV3` + `hnum` + `XcriptG1`). `Decoded` gives
+    `cd.size = proofEnd + 32 + 32 * numInstances` (`numInstances_lt_of_cd_size`), so a
+    calldata-size bound `cd.size < 2^36` would supply `hnum`; no such bound is in the
+    tree (`EntryFrameV3.cdSize` is `< 2^256`; `SupportedInput.sizeBound` is `< 2^64` on
+    the generator input, not on `cd`). The proof of the fixed statement itself cannot be
+    imported here: `EndToEndAlgebra` imports this file.
     THE `Inv .transcript` HALF IS LANDED as `invAt_transcript_of_xcriptG1`, and
     `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
     decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
@@ -11933,6 +11950,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.mapM_option_length [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instOfWords?_size [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_inst_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.numInstances_lt_of_cd_size [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.XcriptSchedule [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcriptAlgebraRun_of_schedule [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_schedule [propext, Classical.choice, Quot.sound] native []
