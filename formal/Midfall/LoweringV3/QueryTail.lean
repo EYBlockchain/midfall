@@ -67,6 +67,30 @@ theorem queries_mapM_ok (meta_ : ConstraintSystemMeta) (data : Data)
         change Except.ok qs0 = Except.ok qs at hrest
         exact ⟨qs0, hmap, (Except.ok.inj hrest).symm⟩
 
+/-- `Generator.queries` runs the I-6 upstream-order check on the list it has just
+    built; a successful `queries` therefore exposes that check's success. This is the
+    bridge from `ValidV3.generated` to the upstream source datum. -/
+theorem queries_assert_ok (meta_ : ConstraintSystemMeta) (dat : Data)
+    (qs : List Query) (hq : queries meta_ dat = .ok qs) :
+    assertPermutationQueryOrderIsUpstreamEquivalent meta_ dat qs = .ok () := by
+  unfold queries at hq
+  simp only [Bind.bind, Except.bind] at hq
+  obtain ⟨qs0, _hmap, hrest⟩ := except_bind_ok hq
+  by_cases hany : (meta_.protocol.pcsQueries.zip qs0).any
+      (fun (source, q) => ecPointBeq q.comm g1Identity && ! isCommittedInstanceSource source) = true
+  · rw [ite_eq_left hany] at hrest
+    cases hrest
+  · rw [ite_eq_right hany] at hrest
+    cases hass : assertPermutationQueryOrderIsUpstreamEquivalent meta_ dat qs0 with
+    | error e => rw [hass] at hrest; cases hrest
+    | ok u =>
+        rw [hass] at hrest
+        simp only [Except.bind] at hrest
+        change Except.ok qs0 = Except.ok qs at hrest
+        have hqs : qs = qs0 := (Except.ok.inj hrest).symm
+        rw [hqs]
+        exact hass
+
 theorem queries_getLast?_some (meta_ : ConstraintSystemMeta) (data : Data)
     (qs : List Query) (hq : queries meta_ data = .ok qs)
     {source : PcsQuerySource} (hsrc : meta_.protocol.pcsQueries.getLast? = some source)

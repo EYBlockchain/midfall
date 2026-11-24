@@ -972,18 +972,19 @@ end X0Falsifier
     protocol's proof-read plan), which is not in the tree. This string is the
     handoff; it is NOT a hypothesis on any theorem. -/
 def gap_readScheduleAgrees : String :=
-  "D1 remaining fact: LinearizeQueryMap (LoweringV3/EndToEndAlgebra.lean). The width " ++
-    "schedule itself is PROVED: PrepareLogSlots_of_parseTrace reduces PrepareLogSlots " ++
-    "to KzgMultiPrepareWidths using ValidV3 (parseTraceSchedule) and the parsed trace, " ++
-    "and readScheduleAgrees_of_validV3 is the exact advertised slot equation. " ++
-    "KzgMultiPrepareWidths_of_queryMap names the only missing datum: for each query " ++
-    "vector Verifier.linearize emits, a generator query list paired index-by-index by " ++
-    "KzgQueryMapData (same commitment partition and rotations) with the generator's " ++
-    "point-set count equal to the plan's numPointSets. That is the " ++
-    "linearize <-> Generator.Query correspondence, not a hypothesis on ValidV3, any row, " ++
-    "bundle or root. repack_spec_of_decodeRust is PROVED independently of this fact: " ++
-    "its hsched is the schedule input, and the decodeRust/decodeWire bridge plus the " ++
-    "exact-length guard discharge it."
+  "D1 remaining fact: the per-pair KzgQueryMapData for linearize's query vector. " ++
+    "The width schedule is PROVED (PrepareLogSlots_of_parseTrace, and " ++
+    "readScheduleAgrees_of_validV3 at the ValidV3 surface). The plan/count half is " ++
+    "pointSets_length_eq_plan_of_queryMap / setsG_pointSets_length_eq_plan_of_generator " ++
+    "(KzgQueryMapData -> generator count -> fromProofLayout numPointSets, via " ++
+    "constructIntermediateSets_pointSets_size_eq_of_queryMap and " ++
+    "planMeta_numPointSets_generator_of_validV3). The mapM half is " ++
+    "upstreamDatum_of_validV3' (the A5 upstream source block maps through " ++
+    "queryFromPlan, with the z-position list as the only datum). " ++
+    "LinearizeQueryMap_of_upstreamDatum assembles LinearizeQueryMap once the " ++
+    "per-pair datum supplies the upstream list, both set constructions, the " ++
+    "point-set equality and the KzgQueryMapData; end_to_end_of_validV3_of_upstreamDatum " ++
+    "is the final consumer. Nothing here is a row, bundle or root hypothesis."
 
 
 

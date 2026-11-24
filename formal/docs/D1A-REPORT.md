@@ -697,3 +697,26 @@ No `hpairP`, `hpairC` or `hclass` block has been discharged yet:
 `hpairC`/`hclass` need the `CommitSlot` ↔ `EcPoint` allocation map.  The final
 `KzgQueryMapData` is not yet instantiated; `LinearizeQueryMap_of_upstreamDatum`
 is the named consumer that will take it.
+
+## Complements landed (D1 assembly)
+
+The plan/count and mapM halves of `LinearizeQueryMap` are now proved:
+
+* `pointSets_length_eq_plan_of_queryMap`: from the per-query `KzgQueryMapData`,
+  the Halo2 point-set count, and the generator's `queries` result, the
+  generator's upstream point-set count is the plan's `numPointSets`.
+  `setsG_pointSets_length_eq_plan_of_generator` is the Halo2-free form the
+  assembly consumes.
+* `upstreamDatum_of_validV3'`: `ValidV3` + the literal `pcsBlockList` (with the
+  z-position list as the datum) gives the A5 upstream source block, the
+  `queryFromPlan` map to `upstreamQueries`, the generator `queries` result, both
+  set constructions, and the set equality. The `queries_assert_ok` bridge is
+  what turns a successful `Generator.queries` into the I-6 upstream check.
+* `LinearizeQueryMap_of_upstreamDatum` assembles `LinearizeQueryMap` once the
+  per-pair datum supplies the upstream list, both set constructions, the
+  point-set equality and the `KzgQueryMapData`;
+  `end_to_end_of_validV3_of_upstreamDatum` is the final consumer.
+
+The remaining per-pair inputs are exactly the `hpairP`/`hpairC`/`hclass` facts
+of `KzgQueryMapData` (and the z-position nonemptiness when the permutation block
+is present), not a row, bundle or root hypothesis.
