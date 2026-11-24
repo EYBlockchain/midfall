@@ -1921,6 +1921,29 @@ theorem b3FoldAcc_toNat_lt {rv : U256} (hrv : rv = BitVec.ofNat 256 blsR)
       · rw [if_neg hq]
         exact ih hacc
 
+/-- The q_eval offset of a point set: the number of q_eval words in the sets before it. -/
+def pcsSetOff (pointSets : List (List Int)) (setIdx : Nat) : Nat :=
+  ((pointSets.take setIdx).map List.length).foldl (fun a b => a + b) 0
+
+/-- The memory invariant block 4 needs: every q_eval word of every point set is canonical.
+    Block 3 writes these words with `pcsWriteWords` from `addmod`/`mulmod` values. -/
+def PcsQEvalCanon (qep : U256) (pointSets : List (List Int)) (st : EvmState) : Prop :=
+  ∀ s, s < pointSets.length → ∀ j, j < (pointSets.getD s []).length →
+    (loadWord st.memory
+      (qep.toNat + (pcsSetOff pointSets s + j) * Midfall.Generator.wordBytes)).toNat < blsR
+
+/-- One block-3 persist chunk: canonical stored values give canonical loads. -/
+theorem pcsQEvalCanon_chunk {mem : Nat → UInt8} {R off m : Nat} {v : Nat → U256}
+    (hv : ∀ j, j < m → (v j).toNat < blsR) :
+    ∀ j, j < m →
+      (loadWord (pcsWriteWords mem (R + off * 32) v m)
+        (R + (off + j) * 32)).toNat < blsR := by
+  intro j hj
+  have h := pcsLoadWord_writeWords_toNat_lt (mem := mem) (D := R + off * 32)
+    (v := v) (n := m) (i := j) hv hj
+  convert h using 1
+  ring
+
 /-- `wMulmodAt` by the field one is the identity on canonical words. -/
 theorem pcs_wMulmodAt_one_right {a : U256} (ha : a.toNat < blsR) :
     wMulmodAt a 1 (BitVec.ofNat 256 blsR) = a := by
