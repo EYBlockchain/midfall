@@ -970,7 +970,10 @@ theorem prog_closed (hg : Generates gi o) (hs : SupportedInput gi) :
 /-- P6. The transcript base is above Solidity's reserved words. -/
 theorem prog_transcriptFloor (hg : Generates gi o) (hs : SupportedInput gi) :
     decide (0x80 ≤ (renderOf gi o).pv.memory.transcriptMptr) = true := by
-  sorry -- CERT.4
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, hvk, hsize⟩ :=
+    Midfall.LoweringV3.plan_size_of_generated (generated_of hg)
+  rw [hmem, Midfall.LoweringV3.MemoryPairs.new_transcriptMptr_eq]
+  decide
 
 /-! ### P: no writers -/
 
