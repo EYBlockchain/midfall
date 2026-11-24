@@ -1914,6 +1914,130 @@ theorem noShadowCore_of_residuals (pv : PlanView) (m : Model)
   exact TopAvoids_append (TopAvoids_append hg hwrap) hm
 
 
+
+/-- Every binder of `b`, at any depth, avoids the constant table `C` by name. This is exactly
+    `noShadowProg`'s per-block predicate. -/
+def Avoids (C : List (String × Nat)) (b : YulBlock) : Prop :=
+  (LoweringV2.boundSs b).all (fun x => !((C.map Prod.fst).contains x)) = true
+
+theorem Avoids_append {C : List (String × Nat)} {a b : YulBlock}
+    (ha : Avoids C a) (hb : Avoids C b) : Avoids C (a ++ b) := by
+  unfold Avoids at *
+  rw [boundSs_append, List.all_append, ha, hb]
+  rfl
+
+theorem Avoids_of_BindersOK {C : List (String × Nat)} {S : List String} {b : YulBlock}
+    (h : BindersOK S b)
+    (hS : ∀ x ∈ S, ((C.map Prod.fst).contains x) = false) : Avoids C b := by
+  unfold BindersOK at h
+  unfold Avoids
+  rw [List.all_eq_true] at h ⊢
+  intro x hx
+  rw [hS x (List.contains_iff_mem.mp (h x hx))]
+  rfl
+
+theorem Avoids_nil (C : List (String × Nat)) : Avoids C [] := by
+  unfold Avoids; rw [LoweringV2.boundSs.eq_1]; rfl
+
+theorem noShadowProg_eq_Avoids (C : List (String × Nat)) (b : YulBlock) :
+    Midfall.LoweringV3.noShadowProg C b = true ↔ Avoids C b := Iff.rfl
+
+/-- **`noShadowProg` OF THE WHOLE UN-INLINED PROGRAM, CONDITIONAL ON THE RESIDUALS.**
+    The ABI guard binds nothing (`boundSs` of a `cond` is its condition's expression binders,
+    which are empty); the parser is discharged from `BindersOK` + `hSparser`; everything else is
+    one hypothesis per group. The two named blockers are `hwrap`/`hfixed` (the `constTableOf`
+    name list) and `hqlin` (which contains the parsed numerator). -/
+theorem noShadowProg_of_residuals (pv : PlanView) (m : Model)
+    (hwrap : Avoids (constTableOf m) (wrapperLocals m 0 0))
+    (hfixed : Avoids (constTableOf m)
+      (mainGuardBlock ++ GenAst.emitHelpers pv ++ GenAst.emitAccumulatorHelpers ++ mainLocals))
+    (hSparser : ∀ x ∈ parserBinderNames,
+      (((constTableOf m).map Prod.fst).contains x) = false)
+    (hvk : Avoids (constTableOf m) (GenAst.emitVkLoading pv))
+    (hlag : Avoids (constTableOf m) (GenAst.emitLagrange pv))
+    (hqlin : Avoids (constTableOf m) (qlinSlice pv (partialCtxOfVerifier m)))
+    (hpcs : Avoids (constTableOf m) (GenAst.emitPcsFromPlan pv))
+    (hfp : Avoids (constTableOf m) (GenAst.emitFinalPairing pv))
+    (htr : Avoids (constTableOf m) (GenAst.emitTraceReturn pv)) :
+    Midfall.LoweringV3.noShadowProg (constTableOf m)
+      (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m) = true := by
+  rw [noShadowProg_eq_Avoids]
+  have hparser : Avoids (constTableOf m) (GenAst.emitTranscriptParser pv) :=
+    Avoids_of_BindersOK (parser_bindersOK pv) hSparser
+  have hguard : Avoids (constTableOf m) (abiGuardBlock m) := by
+    unfold Avoids
+    rw [show LoweringV2.boundSs (abiGuardBlock m) = [] from by
+      unfold abiGuardBlock
+      simp only [LoweringV2.boundSs.eq_2, LoweringV2.boundSs.eq_1, LoweringV2.boundS.eq_6,
+        LoweringV2.boundS.eq_10, LoweringV2.boundE, List.append_nil, List.nil_append,
+        List.cons_append]]
+    rfl
+  have hqlin' : Avoids (constTableOf m) (qlinSlice pv (partialCtxOfVerifier m)) := hqlin
+  have hmain : Avoids (constTableOf m) (mainAsmRaw pv m) := by
+    rw [mainAsmRaw_decomp]
+    exact Avoids_append
+      (Avoids_append
+        (Avoids_append
+          (Avoids_append
+            (Avoids_append
+              (Avoids_append
+                (Avoids_append hfixed hvk) hparser) hlag) hqlin') hpcs) hfp) htr
+  exact Avoids_append (Avoids_append hguard hwrap) hmain
+
+
+/-- **`NoWriters` OF THE UN-INLINED PROGRAM**, conditional on the PCS slice and the parsed
+    numerator. The parser is discharged (`parser_noWriters`); `noWriters_mainAsmRaw_of` supplies
+    the rest. The remaining step to `prog_noWriters` is the inliner-preservation lemma
+    `NoWriters (inlineContractConstants c b) ↔ NoWriters b`, named in §5. -/
+theorem noWriters_program_of (pv : PlanView) (m : Model)
+    (hpcs : NoWriters (GenAst.emitPcsFromPlan pv))
+    (hnum : NoWriters (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
+    NoWriters (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m) :=
+  NoWriters_append (NoWriters_append (noWriters_abiGuardBlock m)
+    (noWriters_wrapperLocals m))
+    (noWriters_mainAsmRaw_of pv m (parser_noWriters pv) hpcs hnum)
+
+/-- Names whose references are all declared by `S`. `prog_constsDeclared`'s predicate. -/
+def FreeOK (S : List String) (b : YulBlock) : Prop :=
+  (LoweringV2.freeNames b).all (fun x => S.contains x) = true
+
+theorem FreeOK_append {S : List String} {a b : YulBlock}
+    (ha : FreeOK S a) (hb : FreeOK S b) : FreeOK S (a ++ b) := by
+  unfold FreeOK at *
+  rw [List.all_eq_true] at ha hb ⊢
+  intro x hx
+  rcases freeNames_subset_of_append_left a b x hx with h | h
+  · exact ha x h
+  · exact hb x h
+
+/-- **`prog_constsDeclared`'S SCAN**, split over the groups. The guard and the prefix are
+    hypotheses (their free names are the render's constants, a `constTableOf`/`expectedConsts`
+    fact); the parser and PCS top-level `boundSs` empty their *free* sets only through the
+    bound-name tables, and the numerator's free names are the residual. -/
+theorem freeNames_program_of (pv : PlanView) (m : Model) (S : List String)
+    (hguard : FreeOK S (abiGuardBlock m))
+    (hprefix : FreeOK S
+      (mainGuardBlock ++ GenAst.emitHelpers pv ++ GenAst.emitAccumulatorHelpers ++ mainLocals))
+    (hvk : FreeOK S (GenAst.emitVkLoading pv))
+    (hparser : FreeOK S (GenAst.emitTranscriptParser pv))
+    (hlag : FreeOK S (GenAst.emitLagrange pv))
+    (hqlin : FreeOK S (qlinSlice pv (partialCtxOfVerifier m)))
+    (hpcs : FreeOK S (GenAst.emitPcsFromPlan pv))
+    (hfp : FreeOK S (GenAst.emitFinalPairing pv))
+    (htr : FreeOK S (GenAst.emitTraceReturn pv)) :
+    FreeOK S (abiGuardBlock m ++ mainAsmRaw pv m) := by
+  have hmain : FreeOK S (mainAsmRaw pv m) := by
+    rw [mainAsmRaw_decomp]
+    exact FreeOK_append
+      (FreeOK_append
+        (FreeOK_append
+          (FreeOK_append
+            (FreeOK_append
+              (FreeOK_append
+                (FreeOK_append hprefix hvk) hparser) hlag) hqlin) hpcs) hfp) htr
+  exact FreeOK_append hguard hmain
+
+
 /-! ## 5. WHY THE NUMERATOR RESIDUAL IS NOT A TREE LEMMA (reproduction record)
 
   The three hypotheses of `noWriters_mainAsmRaw_of` are not interchangeable. The parser and PCS
