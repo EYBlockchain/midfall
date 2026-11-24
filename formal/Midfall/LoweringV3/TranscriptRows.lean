@@ -4816,6 +4816,21 @@ theorem runsAll_readAlgebra (E : VerifierEnv p G₁ G₂ Gₜ)
       intro trashcansEvaluatedList _
       exact RunsAllP.pure E _ _ trivial
 
+theorem wireMsgs_map_fr (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (qs : List (Fr p)),
+      wireMsgs E (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) = wireOf (p := p) qs
+  | [] => by simp [wireMsgs, wireOf]
+  | q :: qs => by
+      simp only [List.map_cons, wireMsgs, wireOf]
+      rw [wireMsgs_map_fr E qs]
+      simp [msgWire]
+
+theorem wireMsgs_g1_singleton (E : VerifierEnv p G₁ G₂ Gₜ) (Q : G₁) :
+    wireMsgs E ([Msg.g1 Q] : List (Msg (Fr p) G₁)) = E.g1.toCompressed Q := by
+  rw [show wireMsgs E ([Msg.g1 Q] : List (Msg (Fr p) G₁)) = msgWire E (Msg.g1 Q) ++ Bytes.empty from rfl]
+  rw [bytes_append_empty_local]
+  rfl
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -7158,6 +7173,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupsEvaluated [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashcansEvaluated [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebra [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
