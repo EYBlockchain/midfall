@@ -658,6 +658,141 @@ theorem transcriptInit_inlined (consts : Inline.Consts) (t : Nat)
 #assert_axioms Midfall.LoweringV3.TranscriptRows.transcriptInit_inlined
   [propext, Classical.choice, Quot.sound] native []
 
+set_option maxHeartbeats 4000000 in
+/-- The emitted helper block split at the `transcript_init` boundary. -/
+theorem emitHelpers_split (R : Render p G₁ G₂ Gₜ) :
+    GenAst.emitHelpers R.pv =
+      (GenAst.emitFail ++ GenAst.emitScalarInvAt R.pv) ++
+        (GenAst.emitTranscriptInit ++
+          (GenAst.emitCommonWord ++ GenAst.emitCommonUncompressedG1 ++ GenAst.emitSqueezeTo ++
+            GenAst.emitBatchInvertAt ++ GenAst.emitEcPairingAt R.pv)) := by
+  rw [GenAst.emitHelpers, GenAst.emitTranscriptHelpers]
+  simp only [List.append_assoc]
+
+set_option maxHeartbeats 4000000 in
+/-- **THE `R.helpers` PREFIX SPLIT.** The helper block is the inlined
+    `emitFail ++ emitScalarInvAt` prefix, the singleton inlined `transcript_init`, and the rest
+    (the remaining helpers and the accumulator helpers), exactly as `inlineScan_append` threads
+    them. The `transcript_init` body's shadow list is
+    `(emitFail ++ emitScalarInvAt).flatMap boundOf ++ ["buf_len"]`. -/
+theorem helpers_split (R : Render p G₁ G₂ Gₜ) :
+    R.helpers =
+      (Inline.inlineScan 64 (Midfall.LoweringV2.constTableOf R.model) []
+          (GenAst.emitFail ++ GenAst.emitScalarInvAt R.pv)).blks ++
+        (Inline.inlineScan 64 (Midfall.LoweringV2.constTableOf R.model)
+          ((GenAst.emitFail ++ GenAst.emitScalarInvAt R.pv).flatMap Inline.boundOf)
+          GenAst.emitTranscriptInit).blks ++
+          (Inline.inlineScan 64 (Midfall.LoweringV2.constTableOf R.model)
+            ((GenAst.emitFail ++ GenAst.emitScalarInvAt R.pv).flatMap Inline.boundOf ++
+              GenAst.emitTranscriptInit.flatMap Inline.boundOf)
+            (GenAst.emitCommonWord ++ GenAst.emitCommonUncompressedG1 ++ GenAst.emitSqueezeTo ++
+              GenAst.emitBatchInvertAt ++ GenAst.emitEcPairingAt R.pv ++
+              GenAst.emitAccumulatorHelpers)).blks := by
+  let a : Block EVM.Op := GenAst.emitFail ++ GenAst.emitScalarInvAt R.pv
+  let rest : Block EVM.Op :=
+    GenAst.emitCommonWord ++ GenAst.emitCommonUncompressedG1 ++ GenAst.emitSqueezeTo ++
+      GenAst.emitBatchInvertAt ++ GenAst.emitEcPairingAt R.pv ++ GenAst.emitAccumulatorHelpers
+  unfold Render.helpers Midfall.LoweringV2.helpersOf
+  rw [emitHelpers_split R]
+  change (Inline.inlineScan 64 (Midfall.LoweringV2.constTableOf R.model) []
+    (a ++ (GenAst.emitTranscriptInit ++ rest))).blks = _
+  rw [show (64 : Nat) = 63 + 1 from rfl]
+  have h1 := Inline.inlineScan_append 63 (Midfall.LoweringV2.constTableOf R.model) []
+    a (GenAst.emitTranscriptInit ++ rest)
+  rw [h1]
+  have h2 := Inline.inlineScan_append 63 (Midfall.LoweringV2.constTableOf R.model)
+    ([] ++ a.flatMap Inline.boundOf) GenAst.emitTranscriptInit rest
+  rw [h2]
+  simp [a, rest]
+
+/-- The `transcript_init` singleton scan at an arbitrary unshadowing `sh`. -/
+theorem transcriptInit_inlined_sh (consts : Inline.Consts) (sh : List String) (t : Nat)
+    (h : consts.lookup "TRANSCRIPT_MPTR" = some t)
+    (hsh : Inline.shadowed sh "TRANSCRIPT_MPTR" = false) :
+    (Inline.inlineScan 64 consts sh GenAst.emitTranscriptInit).blks =
+      [Stmt.funDef "transcript_init" [] ["buf_len"]
+        [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))]] := by
+  unfold GenAst.emitTranscriptInit
+  show (Inline.inlineScan 64 consts sh [Stmt.funDef "transcript_init" [] ["buf_len"]
+    [Stmt.assign ["buf_len"] (Expr.var "TRANSCRIPT_MPTR")]]).blks = _
+  have hbody : (Inline.inlineScan 63 consts (sh ++ ["buf_len"])
+      [Stmt.assign ["buf_len"] (Expr.var "TRANSCRIPT_MPTR")]).blks =
+      [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))] := by
+    apply transcriptInit_body_sh
+    · exact h
+    · rw [Inline.shadowed_append_or, hsh]
+      rfl
+  show (Inline.inlineScan (63 + 1) consts sh [Stmt.funDef "transcript_init" [] ["buf_len"]
+    [Stmt.assign ["buf_len"] (Expr.var "TRANSCRIPT_MPTR")]]).blks = _
+  apply inlineScan_single_changed
+  simp only [Inline.inlineStmtStep, List.append_nil]
+  rw [hbody]
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.helpers_split
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.transcriptInit_inlined_sh
+  [propext, Classical.choice, Quot.sound] native []
+
+/-- `hoist` distributes over an append. -/
+theorem hoist_append_local (D : YulSemantics.Dialect) (a b : Block D.Op) :
+    hoist D (a ++ b) = hoist D a ++ hoist D b := by
+  simp [hoist, List.filterMap_append]
+
+set_option maxHeartbeats 4000000 in
+/-- **THE `transcript_init` LOOKUP BODY.** The full `R.scope` resolves `transcript_init` to the
+    declaration whose body is the single literal assignment. The prefix split is `helpers_split`;
+    the prefix `find?` over `fail`/`scalar_inv` is skipped, and the middle scan is
+    `transcriptInit_inlined_sh`. -/
+theorem lookup_transcriptInit_body (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (hR : ValidV3 R) :
+    ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧
+      (lookupFun (R.scope c g) "transcript_init").map (fun p => p.1.body) =
+        some [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))] := by
+  obtain ⟨t, ht, -⟩ := Midfall.LoweringV3.transcriptMptr_of_valid (R := R) hR
+  refine ⟨t, ht, ?_⟩
+  have hsh : Inline.shadowed
+      ((GenAst.emitFail ++ GenAst.emitScalarInvAt R.pv).flatMap Inline.boundOf)
+      "TRANSCRIPT_MPTR" = false := by rfl
+  have hmid := transcriptInit_inlined_sh (Midfall.LoweringV2.constTableOf R.model)
+    ((GenAst.emitFail ++ GenAst.emitScalarInvAt R.pv).flatMap Inline.boundOf) t
+    (by simpa [Render.consts] using ht) hsh
+  have hprefix_list : ∃ (b1 b2 : Block EVM.Op),
+      hoist (Bridge.Dialect c g)
+        (Inline.inlineScan 64 (Midfall.LoweringV2.constTableOf R.model) []
+          (GenAst.emitFail ++ GenAst.emitScalarInvAt R.pv)).blks =
+        [("fail", ({ params := ["sel"], rets := [], body := b1 } : FDecl (Bridge.Dialect c g))),
+         ("scalar_inv", ({ params := ["x"], rets := ["inv"], body := b2 } : FDecl (Bridge.Dialect c g)))] := by
+    exact ⟨_, _, rfl⟩
+  obtain ⟨b1, b2, hprefix_list⟩ := hprefix_list
+  unfold Render.scope
+  rw [helpers_split R, hmid]
+  simp only [List.append_assoc]
+  rw [hoist_append_local, hoist_append_local]
+  rw [hprefix_list]
+  simp [lookupFun, List.find?, hoist, List.filterMap]
+
+/-- **THE `transcript_init` DECLARATION AND BODY, UNCONDITIONALLY.** This is the bridge the parser
+    head needs: the lookup, its `[]`/`["buf_len"]` signature, and the literal body. -/
+theorem transcriptInit_lookup_body (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (hR : ValidV3 R) :
+    ∃ decl, lookupFun (R.scope c g) "transcript_init" = some (decl, R.scope c g) ∧
+      decl.params = [] ∧ decl.rets = ["buf_len"] ∧
+      ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧
+        decl.body = [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))] := by
+  obtain ⟨decl, hlook, hparams, hrets⟩ :
+      ∃ decl, lookupFun (R.scope c g) "transcript_init" = some (decl, R.scope c g) ∧
+        decl.params = [] ∧ decl.rets = ["buf_len"] :=
+    ⟨_, rfl, rfl, rfl⟩
+  obtain ⟨t, ht, hmap⟩ := lookup_transcriptInit_body R hR
+  rw [hlook] at hmap
+  have hbody : decl.body = [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))] :=
+    Option.some.inj hmap
+  exact ⟨decl, hlook, hparams, hrets, t, ht, hbody⟩
+#assert_axioms Midfall.LoweringV3.TranscriptRows.lookup_transcriptInit_body
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.transcriptInit_lookup_body
+  [propext, Classical.choice, Quot.sound] native []
+
 /-- **THE `common_word` CALL RESOLVES.** `R.scope` resolves `common_word` to the emitted
     two-parameter/one-return helper with the `mstore`/`add` body. PROVED by `rfl`. -/
 theorem commonWord_lookup_body (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} :
@@ -779,6 +914,19 @@ theorem tp_head_run_of_transcriptInitBody {c : ExternalCalls} {g : ExternalGas}
     (Step.letVal (vars := ["buf_len"]) (vals := [BitVec.ofNat 256 t]) hcall rfl) Step.seqNil⟩
 
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_head_run_of_transcriptInitBody
+  [propext, Classical.choice, Quot.sound] native []
+
+/-- **THE PARSER HEAD RUN, UNCONDITIONAL.** The first emitted statement executes normally from
+    any state in the render's scope. -/
+theorem tp_head_run (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (hR : ValidV3 R) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    ∃ V' st', ExecStmts (D := Bridge.Dialect c g) (R.scope c g) V st
+      [Stmt.letDecl ["buf_len"] (some (Expr.call "transcript_init" []))] V' st' .normal := by
+  obtain ⟨decl, hlook, hparams, hrets, t, ht, hbody⟩ := transcriptInit_lookup_body R hR
+  exact tp_head_run_of_transcriptInitBody (funs := R.scope c g) (V := V) (st := st)
+    decl (R.scope c g) hlook hparams hrets t hbody
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_head_run
   [propext, Classical.choice, Quot.sound] native []
 
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_lookup_body
