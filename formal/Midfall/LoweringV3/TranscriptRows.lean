@@ -9338,6 +9338,83 @@ theorem instStep_stmt {c : ExternalCalls} {g : ExternalGas}
   | assignHalt he => exact (g1Walk_eval_add_var_lit_halt_false he).elim
 
 
+theorem instInit_run {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (start N : Nat) (V : VEnv (Bridge.Dialect c g))
+    (st stinit : EvmState) (Vinit : VEnv (Bridge.Dialect c g))
+    (hbound : start + N * 32 < 2 ^ 256)
+    (h : Step (Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g)
+        [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number start)))
+        , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (N * 32))])) ] :: funs)
+      V st
+      (.stmts
+        [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number start)))
+        , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (N * 32))])) ])
+      (.sres Vinit stinit .normal)) :
+    ∃ e, Vinit = ("instance_cptr_end", e) ::
+        ("instance_cptr", BitVec.ofNat 256 start) :: V ∧
+      e = BitVec.ofNat 256 (start + N * 32) ∧ stinit = st := by
+  cases h with
+  | seqCons h1 h2 =>
+      cases h2 with
+      | seqCons h2a h2b =>
+          cases h2b with
+          | seqNil =>
+              cases h1 with
+              | letVal he1 hlen1 =>
+                  obtain ⟨v1, hv1⟩ := g1Walk_list_length_one hlen1
+                  subst hv1
+                  obtain ⟨hv1', hst1⟩ := g1Walk_eval_lit_inv he1
+                  subst hv1'
+                  subst hst1
+                  cases h2a with
+                  | letVal he2 hlen2 =>
+                      obtain ⟨v2, hv2⟩ := g1Walk_list_length_one hlen2
+                      subst hv2
+                      obtain ⟨a, hget, hval, hst2⟩ :=
+                        g1Walk_eval_add_var_lit_inv (x := "instance_cptr") (k := N * 32) he2
+                      simp only [VEnv.get, List.find?] at hget
+                      injection hget with ha
+                      subst ha
+                      subst hval
+                      refine ⟨BitVec.ofNat 256 start + BitVec.ofNat 256 (N * 32), ?_, ?_, ?_⟩
+                      · simp only [List.zip_cons_cons, List.zip_nil_left, List.cons_append, List.nil_append]
+                      · exact (BitVec.ofNat_add (n := 256) start (N * 32)).symm
+                      · exact hst2
+      | seqStop hstop hne => exact absurd rfl hne
+  | seqStop hstop hne => exact absurd rfl hne
+
+theorem instInit_halt_false {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (start N : Nat) (V : VEnv (Bridge.Dialect c g))
+    (st stinit : EvmState) (Vinit : VEnv (Bridge.Dialect c g))
+    (h : Step (Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g)
+        [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number start)))
+        , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (N * 32))])) ] :: funs)
+      V st
+      (.stmts
+        [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number start)))
+        , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (N * 32))])) ])
+      (.sres Vinit stinit .halt)) : False := by
+  cases h with
+  | seqCons h1 h2 =>
+      cases h1 with
+      | letVal he1 _ =>
+          cases h2 with
+          | seqCons h2a h2b =>
+              cases h2b
+          | seqStop h2a hne =>
+              cases h2a with
+              | letHalt he2 => exact (g1Walk_eval_add_var_lit_halt_false (x := "instance_cptr") (k := N * 32) he2)
+  | seqStop h1 hne =>
+      cases h1 with
+      | letHalt he1 => cases he1
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9960,5 +10037,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1AppendWords_append [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_take_succ [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instStep_stmt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instInit_run [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instInit_halt_false [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
