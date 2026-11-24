@@ -1805,6 +1805,37 @@ theorem snapshotAlgebraRun_xn_pow {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R)
     ← pv_k_eq_vk_domain_k hR]
 
 #assert_axioms snapshotAlgebraRun_xn_pow [propext, Classical.choice, Quot.sound]
+
+theorem lag_agrees_of_run (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hm : 2 ≤ R.pv.numNegLagranges) (hn : 1 ≤ R.pv.numInstances)
+    {H : Hash} {ms : List (Msg (Fr p) G₁)} {t2 : Transcript}
+    (s2 : SnapAlgebra p G₁) (l : SnapLagrange p G₁)
+    (hl : snapshotLagrangeStep (G₁ := G₁) R.vk s2 = .ok l)
+    (inst : Array (Fr p))
+    (hrun : snapshotAlgebraRun R.E H R.vk inst ms = .ok (s2, t2))
+    (W : LagWords)
+    (hinst : s2.alg.instanceEvals.getD 0 #[] = inst)
+    (hW : LagRel (BitVec.ofNat 256 p) (Midfall.Halo2.frWord s2.alg.x)
+      (Midfall.Halo2.frWord R.vk.domain.omega)
+      (Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges))
+      (Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹)) R.pv.k R.pv.numInstances
+      R.pv.numNegLagranges (fun j => Midfall.Halo2.frWord (inst.getD j 0)) W)
+    (bf : Nat) (hbf : R.vk.cs.blindingFactors = .ok bf)
+    (Lw : Nat → U256)
+    (hval : ∀ i, i ≤ bf + 1 →
+      Midfall.Halo2.frWord ((lagList R.vk.domain s2.alg.x s2.alg.xn (bf + 1))[i]!) = Lw i)
+    (hBlindW : W.lBlind = wSum (BitVec.ofNat 256 p : U256)
+      (fun i => Lw (2 + i)) (bf - 1) (Lw 1))
+    (hInstEval : ∀ e, l.instanceEval = some e → W.instEval = Midfall.Halo2.frWord e) :
+    W.xn = Midfall.Halo2.frWord s2.alg.xn ∧
+    W.lLast = Midfall.Halo2.frWord l.lagrange.lLast ∧
+    W.lBlind = Midfall.Halo2.frWord l.lagrange.lBlind ∧
+    W.l0 = Midfall.Halo2.frWord l.lagrange.l0 ∧
+    ∀ e, l.instanceEval = some e → W.instEval = Midfall.Halo2.frWord e :=
+  lag_agrees R hR hm hn s2 l hl (snapshotAlgebraRun_xn_pow hR hrun) inst W hinst hW
+    bf hbf Lw hval hBlindW hInstEval
+
+#assert_axioms lag_agrees_of_run [propext, Classical.choice, Quot.sound]
 /-- The table's `MODEXP_GAS` is the model's scheduled modexp gas. -/
 theorem consts_lookup_MODEXP_GAS (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
     R.consts.lookup "MODEXP_GAS" = some R.model.templateConstants.gas.modexp := by
