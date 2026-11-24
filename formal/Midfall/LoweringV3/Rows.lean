@@ -35,6 +35,7 @@ import Midfall.LoweringV3.FpConsts
 import Midfall.LoweringV3.FpClean
 import Midfall.LoweringV3.FpG2Width
 import Midfall.LoweringV3.FpFit
+import Midfall.LoweringV3.LagrangeBlock
 import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.Tools.ConeSorries
@@ -144,24 +145,72 @@ The lagrange rows cannot yet be assembled from the tree. The blockers are NOT on
    4/5/6 (`omega`, `mptr`, `mptr_end`), 8/9 (`x_n_minus_1`, `mptr_end` store), 11/12 (`mptr`
    reset, `l_i_common`), 14/15 (`l_blind`, `l_i_cptr`), 17 (`instance_eval`), 19/20/21
    (`x_n_minus_1_inv`, `l_last`, `l_0`), and 22-27 (the six slot stores). Statement 10 (the
-   `batch_invert` call) is the ONLY uncovered inner statement. The row still needs the
-   whole-block composition whose post is
-   `∃ W, LagRel … W ∧ <the six slots hold W's words> ∧ <memory outside the denominator/scratch/slot
-   windows unchanged>`; that composition is the T3.9.f card and cannot be stated honestly until
-   the call segment's post exists.
-2. **T3.9.h `lag_poison` is absent.** Its proof needs the whole-block normal-run composition and
-   the poison arm of the `batch_invert` call (A5). The fixed prelude itself is no longer the
-   blocker: statements 0-9 bind `mptr`/`mptr_end` and write the denominator window inside the
-   inner block, so the loop preconditions are reached by the landed segment contracts.
-3. **A5 `batch_invert_summary` is absent.** It supplies statement 10's `success = 0` / `ret = 0`
-   call fact (and the `ret = 1` arm for progress), hence both the whole-block post and
-   `lag_poison`.
+   `batch_invert` call) is the only inner statement not yet discharged; A5's
+   `batch_invert_summary` now exists (`ModexpGeneral.lean:4331`), so what remains there is the
+   caller-side `Step.callOk`/`ysetN` bridge, not a missing summary. Its exact inputs are:
+   `batchInvertDecl`/`lookupFun funs "batch_invert" = some (decl, cenv)` with
+   `decl.body = helperBody consts emitBatchInvertAt` and the five params/two rets (provable by
+   `kernel_rfl`, as `EcPairing.ecPairing_lookup` does); the argument evaluation of
+   `success, LAGRANGE_DENOMS_MPTR, mptr_end + 0x20, BATCH_INV_SCRATCH_MPTR, r`; the A5 pre's
+   `MODEXP_GAS` lookup, `hsp` (`lagScratchFits`), the window fits (`LagWindowFits`) and the
+   CANONICAL FIRST DENOMINATOR WORD `(loadWord st.memory C.D).toNat < blsR`; then
+   `BatchInvertPost` -> `BatchInvertCallPost` through `VEnv.setMany`. The canonical-word fact is
+   the named PG-BATCHINVERT(3) premise (it follows from `x ∉ domain` on the progress side, and
+   is not implied by `LagPre` on the soundness side).
+2. **T3.9.h `lag_poison`'s inner half is now landed** as `LagrangeBlock.lag_poison` (with
+   `lag_body_poison_contract` / `lag_block_poison_contract` / `lag_guard_poison_contract`): the
+   body's `restore` keeps `success`/`lagrange_precompile_failed` (the two non-membership facts
+   in 5d), and the guard reverts from `(0, 0)`. It is conditional on a `LagInnerContract` at
+   `C.succ = 0`, which is exactly the remaining whole-block composition. The Render-level
+   assembly `lagBlockPoisonContract_of_inner` below reduces `LagBlockPoisonContract` to the two
+   named bridges `hpre : Poisoned → LagPre C` and `hinner : LagInnerContract C …`.
+3. **PG-LAG-FITS is now an exact named predicate.** `LagrangeBlock.LagWindowFits` carries the
+   denominator window end `D + 32(n+m+1) < 2^256`, the six slot fits, the four window
+   disjointness clauses and the six pairwise slot separations; `lag_inner_contract_post_of_fits`
+   derives `LagInnerContract` from it (all weaker arithmetic is `omega`). It is NOT a
+   `ValidV3` projection: `MetaCountsBound` (`Generator/Certified.lean:207`) bounds `m` through
+   `rotationLast < 2^32`, but nothing bounds `n = numInstances`; the generator's input predicate
+   `CountBound` (`Certified.lean:286`) has `instances < 2^32` and `metaCounts`, and with a
+   layout address below `2^200` it gives the denominator end
+   (`LagrangeBlock.lagDenomEnd_of_countBound`). `Render` does not retain `CountBound`, so this
+   remains an INPUT predicate, not a row/root hypothesis. The clean post also needs T3.9.g's
+   actual premises: `lag_agrees` is landed (`LagrangeRows.lean:3515`) but consumes
+   `hl : snapshotLagrangeStep = .ok l`, `hxn`, `hinst` and the `XcriptAlgebraRun`/`XcriptG1`
+   parser facts, none of which `ValidV3` supplies.
 
 Therefore `lag_blockSim`/`lag_blockProgS` remain the existing registered leaves; no row hypothesis
 has been added and no new `sorry` is introduced here. When 1–3 land, the rows are pure glue.
 -/
 
 /-! ## 3. lagrange (owner T3.9, WP A4) -/
+
+/-- **THE RENDER-LEVEL `LagBlockPoisonContract` ASSEMBLY.** The inner and guard units are
+    `LagrangeBlock.lag_poison`; this theorem rewrites the real slice by
+    `lag_slice`/`lag_slice_decomp` and supplies the three render facts (`ERR_PROOF_REJECTED`,
+    `success` absent, the `fail` lookup). The two remaining bridges are explicit arguments, not
+    row hypotheses: `hpre` is `Poisoned → LagPre C` (the `LagCfg`/frame bridge) and `hinner` is
+    the whole-block contract at `C.succ = 0` (the T3.9.f composition under PG-LAG-FITS). -/
+theorem lagBlockPoisonContract_of_inner (R : Render p G₁ G₂ Gₜ)
+    (product : PairingProduct) (hR : ValidV3 R) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (g : ExternalGas)
+    (C : LagrangeBlock.LagCfg R.consts cd R.pv.k R.pv.numInstances R.pv.numNegLagranges)
+    (hpre : ∀ V st, Poisoned R H vkAddr cd
+      (c := permissive (callsOf product)) (g := g) V st → LagrangeBlock.LagPre C V st)
+    (hinner : LagrangeBlock.LagInnerContract C (hoist
+      (Bridge.Dialect (permissive (callsOf product)) g)
+      (LagrangeRows.lagInner R.consts R.pv.k R.pv.numInstances R.pv.numNegLagranges) ::
+      R.scope (permissive (callsOf product)) g))
+    (hsucc0 : C.succ = 0) :
+    LagrangeBlock.LagBlockPoisonContract R product g H vkAddr cd := by
+  intro V st hpois V' st' o hrun
+  rw [LagrangeRows.lag_slice, LagrangeBlock.lag_slice_decomp] at hrun
+  exact LagrangeBlock.lag_poison (C := C) hinner hsucc0
+    (consts_errProof_of_validV3 hR)
+    (Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R)
+    (Midfall.LoweringV2.Blocks.TraceReturn.fail_lookup R)
+    V st (hpre V st hpois) V' st' o hrun
+
+#assert_axioms lagBlockPoisonContract_of_inner [propext, Classical.choice, Quot.sound]
 
 /-- **LEAF (T3.9, WP A4): the lagrange simulation row.** Evidence `GeneratorRows.lean:621`; children
     are loops a-e, HLP.1.b, `lag_agrees`, `lag_poison`. -/
@@ -1272,5 +1321,190 @@ theorem prog_rows (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
 #print axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
 #assert_axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
   [propext, Classical.choice, Quot.sound] native []
+
+/-! ## 9. The canonical Lagrange `LagCfg` and the `Inv → LagPre` field assembly
+
+The Render-level clean arm needs one `LagCfg` constructed from the snapshot the Lagrange
+post talks about. `lagCfgOf` is that record. The four memory-word equalities (`x`, `omega`,
+`omega_inv_to_l`, `n_inv`) are the only facts the assembly cannot read off `Inv` + `Frame`
+directly here: `x` comes from the `.transcript` slot (decode-relative, via `Agree`), the three
+header words from `Inv .vk`'s `bytesAt vkMptr = PV.vk.bytes` window plus `PayloadAgrees` and
+the `readBytes`/`loadWord` bridge (`PG-LOADWORD-BYTES`). They are explicit arguments so the
+missing bridge is named rather than guessed. -/
+
+/-- `loadWord` is the `wordFrom` of the 32-byte `readBytes` window. -/
+theorem loadWord_eq_wordFrom_readBytes (mem : Nat → UInt8) (p : Nat) :
+    loadWord mem p = wordFrom (readBytes mem p 32) 0 := by
+  unfold loadWord wordFrom readBytes byteFrom
+  refine Midfall.Yul.Word.foldl_congr _ _ _ ?_ 0
+  intro i hi acc
+  have hi32 : i < 32 := List.mem_range.mp hi
+  rw [Nat.zero_add, List.getD_eq_getElem?_getD, List.getElem?_map,
+    List.getElem?_eq_getElem (by simpa using hi32), List.getElem_range]
+  simp only [Option.map_some, Option.getD_some]
+
+set_option maxHeartbeats 4000000 in
+/-- **PG-LOADWORD-BYTES, the header-word core.** `bytesAt`/`readBytes` at the payload base
+    gives every VK header word: `readBytes_vkHeader` slices the payload bytes and
+    `wordFrom_wordToBytesBE` closes the one-word fold. This is the lemma the three `lagCfgOf`
+    header slots (`omega`, `omega_inv_to_l`, `n_inv`) consume; the caller supplies the payload
+    window from `Inv .vk`. -/
+theorem loadWord_vkHeader_of_readBytes (PV : PlanView) (st : EvmState) (i : Nat)
+    (hlen : 11 ≤ PV.vk.constants.length) (hi : i ≤ 10)
+    (hpayload : readBytes st.memory (ptrAddr PV.memory.vkMptr) PV.vk.len =
+      PV.vk.bytes.data.toList) :
+    loadWord st.memory (ptrAddr PV.memory.vkMptr + 32 * i) =
+      (PV.vk.constants.getD i ("", 0)).2 := by
+  have hlenGe : 352 ≤ PV.vk.len := by
+    rw [Midfall.Generator.Halo2VerifyingKey.len]
+    omega
+  have hfit : 32 * (i + 1) ≤ PV.vk.len := by omega
+  have hread := Midfall.LoweringV3.readBytes_vkHeader st PV i 1 hpayload hfit (by omega)
+  rw [loadWord_eq_wordFrom_readBytes, hread]
+  unfold Midfall.Lowering.vkHeaderBytes
+  rw [show (PV.vk.constants.drop i).take 1 = [(PV.vk.constants.getD i ("", 0))] from by
+    rw [List.take_one, List.drop_eq_getElem_cons (by omega)]
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (by omega)]
+    rfl]
+  simp only [List.foldl_cons, List.foldl_nil]
+  rw [Midfall.LoweringV3.VkClean.bytes_empty_append,
+    Midfall.LoweringV3.VkClean.wordFrom_wordToBytesBE]
+
+/-- The canonical Lagrange block configuration at a snapshot. -/
+def lagCfgOf (R : Render p G₁ G₂ Gₜ) (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ) :
+    LagrangeBlock.LagCfg R.consts cd R.pv.k R.pv.numInstances R.pv.numNegLagranges :=
+  { D := R.pv.memory.lagrangeDenomsMptr
+    s := R.pv.memory.batchInvertScratchMptr
+    aX := ptrAddr R.pv.memory.xMptr
+    aO := ptrAddr R.pv.memory.vkMptr + 32 * vkHeaderTemplateSlotsDefault.omega
+    aL := ptrAddr R.pv.memory.vkMptr + 32 * vkHeaderTemplateSlotsDefault.omegaInvToL
+    aN := ptrAddr R.pv.memory.vkMptr + 32 * vkHeaderTemplateSlotsDefault.nInv
+    aI := R.pv.proofLayout.proofEnd + 32
+    aXN := ptrAddr R.pv.memory.xNMptr
+    aXN1 := ptrAddr R.pv.memory.xNMinus1InvMptr
+    aLL := ptrAddr R.pv.memory.lLastMptr
+    aLB := ptrAddr R.pv.memory.lBlindMptr
+    aL0 := ptrAddr R.pv.memory.l0Mptr
+    aIE := ptrAddr R.pv.memory.instanceEvalMptr
+    rw := BitVec.ofNat 256 p
+    succ := 1
+    xw := Midfall.Halo2.frWord S.alg.x
+    omw := Midfall.Halo2.frWord R.vk.domain.omega
+    w0 := Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges)
+    nInv := Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹) }
+
+set_option maxHeartbeats 4000000 in
+/-- PG-LOADWORD-BYTES at `OMEGA_MPTR`: the payload window gives the omega header word. -/
+theorem lagCfgOf_aO_load (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (st : EvmState) (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ)
+    (hpayload : readBytes st.memory (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len =
+      R.pv.vk.bytes.data.toList) :
+    loadWord st.memory (lagCfgOf R cd S).aO = (lagCfgOf R cd S).omw := by
+  have h := loadWord_vkHeader_of_readBytes R.pv st vkHeaderTemplateSlotsDefault.omega
+    hR.payload.constantsLength (by decide) hpayload
+  have hpay : (R.pv.vk.constants.getD vkHeaderTemplateSlotsDefault.omega ("", 0)).2 =
+      Midfall.Halo2.frWord R.vk.domain.omega := by
+    simpa [payloadWord] using hR.payload.omega
+  rw [hpay] at h
+  simpa [lagCfgOf] using h
+
+set_option maxHeartbeats 4000000 in
+/-- PG-LOADWORD-BYTES at `N_INV_MPTR`: the payload window gives the barycentric-weight header
+    word, which is exactly `LagCfg.nInv` (`PayloadAgrees.nInv`). -/
+theorem lagCfgOf_aN_load (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (st : EvmState) (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ)
+    (hpayload : readBytes st.memory (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len =
+      R.pv.vk.bytes.data.toList) :
+    loadWord st.memory (lagCfgOf R cd S).aN = (lagCfgOf R cd S).nInv := by
+  have h := loadWord_vkHeader_of_readBytes R.pv st vkHeaderTemplateSlotsDefault.nInv
+    hR.payload.constantsLength (by decide) hpayload
+  have hpay : (R.pv.vk.constants.getD vkHeaderTemplateSlotsDefault.nInv ("", 0)).2 =
+      Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹) := by
+    simpa [payloadWord] using hR.payload.nInv
+  rw [hpay] at h
+  simpa [lagCfgOf] using h
+
+set_option maxHeartbeats 4000000 in
+/-- PG-LOADWORD-BYTES at `OMEGA_INV_TO_L_MPTR`. The payload word is
+    `frWord (ω⁻¹ ^ rotationLast.natAbs)`; the block's `w0` is `frWord (ω⁻¹ ^ numNegLagranges)`.
+    THE EXPONENT EQUALITY IS THE NAMED `PG-OMEGAINV-SLOT`: `EnvAgrees.negLagranges` gives
+    `numNegLagranges = blindingFactors + 1`, but `rotationLast = -(blindingFactors + 1)` is a
+    generator-input fact (`Certified.fromConstraintSystem_rotationLast`), not a `ValidV3`
+    projection. It is an explicit premise, not a row/root hypothesis. -/
+theorem lagCfgOf_aL_load (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (st : EvmState) (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ)
+    (hrot : R.plan.meta_.rotationLast.natAbs = R.pv.numNegLagranges)
+    (hpayload : readBytes st.memory (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len =
+      R.pv.vk.bytes.data.toList) :
+    loadWord st.memory (lagCfgOf R cd S).aL = (lagCfgOf R cd S).w0 := by
+  have h := loadWord_vkHeader_of_readBytes R.pv st vkHeaderTemplateSlotsDefault.omegaInvToL
+    hR.payload.constantsLength (by decide) hpayload
+  have hpay : (R.pv.vk.constants.getD vkHeaderTemplateSlotsDefault.omegaInvToL ("", 0)).2 =
+      Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges) := by
+    simpa [payloadWord, hrot] using hR.payload.omegaInvToL
+  rw [hpay] at h
+  simpa [lagCfgOf] using h
+
+/-- `bytesAt` is the `readBytes` window: the equality at `ByteArray` level is the equality of
+    the underlying byte lists. -/
+theorem readBytes_of_bytesAt {st : EvmState} {a n : Nat} {b : Bytes}
+    (h : bytesAt st a n = b) : readBytes st.memory a n = b.data.toList := by
+  unfold bytesAt at h
+  exact congrArg (fun x : Bytes => x.data.toList) h
+
+
+/-- **THE `Inv`/`Frame` → `LagPre` FIELD ASSEMBLY.** `Frame` supplies `r` (its `FR_MODULUS`
+    word, `frModulus_of_valid` identifying the literal with `p`) and the calldata; `StageInv`'s
+    success conjunct supplies `success = 1`; the prologue supplies `pf = 0`; the four explicit
+    hypotheses are the memory words. This is the exact interface of the bridge: no row/root
+    hypothesis, and the four word facts stay visible. -/
+theorem lagPre_of_inv_transcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hframe : Frame R H vkAddr cd V st)
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (hpf : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (hX : loadWord st.memory (lagCfgOf R cd S).aX = (lagCfgOf R cd S).xw)
+    (hO : loadWord st.memory (lagCfgOf R cd S).aO = (lagCfgOf R cd S).omw)
+    (hL : loadWord st.memory (lagCfgOf R cd S).aL = (lagCfgOf R cd S).w0)
+    (hN : loadWord st.memory (lagCfgOf R cd S).aN = (lagCfgOf R cd S).nInv) :
+    LagrangeBlock.LagPre (lagCfgOf R cd S) V st := by
+  obtain ⟨rv, hrv, hget⟩ := hframe.r
+  have hrvp : rv = p := by
+    have h := frModulus_of_valid hR
+    rw [hrv] at h
+    exact Option.some.inj h
+  refine ⟨?_, hsucc, hpf, hX, hO, hL, hN, hframe.calldata⟩
+  rw [hget, hrvp]
+  rfl
+
+#assert_axioms lagCfgOf_aO_load [propext, Classical.choice, Quot.sound]
+#assert_axioms lagCfgOf_aN_load [propext, Classical.choice, Quot.sound]
+#assert_axioms lagCfgOf_aL_load [propext, Classical.choice, Quot.sound]
+#assert_axioms lagPre_of_inv_transcript [propext, Classical.choice, Quot.sound]
+
+/-- **THE BRIDGE WITH THE PG-LOADWORD SLOTS SPENT.** Only three inputs remain: the payload
+    window (`hpayload`, a projection of `Inv .vk`), the x-slot word (`hx`, the named SIM.10 /
+    parser pin) and the `PG-OMEGAINV-SLOT` exponent equality. Everything else is
+    `lagPre_of_inv_transcript` plus the three `lagCfgOf` slot lemmas. -/
+theorem lagPre_of_inv_transcript_of_payload (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hframe : Frame R H vkAddr cd V st)
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (hpf : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (hx : loadWord st.memory (lagCfgOf R cd S).aX = (lagCfgOf R cd S).xw)
+    (hrot : R.plan.meta_.rotationLast.natAbs = R.pv.numNegLagranges)
+    (hpayload : readBytes st.memory (ptrAddr R.pv.memory.vkMptr) R.pv.vk.len =
+      R.pv.vk.bytes.data.toList) :
+    LagrangeBlock.LagPre (lagCfgOf R cd S) V st :=
+  lagPre_of_inv_transcript R hR cd S H vkAddr V st hframe hsucc hpf hx
+    (lagCfgOf_aO_load R hR st cd S hpayload)
+    (lagCfgOf_aL_load R hR st cd S hrot hpayload)
+    (lagCfgOf_aN_load R hR st cd S hpayload)
+
+#assert_axioms lagPre_of_inv_transcript_of_payload [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3

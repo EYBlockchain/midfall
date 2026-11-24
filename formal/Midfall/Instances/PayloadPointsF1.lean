@@ -625,6 +625,7 @@ theorem f1PointRenderCN_payloadScalars (n : Nat) :
   · show 11 ≤ f1Pv.vk.constants.length
     native_decide
 
+set_option maxHeartbeats 1000000 in
 /-- `WellFormed` at the resourced key: every field reads counts/domain, which the re-source
     preserves. -/
 theorem f1VkResourced_wf : f1VkResourced.WellFormed Features.solidity :=
@@ -657,7 +658,10 @@ theorem f1VkResourced_wf : f1VkResourced.WellFormed Features.solidity :=
     fixedSelectorBound := by native_decide
     fixedQueriesBound := by native_decide
     simpleSelectorQueriesBound := by native_decide
-    instanceRotZero := by native_decide }
+    instanceRotZero := by native_decide
+    instanceQueriesBound := by native_decide,
+    advicePhaseColumnOrder := by native_decide }
+
 
 /-- **`supported` AT THE RE-SOURCED RENDER.** The only changed field is `vkPoints`, which is
     `g1CodecZ_g1Valid` for EVERY carrier point (so the real commitments are readable by

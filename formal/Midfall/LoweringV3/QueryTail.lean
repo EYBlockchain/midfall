@@ -310,4 +310,33 @@ theorem queries_pcsBlocks (meta_ : ConstraintSystemMeta) (data : Data)
   rw [hPcs, pcsBlockList] at hmap
   exact mapM_flatten_ok _ _ hmap
 
+theorem mapM_blockList_length {α β ε : Type} {f : α → Except ε β} :
+    ∀ (blocks : List (List α)) (outs : List (List β)),
+      blocks.mapM (fun b => b.mapM f) = .ok outs →
+      outs.map List.length = blocks.map List.length := by
+  intro blocks
+  induction blocks with
+  | nil => intro outs h; cases h; rfl
+  | cons b bs ih =>
+      intro outs h
+      rw [List.mapM_cons] at h
+      obtain ⟨ob, hob, h1⟩ := except_bind_ok h
+      obtain ⟨obs, hobs, h2⟩ := except_bind_ok h1
+      cases h2
+      have hb : ob.length = b.length := list_mapM_length _ _ hob
+      have ih' := ih obs hobs
+      simp only [List.map_cons, hb, ih']
+
+theorem queries_pcsBlocks_lengths (meta_ : ConstraintSystemMeta) (data : Data)
+    (qs : List Query) (hq : queries meta_ data = .ok qs)
+    (cs : ConstraintSystem (Fr p)) (nb dg : Nat) (lc : List Nat)
+    (hPcs : meta_.protocol.pcsQueries = pcsBlockList cs nb dg lc) :
+    ∃ outs, (pcsBlocks cs nb dg lc).mapM
+        (fun b => b.mapM (fun source => queryFromPlan source meta_ data)) = .ok outs ∧
+      qs = outs.flatten ∧ outs.map List.length = (pcsBlocks cs nb dg lc).map List.length := by
+  obtain ⟨outs, hmap, hqs⟩ := queries_pcsBlocks meta_ data qs hq cs nb dg lc hPcs
+  exact ⟨outs, hmap, hqs, mapM_blockList_length _ _ hmap⟩
+
+
+
 end Midfall.LoweringV3

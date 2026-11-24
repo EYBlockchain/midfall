@@ -18,6 +18,7 @@
 -- window fits.
 import Midfall.LoweringV3.BatchInvert
 import Midfall.LoweringV3.ScalarInvSummary
+import Midfall.LoweringV3.FpBody
 
 set_option autoImplicit false
 
@@ -78,6 +79,284 @@ def BatchInvertCallSegment (consts : Inline.Consts) (product : PairingProduct) (
     (fun V st V' st' o => o = .normal ∧
       BatchInvertCallPost (c := permissive (callsOf product)) (g := g) V st st' V' succ
         D (D + 32 * (n + m) + 32) aS rw)
+
+/-- The declaration `R.scope` resolves for `batch_invert`, with the inlined helper body A5's
+    `batch_invert_summary` speaks about. -/
+def batchInvertDecl (R : Render p G₁ G₂ Gₜ) (c : ExternalCalls) (g : ExternalGas) :
+    FDecl (Bridge.Dialect c g) :=
+  { params := ["success", "mptr_start", "mptr_end", "scratch_mptr", "r"],
+    rets := ["ret", "precompile_failed"],
+    body := Midfall.LoweringV3.BatchInvert.helperBody R.consts GenAst.emitBatchInvertAt }
+
+/-- **THE `batch_invert` SCOPE LOOKUP, BY KERNEL REDUCTION** (the same shape as
+    `EcPairing.ecPairing_lookup`). -/
+theorem batchInvert_lookup (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} :
+    lookupFun (R.scope c g) "batch_invert" = some (batchInvertDecl R c g, R.scope c g) := by
+  kernel_rfl
+
+#assert_axioms batchInvert_lookup [propext, Classical.choice, Quot.sound]
+
+/-- **STATEMENT 10'S FORM, AT THE INLINER'S CONSTANT SITES.** All five arguments are `vkSite`s;
+    the inliner's `inExpr` on a variable is definitionally this site once `shadowed` is false, and
+    `success`/`r` are not shadowed inside the inner block. -/
+theorem lagInner_10_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 10 1 =
+      [Stmt.assign ["success", "lagrange_precompile_failed"]
+        (Expr.call "batch_invert"
+          [Midfall.LoweringV2.Blocks.VkLoading.vkSite "success" consts,
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+           Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "r" consts])] := by
+  kernel_rfl
+
+/-- The same statement at the two UNBOUND caller locals: `success` and `r` stay variables.
+    THIS IS THE FORM THE CALLER BRIDGE CONSUMES; the lookup hypotheses are what the inliner
+    needs to reduce its two-site match, and are exactly `consts_succ_none` / `hr`. -/
+theorem lagInner_10_form_var (consts : Inline.Consts) (k n m : Nat)
+    (hsucc : consts.lookup "success" = none) (hr : consts.lookup "r" = none) :
+    seg (lagInner consts k n m) 10 1 =
+      [Stmt.assign ["success", "lagrange_precompile_failed"]
+        (Expr.call "batch_invert"
+          [Expr.var "success",
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+           Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+           Expr.var "r"])] := by
+  rw [lagInner_10_form]
+  simp [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hsucc, hr]
+
+#assert_axioms lagInner_10_form_var [propext, Classical.choice, Quot.sound]
+
+/-- A `vkSite` that resolves to a literal evaluates to that word. -/
+theorem eval_vkSite_lit {consts : Inline.Consts} {x : String} {v : Nat}
+    (h : consts.lookup x = some v) (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.expr (Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts))
+      (Res.eres (EResult.vals [(BitVec.ofNat 256 v : U256)] st)) := by
+  have hs : Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts = Expr.lit (.number v) := by
+    simp [Midfall.LoweringV2.Blocks.VkLoading.vkSite, h]
+  rw [hs]
+  exact Step.lit
+
+/-- A `vkSite` that does not resolve evaluates its variable. -/
+theorem eval_vkSite_var {consts : Inline.Consts} {x : String}
+    (h : consts.lookup x = none) (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) {v : U256}
+    (hget : VEnv.get V x = some v) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.expr (Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts))
+      (Res.eres (EResult.vals [v] st)) := by
+  have hs : Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts = Expr.var x := by
+    simp [Midfall.LoweringV2.Blocks.VkLoading.vkSite, h]
+  rw [hs]
+  exact Step.var hget
+
+/-- **THE FIVE `batch_invert` ARGUMENTS, RIGHT-TO-LEFT.** The result list is in source order:
+    `[succ, ofNat D, mptr_end + 0x20, ofNat aS, rw]`. The `+ 0x20` step is the only arithmetic
+    one; `LagWindowFits.denomEnd` supplies its word-level fit in the caller. -/
+theorem eval_batchArgs {consts : Inline.Consts} {D aS : Nat}
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (hsucc : consts.lookup "success" = none) (hr : consts.lookup "r" = none)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    {succ rw me : U256}
+    (hsuccV : VEnv.get V "success" = some succ)
+    (hrV : VEnv.get V "r" = some rw)
+    (hme : VEnv.get V "mptr_end" = some me) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.args
+        [Midfall.LoweringV2.Blocks.VkLoading.vkSite "success" consts,
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+         Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "r" consts])
+      (Res.eres (EResult.vals [succ, BitVec.ofNat 256 D,
+        me + BitVec.ofNat 256 0x20, BitVec.ofNat 256 aS, rw] st)) := by
+  let e1 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "success" consts
+  let e2 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts
+  let e3 := Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)]
+  let e4 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts
+  let e5 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "r" consts
+  let a1 : U256 := succ
+  let a2 : U256 := BitVec.ofNat 256 D
+  let a3 : U256 := me + BitVec.ofNat 256 0x20
+  let a4 : U256 := BitVec.ofNat 256 aS
+  let a5 : U256 := rw
+  have h5 := eval_vkSite_var (consts := consts) (x := "r") hr funs V st hrV
+  have h4 := eval_vkSite_lit (consts := consts) (x := "BATCH_INV_SCRATCH_MPTR") hS funs V st
+  have h3 := Midfall.LoweringV3.LagrangeRows.eval_add_var_lit_step
+    (funs := funs) (V := V) (st := st) (x := "mptr_end") (n := 0x20) (pv := me) hme
+  have h2 := eval_vkSite_lit (consts := consts) (x := "LAGRANGE_DENOMS_MPTR") hD funs V st
+  have h1 := eval_vkSite_var (consts := consts) (x := "success") hsucc funs V st hsuccV
+  have A5 : Step (Bridge.Dialect c g) funs V st (.args [e5]) (.eres (.vals [a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (v := a5)
+      (st1 := st) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g)) h5
+  have A4 : Step (Bridge.Dialect c g) funs V st (.args [e4, e5])
+      (.eres (.vals [a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e5]) (restvals := [a5]) (v := a4)
+      (st1 := st) (st2 := st) A5 h4
+  have A3 : Step (Bridge.Dialect c g) funs V st (.args [e3, e4, e5])
+      (.eres (.vals [a3, a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e4, e5]) (restvals := [a4, a5])
+      (v := a3) (st1 := st) (st2 := st) A4 h3
+  have A2 : Step (Bridge.Dialect c g) funs V st (.args [e2, e3, e4, e5])
+      (.eres (.vals [a2, a3, a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e3, e4, e5]) (restvals := [a3, a4, a5])
+      (v := a2) (st1 := st) (st2 := st) A3 h2
+  have A1 : Step (Bridge.Dialect c g) funs V st (.args [e1, e2, e3, e4, e5])
+      (.eres (.vals [a1, a2, a3, a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e2, e3, e4, e5])
+      (restvals := [a2, a3, a4, a5]) (v := a1) (st1 := st) (st2 := st) A2 h1
+  simpa [e1, e2, e3, e4, e5, a1, a2, a3, a4, a5] using A1
+
+#assert_axioms eval_batchArgs [propext, Classical.choice, Quot.sound]
+
+/-- **THE FIVE-ARGUMENT INVERSION.** From any value run of the call's argument list, recover the
+    unique value list and the unchanged state. This is what lets `callOk`'s `argvals` be read
+    without dialect determinism (the permissive call relation is not functional). -/
+theorem batchArgs_vals {consts : Inline.Consts} {D aS : Nat}
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) {succ rw me : U256}
+    (hsuccV : VEnv.get V "success" = some succ)
+    (hrV : VEnv.get V "r" = some rw)
+    (hmpeV : VEnv.get V "mptr_end" = some me)
+    {argvals : List U256} {st1 : EvmState}
+    (h : Step (Bridge.Dialect c g) funs V st
+      (Code.args
+        [Expr.var "success",
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+         Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+         Expr.var "r"])
+      (Res.eres (EResult.vals argvals st1))) :
+    argvals = [succ, BitVec.ofNat 256 D, me + BitVec.ofNat 256 0x20,
+      BitVec.ofNat 256 aS, rw] ∧ st1 = st := by
+  cases h with
+  | argsCons hrest hhead =>
+    cases hrest with
+    | argsCons hrest2 hhead2 =>
+      cases hrest2 with
+      | argsCons hrest3 hhead3 =>
+        cases hrest3 with
+        | argsCons hrest4 hhead4 =>
+          cases hrest4 with
+          | argsCons hrest5 hhead5 =>
+            cases hrest5 with
+            | argsNil =>
+              cases hhead with
+              | var hget1 =>
+                have hsuccV' := hsuccV
+                rw [hget1] at hsuccV'
+                cases hsuccV'
+                simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hD] at hhead2
+                cases hhead2 with
+                | lit =>
+                  simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hS] at hhead4
+                  cases hhead4 with
+                  | lit =>
+                    obtain ⟨hv3, hst3⟩ := Midfall.LoweringV3.ScalarInv.eval_add_var_lit
+                      (funs := funs) (V := V) (x := "mptr_end") (n := 0x20) (pv := me)
+                      hmpeV hhead3
+                    cases hhead5 with
+                    | var hget5 =>
+                      have hrV' := hrV
+                      rw [hget5] at hrV'
+                      cases hrV'
+                      cases hv3
+                      refine ⟨?_, hst3⟩
+                      rw [Midfall.Yul.Bridge.litValue_number_nat]
+                      rw [Midfall.Yul.Bridge.litValue_number_nat]
+
+#assert_axioms batchArgs_vals [propext, Classical.choice, Quot.sound]
+
+/-- A list of expressions that individually never halt cannot halt as an argument list. -/
+theorem args_ne_halt_of {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {es : List (Expr EVM.Op)}
+    (hne : ∀ e ∈ es, ∀ (st st' : EvmState),
+      ¬ Step (Bridge.Dialect c g) funs V st (Code.expr e) (Res.eres (EResult.halt st'))) :
+    ∀ (st st' : EvmState), ¬ Step (Bridge.Dialect c g) funs V st
+      (Code.args es) (Res.eres (EResult.halt st')) := by
+  induction es with
+  | nil => intro st st' h; cases h
+  | cons e rest ih =>
+    intro st st' h
+    cases h with
+    | argsRestHalt hrest =>
+      exact ih (fun x hx => hne x (List.mem_cons_of_mem e hx)) st st' hrest
+    | argsHeadHalt _ hhead => exact hne e (by simp) _ st' hhead
+
+/-- The five `batch_invert` arguments never halt: vars and literals cannot, and the only
+    built-in is the `add` whose halt is ruled out by `expr_add_var_lit_ne_halts`. -/
+theorem batchArgs_ne_halt {consts : Inline.Consts} {D aS : Nat}
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    ¬ Step (Bridge.Dialect c g) funs V st
+      (Code.args
+        [Expr.var "success",
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+         Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+         Expr.var "r"])
+      (Res.eres (EResult.halt st)) := by
+  apply args_ne_halt_of
+  intro e he st0 st1 h
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+  rcases he with rfl | rfl | rfl | rfl | rfl
+  · exact Midfall.LoweringV2.Blocks.TraceReturn.trExprVar_ne_halts h
+  · simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hD] at h
+    exact Midfall.LoweringV2.Blocks.TraceReturn.trExprLit_ne_halts h
+  · exact Midfall.LoweringV3.ScalarInv.expr_add_var_lit_ne_halts
+      (funs := funs) (V := V) (x := "mptr_end") (n := 0x20) h
+  · simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hS] at h
+    exact Midfall.LoweringV2.Blocks.TraceReturn.trExprLit_ne_halts h
+  · exact Midfall.LoweringV2.Blocks.TraceReturn.trExprVar_ne_halts h
+
+#assert_axioms batchArgs_ne_halt [propext, Classical.choice, Quot.sound]
+
+/-- **`BatchInvertPost → BatchInvertCallPost` THROUGH `VEnv.setMany`.** The A5 summary is stated
+    over the callee environment (`ret` / `precompile_failed`); the caller binds those two words to
+    `success` / `lagrange_precompile_failed`. This lemma is the whole environment conversion: the
+    two gets after `setMany`, the set equation, and the unchanged state/memory/reject arms. -/
+theorem batchInvertCallPost_of_post
+    {V Vc V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    {succ rw : U256} {a e s : Nat}
+    (hpost : BatchInvertPost (c := c) (g := g) st succ a e s (BitVec.ofNat 256 Midfall.Yul.blsR) Vc st')
+    (hrw : rw = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hsuccV : VEnv.get V "success" = some succ)
+    (hpfV : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (hV' : ∀ ret pf, VEnv.get Vc "ret" = some ret →
+      VEnv.get Vc "precompile_failed" = some pf →
+      V' = VEnv.setMany V ["success", "lagrange_precompile_failed"] [ret, pf]) :
+    BatchInvertCallPost (c := c) (g := g) V st st' V' succ a e s rw := by
+  obtain ⟨ret, pf, hret, hpf, henv, hhalt, hout, hszero, hpfzero, hinv⟩ := hpost
+  have hV'ret := hV' ret pf hret hpf
+  refine ⟨ret, pf, ?_, ?_, ?_, henv, hhalt, hout, hszero, hpfzero, ?_⟩
+  · rw [hV'ret]
+    simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
+      List.foldl_nil]
+    rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "lagrange_precompile_failed")
+      (y := "success") (by decide)]
+    exact venv_get_set_same hsuccV
+  · rw [hV'ret]
+    simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
+      List.foldl_nil]
+    rw [venv_get_set_same (D := Bridge.Dialect c g)]
+    rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "success")
+      (y := "lagrange_precompile_failed") (by decide)]
+    exact hpfV
+  · rw [hV'ret]
+    simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
+      List.foldl_nil]
+  · intro hretne
+    rw [hrw]
+    exact hinv hretne
+
+#assert_axioms batchInvertCallPost_of_post [propext, Classical.choice, Quot.sound]
 
 /-! ## 2. THE MEMORY-OUTSIDE WINDOW VOCABULARY -/
 
@@ -545,6 +824,45 @@ def LagPre {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg const
   loadWord st.memory C.aX = C.xw ∧ loadWord st.memory C.aO = C.omw ∧
   loadWord st.memory C.aL = C.w0 ∧ loadWord st.memory C.aN = C.nInv ∧
   st.env.calldata = cd.data.toList
+
+/-- **THE PG-LAG-FITS INPUT PREDICATE, EXACTLY.** The address/window arithmetic the
+    `LagInnerContract` composition consumes and that `ValidV3` ALONE does not bound: the
+    Lagrange-denominator end (`D + 32(n+m+1)`), the six slot fits, the four window
+    disjointness clauses, and the six pairwise slot separations. The remaining fits in
+    `lag_inner_contract` are consequences of `denomEnd` (`omega`) or projections of
+    `programOk`/`cdBound` (`aI + 32n`); they are not repeated here. `MetaCountsBound`
+    (Generator/Certified) bounds the VK's `rotationLast` (`m`) by `2^32` but says
+    nothing about `n = numInstances`, so it does not imply `denomEnd` on its own. -/
+structure LagWindowFits {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) : Prop where
+  aX : C.aX < 2 ^ 256
+  aO : C.aO < 2 ^ 256
+  aL : C.aL < 2 ^ 256
+  aN : C.aN < 2 ^ 256
+  aIb : C.aI + 32 * n < 2 ^ 256
+  denomEnd : C.D + 32 * (n + m + 1) < 2 ^ 256
+  LD : C.aL + 32 ≤ C.D ∨ C.D + 32 * (n + m) ≤ C.aL
+  Lne : C.aL + 32 ≤ C.D ∨ C.D + 32 * (n + m) + 32 ≤ C.aL
+  Ls : C.aL + 32 ≤ C.s ∨ C.s + (32 * (n + m + 1) + 0xc0) ≤ C.aL
+  Nne : C.aN + 32 ≤ C.D ∨ C.D + 32 * (n + m) + 32 ≤ C.aN
+  Ns : C.aN + 32 ≤ C.s ∨ C.s + (32 * (n + m + 1) + 0xc0) ≤ C.aN
+  Nslot : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+    C.aN + 32 ≤ q ∨ q + 32 ≤ C.aN
+  slotFits : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE, q + 32 < 2 ^ 256
+  slotD : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+    q + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ q
+  pair : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+    ∀ q' ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      q + 32 ≤ q' ∨ q' + 32 ≤ q
+
+/-- **WHERE `denomEnd` COMES FROM.** The two counts D-GATE11's input predicate bounds
+    (`CountBound.instances : numInstances < 2^32`, `MetaCountsBound.rotationLast` for `m`) and
+    a layout address below `2^200` put the whole denominator window below `2^256`. -/
+theorem lagDenomEnd_of_countBound {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    {C : LagCfg consts cd k n m} (hD : C.D < 2 ^ 200)
+    (hn : n < 2 ^ 32) (hm : m < 2 ^ 32) :
+    C.D + 32 * (n + m + 1) < 2 ^ 256 := by
+  omega
 
 /-- **THE BLOCK'S POST (the card's T3.9.f statement).** `LagRel` at the block's own memory, the
     six slot stores holding the same words, and the memory outside the denominator window, the
@@ -2639,36 +2957,34 @@ theorem lag_guard_body_run {c : ExternalCalls} {g : ExternalGas} {consts : Inlin
 
 /-- The outer MF-4 guard: from `success = 0` and `lagrange_precompile_failed = 0` every run
     halts reverted (`ERR_PROOF_REJECTED`). -/
-theorem lag_outer_guard_run {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
-    [Group G₁] [Group G₂] [Group Gₜ] [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p]
-    [PrimeOrderWith Gₜ p] [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
-    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
-    {c : ExternalCalls} {g : ExternalGas} (R : Render p G₁ G₂ Gₜ)
+theorem lag_outer_guard_run {consts : Inline.Consts}
+    {c : ExternalCalls} {g : ExternalGas}
     {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
     {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
     {errPR : Nat}
-    (hPR : R.consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hsuccNone : consts.lookup "success" = none)
     (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
     (hs : VEnv.get V "success" = some (0 : U256))
     (hp : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
-    (h : ExecStmts (Bridge.Dialect c g) funs V st (lagGuard R.consts) V' st' o) :
+    (h : ExecStmts (Bridge.Dialect c g) funs V st (lagGuard consts) V' st' o) :
     o = .halt ∧ Midfall.LoweringV2.Reverted st' := by
   have hfail' : lookupFun (hoist (Bridge.Dialect c g)
       [Stmt.cond (Expr.var "lagrange_precompile_failed")
-        [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
-       Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])]
+        [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+       Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])]
       :: funs) "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv) := by
     have hh : hoist (Bridge.Dialect c g)
         [Stmt.cond (Expr.var "lagrange_precompile_failed")
-          [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
-         Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])] = [] := by
+          [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+         Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])] = [] := by
       rfl
     rw [hh]
     exact hfail
   cases h with
   | seqCons h1 _ =>
       simp only [lagGuard, lagSite,
-        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+        hsuccNone] at h1
       cases h1 with
       | ifTrue hc hnz hbody =>
           have hh := lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
@@ -2681,7 +2997,7 @@ theorem lag_outer_guard_run {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Typ
           exact absurd hz' (by decide)
   | seqStop h1 hne =>
       simp only [lagGuard, lagSite,
-        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+        hsuccNone] at h1
       cases h1 with
       | ifTrue hc hnz hbody =>
           exact lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
@@ -2744,7 +3060,58 @@ theorem lag_inner_contract_post {consts : Inline.Consts} {cd : Bytes} {k n m : N
       V st hp V' st' o hrun
   exact ⟨ho, lag_inner_post_of_p15 (mem0 := mem) (mem := LagM6 C mem) hm hn h15⟩
 
-
+/-- **`LagInnerContract` FROM THE EXACT PG-LAG-FITS PREDICATE.** All the window arithmetic the
+    composition consumes is in `LagWindowFits`; the consequences (`hfitD`, `hfitm`, `hm32`,
+    `haDm`, `haD32`, `haD`, the six slot fits) are `omega`/projection steps, not new inputs.
+    The constant-table lookups, `hm`/`hn`/`hk` and the A5 call segment stay explicit. -/
+theorem lag_inner_contract_post_of_fits {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) (product : PairingProduct) (g : ExternalGas)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (hr : consts.lookup "r" = none)
+    (hX : consts.lookup "X_MPTR" = some C.aX)
+    (hO : consts.lookup "OMEGA_MPTR" = some C.aO)
+    (hL : consts.lookup "OMEGA_INV_TO_L_MPTR" = some C.aL)
+    (hN : consts.lookup "N_INV_MPTR" = some C.aN)
+    (hI : consts.lookup "INSTANCE_CPTR" = some C.aI)
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D)
+    (hXN : consts.lookup "X_N_MPTR" = some C.aXN)
+    (hXN1 : consts.lookup "X_N_MINUS_1_INV_MPTR" = some C.aXN1)
+    (hLL : consts.lookup "L_LAST_MPTR" = some C.aLL)
+    (hLB : consts.lookup "L_BLIND_MPTR" = some C.aLB)
+    (hL0 : consts.lookup "L_0_MPTR" = some C.aL0)
+    (hIE : consts.lookup "INSTANCE_EVAL_MPTR" = some C.aIE)
+    (hfits : LagWindowFits C)
+    (hm : 2 ≤ m) (hn : 1 ≤ n) (hk : k < 2 ^ 256)
+    (hcall : BatchInvertCallSegment consts product g k n m C.D C.s funs C.succ C.rw) :
+    LagInnerContract C funs := by
+  have hfitD : C.D + 32 * (n + m) < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have hfitm : C.D + 32 * m < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have hm32 : m * 32 < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have haDm : C.D + m * 32 < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have haD32 : C.D + 32 < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have haD : C.D < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have hfitXN : C.aXN + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aXN (by simp [lagSlots])
+  have hfitXN1 : C.aXN1 + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aXN1 (by simp [lagSlots])
+  have hfitLL : C.aLL + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aLL (by simp [lagSlots])
+  have hfitLB : C.aLB + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aLB (by simp [lagSlots])
+  have hfitL0 : C.aL0 + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aL0 (by simp [lagSlots])
+  have hfitIE : C.aIE + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aIE (by simp [lagSlots])
+  exact lag_inner_contract_post C product g funs hr hX hfits.aX hO hfits.aO hL hfits.aL
+    hN hfits.aN hI hfits.aIb hD hfitD hfitm hm32 haDm haD32 haD
+    hfits.LD hfits.Lne hfits.Ls hfits.Nne hfits.Ns hfits.Nslot hXN hXN1 hLL hLB hL0 hIE
+    hfitXN hfitXN1 hfitLL hfitLB hfitL0 hfitIE hfits.slotD hfits.pair hm hn hk hcall
 
 /-- **THE POISON ARM OF THE INNER SCOPE.** At `C.succ = 0` the inner contract's reject arm keeps
     `success = 0` (`LagInnerPost`'s `succZero` clause), which is what the final guard reads. -/
@@ -2757,6 +3124,569 @@ theorem lag_inner_contract_zero {consts : Inline.Consts} {cd : Bytes} {k n m : N
   have hip' := hip
   obtain ⟨ret, pf, hsucc, -, -, -, -, hszero, -⟩ := hip'
   exact ⟨ho, hip, by rw [hsucc, (hszero hsucc0).1]⟩
+
+
+/-! ## 5c. THE ENVIRONMENT NAME SHAPE OF A RUN -/
+
+/-- `VEnv.set` preserves the name list. -/
+theorem venv_set_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V : VEnv D) (x : Ident) (v : D.Value) :
+    (VEnv.set V x v).map Prod.fst = V.map Prod.fst := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, w⟩ := p
+      unfold VEnv.set
+      by_cases h : y = x
+      · simp [h]
+      · simp [h, ih]
+
+/-- `VEnv.setMany` preserves the name list. -/
+theorem venv_setMany_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V : VEnv D) (xs : List Ident) (vs : List D.Value) :
+    (VEnv.setMany V xs vs).map Prod.fst = V.map Prod.fst := by
+  unfold VEnv.setMany
+  generalize xs.zip vs = ps
+  induction ps generalizing V with
+  | nil => rfl
+  | cons p ps ih =>
+      obtain ⟨x, v⟩ := p
+      simp only [List.foldl_cons]
+      rw [ih, venv_set_names]
+
+/-- The names of a zip are the prefix of the first list. -/
+theorem zip_fst_names {α β : Type} (xs : List α) (ys : List β) :
+    (xs.zip ys).map Prod.fst = xs.take ys.length := by
+  induction xs generalizing ys with
+  | nil =>
+      cases ys with
+      | nil => rfl
+      | cons b bs => simp [List.zip]
+  | cons a as ih =>
+      cases ys with
+      | nil => rfl
+      | cons b bs =>
+          rw [List.zip_cons_cons, List.map_cons, ih]
+          rfl
+
+/-- A block's `restore` drops the values but keeps the outer name list. -/
+theorem restore_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V W : VEnv D} {e : List Ident}
+    (h : W.map Prod.fst = e ++ V.map Prod.fst) :
+    (restore V W).map Prod.fst = V.map Prod.fst := by
+  have hl : W.length - V.length = e.length := by
+    have hh := congrArg List.length h
+    simp only [List.length_map, List.length_append] at hh
+    omega
+  rw [show restore V W = W.drop (W.length - V.length) from rfl, hl, List.map_drop, h]
+  exact List.drop_left
+
+
+
+/-- The names a code fragment can bind in the CURRENT environment. Scopes (`block`, `cond`,
+    `forLoop`, `loop`) restore their bindings, so only the top-level `let`s of a sequence count;
+    the run-shape lemma threads nested cases with an empty local prefix. -/
+def Code.boundNames {Op : Type} : Code Op → List Ident
+  | .expr _ => []
+  | .args _ => []
+  | .stmt (.letDecl vars _) => vars
+  | .stmt _ => []
+  | .stmts [] => []
+  | .stmts (s :: ss) => Code.boundNames (.stmt s) ++ Code.boundNames (.stmts ss)
+  | .loop _ _ _ => []
+
+
+
+/-- **THE ENVIRONMENT SHAPE OF EVERY RUN.** A `.sres` run's output environment is the input
+    environment with a prefix of locally bound names; every name in that prefix is a top-level
+    `let` of the code. -/
+theorem Step.sres_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {V : VEnv D} {st : D.State} {code : Code D.Op} {r : Res D}
+    (h : Step D funs V st code r) :
+    ∀ {V' : VEnv D} {st' : D.State} {o : Outcome}, r = .sres V' st' o →
+      ∃ extra : List Ident, V'.map Prod.fst = extra ++ V.map Prod.fst ∧
+        ∀ x ∈ extra, x ∈ Code.boundNames code := by
+  induction h with
+  | lit => intro V' st' o hr; cases hr
+  | var => intro V' st' o hr; cases hr
+  | builtinOk => intro V' st' o hr; cases hr
+  | builtinHalt => intro V' st' o hr; cases hr
+  | builtinArgsHalt => intro V' st' o hr; cases hr
+  | callOk => intro V' st' o hr; cases hr
+  | callHalt => intro V' st' o hr; cases hr
+  | callArgsHalt => intro V' st' o hr; cases hr
+  | argsNil => intro V' st' o hr; cases hr
+  | argsCons => intro V' st' o hr; cases hr
+  | argsRestHalt => intro V' st' o hr; cases hr
+  | argsHeadHalt => intro V' st' o hr; cases hr
+  | funDef => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp [Code.boundNames]⟩
+  | block hbody ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨[], restore_names he, by simp⟩
+  | letZero =>
+      intro V' st' o hr; cases hr
+      rename_i vars
+      refine ⟨vars, ?_, ?_⟩
+      · rw [List.map_append]
+        congr 1
+        simp [bindZeros, Function.comp_def]
+      · intro x hx
+        simpa [Code.boundNames, bindZeros] using hx
+  | letVal he hlen ihhe =>
+      intro V' st' o hr; cases hr
+      rename_i vars e vals st1
+      refine ⟨vars.take vals.length, ?_, ?_⟩
+      · rw [List.map_append, zip_fst_names, hlen, List.take_length]
+      · intro x hx
+        simp only [Code.boundNames]
+        exact List.mem_of_mem_take hx
+  | letHalt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp [Code.boundNames]⟩
+  | assignVal he ihhe hlen =>
+      intro V' st' o hr; cases hr
+      exact ⟨[], venv_setMany_names _ _ _, by simp⟩
+  | assignHalt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | exprStmt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | exprStmtHalt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | ifTrue hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | ifFalse hc hz ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | ifHalt hc ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | switchExec hc hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | switchHalt hc ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | forLoop hinit hloop ihinit ihloop =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, h1, _⟩ := ihinit rfl
+      obtain ⟨e2, h2, _⟩ := ihloop rfl
+      exact ⟨[], restore_names (by rw [h2, h1, List.append_assoc]), by simp⟩
+  | forInitHalt hinit ihinit =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, _⟩ := ihinit rfl
+      exact ⟨[], restore_names he, by simp⟩
+  | «break» => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | «continue» => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | «leave» => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | seqNil => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | seqCons h1 h2 ih1 ih2 =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, he1, hb1⟩ := ih1 rfl
+      obtain ⟨e2, he2, hb2⟩ := ih2 rfl
+      refine ⟨e2 ++ e1, by rw [he2, he1, List.append_assoc], ?_⟩
+      intro x hx
+      simp only [Code.boundNames, List.mem_append] at hx ⊢
+      rcases hx with hx | hx
+      · exact Or.inr (hb2 x hx)
+      · exact Or.inl (hb1 x hx)
+  | seqStop h1 hne ih1 =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ih1 rfl
+      refine ⟨e, he, fun x hx => ?_⟩
+      simp only [Code.boundNames, List.mem_append]
+      exact Or.inl (hb x hx)
+  | loopDone hc hz ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | loopCondHalt hc ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | loopStep hc hnz hbody hob hpost hloop ihc ihbody ihpost ihloop =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, h1, hb1⟩ := ihbody rfl
+      obtain ⟨e2, h2, hb2⟩ := ihpost rfl
+      obtain ⟨e3, h3, hb3⟩ := ihloop rfl
+      refine ⟨e3 ++ e2 ++ e1, by rw [h3, h2, h1, List.append_assoc, List.append_assoc], ?_⟩
+      intro x hx
+      simp only [Code.boundNames, List.mem_append] at hx ⊢
+      rcases hx with (hx | hx) | hx
+      · simpa [Code.boundNames] using hb3 x hx
+      · simpa [Code.boundNames] using hb2 x hx
+      · simpa [Code.boundNames] using hb1 x hx
+  | loopPostHalt hc hnz hbody hob hpost ihc ihbody ihpost =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, h1, hb1⟩ := ihbody rfl
+      obtain ⟨e2, h2, hb2⟩ := ihpost rfl
+      refine ⟨e2 ++ e1, by rw [h2, h1, List.append_assoc], ?_⟩
+      intro x hx
+      simp only [Code.boundNames, List.mem_append] at hx ⊢
+      exact hx.elim (fun h => by simpa [Code.boundNames] using hb2 x h)
+        (fun h => by simpa [Code.boundNames] using hb1 x h)
+  | loopBreak hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | loopLeave hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | loopBodyHalt hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+
+/-! ## 5d. THE INNER BLOCK'S TOP-LEVEL NAMES - THE TWO `lag_poison` FACTS
+
+The poisoned arm of T3.9.h runs the inner block from `success = 0` and then reads the outer
+guard. The block `restore`s its own scope, so the two names the guard reads survive the block
+exactly when they are NOT among the block body's top-level lets. `Step.sres_names` (5c) turns
+that into the two non-membership facts proved here.
+
+`lagInner` is the INLINED body, so its names are not syntactically the emitter's. The bridge is
+the inliner's name invariant: `inlineStmtStep` rewrites expressions only, never a `letDecl`'s
+binders (and never descends into a nested scope for `Code.boundNames`). The invariant is stated
+at three levels - one statement, the `stepAcc` fold, and the contract transform - and then
+applied to the pre-inline emitter body `lagInnerRaw`, whose 14 top-level lets are fixed by the
+template and contain neither `success` nor `lagrange_precompile_failed`. -/
+
+/-- The 14 top-level `let`s of the emitter's inner scope (`GenAst.emitLagrangeAt`'s `yblock`). -/
+def lagInnerNames : List Ident :=
+  ["k", "x", "x_n", "omega", "mptr", "mptr_end", "x_n_minus_1", "l_i_common",
+   "l_blind", "l_i_cptr", "instance_eval", "x_n_minus_1_inv", "l_last", "l_0"]
+
+/-- The names a single statement contributes to a block's top-level scope, recursing into nested
+    blocks. `Code.boundNames` is non-recursive through scopes, so every other constructor is
+    empty: a `cond`, `forLoop` or `funDef` restores its own bindings. -/
+def Stmt.names {Op : Type} : Stmt Op → List Ident
+  | Stmt.block b => Code.boundNames (.stmts b)
+  | Stmt.letDecl xs _ => xs
+  | _ => []
+
+/-- **THE STATEMENT-LEVEL INVARIANT.** One statement's contribution to the enclosing block's
+    top-level lets is unchanged by inlining, for every shadow list. The `letDecl` case is its own
+    binder list (`rfl`); the `block` case is exactly the block-level IH; every other constructor
+    is `[]` on both sides (`Code.boundNames` does not see into scopes). -/
+theorem stmt_names_inlineStmtStep
+    (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts)
+    (hrec : ∀ (sh : List String) (b : Block EVM.Op),
+      Code.boundNames (.stmts (rec sh b).blks) = Code.boundNames (.stmts b)) :
+    ∀ (sh : List String) (s : Stmt EVM.Op),
+      Stmt.names (Inline.inlineStmtStep rec consts sh s).1 = Stmt.names s := by
+  intro sh s
+  cases s with
+  | block b => exact hrec sh b
+  | letDecl xs e => rfl
+  | funDef n ps rs body => rfl
+  | assign xs e => rfl
+  | cond c body => rfl
+  | «switch» c cs d => rfl
+  | forLoop init c post body => rfl
+  | exprStmt e => rfl
+  | «break» => rfl
+  | «continue» => rfl
+  | «leave» => rfl
+
+/-- The non-recursive top-level name map: `Code.boundNames` of a statement is `Stmt.topNames`. -/
+def Stmt.topNames {Op : Type} : Stmt Op → List Ident
+  | Stmt.letDecl xs _ => xs
+  | _ => []
+
+/-- `Code.boundNames` of a statement list is the flattening of `Stmt.topNames`. -/
+theorem boundNames_stmts (X : List (Stmt EVM.Op)) :
+    Code.boundNames (.stmts X) = X.flatMap Stmt.topNames := by
+  induction X with
+  | nil => simp [Code.boundNames]
+  | cons s X ih =>
+      cases s <;> simp [Code.boundNames, Stmt.topNames, ih]
+
+/-- The single-statement form of the same identity. -/
+theorem boundNames_stmt_eq_topNames (s : Stmt EVM.Op) :
+    Code.boundNames (.stmt s) = Stmt.topNames s := by
+  cases s <;> simp [Code.boundNames, Stmt.topNames]
+
+/-- **THE STATEMENT-LEVEL INVARIANT, IN `Code.boundNames` FORM.** -/
+theorem boundNames_inlineStmtStep
+    (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts) :
+    ∀ (sh : List String) (s : Stmt EVM.Op),
+      Code.boundNames (.stmt (Inline.inlineStmtStep rec consts sh s).1) =
+        Code.boundNames (.stmt s) := by
+  intro sh s
+  rw [boundNames_stmt_eq_topNames, boundNames_stmt_eq_topNames]
+  cases s with
+  | block b => rfl
+  | letDecl xs e => rfl
+  | funDef n ps rs body => rfl
+  | assign xs e => rfl
+  | cond c body => rfl
+  | «switch» c cs d => rfl
+  | forLoop init c post body => rfl
+  | exprStmt e => rfl
+  | «break» => rfl
+  | «continue» => rfl
+  | «leave» => rfl
+
+/-- **THE FOLD INVARIANT, CARRYING THE ACCUMULATOR AND ITS SHADOW LIST.** Mirrors
+    `Statements.noFunDef_inline`: `stepAcc` appends exactly one statement per input statement, and
+    the statement-level invariant says the appended statement has the same top-level names. -/
+theorem foldl_names (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts)
+    (hstmt : ∀ (sh : List String) (s : Stmt EVM.Op),
+      Stmt.names (Inline.inlineStmtStep rec consts sh s).1 = Stmt.names s) :
+    ∀ (X : List (Stmt EVM.Op)) (acc : Inline.Acc),
+      (X.foldl (Inline.stepAcc rec consts) acc).blks.flatMap Stmt.names =
+        acc.blks.flatMap Stmt.names ++ X.flatMap Stmt.names := by
+  intro X
+  induction X with
+  | nil =>
+      intro acc
+      rw [List.foldl_nil, List.flatMap_nil, List.append_nil]
+  | cons s X ih =>
+      intro acc
+      rw [List.foldl_cons, ih (Inline.stepAcc rec consts acc s), Inline.stepAcc_blks,
+        List.flatMap_append, List.flatMap_cons, List.flatMap_cons]
+      simp only [List.flatMap_nil, List.append_nil, List.append_assoc, hstmt acc.sh s]
+
+/-- The `Stmt.topNames` fold: the same induction without the block-recursive case. -/
+theorem foldl_topNames (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts)
+    (hstmt : ∀ (sh : List String) (s : Stmt EVM.Op),
+      Stmt.topNames (Inline.inlineStmtStep rec consts sh s).1 = Stmt.topNames s) :
+    ∀ (X : List (Stmt EVM.Op)) (acc : Inline.Acc),
+      (X.foldl (Inline.stepAcc rec consts) acc).blks.flatMap Stmt.topNames =
+        acc.blks.flatMap Stmt.topNames ++ X.flatMap Stmt.topNames := by
+  intro X
+  induction X with
+  | nil =>
+      intro acc
+      rw [List.foldl_nil, List.flatMap_nil, List.append_nil]
+  | cons s X ih =>
+      intro acc
+      rw [List.foldl_cons, ih (Inline.stepAcc rec consts acc s), Inline.stepAcc_blks,
+        List.flatMap_append, List.flatMap_cons, List.flatMap_cons]
+      simp only [List.flatMap_nil, List.append_nil, List.append_assoc, hstmt acc.sh s]
+
+/-- `Stmt.topNames` is invariant under one statement's inlining, at every shadow list. -/
+theorem stmt_topNames_inlineStmtStep
+    (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts) :
+    ∀ (sh : List String) (s : Stmt EVM.Op),
+      Stmt.topNames (Inline.inlineStmtStep rec consts sh s).1 = Stmt.topNames s := by
+  intro sh s
+  cases s with
+  | block b => rfl
+  | letDecl xs e => rfl
+  | funDef n ps rs body => rfl
+  | assign xs e => rfl
+  | cond c body => rfl
+  | «switch» c cs d => rfl
+  | forLoop init c post body => rfl
+  | exprStmt e => rfl
+  | «break» => rfl
+  | «continue» => rfl
+  | «leave» => rfl
+
+/-- **THE BLOCK/FOLD INVARIANT.** One `inlineStep` (any continuation, any shadow list) preserves
+    the `Code.boundNames` of the block, because the fold appends one statement per input
+    statement and each appended statement has the same top-level names. -/
+theorem boundNames_inlineStep (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts) (sh : List String) (X : List (Stmt EVM.Op)) :
+    Code.boundNames (.stmts (Inline.inlineStep rec consts sh X).blks) =
+      Code.boundNames (.stmts X) := by
+  rw [Inline.inlineStep_eq_foldl]
+  rw [boundNames_stmts, boundNames_stmts]
+  rw [foldl_topNames rec consts
+    (fun sh s => stmt_topNames_inlineStmtStep rec consts sh s) X (Inline.initAcc sh)]
+  simp [Inline.initAcc]
+
+/-- **THE DISPLAYED INVARIANT AT THE CONTRACT TRANSFORM.** Constant substitution changes no
+    top-level `let` binder, at every table and every block. -/
+theorem boundNames_inlineContractConstants (consts : Inline.Consts)
+    (X : List (Stmt EVM.Op)) :
+    Code.boundNames (.stmts (Inline.inlineContractConstants consts X)) =
+      Code.boundNames (.stmts X) := by
+  show Code.boundNames (.stmts (Inline.inlineScan Inline.inlineFuel consts [] X).blks) =
+    Code.boundNames (.stmts X)
+  have h : Inline.inlineFuel = 63 + 1 := rfl
+  rw [h]
+  exact boundNames_inlineStep (Inline.inlineScan 63 consts) consts [] X
+
+/-- The emitter's inner scope BEFORE constant inlining: the body of `emitLagrangeAt`'s `yblock`. -/
+def lagInnerRaw (k n m : Nat) : Block EVM.Op :=
+  match GenAst.emitLagrangeAt k n m with
+  | [_, Stmt.block body, _] => body
+  | _ => []
+
+/-- `lagInner` is the inliner at work on exactly `lagInnerRaw`, at the shadow list of the outer
+    prologue's `let` (`lagrange_precompile_failed`) and at the body's own nesting fuel. -/
+theorem lagInner_eq_inlineStep (consts : Inline.Consts) (k n m : Nat) :
+    lagInner consts k n m =
+      (Inline.inlineStep (Inline.inlineScan 62 consts) consts
+        ["lagrange_precompile_failed"] (lagInnerRaw k n m)).blks := by
+  kernel_rfl
+
+/-- The pre-inline inner scope has exactly the 14 template `let`s. -/
+theorem lagInnerRaw_boundNames (k n m : Nat) :
+    Code.boundNames (.stmts (lagInnerRaw k n m)) = lagInnerNames := by
+  rw [boundNames_stmts]
+  kernel_rfl
+
+/-- **THE INVARIANT APPLIED TO THE LAGRANGE INNER SCOPE.** -/
+theorem lagInner_boundNames (consts : Inline.Consts) (k n m : Nat) :
+    Code.boundNames (.stmts (lagInner consts k n m)) =
+      Code.boundNames (.stmts (lagInnerRaw k n m)) := by
+  rw [lagInner_eq_inlineStep]
+  exact boundNames_inlineStep (Inline.inlineScan 62 consts) consts
+    ["lagrange_precompile_failed"] (lagInnerRaw k n m)
+
+/-- **THE INLINED INNER SCOPE'S TOP-LEVEL NAMES.** -/
+theorem lagInner_boundNames_eq (consts : Inline.Consts) (k n m : Nat) :
+    Code.boundNames (.stmts (lagInner consts k n m)) = lagInnerNames := by
+  rw [lagInner_boundNames, lagInnerRaw_boundNames]
+
+/-- **NON-MEMBERSHIP 1/2.** `success` is not a top-level `let` of the inner scope, so the
+    block's `restore` keeps the caller's binding (and statement 10's assigned value). -/
+theorem success_notMem_lagInner (consts : Inline.Consts) (k n m : Nat) :
+    "success" ∉ Code.boundNames (.stmts (lagInner consts k n m)) := by
+  rw [lagInner_boundNames_eq]
+  decide
+
+/-- **NON-MEMBERSHIP 2/2.** Same for the MF-4 precompile-failure flag the outer guard reads. -/
+theorem lagrange_precompile_failed_notMem_lagInner (consts : Inline.Consts) (k n m : Nat) :
+    "lagrange_precompile_failed" ∉ Code.boundNames (.stmts (lagInner consts k n m)) := by
+  rw [lagInner_boundNames_eq]
+  decide
+
+/-! ## 5e. T3.9.h: THE POISONED INNER BLOCK, THE GUARD, AND `lag_poison`
+
+`LagInnerContractZero` (5) already says that at `C.succ = 0` every run of the inner body is
+`.normal` with `success = 0`. The block statement's `restore` is the remaining environment step:
+`Step.sres_names` gives the body-added prefix `extra`, the two non-membership facts above put
+`success`/`lagrange_precompile_failed` outside it, and `venv_get_restore_of_names` reads both
+values back in the caller's environment. The prologue's `let` supplies the flag `0` the outer
+guard needs, and `lag_outer_guard_run` turns that guard into the revert.
+
+This is the inner-scope half of T3.9.h. The Render-level `LagBlockPoisonContract` additionally
+needs a `LagCfg` for the concrete site values and the window fits (`PG-LAG-FITS`), which are not
+part of this unit; `lag_poison` states the part that follows from a `LagInnerContract` alone. -/
+
+/-- The inner body, at the body's own function scope: every run is normal, leaves `success = 0`
+    and `lagrange_precompile_failed = 0`, AND the caller's `restore` keeps both values. -/
+theorem lag_body_poison_contract {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m)
+    {funs : FunEnv (Bridge.Dialect c g)}
+    (hinner : LagInnerContract C (hoist (Bridge.Dialect c g) (lagInner consts k n m) :: funs))
+    (hsucc0 : C.succ = 0) :
+    StmtsContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (lagInner consts k n m) :: funs)
+      (lagInner consts k n m) (LagPre C)
+      (fun V _ Vb _ o => o = .normal ∧
+        VEnv.get (restore V Vb) "success" = some 0 ∧
+        VEnv.get (restore V Vb) "lagrange_precompile_failed" = some 0) := by
+  intro V st hpre Vb stb o hbody
+  have hzero := lag_inner_contract_zero hinner hsucc0
+  obtain ⟨ho, hip, hsuccB⟩ := hzero V st hpre Vb stb o hbody
+  obtain ⟨ret, pf, hsuccV, hpfV, -, -, -, hszero, -⟩ := hip
+  have hret0 : ret = 0 := (hszero hsucc0).1
+  have hpf0 : pf = 0 := (hszero hsucc0).2
+  have hsuccB' : VEnv.get Vb "success" = some (0 : U256) := by
+    rw [hsuccV, hret0]
+  have hpfB : VEnv.get Vb "lagrange_precompile_failed" = some (0 : U256) := by
+    rw [hpfV, hpf0]
+  obtain ⟨extra, hnames, hbound⟩ := Step.sres_names hbody rfl
+  have hsuccExtra : "success" ∉ extra := fun hx =>
+    success_notMem_lagInner consts k n m (hbound "success" hx)
+  have hpfExtra : "lagrange_precompile_failed" ∉ extra := fun hx =>
+    lagrange_precompile_failed_notMem_lagInner consts k n m
+      (hbound "lagrange_precompile_failed" hx)
+  exact ⟨ho,
+    Midfall.LoweringV2.Blocks.EcPairing.venv_get_restore_of_names hnames hsuccExtra hsuccB',
+    Midfall.LoweringV2.Blocks.EcPairing.venv_get_restore_of_names hnames hpfExtra hpfB⟩
+
+/-- The block statement's poison contract, caller-side: `StmtsContractAll.block` moves the body
+    contract across the `restore`. -/
+theorem lag_block_poison_contract {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m)
+    {funs : FunEnv (Bridge.Dialect c g)}
+    (hinner : LagInnerContract C (hoist (Bridge.Dialect c g) (lagInner consts k n m) :: funs))
+    (hsucc0 : C.succ = 0) :
+    StmtContractAll (D := Bridge.Dialect c g) funs (Stmt.block (lagInner consts k n m))
+      (LagPre C)
+      (fun _ _ V' _ o => o = .normal ∧
+        VEnv.get V' "success" = some 0 ∧
+        VEnv.get V' "lagrange_precompile_failed" = some 0) :=
+  StmtsContractAll.block (D := Bridge.Dialect c g)
+    (post := fun _ _ V' _ o => o = .normal ∧
+      VEnv.get V' "success" = some 0 ∧
+      VEnv.get V' "lagrange_precompile_failed" = some 0)
+    (lag_body_poison_contract C hinner hsucc0)
+
+/-- The prologue's `let` runs normally, leaves the state alone, and keeps `LagPre`. -/
+theorem lag_prologue_poison_contract {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) (funs : FunEnv (Bridge.Dialect c g)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs lagPrologue (LagPre C)
+      (fun _ _ V' st' o => o = .normal ∧ LagPre C V' st') := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨ho, hst, hV⟩ := lag_prologue_run hrun
+  obtain ⟨hr, hs, hpf, hx, hO, hL, hN, hcd⟩ := hpre
+  refine ⟨ho, ?_⟩
+  rw [hV, hst]
+  refine ⟨?_, ?_, ?_, hx, hO, hL, hN, hcd⟩
+  · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "lagrange_precompile_failed")
+      (y := "r") (by decide)]; exact hr
+  · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "lagrange_precompile_failed")
+      (y := "success") (by decide)]; exact hs
+  · exact venv_get_cons_self V "lagrange_precompile_failed" 0
+
+/-- The outer MF-4 guard reverts from `success = 0` and `lagrange_precompile_failed = 0`. -/
+theorem lag_guard_poison_contract {consts : Inline.Consts}
+    {funs : FunEnv (Bridge.Dialect c g)}
+    {cenv : FunEnv (Bridge.Dialect c g)} {errPR : Nat}
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hsuccNone : consts.lookup "success" = none)
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (lagGuard consts)
+      (fun V _ => VEnv.get V "success" = some (0 : U256) ∧
+        VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+      (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
+  intro V st hpre V' st' o hrun
+  exact lag_outer_guard_run hPR hsuccNone hfail hpre.1 hpre.2 hrun
+
+/-- **T3.9.h `lag_poison` (the inner-scope half).** Every run of
+    `lagPrologue ++ [inner block] ++ lagGuard` from `LagPre C` halts reverted, given the inner
+    contract at `C.succ = 0`. The two name facts are `success_notMem_lagInner` /
+    `lagrange_precompile_failed_notMem_lagInner`; the block contract above is their only use. -/
+theorem lag_poison {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m)
+    {funs : FunEnv (Bridge.Dialect c g)}
+    (hinner : LagInnerContract C (hoist (Bridge.Dialect c g) (lagInner consts k n m) :: funs))
+    (hsucc0 : C.succ = 0)
+    {cenv : FunEnv (Bridge.Dialect c g)} {errPR : Nat}
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hsuccNone : consts.lookup "success" = none)
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (lagPrologue ++ [Stmt.block (lagInner consts k n m)] ++ lagGuard consts)
+      (LagPre C)
+      (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
+  have hpro := lag_prologue_poison_contract (C := C) funs
+  have hblock := lag_block_poison_contract C hinner hsucc0
+  have hguard := lag_guard_poison_contract (consts := consts) (funs := funs)
+    hPR hsuccNone hfail
+  have hblockList : StmtsContractAll (D := Bridge.Dialect c g) funs
+      [Stmt.block (lagInner consts k n m)] (LagPre C)
+      (fun _ _ V' _ o => o = .normal ∧ VEnv.get V' "success" = some 0 ∧
+        VEnv.get V' "lagrange_precompile_failed" = some 0) := by
+    intro V st hpre V' st' o hrun
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1, hnil⟩ | ⟨h1, hne⟩
+    · cases hnil
+      exact hblock V st hpre _ _ _ h1
+    · exact hblock V st hpre V' st' o h1
+  have hbg : StmtsContractAll (D := Bridge.Dialect c g) funs
+      ([Stmt.block (lagInner consts k n m)] ++ lagGuard consts) (LagPre C)
+      (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') :=
+    StmtsContractAll.append_normal hblockList (fun _ _ _ => hguard)
+  rw [List.append_assoc]
+  exact StmtsContractAll.append_normal hpro (fun _ _ _ => hbg)
+
+#assert_axioms lag_poison [propext, Classical.choice, Quot.sound]
+#assert_axioms lag_inner_contract_post_of_fits [propext, Classical.choice, Quot.sound]
+#assert_axioms lagDenomEnd_of_countBound [propext, Classical.choice, Quot.sound]
+
+-- Downstream `lag_poison` reads the two facts above; keep the closed 14-name list opaque so that
+-- later `decide`/`simp` does not try to unfold `lagInner` at a general table.
+attribute [local irreducible] lagInner
 
 
 end Midfall.LoweringV3.LagrangeBlock
