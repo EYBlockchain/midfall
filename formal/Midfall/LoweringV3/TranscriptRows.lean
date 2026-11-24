@@ -6127,6 +6127,62 @@ theorem snapshotAlgebraRun_ok_of_schedule (E : VerifierEnv p G₁ G₂ Gₜ) (H 
     omega
 
 
+theorem mapM_option_length {α β : Type} (f : α → Option β) :
+    ∀ (l : List α) (l' : List β), l.mapM f = some l' → l'.length = l.length := by
+  intro l
+  induction l with
+  | nil =>
+      intro l' h
+      cases h
+      rfl
+  | cons a as ih =>
+      intro l' h
+      simp only [List.mapM_cons] at h
+      cases ha : f a with
+      | none => rw [ha] at h; cases h
+      | some b =>
+          rw [ha] at h
+          cases hrest : as.mapM f with
+          | none => rw [hrest] at h; cases h
+          | some l0 =>
+              rw [hrest] at h
+              injection h with h
+              subst h
+              simp only [List.length_cons]
+              rw [ih l0 hrest]
+
+theorem instOfWords?_size {p : ℕ} [Fact (Nat.Prime p)]
+    {instW : Array Word256} {inst : Array (Fr p)}
+    (h : Midfall.LoweringV2.instOfWords? (p := p) instW = some inst) : inst.size = instW.size := by
+  unfold Midfall.LoweringV2.instOfWords? at h
+  rw [Option.map_eq_some_iff] at h
+  obtain ⟨l, hl, rfl⟩ := h
+  rw [List.size_toArray, mapM_option_length (Midfall.LoweringV2.frOfWord? (p := p)) instW.toList l hl, Array.length_toList]
+
+set_option maxHeartbeats 1000000 in
+theorem decoded_inst_size {R : Render p G₁ G₂ Gₜ} {cd : Bytes} {ms : List (Msg (Fr p) G₁)}
+    {instW : Array Word256} {inst : Array (Fr p)}
+    (h : Decoded R cd ms instW inst) : inst.size = R.cfg.numInstances := by
+  obtain ⟨hdec, hinst⟩ := h
+  unfold decodeCalldata at hdec
+  simp at hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec
+  obtain ⟨⟨ms0, cur0⟩, hslots, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  simp only [Option.some.injEq, Prod.mk.injEq] at hdec
+  obtain ⟨-, hinstWeq⟩ := hdec
+  have hsize : inst.size = instW.size := instOfWords?_size hinst
+  rw [hsize, ← hinstWeq]
+  simp
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -6238,6 +6294,71 @@ def XcriptAlgebraTail (R : Render p G₁ G₂ Gₜ) (H : Hash)
 def XcriptAlgebraRun (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
   ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
     Decoded R cd ms instW inst → XcriptAlgebraTail R H inst ms
+
+/-- **THE NAMED READ SCHEDULE.** For every decoding of `cd`, the decoded messages split
+    into the parseTrace commitments, the readAlgebra evals, and the fCom/qs/pi tail,
+    with the block lengths the VK's own read walk consumes. This is the named
+    plan-count <-> VK-schedule link at payload granularity: the coarse split
+    (`decoded_split_of_plan`) supplies the two coarse lengths, and these fields are
+    the fine counts the walk needs. `H` is carried to match the consumer
+    (`XcriptAlgebraRun`); the schedule itself is hash-free. -/
+def XcriptSchedule (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
+  ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+    Decoded R cd ms instW inst →
+      ∃ (QAdv QMult QPerm QLook QTrash Qg : List G₁)
+        (Qi Qa Qf Qc Qp Ql Qt qs : List (Fr p)) (fCom pi : G₁),
+        ms = xcriptPt QAdv QMult QPerm QLook QTrash ++
+          xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt ++ xcriptTail fCom qs pi ∧
+        QAdv.length = (R.vk.cs.phases.map (fun ph => (phaseCols R.vk.cs ph).length)).sum ∧
+        QMult.length = R.vk.cs.lookups.size ∧
+        QPerm.length = Permutation.numChunksOf R.vk.cs.permutation.columns.size
+          (R.vk.csDegree - 2) ∧
+        QLook.length = (R.vk.cs.lookups.toList.map
+          (fun l => lookupChunkNum R.vk.csDegree l + 1)).sum ∧
+        QTrash.length = R.vk.cs.trashcans.size ∧
+        Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+          else R.vk.domain.getQuotientPolyDegree) ∧
+        Qi.length = (instanceShape inst).size *
+          (R.vk.cs.instanceQueries.toList.filter
+            (fun q => decide (q.1.index < 1))).length ∧
+        Qa.length = (instanceShape inst).size * R.vk.cs.adviceQueries.size ∧
+        Qf.length = R.vk.cs.numFixedColumns - R.vk.cs.numSimpleSelectors ∧
+        Qc.length = R.vk.permutation.commitments.size ∧
+        Qp.length = 3 * Permutation.numChunksOf R.vk.cs.permutation.columns.size
+          (R.vk.csDegree - 2) - 1 ∧
+        Ql.length = (R.vk.cs.lookups.toList.map
+          (fun l => lookupChunkNum R.vk.csDegree l + 3)).sum ∧
+        Qt.length = R.vk.cs.trashcans.size ∧
+        qs.length = R.nSets
+
+/-- **`XcriptAlgebraRun` FROM THE NAMED SCHEDULE.** Every decoding is fed to
+    `snapshotAlgebraRun_ok_of_schedule`; the instance-shape facts are the supported
+    key's (`WellFormed`, `numInstanceColumns = 2`) and the two runtime inputs
+    (`hinstQ`, `hnum`). -/
+theorem xcriptAlgebraRun_of_schedule (R : Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (cd : Bytes)
+    (hsched : XcriptSchedule R H cd)
+    (hinstQ : ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1)
+    (hnum : R.cfg.numInstances < 2 ^ 31) :
+    XcriptAlgebraRun R H cd := by
+  intro ms instW inst hdec
+  obtain ⟨QAdv, QMult, QPerm, QLook, QTrash, Qg, Qi, Qa, Qf, Qc, Qp, Ql, Qt, qs,
+    fCom, pi, hms, hAdv, hMult, hPerm, hLook, hTrash, hQ, hI, hA, hF, hC, hP, hL, hT,
+    hQs⟩ := hsched ms instW inst hdec
+  have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
+  have hnc : 2 = R.vk.cs.numInstanceColumns := hR.supported.instShape.1.symm
+  have hinstSize : inst.size < 2 ^ 31 := by
+    rw [decoded_inst_size hdec]; exact hnum
+  have hp : p ≤ 2 ^ 256 := by
+    rw [hR.env.modulus]; norm_num [frModulusConstant]
+  obtain ⟨s2, t2, hrun, hbuf, hpos⟩ :=
+    snapshotAlgebraRun_ok_of_schedule R.E H R.vk inst hf hnc hinstQ hinstSize hp
+      hcodec.compressedEncoderFirst hcodec.compressedWidth
+      QAdv QMult QPerm QLook QTrash Qg Qi Qa Qf Qc Qp Ql Qt qs fCom pi R.nSets ms hms
+      hAdv hMult hPerm hLook hTrash hQ hI hA hF hC hP hL hT hQs
+  exact ⟨s2, t2, wireMsgs R.E (xcriptPt QAdv QMult QPerm QLook QTrash ++
+    xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt), fCom, pi, qs, hrun, hbuf, hpos, hQs⟩
+
 
 /-- `xcript_total` at one fixed decoded message list, directly from the tail clause. -/
 theorem xcript_total_at (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
@@ -8426,6 +8547,23 @@ theorem tp_agrees_of_xcriptG1 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
         invAt_transcript_of_xcriptG1 R H vkAddr cd V st hpost hG1
           ms instW inst hdec S hS))
 
+/-- **`tp_agrees` FROM THE NAMED SCHEDULE AND THE COMMITMENT HALF.** The fixed `tp_agrees`
+    has no room for the schedule or `XcriptG1`; this is its schedule-carrying consumer.
+    `XcriptAlgebraRun` is produced by `xcriptAlgebraRun_of_schedule` and spent by
+    `tp_agrees_of_xcriptG1`. -/
+theorem tp_agrees_of_schedule (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TpPost R H vkAddr cd V st)
+    (hsched : XcriptSchedule R H cd)
+    (hinstQ : ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1)
+    (hnum : R.cfg.numInstances < 2 ^ 31)
+    (hG1 : XcriptG1 R H cd st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st :=
+  tp_agrees_of_xcriptG1 R hR hcodec H vkAddr cd V st hpost
+    (xcriptAlgebraRun_of_schedule R hR hcodec H cd hsched hinstQ hnum) hG1
+
+
 /-- **`tp_agrees_of_xcript` WITH `hinv` DISCHARGED.** The whole-`Inv` hypothesis is
     replaced by `XcriptG1`, the four commitment holds; the scalar slots, q-eval
     pointer and earlier checkpoints are proved by `invAt_transcript_of_xcriptG1`.
@@ -8446,10 +8584,13 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
 
     THE REDUCTION IS LANDED: `tp_agrees_of_xcript` proves this row from `XcriptAlgebraRun` (the
     named SIM.10 parser-side clause, §3b) plus the `Inv .transcript` assembly, and
-    `tp_agrees_of_agree` isolates the latter. DEPENDENCY, NAMED AND OPEN: `XcriptAlgebraRun` is a
-    DATA clause, not a theorem of `ValidV3` + `Decoded` (no `parseTrace`/`readAlgebra`/`snapshotAlgebraRun`
-    existence theorem exists; the width schedule is pinned but conditional, see §3b). THE
-    `Inv .transcript` HALF IS NOW LANDED as `invAt_transcript_of_xcriptG1`, and
+    `tp_agrees_of_agree` isolates the latter. THE SCHEDULE LAYER IS NOW LANDED:
+    `xcriptAlgebraRun_of_schedule` produces `XcriptAlgebraRun` from the named
+    `XcriptSchedule` (the fine read schedule at payload granularity) plus the two runtime
+    inputs `hinstQ`/`hnum`, and `tp_agrees_of_schedule` is the schedule-carrying consumer of
+    this row. THE FIXED STATEMENT'S RESIDUAL is therefore exactly those named data -
+    `XcriptSchedule`, `hinstQ`, `hnum` and `XcriptG1` - not `ValidV3` + `Decoded` alone.
+    THE `Inv .transcript` HALF IS LANDED as `invAt_transcript_of_xcriptG1`, and
     `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
     decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
     producer is the value half of A11's `runsAll_readAlgebra` plus `MirrorAt`/`eipRoundtrip`;
@@ -8689,6 +8830,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript
 #check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript_of_inv
 #check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcriptG1
+#check @Midfall.LoweringV3.TranscriptRows.xcriptAlgebraRun_of_schedule
+#check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_schedule
 #check @Midfall.LoweringV3.TranscriptRows.invAt_transcript_of_xcriptG1
 #check @Midfall.LoweringV3.TranscriptRows.inline_g1WalkLoop
 
@@ -8828,6 +8971,12 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTrace_run_of_ms_sizes_rest [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_tail [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotAlgebraRun_ok_of_schedule [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.mapM_option_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instOfWords?_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_inst_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.XcriptSchedule [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcriptAlgebraRun_of_schedule [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_schedule [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
