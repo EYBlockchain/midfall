@@ -8961,6 +8961,41 @@ theorem commonWord_stmt_lit_contract {c : ExternalCalls} {g : ExternalGas}
 
 
 
+/-! ### ROW.TP.4 - scalar-loop vocabulary -/
+
+/-- The instance loop's `success` fold: `and`-accumulate the canonicality bits. -/
+def g1SuccessFold (rv s : U256) (ws : List U256) : U256 :=
+  ws.foldl (fun acc w => acc &&& b2w (w.ult rv)) s
+
+theorem g1SuccessFold_nil (rv s : U256) : g1SuccessFold rv s [] = s := rfl
+
+theorem g1SuccessFold_cons (rv s w : U256) (ws : List U256) :
+    g1SuccessFold rv s (w :: ws) = g1SuccessFold rv (s &&& b2w (w.ult rv)) ws := rfl
+
+/-- The words appended into the transcript buffer, starting at `buf + 32*j`. -/
+def g1AppendWords (mem : Nat → UInt8) (buf : Nat) : List U256 → Nat → (Nat → UInt8)
+  | [], _ => mem
+  | w :: ws, j => g1AppendWords (storeWord mem (buf + 32 * j) w) buf ws (j + 1)
+
+theorem g1AppendWords_nil (mem : Nat → UInt8) (buf j : Nat) :
+    g1AppendWords mem buf [] j = mem := rfl
+
+theorem g1AppendWords_cons (mem : Nat → UInt8) (buf j : Nat) (w : U256) (ws : List U256) :
+    g1AppendWords mem buf (w :: ws) j =
+      g1AppendWords (storeWord mem (buf + 32 * j) w) buf ws (j + 1) := rfl
+
+/-- The instance loop's source words: one calldata word per instance, stride 32. -/
+def g1InstanceWords (cd : Bytes) (start N : Nat) : List U256 :=
+  (List.range N).map (fun j => cdWord cd (start + 32 * j))
+
+theorem g1InstanceWords_length (cd : Bytes) (start N : Nat) :
+    (g1InstanceWords cd start N).length = N := by
+  simp [g1InstanceWords]
+
+theorem g1InstanceWords_get? (cd : Bytes) (start N j : Nat) (hj : j < N) :
+    (g1InstanceWords cd start N)[j]? = some (cdWord cd (start + 32 * j)) := by
+  simp [g1InstanceWords, hj]
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9565,5 +9600,11 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.args_var_lit_ne_halt [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.eval_args_var_lit_exists [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_stmt_lit_contract [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1SuccessFold_nil [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1SuccessFold_cons [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1AppendWords_nil [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1AppendWords_cons [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_get? [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
