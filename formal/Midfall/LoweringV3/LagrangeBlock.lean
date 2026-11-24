@@ -2827,4 +2827,133 @@ def Code.boundNames {Op : Type} : Code Op → List Ident
   | .loop _ _ _ => []
 
 
+
+/-- **THE ENVIRONMENT SHAPE OF EVERY RUN.** A `.sres` run's output environment is the input
+    environment with a prefix of locally bound names; every name in that prefix is a top-level
+    `let` of the code. -/
+theorem Step.sres_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {V : VEnv D} {st : D.State} {code : Code D.Op} {r : Res D}
+    (h : Step D funs V st code r) :
+    ∀ {V' : VEnv D} {st' : D.State} {o : Outcome}, r = .sres V' st' o →
+      ∃ extra : List Ident, V'.map Prod.fst = extra ++ V.map Prod.fst ∧
+        ∀ x ∈ extra, x ∈ Code.boundNames code := by
+  induction h with
+  | lit => intro V' st' o hr; cases hr
+  | var => intro V' st' o hr; cases hr
+  | builtinOk => intro V' st' o hr; cases hr
+  | builtinHalt => intro V' st' o hr; cases hr
+  | builtinArgsHalt => intro V' st' o hr; cases hr
+  | callOk => intro V' st' o hr; cases hr
+  | callHalt => intro V' st' o hr; cases hr
+  | callArgsHalt => intro V' st' o hr; cases hr
+  | argsNil => intro V' st' o hr; cases hr
+  | argsCons => intro V' st' o hr; cases hr
+  | argsRestHalt => intro V' st' o hr; cases hr
+  | argsHeadHalt => intro V' st' o hr; cases hr
+  | funDef => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp [Code.boundNames]⟩
+  | block hbody ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨[], restore_names he, by simp⟩
+  | letZero =>
+      intro V' st' o hr; cases hr
+      rename_i vars
+      refine ⟨vars, ?_, ?_⟩
+      · rw [List.map_append]
+        congr 1
+        simp [bindZeros, Function.comp_def]
+      · intro x hx
+        simpa [Code.boundNames, bindZeros] using hx
+  | letVal he hlen ihhe =>
+      intro V' st' o hr; cases hr
+      rename_i vars e vals st1
+      refine ⟨vars.take vals.length, ?_, ?_⟩
+      · rw [List.map_append, zip_fst_names, hlen, List.take_length]
+      · intro x hx
+        simp only [Code.boundNames]
+        exact List.mem_of_mem_take hx
+  | letHalt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp [Code.boundNames]⟩
+  | assignVal he ihhe hlen =>
+      intro V' st' o hr; cases hr
+      exact ⟨[], venv_setMany_names _ _ _, by simp⟩
+  | assignHalt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | exprStmt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | exprStmtHalt he ihhe => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | ifTrue hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | ifFalse hc hz ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | ifHalt hc ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | switchExec hc hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | switchHalt hc ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | forLoop hinit hloop ihinit ihloop =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, h1, _⟩ := ihinit rfl
+      obtain ⟨e2, h2, _⟩ := ihloop rfl
+      exact ⟨[], restore_names (by rw [h2, h1, List.append_assoc]), by simp⟩
+  | forInitHalt hinit ihinit =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, _⟩ := ihinit rfl
+      exact ⟨[], restore_names he, by simp⟩
+  | «break» => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | «continue» => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | «leave» => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | seqNil => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | seqCons h1 h2 ih1 ih2 =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, he1, hb1⟩ := ih1 rfl
+      obtain ⟨e2, he2, hb2⟩ := ih2 rfl
+      refine ⟨e2 ++ e1, by rw [he2, he1, List.append_assoc], ?_⟩
+      intro x hx
+      simp only [Code.boundNames, List.mem_append] at hx ⊢
+      rcases hx with hx | hx
+      · exact Or.inr (hb2 x hx)
+      · exact Or.inl (hb1 x hx)
+  | seqStop h1 hne ih1 =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ih1 rfl
+      refine ⟨e, he, fun x hx => ?_⟩
+      simp only [Code.boundNames, List.mem_append]
+      exact Or.inl (hb x hx)
+  | loopDone hc hz ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | loopCondHalt hc ihc => intro V' st' o hr; cases hr; exact ⟨[], rfl, by simp⟩
+  | loopStep hc hnz hbody hob hpost hloop ihc ihbody ihpost ihloop =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, h1, hb1⟩ := ihbody rfl
+      obtain ⟨e2, h2, hb2⟩ := ihpost rfl
+      obtain ⟨e3, h3, hb3⟩ := ihloop rfl
+      refine ⟨e3 ++ e2 ++ e1, by rw [h3, h2, h1, List.append_assoc, List.append_assoc], ?_⟩
+      intro x hx
+      simp only [Code.boundNames, List.mem_append] at hx ⊢
+      rcases hx with (hx | hx) | hx
+      · simpa [Code.boundNames] using hb3 x hx
+      · simpa [Code.boundNames] using hb2 x hx
+      · simpa [Code.boundNames] using hb1 x hx
+  | loopPostHalt hc hnz hbody hob hpost ihc ihbody ihpost =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e1, h1, hb1⟩ := ihbody rfl
+      obtain ⟨e2, h2, hb2⟩ := ihpost rfl
+      refine ⟨e2 ++ e1, by rw [h2, h1, List.append_assoc], ?_⟩
+      intro x hx
+      simp only [Code.boundNames, List.mem_append] at hx ⊢
+      exact hx.elim (fun h => by simpa [Code.boundNames] using hb2 x h)
+        (fun h => by simpa [Code.boundNames] using hb1 x h)
+  | loopBreak hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | loopLeave hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+  | loopBodyHalt hc hnz hbody ihc ihbody =>
+      intro V' st' o hr; cases hr
+      obtain ⟨e, he, hb⟩ := ihbody rfl
+      exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
+
+
 end Midfall.LoweringV3.LagrangeBlock
