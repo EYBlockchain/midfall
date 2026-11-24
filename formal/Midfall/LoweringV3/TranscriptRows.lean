@@ -7366,6 +7366,116 @@ theorem decodeSlots_g1_provenance {c : G1Codec G₁} {cd : Bytes} (n : Nat)
                 exact hb'
               · simpa using hidx
 
+
+theorem eipWidthSum_replicate_g1 (n : Nat) :
+    Midfall.Lowering.eipWidthSum (List.replicate n Midfall.Lowering.WireSlot.g1) =
+      n * g1EipWidth := by
+  induction n with
+  | zero => simp [Midfall.Lowering.eipWidthSum]
+  | succ n ih =>
+      rw [List.replicate_succ, Midfall.Lowering.eipWidthSum_cons, ih]
+      simp [Midfall.Lowering.slotEipWidth]
+      ring
+
+theorem eipWidthSum_replicate_fr (n : Nat) :
+    Midfall.Lowering.eipWidthSum (List.replicate n Midfall.Lowering.WireSlot.fr) = n * 32 := by
+  induction n with
+  | zero => simp [Midfall.Lowering.eipWidthSum]
+  | succ n ih =>
+      rw [List.replicate_succ, Midfall.Lowering.eipWidthSum_cons, ih]
+      simp [Midfall.Lowering.slotEipWidth]
+      ring
+
+theorem decodeSlots_cursor {c : G1Codec G₁} {cd : Bytes} :
+    ∀ (slots : List Midfall.Lowering.WireSlot) (cur : Nat)
+      (ms : List (Msg (Fr p) G₁)) (cur' : Nat),
+      decodeSlots (p := p) c cd slots cur = some (ms, cur') →
+      cur' = cur + Midfall.Lowering.eipWidthSum slots := by
+  intro slots
+  induction slots with
+  | nil =>
+      intro cur ms cur' h
+      simp only [decodeSlots, Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨-, rfl⟩ := h
+      simp [Midfall.Lowering.eipWidthSum]
+  | cons sl rest ih =>
+      intro cur ms cur' h
+      cases sl with
+      | g1 =>
+          obtain ⟨b, Q, ms0, cur0, hg, hb, hq, hrec, hms, hcur⟩ :=
+            decodeSlots_g1_inv rest cur ms cur' h
+          rw [hcur, ih (cur + g1EipWidth) ms0 cur0 hrec]
+          rw [Midfall.Lowering.eipWidthSum_cons]
+          simp [Midfall.Lowering.slotEipWidth]
+          omega
+      | fr =>
+          unfold decodeSlots at h
+          simp only [guard] at h
+          by_cases hlt : (cdWord cd cur).toNat < p
+          · rw [if_pos hlt] at h
+            cases hrec : decodeSlots (p := p) c cd rest (cur + 32) with
+            | none => rw [hrec] at h; simp at h
+            | some pair =>
+                obtain ⟨ms0, cur0⟩ := pair
+                rw [hrec] at h
+                simp at h
+                obtain ⟨-, hcur⟩ := h
+                have hc0 : cur0 = (cur + 32) + Midfall.Lowering.eipWidthSum rest :=
+                  ih (cur + 32) ms0 cur0 hrec
+                rw [← hcur, hc0]
+                rw [Midfall.Lowering.eipWidthSum_cons]
+                simp only [Midfall.Lowering.slotEipWidth]
+                omega
+          · rw [if_neg hlt] at h
+            simp at h
+
+theorem decodeSlots_g1_prefix_split {c : G1Codec G₁} {cd : Bytes}
+    {pre : List G₁} {restSlots : List Midfall.Lowering.WireSlot} {cur cur' : Nat}
+    {restMs : List (Msg (Fr p) G₁)}
+    (h : decodeSlots (p := p) c cd
+        (List.replicate pre.length Midfall.Lowering.WireSlot.g1 ++ restSlots) cur =
+      some (pre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ restMs, cur')) :
+    ∃ cur1, decodeSlots (p := p) c cd
+        (List.replicate pre.length Midfall.Lowering.WireSlot.g1) cur =
+        some (pre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)), cur1) ∧
+      decodeSlots (p := p) c cd restSlots cur1 = some (restMs, cur') := by
+  obtain ⟨ms1, cur1, ms2, h1, h2, hms⟩ :=
+    decodeSlots_split (List.replicate pre.length Midfall.Lowering.WireSlot.g1)
+      restSlots cur (pre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ restMs) cur' h
+  have hlen1 : ms1.length = pre.length := by
+    have := decodeSlots_map_slot (p := p) c cd
+      (List.replicate pre.length Midfall.Lowering.WireSlot.g1) cur ms1 cur1 h1
+    simpa using congrArg List.length this
+  have hms1 : ms1 = pre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+    have htake := congrArg (List.take ms1.length) hms
+    have hleft : List.take ms1.length
+        (pre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ restMs) =
+        pre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+      rw [hlen1]
+      simpa using List.take_left (l₁ := pre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (l₂ := restMs)
+    have hright : List.take ms1.length (ms1 ++ ms2) = ms1 := List.take_left
+    rw [hleft, hright] at htake
+    exact htake.symm
+  have hms2 : ms2 = restMs := by
+    have := hms
+    rw [hms1] at this
+    exact (List.append_cancel_left this).symm
+  refine ⟨cur1, ?_, ?_⟩
+  · rwa [hms1] at h1
+  · rwa [hms2] at h2
+
+theorem decodeSlots_g1_provenance_of_prefix {c : G1Codec G₁} {cd : Bytes}
+    {pre : List G₁} {restSlots : List Midfall.Lowering.WireSlot} {cur cur' : Nat}
+    {restMs : List (Msg (Fr p) G₁)}
+    (h : decodeSlots (p := p) c cd
+        (List.replicate pre.length Midfall.Lowering.WireSlot.g1 ++ restSlots) cur =
+      some (pre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ restMs, cur')) :
+    ∀ i < pre.length, ∃ (b : Bytes) (Q : G₁),
+      bytesTake cd (cur + g1EipWidth * i) g1EipWidth = some b ∧
+        c.ofEip? b = some Q ∧ pre[i]? = some Q := by
+  exact decodeSlots_g1_provenance pre.length restSlots cur pre restMs cur'
+    (rfl : pre.length = pre.length) h
 def XcriptAlgebraTail (R : Render p G₁ G₂ Gₜ) (H : Hash)
     (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) : Prop :=
   ∃ (s2 : SnapAlgebra p G₁) (t2 : Transcript) (pref : Bytes) (fCom pi : G₁)
@@ -12637,14 +12747,19 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     now `WellFormed.instanceQueriesBound` (D-GATE15(c)), so the old `hinstQ` premise is
     gone, and `PlanReadCounts` itself is PROVED downstream in
     `EndToEndAlgebra.planReadCounts_of_valid` (`planPrefixG1_eq` + `planNumEvals_eq`).
-    THE FIXED STATEMENT'S RESIDUAL is therefore exactly the calldata bound `hnum` and
-    Calldata's `XcriptG1`; `EndToEndAlgebra.tp_agrees_of_valid` is the fixed row's fully
-    wired consumer (`ValidV3` + `hnum` + `XcriptG1`). `Decoded` gives
-    `cd.size = proofEnd + 32 + 32 * numInstances` (`numInstances_lt_of_cd_size`), so a
-    calldata-size bound `cd.size < 2^36` would supply `hnum`; no such bound is in the
-    tree (`EntryFrameV3.cdSize` is `< 2^256`; `SupportedInput.sizeBound` is `< 2^64` on
-    the generator input, not on `cd`). The proof of the fixed statement itself cannot be
-    imported here: `EndToEndAlgebra` imports this file.
+    THE FIXED STATEMENT'S RESIDUAL is now exactly the calldata bound `hnum` and the
+    interface premise `AdvicePhasesColumnOrder R.vk`; `XcriptG1` itself is CLOSED by
+    `EndToEndAlgebra.xcriptG1` (from `xcriptG1_provenance`, `xcriptG1_tail_provenance`,
+    the four `MirrorAt` windows and Calldata's value/provenance lemmas) and consumed by
+    `EndToEndAlgebra.tp_agrees_of_valid_closed` (`ValidV3` + `hnum` + `horder`).
+    `Decoded` gives `cd.size = proofEnd + 32 + 32 * numInstances`
+    (`numInstances_lt_of_cd_size`), so a calldata-size bound `cd.size < 2^36` would
+    supply `hnum`; no such bound is in the tree (`EntryFrameV3.cdSize` is `< 2^256`;
+    `SupportedInput.sizeBound` is `< 2^64` on the generator input, not on `cd`).
+    `AdvicePhasesColumnOrder` is not a theorem of `WellFormed`
+    (`advicePhaseTotal_not_columnOrder`). The proof of the fixed statement itself cannot
+    be imported here: `EndToEndAlgebra` imports this file, and its statement has no
+    `hnum`/`horder` parameters.
     THE `Inv .transcript` HALF IS LANDED as `invAt_transcript_of_xcriptG1`, and
     `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
     decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
