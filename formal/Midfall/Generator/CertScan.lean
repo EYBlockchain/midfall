@@ -2151,11 +2151,11 @@ theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan
   `pcsBlock1Ast`, `pcsBlock2Ast`, `pcsBlock3Ast` (including the rolled `for` body and the
   `wordExpr`/`ptrExpr` codec leaves), `pcsBlock6Ast`, `pcsX4PowersAst`, `pcsVLinesAst`,
   `pcsSetBlockAst` (both arms, including the diagonal `List.filterMap`), and `pcsBlock4Ast` (the
-  per-set `yblock` induction); plus the `NoWriters_forLoop` composition and the compositional
-  `ScanClean` codec leaves. STILL OPEN there, named: `pcsBlock5Ast`'s scans (the nested monadic
-  `foldlM` over `bySet`/commitments and `pcsLinExpansion`'s folds; the block has no user call and
-  no writer builtin) and the `computationsAst` assembly that extracts the emitted block list from
-  the `Except` chain. `topBinders_emitPcsFromPlan = []` and `funSigs_emitPcsFromPlan = []` are
-  proved in §2/§3 here. -/
+  per-set `yblock` induction); plus the `NoWriters_forLoop` composition, the compositional
+  `ScanClean` codec leaves, and `pcsBlock5Ast`'s two scans (the nested monadic `foldlM` over
+  `bySet`/commitments and `pcsLinExpansion`'s folds, through `foldlM_invariant'` and the
+  identity/linearization/MSM step invariant). STILL OPEN there, named: the `computationsAst`
+  assembly that extracts the emitted block list from the `Except` chain.
+  `topBinders_emitPcsFromPlan = []` and `funSigs_emitPcsFromPlan = []` are proved in §2/§3 here. -/
 
 end Midfall.Generator.CertScan
