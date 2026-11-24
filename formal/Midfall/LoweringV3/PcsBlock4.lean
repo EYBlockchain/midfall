@@ -1895,6 +1895,32 @@ theorem pcs_field_distrib (c e inv : U256) (he : e.toNat < Midfall.Yul.blsR) :
     pcs_wMulmodAt_toNat]
   exact pcs_nat_key c.toNat e.toNat inv.toNat Midfall.Yul.blsR he
 
+/-- Loads from a `pcsWriteWords` image are canonical when every written value is. -/
+theorem pcsLoadWord_writeWords_toNat_lt {mem : Nat → UInt8} {D : Nat} {v : Nat → U256}
+    {n i : Nat} (hv : ∀ k, k < n → (v k).toNat < blsR) (hi : i < n) :
+    (loadWord (pcsWriteWords mem D v n) (D + 32 * i)).toNat < blsR := by
+  rw [pcsLoadWord_writeWords_lt mem D v hi]
+  exact hv i hi
+
+/-- A `b3FoldAcc` started from a canonical accumulator stays canonical: every update is an
+    `addmod`, and untouched entries keep the initial value. -/
+theorem b3FoldAcc_toNat_lt {rv : U256} (hrv : rv = BitVec.ofNat 256 blsR)
+    {f : FoldPair → U256} {x1 : Nat → U256}
+    {xs : List FoldPair} {k : Nat} {acc : U256} (hacc : acc.toNat < blsR) :
+    (b3FoldAcc rv f x1 xs k acc).toNat < blsR := by
+  subst rv
+  induction xs generalizing acc with
+  | nil => exact hacc
+  | cons q rest ih =>
+      rw [b3FoldAcc_cons]
+      by_cases hq : q.2.1 = k
+      · rw [if_pos hq]
+        apply ih
+        rw [pcs_wAddmodAt_toNat]
+        exact Nat.mod_lt _ (Fact.out (p := Nat.Prime blsR)).pos
+      · rw [if_neg hq]
+        exact ih hacc
+
 /-- `wMulmodAt` by the field one is the identity on canonical words. -/
 theorem pcs_wMulmodAt_one_right {a : U256} (ha : a.toNat < blsR) :
     wMulmodAt a 1 (BitVec.ofNat 256 blsR) = a := by
