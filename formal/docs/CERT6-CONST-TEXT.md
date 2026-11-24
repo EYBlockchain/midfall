@@ -2,41 +2,73 @@
 
 ## What is proved
 
-### Character lemmas (`formal/Midfall/Generator/ConstText.lean`)
+### `String.splitOn` at a newline (`formal/Midfall/Generator/SplitOnLines.lean`)
 
-- `toString_chars`: every character of `toString n` is a decimal digit.
-- `hexDigits_chars` / `hexFilter_*` / `hexPaddedFilter_*`: the rendered
-  `0x` forms start with `0x`, have a non-empty body, and that body contains
-  only lowercase hex digits (`0-9`, `a-f`).
-- `printPtr_integer_nonneg`: `printPtr (Value.integer i)` for `0 ≤ i` is
-  `hexFilter i.toNat`.
-- `printPtr_valueFromNat`, `printPtr_memory_add`, `printPtr_calldata_sub`:
-  the concrete numeric pointer forms used by `renderConstants` are
-  `hexFilter` of a Nat, including the word-addressed `Ptr.add`/`Ptr.sub`
-  shapes.
+The toolchain has no inverse lemma for the legacy `String.splitOn`, which is
+why the earlier residual could not even state a line decomposition. That gap
+is now closed for the newline separator:
 
-These are uniform in the numeric fields; none of them depends on a concrete
-model.
+- `splitOn_newline_eq_splitToList`: `s.splitOn "\n" = s.splitToList (· == '\n')`,
+  proved by simulating the byte-level `splitOnAux` against the Batteries
+  `splitAux` characterization.
+- `intercalate_splitOn_newline`: `String.intercalate "\n" (s.splitOn "\n") = s`.
+- `splitOn_newline_ne_nil`, `splitOn_newline_no_nl`: split pieces are nonempty
+  as a list and contain no embedded newline.
+- `splitOn_intercalate_newline`: for a nonempty line list with no embedded
+  newline, `(String.intercalate "\n" l).splitOn "\n" = l`.
+
+### Generic template chunks (`formal/Midfall/Generator/ConstLines.lean`)
+
+`renderConstants` is transcribed into literal chunks, one chunk per `++`
+segment, with a named `litN` definition for every closed literal so the
+transcription is inspectable without reducing the whole template:
+
+- `vkSeg` / `qeSeg` / `fixedSeg` / `accSeg` / `buildSeg` / `directSeg`, and the
+  matching `vkText` / `qeText` / `fixedText` / `accText` / `buildText` /
+  `directText` strings.
+- `vk_eq`, `qe_eq`, `fixed_eq`, `acc_eq`, `build_eq`, `direct_eq`: each arm's
+  text is the `String.join` of its chunks. The optional VK, quotient, and
+  accumulator arms and the arbitrary `quotientDirect` arm are all present.
+- `linesOfChunks` / `prepend`: merge chunk splits on newlines while joining the
+  boundary line.
+- `linesOfChunks_spec`: `String.intercalate "\n" (linesOfChunks cs)` is the
+  `String.join` of the chunk texts.
+- `linesOfChunks_no_nl`: every produced line is newline-free.
+- `splitOn_newline_chunks`: splitting the chunk concatenation at newlines
+  returns exactly `linesOfChunks cs`.
+- `renderConstantsLines`, `renderConstantsLines_ne_nil`,
+  `renderConstantsLines_no_nl`: the named generic line list for the full
+  `renderConstantsChunks` template.
+
+### Reduced residual interface (`Generator/ConstTextResidual.lean`)
+
+`ConstTextWitness` no longer carries an arbitrary `lines` field or a separate
+`split_eq`; it now names the generic list and only asks for:
+
+```lean
+render_eq :
+  renderConstants (partialCtxOfVerifier m) =
+    String.intercalate "\n" (renderConstantsLines (partialCtxOfVerifier m))
+lines_literal :
+  (renderConstantsLines (partialCtxOfVerifier m)).all LineLiteral = true
+table_eq :
+  (constTableOf m == expectedConsts pv m) = true
+```
+
+`split_eq_of_render_eq` derives the split equality from `render_eq` using the
+proved `splitOn_intercalate_newline`; `constLinesLiteral_of_witness` and
+`constTable_of_witness` are the unchanged reductions to the two targets.
 
 ### Concrete instance
 
-- `formal/Midfall/Instances/ConstsCert6.lean`
-  - `poseidon_constLinesLiteral`:
-    `LoweringV3.constLinesLiteral poseidonM = true`.
-  - `poseidon_constTable`:
-    `LoweringV2.constTableOf poseidonM == LoweringV3.expectedConsts poseidonPv poseidonM`.
-- `formal/Midfall/Instances/CertMeasure.lean`
-  - `f1_constLinesLiteral`: the same line predicate at the F1 render.
-  - `f1_constTable`: the same table equality at F1.
+`formal/Midfall/Instances/ConstsCert6.lean` inhabits the reduced witness at the
+tracked poseidon fixture (`poseidonConstTextWitness`); `render_eq`,
+`lines_literal`, and `table_eq` are closed by `native_decide` on the closed
+render. The F1 concrete gates remain in `Instances/CertMeasure.lean`.
 
-Both concrete instances are `native_decide` (the instance-confinement rule;
-D-P17/D-P20). The pre-existing `ConstsKats.coherent_ok` `#eval` already
-printed the poseidon coincidence; the two theorems above are the kernel
-statements, not a new computation.
+## Exact remaining generic obligations
 
-## Exact generic residual
-
-The generic targets in `Generator/Certified.lean` remain:
+The generic target statements in `Generator/Certified.lean` are unchanged:
 
 ```lean
 prog_constLinesLiteral : constLinesLiteral (renderOf gi o).model = true
@@ -45,86 +77,32 @@ prog_constTable :
     expectedConsts (renderOf gi o).pv (renderOf gi o).model) = true
 ```
 
-The missing generic step is the **line decomposition of `renderConstants`**,
-not any character-level fact:
+Two obligations remain, both named rather than hidden:
 
-1. `constLinesLiteral` and `constTableOf` both call
-   `(renderConstants (partialCtxOfVerifier m)).splitOn "\n"`.
-   `renderConstants` is one large concatenation of template text and
-   interpolations. There is no lemma in the tree that writes it as
-   `String.intercalate "\n" lines`, and `String.splitOn` on a symbolic string
-   does not reduce (it is defined through `splitOnAux`).
-2. A generic proof therefore needs a proof-only
-   `renderConstants_lines` (or equivalent `splitOn`/append) lemma and a
-   per-line `solConstantLine?` round-trip. The latter must show
-   `natOfLiteral` inverts both `toString n` (decimal) and
-   `hexFilter`/`hexPaddedFilter pad n` (lowercase hex), including the leading
-   spaces, `=` and `;` trimming.
-3. The four optional template arms are:
-   - `expectedVkCodehash` `some`/`none`;
-   - `quotientExternal` × `expectedQuotientCodehash`;
-   - `expectedHasAccumulator`;
-   - `quotientDirect`.
-   The first three emit only the fixed-format lines covered by the character
-   lemmas; the `quotientDirect` arm emits arbitrary `qdirect.constants` text
-   and is excluded by the already-proved `prog_noDirect hg hs`
-   (`quotientDirect.isNone = true`). No target proof was weakened to assume
-   this: the generic target still has to consume `prog_noDirect`.
+1. **Template reassociation (`render_eq`).** `renderConstants` is one
+   left-associated `++` chain. The chunk transcription is definitionally the
+   same atom sequence, but closing the equality by `rfl` forces the kernel to
+   normalise the full string chain. Measured: `fixed_eq` alone takes about 46 s
+   with `maxHeartbeats 20000000`; the full template `rfl` exceeds a five-minute
+   budget and was stopped. This is a kernel-reduction cost, not a missing
+   mathematical fact; the named `litN` definitions give a route to a
+   reflection/`conv` proof that rewrites literals to `litN` without normalising
+   the string contents. The target was not weakened to assume `render_eq`.
+2. **Per-line `LineLiteral` / `solConstantLine?` round-trips.** `LineLiteral`
+   calls `String.splitOn "uint256 internal constant "`, a *multi-character*
+   separator, for which the toolchain still has no append/inverse lemma (the
+   new `SplitOnLines` file covers the one-character `"\n"` case). The same
+   applies to the `=` / `;` fields of `solConstantLine?` and to
+   `natOfLiteral`'s inversion of `toString` / `hexFilter` / `hexPaddedFilter`.
+   The concrete poseidon and F1 instances discharge these by `native_decide`;
+   a generic proof needs that multi-character split lemma first.
 
-`native_decide` cannot close the generic statement because `m`/`pv` contain
-free variables; the concrete F1 and poseidon instances above are the
-kernel-checked witnesses, not a substitution for the generic line lemma.
-
-## Exact residual interface
-
-`formal/Midfall/Generator/ConstTextResidual.lean` names the missing data:
-
-```lean
-structure ConstTextWitness (pv : PlanView) (m : Model) where
-  lines : List String
-  render_eq : renderConstants (partialCtxOfVerifier m) =
-    String.intercalate "\n" lines
-  split_eq : (renderConstants (partialCtxOfVerifier m)).splitOn "\n" = lines
-  lines_literal : lines.all LineLiteral = true
-  table_eq : (constTableOf m == expectedConsts pv m) = true
-```
-
-`constLinesLiteral_of_witness` and `constTable_of_witness` are the reductions
-from that witness to the two targets. The witness is not used to replace the
-targets.
-
-A concrete inhabitant is `ConstsCert6.poseidonConstTextWitness`: it closes
-`render_eq`, `split_eq`, `lines_literal` and `table_eq` at the tracked
-poseidon fixture (`render_eq`/`lines_literal` by `native_decide` on the
-concrete closed strings). This exercises the exact interface the generic
-proof would have to fill.
-
-## This round's exact obstruction (measured)
-
-The generic line decomposition was attacked directly. The obstruction is
-structural rather than a missing character fact:
-
-- `renderConstants` is a 195-line Lean definition of concatenated string
-  segments; the rendered table has 90 entries plus comment lines.
-- The toolchain has `String.intercalate_nil`, `intercalate_singleton`,
-  `intercalate_cons_cons`, `intercalate_cons_append`,
-  `intercalate_cons_of_ne_nil`, and `intercalate_append_of_ne_nil`, but no
-  inverse theorem for `String.splitOn`.
-- Writing `renderConstantsLines` as a proof-only list requires transcribing
-  every segment and its four optional arms; a `splitOn`-defined list is
-  circular and does not reduce symbolically.
-- `ConstText`'s character lemmas are complete for the interpolation values
-  (`toString`, `hexFilter`, `hexPaddedFilter`, numeric `printPtr`). What is
-  still missing is exactly the `renderConstantsLines` list plus the
-  `solConstantLine?`/`natOfLiteral` per-line round-trip. This is what the
-  concrete `poseidon`/F1 theorems above bypass at the fixture.
-
-No target statement was weakened, and the generic `prog_constLinesLiteral` /
-`prog_constTable` sorries remain.
+No target statement was weakened, no row/root hypothesis was added, and the
+`prog_noDirect` exclusion of the arbitrary `quotientDirect` arm remains the
+only option-level hypothesis needed.
 
 ## Build
 
-`lake build Midfall.Generator.ConstText Midfall.Instances.ConstsCert6
-Midfall.Instances.CertMeasure Midfall.Generator.Certified` is green.
-`SupportedInput`, `ValidV3`, rows/root and the target statements are
-untouched.
+`lake build Midfall.Generator.SplitOnLines Midfall.Generator.ConstLines
+Midfall.Generator.ConstTextResidual Midfall.Instances.ConstsCert6
+Midfall.Generator.Certified` is green.
