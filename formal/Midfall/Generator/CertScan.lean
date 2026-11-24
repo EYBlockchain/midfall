@@ -2131,11 +2131,14 @@ theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan
     numerator and of the PCS slice, with `pv.hasAccumulator = false` (which removes
     `validate_public_accumulator` from the sigs). Every other group's call sites are tabulated and
     the parser's are proved (`parser_callsOK`); the function table is `mainSigSet`.
+    `CertScanPcs.callsResolved_mainAsmRaw_of_pcs` replaces the PCS slice hypothesis by the
+    per-block invariant `∀ blocks, computationsAst … = .ok blocks → ∀ b ∈ blocks, CallsOK … b`.
   * `prog_noWriters`: `noWriters_program_of` leaves the PCS slice and the parsed numerator; the
     parser (`parser_noWriters`) and all fixed groups are proved. The target's `prog` is the INLINED
     program, so one more child remains: `NoWriters` is invariant under
     `Inline.inlineContractConstants` (the inliner changes expressions only, and the writer scan
-    reads constructors only).
+    reads constructors only). `CertScanPcs.noWriters_mainAsmRaw_of_pcs` replaces the PCS slice by
+    the same per-block invariant.
   * `prog_constsDeclared`: `freeNames_program_of` reduces the scan to one `FreeOK` hypothesis per
     emitter group; the guard/prefix facts are `constTableOf`/`expectedConsts` computations, and the
     numerator's free names are Blocker 1.
@@ -2144,12 +2147,15 @@ theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan
   * `prog_closed` / `v3_closed`: additionally need the inliner free-name lemma (`freeNames` after
     `inlineContractConstants`); the V3 statement records it as the only side condition.
 
-  **PCS, PRECISELY.** Closed: `topBinders_emitPcsFromPlan = []`, `funSigs_emitPcsFromPlan = []`.
-  The remaining inductions are over `computationsAst`'s block functions (`pcsBlock1Ast` …
-  `pcsBlock6Ast`, `pcsSetBlockAst`, `pcsX4PowersAst`, `pcsVLinesAst`). The set block's general arm
-  nests `List.filterMap` (the diagonal term), which is why `CallsOK_filterMap` /
-  `BindersOK_filterMap` / `NoWriters_filterMap` are landed here: with those, the composition is
-  `CallsOK_append`/`_map`/`_flatten_map`/`_filterMap` plus the one-statement leaves. `pcsBlock6Ast`
-  has no binders and no user calls; its `staticcall`s are builtins and non-writers. -/
+  **PCS, PRECISELY.** `Midfall/Generator/CertScanPcs.lean` lands `callSitesSs`/`NoWriters` for
+  `pcsBlock1Ast`, `pcsBlock2Ast`, `pcsBlock6Ast`, `pcsX4PowersAst`, `pcsVLinesAst`,
+  `pcsSetBlockAst` (both arms, including the diagonal `List.filterMap`), `pcsBlock4Ast` (the
+  per-set `yblock` induction), and `callSitesSs` for `pcsBlock3Ast`; plus the `NoWriters_forLoop`
+  composition. STILL OPEN there, named: `pcsBlock3Ast`'s `NoWriters` (its `for`-body and the
+  `wordExpr`/`ptrExpr` codec leaves — the `NoWriters_forLoop` and the set-block `split` leaf are
+  the two halves), `pcsBlock5Ast`'s scans (the nested monadic `foldlM` over `bySet`/commitments
+  and `pcsLinExpansion`'s folds; the block has no user call and no writer builtin), and the
+  `computationsAst` assembly that extracts the emitted block list from the `Except` chain.
+  `topBinders_emitPcsFromPlan = []` and `funSigs_emitPcsFromPlan = []` are proved in §2/§3 here. -/
 
 end Midfall.Generator.CertScan
