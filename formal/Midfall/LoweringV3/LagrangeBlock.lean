@@ -213,6 +213,66 @@ theorem eval_batchArgs {consts : Inline.Consts} {D aS : Nat}
 
 #assert_axioms eval_batchArgs [propext, Classical.choice, Quot.sound]
 
+/-- **THE FIVE-ARGUMENT INVERSION.** From any value run of the call's argument list, recover the
+    unique value list and the unchanged state. This is what lets `callOk`'s `argvals` be read
+    without dialect determinism (the permissive call relation is not functional). -/
+theorem batchArgs_vals {consts : Inline.Consts} {D aS : Nat}
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) {succ rw me : U256}
+    (hsuccV : VEnv.get V "success" = some succ)
+    (hrV : VEnv.get V "r" = some rw)
+    (hmpeV : VEnv.get V "mptr_end" = some me)
+    {argvals : List U256} {st1 : EvmState}
+    (h : Step (Bridge.Dialect c g) funs V st
+      (Code.args
+        [Expr.var "success",
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+         Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+         Expr.var "r"])
+      (Res.eres (EResult.vals argvals st1))) :
+    argvals = [succ, BitVec.ofNat 256 D, me + BitVec.ofNat 256 0x20,
+      BitVec.ofNat 256 aS, rw] ∧ st1 = st := by
+  cases h with
+  | argsCons hrest hhead =>
+    cases hrest with
+    | argsCons hrest2 hhead2 =>
+      cases hrest2 with
+      | argsCons hrest3 hhead3 =>
+        cases hrest3 with
+        | argsCons hrest4 hhead4 =>
+          cases hrest4 with
+          | argsCons hrest5 hhead5 =>
+            cases hrest5 with
+            | argsNil =>
+              cases hhead with
+              | var hget1 =>
+                have hsuccV' := hsuccV
+                rw [hget1] at hsuccV'
+                cases hsuccV'
+                simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hD] at hhead2
+                cases hhead2 with
+                | lit =>
+                  simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hS] at hhead4
+                  cases hhead4 with
+                  | lit =>
+                    obtain ⟨hv3, hst3⟩ := Midfall.LoweringV3.ScalarInv.eval_add_var_lit
+                      (funs := funs) (V := V) (x := "mptr_end") (n := 0x20) (pv := me)
+                      hmpeV hhead3
+                    cases hhead5 with
+                    | var hget5 =>
+                      have hrV' := hrV
+                      rw [hget5] at hrV'
+                      cases hrV'
+                      cases hv3
+                      refine ⟨?_, hst3⟩
+                      rw [Midfall.Yul.Bridge.litValue_number_nat]
+                      rw [Midfall.Yul.Bridge.litValue_number_nat]
+
+#assert_axioms batchArgs_vals [propext, Classical.choice, Quot.sound]
+
 /-- **`BatchInvertPost → BatchInvertCallPost` THROUGH `VEnv.setMany`.** The A5 summary is stated
     over the callee environment (`ret` / `precompile_failed`); the caller binds those two words to
     `success` / `lagrange_precompile_failed`. This lemma is the whole environment conversion: the
