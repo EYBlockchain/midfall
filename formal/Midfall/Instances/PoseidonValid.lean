@@ -503,6 +503,7 @@ theorem deciding_supported_degree_eq :
       simp only [h'] at h
       exact absurd h (by native_decide)
 
+set_option maxHeartbeats 1000000 in
 /-- **ALL SEVEN `WellFormed` FIELDS AT THE FIXTURE KEY (R.7 step 5).** Six are computations on the
     imported key; `permutationCommitmentsMatch` is the repaired one above. AXIOMS:
     deciding_supported_wf._native.native_decide.ax_1_1 through ax_1_4, plus the ones named above. -/
@@ -520,7 +521,9 @@ theorem deciding_supported_wf : poseidonVkExec.WellFormed Features.solidity :=
     fixedSelectorBound := by native_decide,
     fixedQueriesBound := by native_decide,
     simpleSelectorQueriesBound := by native_decide,
-    instanceRotZero := by native_decide }
+    instanceRotZero := by native_decide,
+    instanceQueriesBound := by native_decide }
+
 
 /- **THE SUPPORTED CLAUSE WAS REFUTED HERE UNTIL R.7.** The refutation `poseidonValid_supported_not` ran
     through `wf.permutationCommitmentsMatch` - the mis-ported field D-P59 repairs. At the fixture the

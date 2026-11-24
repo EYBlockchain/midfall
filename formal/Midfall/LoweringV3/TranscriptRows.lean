@@ -6331,14 +6331,182 @@ def XcriptSchedule (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop 
         Qt.length = R.vk.cs.trashcans.size ∧
         qs.length = R.nSets
 
+/-- The plan's G1 read count as the six blocks `parseTrace` and the quotient
+    limb read consume. -/
+def planPrefixG1Count (R : Render p G₁ G₂ Gₜ) : Nat :=
+  (R.vk.cs.phases.map (fun ph => (phaseCols R.vk.cs ph).length)).sum
+  + R.vk.cs.lookups.size
+  + Permutation.numChunksOf R.vk.cs.permutation.columns.size (R.vk.csDegree - 2)
+  + (R.vk.cs.lookups.toList.map (fun l => lookupChunkNum R.vk.csDegree l + 1)).sum
+  + R.vk.cs.trashcans.size
+  + (if Features.solidity.outerSingleHCommitment then 1
+      else R.vk.domain.getQuotientPolyDegree)
+
+/-- The plan's scalar read count as the seven blocks `readAlgebra` consumes. -/
+def planNumEvals (R : Render p G₁ G₂ Gₜ) (inst : Array (Fr p)) : Nat :=
+  (instanceShape inst).size *
+    (R.vk.cs.instanceQueries.toList.filter (fun q => decide (q.1.index < 1))).length
+  + (instanceShape inst).size * R.vk.cs.adviceQueries.size
+  + (R.vk.cs.numFixedColumns - R.vk.cs.numSimpleSelectors)
+  + R.vk.permutation.commitments.size
+  + (3 * Permutation.numChunksOf R.vk.cs.permutation.columns.size (R.vk.csDegree - 2) - 1)
+  + (R.vk.cs.lookups.toList.map (fun l => lookupChunkNum R.vk.csDegree l + 3)).sum
+  + R.vk.cs.trashcans.size
+
+/-- **THE PLAN-COUNT / VK-SCHEDULE LINK.** The two counts the generated plan's
+    proof layout exposes, identified with the read walk's block lengths. The
+    coarse split itself is proved from `Decoded` (`decodeCalldata_slots` +
+    `decoded_split_of_plan`), and the point-set count is definitional
+    (`plan_numPointSets_eq_nSets`); these two equations are the whole plan-side
+    input, so naming them here names `hsched` at its smallest. -/
+structure PlanReadCounts (R : Render p G₁ G₂ Gₜ) : Prop where
+  prefixG1 : (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count =
+    planPrefixG1Count R
+  numEvals : ∀ (inst : Array (Fr p)),
+    (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals =
+      planNumEvals R inst
+
+/-- The point-set count is definitional: `fromProofLayout`'s `numPointSets` is the
+    layout's `qEvals.itemCount`, which is `R.nSets`. -/
+theorem plan_numPointSets_eq_nSets (R : Render p G₁ G₂ Gₜ) :
+    (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets = R.nSets := rfl
+
+/-- Split a list at a list of block lengths whose sum is its length. -/
+theorem exists_blocks_of_sum_length {α : Type} :
+    ∀ (l : List α) (ns : List Nat), l.length = ns.sum →
+      ∃ ls : List (List α), ls.length = ns.length ∧ ls.map List.length = ns ∧
+        l = ls.flatten := by
+  intro l ns
+  induction ns generalizing l with
+  | nil =>
+      intro h
+      have hl : l = [] := List.eq_nil_of_length_eq_zero (by simpa using h)
+      exact ⟨[], rfl, rfl, by simp [hl]⟩
+  | cons n ns ih =>
+      intro h
+      have hn : n ≤ l.length := by simp only [List.sum_cons] at h; omega
+      have htn : (l.take n).length = n := by rw [List.length_take]; omega
+      have hdn : (l.drop n).length = ns.sum := by
+        simp only [List.sum_cons] at h
+        rw [List.length_drop]; omega
+      obtain ⟨ls, hlen, hmap, hflat⟩ := ih (l.drop n) hdn
+      refine ⟨l.take n :: ls, ?_, ?_, ?_⟩
+      · simp [hlen]
+      · simp only [List.map_cons, List.length_cons, htn, hmap]
+      · rw [List.flatten_cons, ← hflat]
+        exact (List.take_append_drop n l).symm
+
+/-- Cut a list into the six blocks of the given lengths (the lengths sum to its
+    length). The blocks' contents are irrelevant; the schedule only reads counts. -/
+theorem list_split_six {α : Type} (l : List α) (a b c d e f : Nat)
+    (h : l.length = a + b + c + d + e + f) :
+    ∃ l1 l2 l3 l4 l5 l6, l = l1 ++ l2 ++ l3 ++ l4 ++ l5 ++ l6 ∧
+      l1.length = a ∧ l2.length = b ∧ l3.length = c ∧ l4.length = d ∧
+      l5.length = e ∧ l6.length = f := by
+  have h' : l.length = [a, b, c, d, e, f].sum := by
+    simp only [List.sum_cons, List.sum_nil]; omega
+  obtain ⟨ls, hlen, hmap, hflat⟩ := exists_blocks_of_sum_length l [a, b, c, d, e, f] h'
+  rcases ls with _ | ⟨l1, _ | ⟨l2, _ | ⟨l3, _ | ⟨l4, _ | ⟨l5, _ | ⟨l6, rest⟩⟩⟩⟩⟩⟩
+  · simp at hlen
+  · simp at hlen
+  · simp at hlen
+  · simp at hlen
+  · simp at hlen
+  · simp at hlen
+  · rcases rest with _ | ⟨head, tail⟩
+    · simp only [List.map_cons, List.map_nil] at hmap
+      simp only [List.cons.injEq, and_true] at hmap
+      obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hmap
+      refine ⟨l1, l2, l3, l4, l5, l6, ?_, h1, h2, h3, h4, h5, h6⟩
+      simpa using hflat
+    · simp at hlen
+
+/-- Cut a list into the seven scalar blocks of the given lengths. -/
+theorem list_split_seven {α : Type} (l : List α) (a b c d e f g : Nat)
+    (h : l.length = a + b + c + d + e + f + g) :
+    ∃ l1 l2 l3 l4 l5 l6 l7, l = l1 ++ l2 ++ l3 ++ l4 ++ l5 ++ l6 ++ l7 ∧
+      l1.length = a ∧ l2.length = b ∧ l3.length = c ∧ l4.length = d ∧
+      l5.length = e ∧ l6.length = f ∧ l7.length = g := by
+  have h' : l.length = [a, b, c, d, e, f, g].sum := by
+    simp only [List.sum_cons, List.sum_nil]; omega
+  obtain ⟨ls, hlen, hmap, hflat⟩ := exists_blocks_of_sum_length l [a, b, c, d, e, f, g] h'
+  rcases ls with _ | ⟨l1, _ | ⟨l2, _ | ⟨l3, _ | ⟨l4, _ | ⟨l5, _ | ⟨l6, _ | ⟨l7, rest⟩⟩⟩⟩⟩⟩⟩
+  · simp at hlen
+  · simp at hlen
+  · simp at hlen
+  · simp at hlen
+  · simp at hlen
+  · simp at hlen
+  · simp at hlen
+  · rcases rest with _ | ⟨head, tail⟩
+    · simp only [List.map_cons, List.map_nil] at hmap
+      simp only [List.cons.injEq, and_true] at hmap
+      obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hmap
+      refine ⟨l1, l2, l3, l4, l5, l6, l7, ?_, h1, h2, h3, h4, h5, h6, h7⟩
+      simpa using hflat
+    · simp at hlen
+
+/-- **`XcriptSchedule` FROM THE TWO PLAN COUNTS.** The coarse split is the
+    decoded-slot linkage; the fine blocks are cuts of its `P` and `R` at the
+    VK's own lengths, so only the sums have to be provided. -/
+theorem xcriptSchedule_of_planReadCounts (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes)
+    (hc : PlanReadCounts R) : XcriptSchedule R H cd := by
+  intro ms instW inst hdec
+  have hslots : ms.map Msg.slot =
+      (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots :=
+    decodeCalldata_slots hdec
+  obtain ⟨P, Rb, fCom, qs, pi, hms, hPlen, hRlen, hqslen⟩ :=
+    decoded_split_of_plan R.plan.proofLayout ms hslots
+  have hPs : P.length = planPrefixG1Count R := by rw [hPlen, hc.prefixG1]
+  have hRs : Rb.length = planNumEvals R inst := by rw [hRlen, hc.numEvals inst]
+  obtain ⟨QAdv, QMult, QPerm, QLook, QTrash, Qg, hPeq, hA, hB, hC, hD, hE, hF⟩ :=
+    list_split_six P
+      ((R.vk.cs.phases.map (fun ph => (phaseCols R.vk.cs ph).length)).sum)
+      R.vk.cs.lookups.size
+      (Permutation.numChunksOf R.vk.cs.permutation.columns.size (R.vk.csDegree - 2))
+      ((R.vk.cs.lookups.toList.map (fun l => lookupChunkNum R.vk.csDegree l + 1)).sum)
+      R.vk.cs.trashcans.size
+      (if Features.solidity.outerSingleHCommitment then 1
+        else R.vk.domain.getQuotientPolyDegree)
+      (by rw [hPs]; rfl)
+  obtain ⟨Qi, Qa, Qf, Qc, Qp, Ql, Qt, hReq, hI, hJ, hK, hL, hM, hN, hO⟩ :=
+    list_split_seven Rb
+      ((instanceShape inst).size *
+        (R.vk.cs.instanceQueries.toList.filter (fun q => decide (q.1.index < 1))).length)
+      ((instanceShape inst).size * R.vk.cs.adviceQueries.size)
+      (R.vk.cs.numFixedColumns - R.vk.cs.numSimpleSelectors)
+      R.vk.permutation.commitments.size
+      (3 * Permutation.numChunksOf R.vk.cs.permutation.columns.size (R.vk.csDegree - 2) - 1)
+      ((R.vk.cs.lookups.toList.map (fun l => lookupChunkNum R.vk.csDegree l + 3)).sum)
+      R.vk.cs.trashcans.size
+      (by rw [hRs]; rfl)
+  refine ⟨QAdv, QMult, QPerm, QLook, QTrash, Qg, Qi, Qa, Qf, Qc, Qp, Ql, Qt, qs, fCom, pi,
+    ?_, hA, hB, hC, hD, hE, hF, hI, hJ, hK, hL, hM, hN, hO, ?_⟩
+  · rw [hms, hPeq, hReq]
+    simp only [List.map_append, xcriptPt, xcriptRa, xcriptTail, List.append_assoc,
+      List.append_nil]
+  · exact hqslen.trans (plan_numPointSets_eq_nSets R)
+
+/-- **THE INSTANCE-QUERY INDEX BOUND.** The key's own instance queries all name
+    columns below `numInstanceColumns` (D-GATE15(c)); with the supported shape
+    (`numInstanceColumns = 2`) a query that is not a committed one has index
+    exactly `1`, which is what the `readAlgebra` matrix index needs. -/
+theorem instanceQueries_index_eq_one {G₁ : Type} [Group G₁]
+    (vk : VerifyingKey (Fr p) G₁) (hf : vk.WellFormed Features.solidity)
+    (hnc : vk.cs.numInstanceColumns = 2)
+    {q : Column × Rotation} (hq : q ∈ vk.cs.instanceQueries.toList)
+    (hge : ¬ q.1.index < 1) : q.1.index = 1 := by
+  have hlt := hf.instanceQueriesBound q hq
+  omega
+
 /-- **`XcriptAlgebraRun` FROM THE NAMED SCHEDULE.** Every decoding is fed to
     `snapshotAlgebraRun_ok_of_schedule`; the instance-shape facts are the supported
-    key's (`WellFormed`, `numInstanceColumns = 2`) and the two runtime inputs
-    (`hinstQ`, `hnum`). -/
+    key's (`WellFormed`, `numInstanceColumns = 2`), the query-index bound is
+    `instanceQueries_index_eq_one`, and the only remaining runtime input is
+    `hnum`. -/
 theorem xcriptAlgebraRun_of_schedule (R : Render p G₁ G₂ Gₜ)
     (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (cd : Bytes)
     (hsched : XcriptSchedule R H cd)
-    (hinstQ : ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1)
     (hnum : R.cfg.numInstances < 2 ^ 31) :
     XcriptAlgebraRun R H cd := by
   intro ms instW inst hdec
@@ -6346,7 +6514,10 @@ theorem xcriptAlgebraRun_of_schedule (R : Render p G₁ G₂ Gₜ)
     fCom, pi, hms, hAdv, hMult, hPerm, hLook, hTrash, hQ, hI, hA, hF, hC, hP, hL, hT,
     hQs⟩ := hsched ms instW inst hdec
   have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
-  have hnc : 2 = R.vk.cs.numInstanceColumns := hR.supported.instShape.1.symm
+  have hnc0 : R.vk.cs.numInstanceColumns = 2 := hR.supported.instShape.1
+  have hnc : 2 = R.vk.cs.numInstanceColumns := hnc0.symm
+  have hinstQ : ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1 :=
+    fun q hq hge => instanceQueries_index_eq_one R.vk hf hnc0 hq hge
   have hinstSize : inst.size < 2 ^ 31 := by
     rw [decoded_inst_size hdec]; exact hnum
   have hp : p ≤ 2 ^ 256 := by
@@ -6359,6 +6530,16 @@ theorem xcriptAlgebraRun_of_schedule (R : Render p G₁ G₂ Gₜ)
   exact ⟨s2, t2, wireMsgs R.E (xcriptPt QAdv QMult QPerm QLook QTrash ++
     xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt), fCom, pi, qs, hrun, hbuf, hpos, hQs⟩
 
+
+/-- **`XcriptAlgebraRun` FROM THE TWO PLAN COUNTS.** The schedule is built from
+    `Decoded`, so nothing per-decoding is assumed; the only extra runtime input
+    is `hnum`. -/
+theorem xcriptAlgebraRun_of_planReadCounts (R : Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (cd : Bytes)
+    (hc : PlanReadCounts R) (hnum : R.cfg.numInstances < 2 ^ 31) :
+    XcriptAlgebraRun R H cd :=
+  xcriptAlgebraRun_of_schedule R hR hcodec H cd
+    (xcriptSchedule_of_planReadCounts R H cd hc) hnum
 
 /-- `xcript_total` at one fixed decoded message list, directly from the tail clause. -/
 theorem xcript_total_at (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
@@ -8556,13 +8737,25 @@ theorem tp_agrees_of_schedule (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     {c : ExternalCalls} {g : ExternalGas}
     (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TpPost R H vkAddr cd V st)
     (hsched : XcriptSchedule R H cd)
-    (hinstQ : ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1)
     (hnum : R.cfg.numInstances < 2 ^ 31)
     (hG1 : XcriptG1 R H cd st) :
     StageInv R H vkAddr cd Checkpoint.transcript V st :=
   tp_agrees_of_xcriptG1 R hR hcodec H vkAddr cd V st hpost
-    (xcriptAlgebraRun_of_schedule R hR hcodec H cd hsched hinstQ hnum) hG1
+    (xcriptAlgebraRun_of_schedule R hR hcodec H cd hsched hnum) hG1
 
+
+/-- **`tp_agrees` FROM THE TWO PLAN COUNTS AND THE COMMITMENT HALF.** The
+    schedule is now derived from `PlanReadCounts` and `Decoded`; the only other
+    named inputs are `hnum` and Calldata's `XcriptG1`. -/
+theorem tp_agrees_of_planReadCounts (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TpPost R H vkAddr cd V st)
+    (hc : PlanReadCounts R) (hnum : R.cfg.numInstances < 2 ^ 31)
+    (hG1 : XcriptG1 R H cd st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st :=
+  tp_agrees_of_xcriptG1 R hR hcodec H vkAddr cd V st hpost
+    (xcriptAlgebraRun_of_planReadCounts R hR hcodec H cd hc hnum) hG1
 
 /-- **`tp_agrees_of_xcript` WITH `hinv` DISCHARGED.** The whole-`Inv` hypothesis is
     replaced by `XcriptG1`, the four commitment holds; the scalar slots, q-eval
@@ -8585,11 +8778,14 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     THE REDUCTION IS LANDED: `tp_agrees_of_xcript` proves this row from `XcriptAlgebraRun` (the
     named SIM.10 parser-side clause, §3b) plus the `Inv .transcript` assembly, and
     `tp_agrees_of_agree` isolates the latter. THE SCHEDULE LAYER IS NOW LANDED:
-    `xcriptAlgebraRun_of_schedule` produces `XcriptAlgebraRun` from the named
-    `XcriptSchedule` (the fine read schedule at payload granularity) plus the two runtime
-    inputs `hinstQ`/`hnum`, and `tp_agrees_of_schedule` is the schedule-carrying consumer of
-    this row. THE FIXED STATEMENT'S RESIDUAL is therefore exactly those named data -
-    `XcriptSchedule`, `hinstQ`, `hnum` and `XcriptG1` - not `ValidV3` + `Decoded` alone.
+    `xcriptSchedule_of_planReadCounts` derives the fine read schedule from the coarse
+    decoded split and `PlanReadCounts` (the three plan-count/VK-schedule equations), and
+    `xcriptAlgebraRun_of_planReadCounts` spends it. The key-side instance-query bound is
+    now `WellFormed.instanceQueriesBound` (D-GATE15(c)), so the old `hinstQ` premise is
+    gone. THE FIXED STATEMENT'S RESIDUAL is therefore exactly `PlanReadCounts` (two
+    count equations; the point-set count is `rfl`), the calldata bound `hnum` (only
+    `< 2^64` is available from `SupportedInput.sizeBound`, not `< 2^31`) and Calldata's
+    `XcriptG1` - not `ValidV3` + `Decoded` alone.
     THE `Inv .transcript` HALF IS LANDED as `invAt_transcript_of_xcriptG1`, and
     `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
     decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
@@ -8977,6 +9173,16 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.XcriptSchedule [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcriptAlgebraRun_of_schedule [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_schedule [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.exists_blocks_of_sum_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.list_split_six [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.list_split_seven [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.planPrefixG1Count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.planNumEvals [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.plan_numPointSets_eq_nSets [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instanceQueries_index_eq_one [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcriptSchedule_of_planReadCounts [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcriptAlgebraRun_of_planReadCounts [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_planReadCounts [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []

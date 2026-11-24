@@ -420,6 +420,7 @@ theorem f1PointRenderCN_payloadScalars (n : Nat) :
   · show 11 ≤ f1Pv.vk.constants.length
     native_decide
 
+set_option maxHeartbeats 1000000 in
 /-- **`WellFormed` AT THE RE-SOURCED KEY.** Every field is a count, a domain fact or a CS fact;
     the re-source changes only the commitment ELEMENTS. AXIOM:
     f1VkResourced_wf._native.native_decide.ax_1_1 through ax_1_3 (plus
@@ -439,6 +440,8 @@ theorem f1VkResourced_wf : f1VkResourced.WellFormed Features.solidity where
   fixedQueriesBound := by native_decide
   simpleSelectorQueriesBound := by native_decide
   instanceRotZero := by native_decide
+  instanceQueriesBound := by native_decide
+
 
 /-- **`supported` AT THE RE-SOURCED RENDER.** `wf` is D.2's `WellFormed` (the re-source changes
     the commitment ELEMENTS; every count, domain and CS face is unchanged), `vkPoints` is
