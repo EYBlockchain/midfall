@@ -319,7 +319,11 @@ helper now has a proved `ExecStmts` run (`TranscriptRows.commonWordBody_run` and
 `consts.lookup "TRANSCRIPT_MPTR" = some t`, and the full `R.helpers` prefix split
 (`helpers_split`, `inlineScan_append` at `emitFail ++ emitScalarInvAt`) is PROVED. The
 lookup/body equation `transcriptInit_lookup_body` and the unconditional first-statement run
-`tp_head_run` are now in the tree.
+`tp_head_run` are now in the tree. The `VK_DIGEST_MPTR` lookup (`vkDigestMptr_of_valid`),
+the second statement's inliner shape (`secondStmt_inlined`), and its actual run
+(`secondStmt_run` / `secondStmt_run_of_valid`) are also PROVED. The exact head post
+(`tp_head_run_exact`) and the two-statement prefix run (`tp_head_second_run`) are PROVED; the
+remaining emitted loop segments are the open part.
 `tp_blockProgS` is factored as
 `tp_blockProgS_of_exists_and_all`: its two remaining facts are the full emitted-AST
 `StmtsContract` existence walk and the normal all-runs contract. The model-level
