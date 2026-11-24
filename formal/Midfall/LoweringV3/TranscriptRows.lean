@@ -582,6 +582,15 @@ theorem stepOp_mload_evm (p : U256) (st : EvmState) :
     stepOp Op.mload [p] st =
       some (.ok [loadWord st.memory p.toNat] (touchMemory st p.toNat 32)) := rfl
 
+theorem stepOp_calldataload_evm (p : U256) (st : EvmState) :
+    stepOp Op.calldataload [p] st = some (.ok [wordFrom st.env.calldata p.toNat] st) := rfl
+
+theorem stepOp_lt_evm (a b : U256) (st : EvmState) :
+    stepOp Op.lt [a, b] st = some (.ok [b2w (a.ult b)] st) := rfl
+
+theorem stepOp_and_evm (a b : U256) (st : EvmState) :
+    stepOp Op.and [a, b] st = some (.ok [a &&& b] st) := rfl
+
 /-- The emitted `common_word` body, as `inlineContractConstants` leaves it: the template's
     `mstore(buf_len, word); ret := add(buf_len, 32)`. -/
 def commonWordBody : Block EVM.Op :=
@@ -955,6 +964,52 @@ theorem tp_head_run (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : Exter
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonWordBody_run
   [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_call_run
+  [propext, Classical.choice, Quot.sound] native []
+
+set_option maxHeartbeats 4000000 in
+/-- **THE `common_word` CALL WITH AN ARBITRARY SECOND ARGUMENT.** The call body run is the same as
+    `commonWord_call_run`; only the argument expression and its `Step` are supplied by the
+    caller. This is the leaf the instance/eval loop bodies use for `common_word(buf_len, inst_be)`
+    and `common_word(buf_len, eval)`. -/
+theorem commonWord_call_run_expr {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (decl : FDecl (Bridge.Dialect c g)) (cenv : FunEnv (Bridge.Dialect c g))
+    (hlook : lookupFun funs "common_word" = some (decl, cenv))
+    (hparams : decl.params = ["buf_len", "word"]) (hrets : decl.rets = ["ret"])
+    (hbody : decl.body = commonWordBody) (arg2 : Expr EVM.Op) (b w : U256)
+    (hb : VEnv.get V "buf_len" = some b)
+    (harg : Step (Bridge.Dialect c g) funs V st (.expr arg2) (.eres (.vals [w] st))) :
+    ∃ st', ExecStmt (D := Bridge.Dialect c g) funs V st
+      (Stmt.assign ["out"] (Expr.call "common_word" [Expr.var "buf_len", arg2]))
+      (VEnv.setMany V ["out"] [b + BitVec.ofNat 256 32]) st' .normal ∧
+      st' = { touchMemory st b.toNat 32 with memory := storeWord st.memory b.toNat w } := by
+  let Vc : VEnv (Bridge.Dialect c g) :=
+    (decl.params.zip [b, w]) ++ bindZeros (Bridge.Dialect c g) decl.rets
+  have hbc : VEnv.get Vc "buf_len" = some b := by
+    simp [Vc, hparams, hrets, VEnv.get, bindZeros]
+  have hwc : VEnv.get Vc "word" = some w := by
+    simp [Vc, hparams, hrets, VEnv.get, bindZeros]
+  obtain ⟨st2, hbodyrun, hst2⟩ :=
+    commonWordBody_run (funs := hoist (Bridge.Dialect c g) commonWordBody :: cenv)
+      (V := Vc) (st := st) (b := b) (w := w) hbc hwc
+  have hrest : restore Vc (Vc.setMany ["ret"] [b + BitVec.ofNat 256 32]) =
+      Vc.setMany ["ret"] [b + BitVec.ofNat 256 32] := by
+    show restore Vc (VEnv.set Vc "ret" (b + BitVec.ofNat 256 32)) = _
+    exact restore_set_local
+  have hbodystep : Step (Bridge.Dialect c g) cenv Vc st (.stmt (.block commonWordBody))
+      (.sres (Vc.setMany ["ret"] [b + BitVec.ofNat 256 32]) st2 .normal) := by
+    simpa [Vc, hbody, hst2, hrest] using Step.block (D := Bridge.Dialect c g) hbodyrun
+  have hcall : Step (Bridge.Dialect c g) funs V st
+      (.expr (.call "common_word" [Expr.var "buf_len", arg2]))
+      (.eres (.vals [b + BitVec.ofNat 256 32] st2)) := by
+    have h := Step.callOk (V := V) (Vend := Vc.setMany ["ret"] [b + BitVec.ofNat 256 32])
+      (st2 := st2) (o := .normal)
+      (Step.argsCons (Step.argsCons Step.argsNil harg) (Step.var hb))
+      hlook (by rw [hparams]; rfl) (by simpa [Vc, hbody] using hbodystep) (Or.inl rfl)
+    simpa [hrets, hparams, VEnv.get, VEnv.set, VEnv.setMany, Vc, bindZeros, List.find?] using h
+  exact ⟨_, Step.assignVal hcall rfl, hst2⟩
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_call_run_expr
   [propext, Classical.choice, Quot.sound] native []
 
 /-- **THE SECOND PARSER STATEMENT'S INLINER SHAPE.** At the shadow list left by the first
