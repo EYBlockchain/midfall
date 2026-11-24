@@ -21,8 +21,10 @@ open Midfall.Lowering.GenAstPcs
   `bySet`/commitments is closed through `foldlM_invariant'`, the inner step's
   identity/linearization/MSM arms carry the accumulator invariant, and
   `pcsLinExpansion`'s pure limb fold and selector fold use the same invariant.
-  STILL OPEN, NAMED: the `computationsAst` assembly that turns the emitted
-  `Except` blocks into the slice's scans.
+  The `computationsAst` assembly is closed here too: `computationsAst_calls` /
+  `computationsAst_noWriters` extract the emitted block list from the `Except`
+  chain, and the `*_pcs` reductions below discharge the PCS slice. The numerator
+  and inliner-preservation sides remain named hypotheses.
 -/
 
 namespace Midfall.Generator.CertScanPcs
@@ -1454,6 +1456,170 @@ theorem block5_noWriters (meta_ : ConstraintSystemMeta) (dat : Midfall.Generator
   · cases h
 
 
+theorem mapM_block3_calls (sets : IntermediateSets) (b3 : List (List CommitmentEntry))
+    (mptr : Nat) :
+    ∀ blocks, List.mapM (fun x => (pure (pcsBlock3Ast x.1 x.2 sets mptr) :
+      Except Midfall.Halo2.Fault (Block EVM.Op))) (enumIdx b3) = .ok blocks →
+      ∀ b ∈ blocks, CallsOK pcsCalls b := by
+  intro blocks h b hb
+  rw [List.mapM_pure] at h
+  cases h
+  simp only [List.mem_map] at hb
+  obtain ⟨x, _, rfl⟩ := hb
+  exact block3_calls x.1 x.2 sets mptr
+
+theorem mapM_block3_noWriters (sets : IntermediateSets) (b3 : List (List CommitmentEntry))
+    (mptr : Nat) :
+    ∀ blocks, List.mapM (fun x => (pure (pcsBlock3Ast x.1 x.2 sets mptr) :
+      Except Midfall.Halo2.Fault (Block EVM.Op))) (enumIdx b3) = .ok blocks →
+      ∀ b ∈ blocks, NoWriters b := by
+  intro blocks h b hb
+  rw [List.mapM_pure] at h
+  cases h
+  simp only [List.mem_map] at hb
+  obtain ⟨x, _, rfl⟩ := hb
+  exact block3_noWriters x.1 x.2 sets mptr
+
+theorem callsOK_of_mem_pcsBlocks_no2 {S : List (String × Nat)}
+    {block1 block4 block5 block6 : Block EVM.Op} {block3 : List (Block EVM.Op)}
+    (h1 : CallsOK S block1) (h3 : ∀ b ∈ block3, CallsOK S b)
+    (h4 : CallsOK S block4) (h5 : CallsOK S block5) (h6 : CallsOK S block6)
+    {b : Block EVM.Op}
+    (hb : b ∈ block1 :: (block3 ++ [block4, block5, block6])) : CallsOK S b := by
+  simp only [List.mem_cons, List.mem_append, List.mem_singleton, List.mem_nil_iff,
+    or_false, false_or] at hb
+  rcases hb with rfl | hb | rfl | rfl | rfl
+  · exact h1
+  · exact h3 _ hb
+  · exact h4
+  · exact h5
+  · exact h6
+
+theorem callsOK_of_mem_pcsBlocks_2 {S : List (String × Nat)}
+    {block1 block2 block4 block5 block6 : Block EVM.Op} {block3 : List (Block EVM.Op)}
+    (h1 : CallsOK S block1) (h2 : CallsOK S block2)
+    (h3 : ∀ b ∈ block3, CallsOK S b)
+    (h4 : CallsOK S block4) (h5 : CallsOK S block5) (h6 : CallsOK S block6)
+    {b : Block EVM.Op}
+    (hb : b ∈ block1 :: block2 :: (block3 ++ [block4, block5, block6])) : CallsOK S b := by
+  simp only [List.mem_cons, List.mem_append, List.mem_singleton, List.mem_nil_iff,
+    or_false, false_or] at hb
+  rcases hb with rfl | rfl | hb | rfl | rfl | rfl
+  · exact h1
+  · exact h2
+  · exact h3 _ hb
+  · exact h4
+  · exact h5
+  · exact h6
+
+theorem computationsAst_calls (meta_ : ConstraintSystemMeta) (dat : Midfall.Generator.Data)
+    (memory : VerifierMemoryLayout) (trunc : Bool) :
+    ∀ blocks, computationsAst meta_ dat memory trunc false = .ok blocks →
+      ∀ b ∈ blocks, CallsOK pcsCalls b := by
+  intro blocks h
+  unfold computationsAst at h
+  dsimp only at h
+  simp only [Bind.bind, Except.bind, Pure.pure, Except.map, List.mapM_pure] at h
+  repeat' first
+    | split at h
+    | simp at h
+    | cases h
+  case h_2.isTrue.refl => simp_all
+  case h_2.isTrue.isTrue.refl => simp_all
+  case h_2.isFalse.isTrue.refl => simp_all
+  case h_2.isTrue.isFalse.refl =>
+    intro b hb
+    refine callsOK_of_mem_pcsBlocks_2 ?_ ?_ ?_ ?_ ?_ ?_ hb
+    · apply block1_calls
+    · apply block2_calls
+    · apply mapM_block3_calls
+      assumption
+    · apply block4_calls
+    · apply block5_calls
+      assumption
+    · apply block6_calls
+  case h_2.isFalse.isFalse.refl =>
+    intro b hb
+    refine callsOK_of_mem_pcsBlocks_no2 ?_ ?_ ?_ ?_ ?_ hb
+    · apply block1_calls
+    · apply mapM_block3_calls
+      assumption
+    · apply block4_calls
+    · apply block5_calls
+      assumption
+    · apply block6_calls
+
+
+theorem noWriters_of_mem_pcsBlocks_no2
+    {block1 block4 block5 block6 : Block EVM.Op} {block3 : List (Block EVM.Op)}
+    (h1 : NoWriters block1) (h3 : ∀ b ∈ block3, NoWriters b)
+    (h4 : NoWriters block4) (h5 : NoWriters block5) (h6 : NoWriters block6)
+    {b : Block EVM.Op}
+    (hb : b ∈ block1 :: (block3 ++ [block4, block5, block6])) : NoWriters b := by
+  simp only [List.mem_cons, List.mem_append, List.mem_singleton, List.mem_nil_iff,
+    or_false, false_or] at hb
+  rcases hb with rfl | hb | rfl | rfl | rfl
+  · exact h1
+  · exact h3 _ hb
+  · exact h4
+  · exact h5
+  · exact h6
+
+theorem noWriters_of_mem_pcsBlocks_2
+    {block1 block2 block4 block5 block6 : Block EVM.Op} {block3 : List (Block EVM.Op)}
+    (h1 : NoWriters block1) (h2 : NoWriters block2)
+    (h3 : ∀ b ∈ block3, NoWriters b)
+    (h4 : NoWriters block4) (h5 : NoWriters block5) (h6 : NoWriters block6)
+    {b : Block EVM.Op}
+    (hb : b ∈ block1 :: block2 :: (block3 ++ [block4, block5, block6])) : NoWriters b := by
+  simp only [List.mem_cons, List.mem_append, List.mem_singleton, List.mem_nil_iff,
+    or_false, false_or] at hb
+  rcases hb with rfl | rfl | hb | rfl | rfl | rfl
+  · exact h1
+  · exact h2
+  · exact h3 _ hb
+  · exact h4
+  · exact h5
+  · exact h6
+
+theorem computationsAst_noWriters (meta_ : ConstraintSystemMeta) (dat : Midfall.Generator.Data)
+    (memory : VerifierMemoryLayout) (trunc : Bool) :
+    ∀ blocks, computationsAst meta_ dat memory trunc false = .ok blocks →
+      ∀ b ∈ blocks, NoWriters b := by
+  intro blocks h
+  unfold computationsAst at h
+  dsimp only at h
+  simp only [Bind.bind, Except.bind, Pure.pure, Except.map, List.mapM_pure] at h
+  repeat' first
+    | split at h
+    | simp at h
+    | cases h
+  case h_2.isTrue.refl => simp_all
+  case h_2.isTrue.isTrue.refl => simp_all
+  case h_2.isFalse.isTrue.refl => simp_all
+  case h_2.isTrue.isFalse.refl =>
+    intro b hb
+    refine noWriters_of_mem_pcsBlocks_2 ?_ ?_ ?_ ?_ ?_ ?_ hb
+    · apply block1_noWriters
+    · apply block2_noWriters
+    · apply mapM_block3_noWriters
+      assumption
+    · apply block4_noWriters
+    · apply block5_noWriters
+      assumption
+    · apply block6_noWriters
+  case h_2.isFalse.isFalse.refl =>
+    intro b hb
+    refine noWriters_of_mem_pcsBlocks_no2 ?_ ?_ ?_ ?_ ?_ hb
+    · apply block1_noWriters
+    · apply mapM_block3_noWriters
+      assumption
+    · apply block4_noWriters
+    · apply block5_noWriters
+      assumption
+    · apply block6_noWriters
+
+
 /-! ### From per-block facts to the PCS slice
 
   `emitPcsFromPlan` is `[]` on a fault / empty plan and `[Stmt.block (blocks.map Stmt.block)]`
@@ -1523,5 +1689,63 @@ theorem noWriters_mainAsmRaw_of_pcs (pv : PlanView) (m : Model)
     (hnum : NoWriters (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
     NoWriters (mainAsmRaw pv m) :=
   noWriters_mainAsmRaw_of pv m (parser_noWriters pv) (NoWriters_emitPcsFromPlan_of pv hpcs) hnum
+
+
+/-- The PCS call table is a subset of `mainSigSet`: `scalar_inv` is the only
+    user call in the whole PCS slice. -/
+theorem pcsCalls_subset_mainSigSet (m : Model) :
+    ∀ c ∈ pcsCalls, c ∈ mainSigSet (partialCtxOfVerifier m) := by
+  intro c hc
+  simp only [pcsCalls, List.mem_singleton] at hc
+  subst hc
+  simp [mainSigSet]
+
+/-- `callsResolved` of `mainAsmRaw` with the PCS residual DISCHARGED. Only the
+    numerator's signatures/calls remain as hypotheses. -/
+theorem callsResolved_mainAsmRaw_pcs (pv : PlanView) (m : Model)
+    (hacc : pv.hasAccumulator = false)
+    (hnumSigs : Midfall.LoweringV3.funSigsOf
+      (GenAst.emitQuotientNumerator (partialCtxOfVerifier m)) = [])
+    (hnumCalls : CallsOK (mainSigSet (partialCtxOfVerifier m))
+      (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
+    Midfall.LoweringV3.callsResolved (mainAsmRaw pv m) = true :=
+  callsResolved_mainAsmRaw_of_pcs pv m hacc hnumSigs hnumCalls
+    (fun blocks hc b hb =>
+      CallsOK_mono (computationsAst_calls pv.meta_ pv.dat pv.memory pv.truncatedChallenges
+        blocks hc b hb) (pcsCalls_subset_mainSigSet m))
+
+/-- `NoWriters` of `mainAsmRaw` with the PCS residual DISCHARGED. The numerator
+    remains the only scan hypothesis. -/
+theorem noWriters_mainAsmRaw_pcs (pv : PlanView) (m : Model)
+    (hnum : NoWriters (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
+    NoWriters (mainAsmRaw pv m) :=
+  noWriters_mainAsmRaw_of_pcs pv m
+    (fun blocks hc b hb =>
+      computationsAst_noWriters pv.meta_ pv.dat pv.memory pv.truncatedChallenges
+        blocks hc b hb)
+    hnum
+
+/-- The guard/wrapper/main block with the PCS slice discharged. -/
+theorem noWriters_program_pcs (pv : PlanView) (m : Model)
+    (hnum : NoWriters (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
+    NoWriters (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m) :=
+  noWriters_program_of pv m
+    (NoWriters_emitPcsFromPlan_of pv
+      (fun blocks hc b hb =>
+        computationsAst_noWriters pv.meta_ pv.dat pv.memory pv.truncatedChallenges
+          blocks hc b hb))
+    hnum
+
+/-- The target's INLINED program with the PCS residual discharged. The remaining
+    named side condition is the inliner's `NoWriters` preservation; the numerator
+    scan is `hnum`. -/
+theorem noWriters_asmOf_pcs (pv : PlanView) (m : Model)
+    (hinline : NoWriters (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m) →
+      NoWriters (Midfall.Lowering.Inline.inlineContractConstants
+        (Midfall.LoweringV2.constTableOf m)
+        (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m)))
+    (hnum : NoWriters (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
+    NoWriters (Midfall.LoweringV2.asmOf pv m 0 0) :=
+  hinline (noWriters_program_pcs pv m hnum)
 
 end Midfall.Generator.CertScanPcs
