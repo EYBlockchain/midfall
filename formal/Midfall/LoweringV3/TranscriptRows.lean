@@ -5682,6 +5682,103 @@ theorem runsAllP_parseTraceWireBody_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
   exact runsAllP_parseTraceTail E vk hdeg hs adviceCommitments challenges
     QMult QPerm QLook QTrash hlenMult hlenPerm hlenLook hlenTrash
 
+theorem runsAllP_parseTrace_one_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity)
+    (hnc : 2 = vk.cs.numInstanceColumns)
+    (hsp : vk.cs.numChallenges = 0)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E (parseTrace (p := p) E.g1 Features.solidity vk
+        (committedShape (G₁ := G₁)) (instanceShape inst))
+      (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+      (fun tr =>
+        (tr.permutations.toList.map (fun pc =>
+          3 * pc.permutationProductCommitments.size - 1)).sum =
+          3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+        (tr.lookups.toList.map (fun row => (row.toList.map
+          (fun c => c.helperPolys.size + 3)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+        (tr.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size) := by
+  unfold parseTrace
+  simp only [Features.solidity, ite_true]
+  rw [if_neg (by simp [committedShape])]
+  rw [if_neg (by simp [committedShape])]
+  rw [if_neg (by simp [committedShape, instanceShape, hnc])]
+  exact runsAllP_parseTraceWireBody_sizes E vk inst hf hsp hdeg hs QAdv QMult QPerm QLook QTrash
+    hlenAdv hlenMult hlenPerm hlenLook hlenTrash
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem parseTrace_run_of_ms_sizes (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity) (hnc : 2 = vk.cs.numInstanceColumns)
+    (hsp : vk.cs.numChallenges = 0) (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size)
+    (hp : p ≤ 2 ^ 256)
+    (henc : ∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth)
+    (ms : List (Msg (Fr p) G₁))
+    (hms : ms = QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))) :
+    ∃ trace t1,
+      (parseTrace (p := p) E.g1 Features.solidity vk
+        (committedShape (G₁ := G₁)) (instanceShape inst)).run (transcriptOf E H ms) =
+        .ok (trace, t1) ∧
+      (trace.permutations.toList.map (fun pc =>
+        3 * pc.permutationProductCommitments.size - 1)).sum =
+        3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+      (trace.lookups.toList.map (fun row => (row.toList.map
+        (fun c => c.helperPolys.size + 3)).sum)).sum =
+        (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+      (trace.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size := by
+  subst hms
+  obtain ⟨trace, t1, hrun, _, _, hP⟩ :=
+    runsAllP_parseTrace_one_sizes E vk inst hf hnc hsp hdeg hs QAdv QMult QPerm QLook QTrash
+      hlenAdv hlenMult hlenPerm hlenLook hlenTrash
+      (transcriptOf E H (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+      ByteArray.empty ByteArray.empty (by
+        rw [(transcriptOf_buffer E H _).1]
+        simp) (by rw [(transcriptOf_buffer E H _).2]; rfl) hp henc hwidth
+  exact ⟨trace, t1, hrun, hP⟩
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -8372,6 +8469,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceTail [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceWireBody_sizes [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTrace_one_sizes [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.parseTrace_run_of_ms_sizes [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
