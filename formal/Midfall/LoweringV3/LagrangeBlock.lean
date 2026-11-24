@@ -17,6 +17,7 @@
 -- No fixture (D-P71): every statement is quantified over the table, the layout values and the
 -- window fits.
 import Midfall.LoweringV3.BatchInvert
+import Midfall.LoweringV3.ScalarInvSummary
 
 set_option autoImplicit false
 
@@ -2508,6 +2509,190 @@ theorem lag_inner_post_of_p15 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat
     show loadWord mem C.aIE = wSum C.rw (fun j => wMulmodAt (L (m + j))
       (cdWord cd (C.aI + 32 * j)) C.rw) n 0
     rw [hIE, hIe]
+
+
+
+/-! ## 5b. THE WHOLE SLICE AND ITS GUARD -/
+
+/-- The outer prologue: the whole slice's first statement. -/
+def lagPrologue : Block EVM.Op :=
+  [GenAst.ylet "lagrange_precompile_failed" (GenAst.ylit 0)]
+
+/-- The inliner's constant site: a lookup hit becomes the literal, a miss stays the variable. -/
+def lagSite (consts : Inline.Consts) (x : String) : Expr EVM.Op :=
+  match consts.lookup x with
+  | some v => Expr.lit (.number v)
+  | none => Expr.var x
+
+/-- The outer epilogue: the two MF-4 guards at the inliner's sites. `lagrange_precompile_failed`
+    is bound by the prologue, so it is shadowed and stays a variable; `success` and the two error
+    constants are unshadowed and carry the inliner's `lagSite` sites. -/
+def lagGuard (consts : Inline.Consts) : Block EVM.Op :=
+  [ Stmt.cond (Expr.builtin EVM.Op.iszero [lagSite consts "success"])
+      [ Stmt.cond (Expr.var "lagrange_precompile_failed")
+          [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])]
+      , Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"]) ] ]
+
+set_option maxHeartbeats 2000000 in
+/-- The inlined whole slice is prologue ++ inner scope ++ guard. -/
+theorem lag_slice_decomp (consts : Inline.Consts) (k n m : Nat) :
+    Inline.inlineContractConstants consts (GenAst.emitLagrangeAt k n m) =
+      lagPrologue ++ [Stmt.block (lagInner consts k n m)] ++ lagGuard consts := by
+  rfl
+
+/-! ## 6. T3.9.h: THE POISONED ARM -/
+
+/-- The prologue statement runs normally, leaves the state alone and binds the flag to zero. -/
+theorem lag_prologue_run {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome}
+    (h : ExecStmts (Bridge.Dialect c g) funs V st lagPrologue V' st' o) :
+    o = .normal ∧ st' = st ∧ V' = ("lagrange_precompile_failed", (0 : U256)) :: V := by
+  cases h with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              cases he with
+              | lit =>
+                  rw [Midfall.Yul.Bridge.litValue_number_nat]
+                  simp
+  | seqStop h1 hne =>
+      cases h1 with
+      | letVal _ _ => exact absurd rfl hne
+      | letHalt he => cases he
+
+/-- The inner guard `if lagrange_precompile_failed { fail(PF) }`: from `pf = 0` it is skipped;
+    its only halting run is the `fail` revert. -/
+theorem lag_inner_guard_run {c : ExternalCalls} {g : ExternalGas} {consts : Inline.Consts}
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (hp : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.var "lagrange_precompile_failed")
+        [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])])
+      V' st' o) :
+    (o = .normal ∧ V' = V ∧ st' = st) ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
+  cases h with
+  | ifTrue hc hnz hbody =>
+      obtain ⟨hcv, hst⟩ := Midfall.LoweringV3.ScalarInv.eval_var_eq funs V
+        "lagrange_precompile_failed" 0 hp hc
+      exact absurd hcv hnz
+  | ifFalse hc hz =>
+      obtain ⟨-, hst⟩ := Midfall.LoweringV3.ScalarInv.eval_var_eq funs V
+        "lagrange_precompile_failed" 0 hp hc
+      exact Or.inl ⟨rfl, rfl, hst⟩
+  | ifHalt hc =>
+      exact absurd hc (Midfall.LoweringV2.Blocks.TraceReturn.trExprVar_ne_halts)
+
+/-- A `fail(ERR_PROOF_REJECTED)` statement halts reverted. -/
+theorem lag_fail_lit_run {c : ExternalCalls} {g : ExternalGas} {consts : Inline.Consts}
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome} {err : Nat}
+    (hE : consts.lookup "ERR_PROOF_REJECTED" = some err)
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])) V' st' o) :
+    o = .halt ∧ Midfall.LoweringV2.Reverted st' := by
+  simp only [lagSite, hE] at h
+  exact Midfall.LoweringV3.ScalarInvSummary.fail_call_any_reverts
+    (fun st₁ st₂ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) hfail h
+
+/-- The guard's body `{ if pf { fail(PF) }; fail(PR) }` always halts reverted at `pf = 0`. -/
+theorem lag_guard_body_run {c : ExternalCalls} {g : ExternalGas} {consts : Inline.Consts}
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {errPR : Nat}
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hfail : lookupFun (hoist (Bridge.Dialect c g)
+      [Stmt.cond (Expr.var "lagrange_precompile_failed")
+        [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+       Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])]
+      :: funs) "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (hp : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.block
+        [Stmt.cond (Expr.var "lagrange_precompile_failed")
+          [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+         Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])])
+      V' st' o) :
+    o = .halt ∧ Midfall.LoweringV2.Reverted st' := by
+  cases h with
+  | block hstmts =>
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hstmts with
+          ⟨V1, st1, hInner, hRest⟩ | ⟨hInner, hne⟩
+      · rcases lag_inner_guard_run (hfail := hfail) hp hInner with
+          ⟨-, hV1, hst1⟩ | ⟨hhal, hrev⟩
+        · rw [hV1, hst1] at hRest
+          cases hRest with
+          | seqCons hf hnil =>
+              cases hnil with
+              | seqNil => exact lag_fail_lit_run hPR hfail hf
+          | seqStop hf _ => exact lag_fail_lit_run hPR hfail hf
+        · exact absurd hhal (by decide)
+      · rcases lag_inner_guard_run (hfail := hfail) hp hInner with
+          ⟨hno, -⟩ | ⟨hhal, hrev⟩
+        · exact absurd hno hne
+        · exact ⟨hhal, hrev⟩
+
+/-- The outer MF-4 guard: from `success = 0` and `lagrange_precompile_failed = 0` every run
+    halts reverted (`ERR_PROOF_REJECTED`). -/
+theorem lag_outer_guard_run {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ] [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p]
+    [PrimeOrderWith Gₜ p] [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    {c : ExternalCalls} {g : ExternalGas} (R : Render p G₁ G₂ Gₜ)
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {errPR : Nat}
+    (hPR : R.consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (hs : VEnv.get V "success" = some (0 : U256))
+    (hp : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (h : ExecStmts (Bridge.Dialect c g) funs V st (lagGuard R.consts) V' st' o) :
+    o = .halt ∧ Midfall.LoweringV2.Reverted st' := by
+  have hfail' : lookupFun (hoist (Bridge.Dialect c g)
+      [Stmt.cond (Expr.var "lagrange_precompile_failed")
+        [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
+       Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])]
+      :: funs) "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv) := by
+    have hh : hoist (Bridge.Dialect c g)
+        [Stmt.cond (Expr.var "lagrange_precompile_failed")
+          [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
+         Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])] = [] := by
+      rfl
+    rw [hh]
+    exact hfail
+  cases h with
+  | seqCons h1 _ =>
+      simp only [lagGuard, lagSite,
+        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+      cases h1 with
+      | ifTrue hc hnz hbody =>
+          have hh := lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
+          exact absurd hh.1 (by decide)
+      | ifFalse hc hz =>
+          obtain ⟨hcv, hst⟩ := Midfall.LoweringV3.ScalarInv.eval_iszero_var funs V
+            "success" 0 hs hc
+          rw [hcv] at hz
+          have hz' : b2w (decide ((0 : U256) = 0)) = (0 : U256) := hz
+          exact absurd hz' (by decide)
+  | seqStop h1 hne =>
+      simp only [lagGuard, lagSite,
+        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+      cases h1 with
+      | ifTrue hc hnz hbody =>
+          exact lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
+      | ifFalse hc hz =>
+          obtain ⟨hcv, hst⟩ := Midfall.LoweringV3.ScalarInv.eval_iszero_var funs V
+            "success" 0 hs hc
+          rw [hcv] at hz
+          have hz' : b2w (decide ((0 : U256) = 0)) = (0 : U256) := hz
+          exact absurd hz' (by decide)
+      | ifHalt hc =>
+          exact absurd hc (Midfall.LoweringV3.ScalarInv.expr_iszero_var_ne_halts funs V "success")
 
 
 end Midfall.LoweringV3.LagrangeBlock
