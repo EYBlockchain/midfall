@@ -11786,10 +11786,6 @@ def transcriptInitBody (tm : Nat) : Block EVM.Op :=
 def transcriptInitInline (tm : Nat) : Block EVM.Op :=
   [yfun "transcript_init" [] ["buf_len"] (transcriptInitBody tm)]
 
-def commonWordBody : Block EVM.Op :=
-  [yexpr (yop Op.mstore [yvar "buf_len", yvar "word"]),
-   yset "ret" (yop Op.add [yvar "buf_len", ylit 32])]
-
 def commonWordInline : Block EVM.Op :=
   [yfun "common_word" ["buf_len", "word"] ["ret"] commonWordBody]
 
