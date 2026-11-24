@@ -7087,6 +7087,91 @@ existence conclusion, and `leanStage_transcript_exists_*` is the existence half 
     wire of `ms`, and the bytes it leaves are the eval tail: a consumed prefix, `fCom`, the `nSets`
     q-eval scalars, and `pi`. The `pos`/`buffer` fields are what `snapshotXcriptRun_of_algebra`
     consumes verbatim. -/
+theorem decodeSlots_g1_inv {c : G1Codec G₁} {cd : Bytes} (rest : List Midfall.Lowering.WireSlot)
+    (cur : Nat) (ms : List (Msg (Fr p) G₁)) (cur' : Nat)
+    (h : decodeSlots (p := p) c cd
+        (Midfall.Lowering.WireSlot.g1 :: rest) cur = some (ms, cur')) :
+    ∃ (b : Bytes) (Q : G₁) (ms0 : List (Msg (Fr p) G₁)) (cur0 : Nat),
+      g1WordsOk cd cur = true ∧ bytesTake cd cur g1EipWidth = some b ∧
+        c.ofEip? b = some Q ∧
+        decodeSlots (p := p) c cd rest (cur + g1EipWidth) = some (ms0, cur0) ∧
+        ms = Msg.g1 Q :: ms0 ∧ cur' = cur0 := by
+  unfold decodeSlots at h
+  simp only [guard] at h
+  by_cases hg : g1WordsOk cd cur = true
+  · rw [if_pos hg] at h
+    cases hb : bytesTake cd cur g1EipWidth with
+    | none =>
+        simp [hb] at h
+    | some b =>
+        simp [hb] at h
+        cases hq : c.ofEip? b with
+        | none =>
+            simp [hq] at h
+        | some Q =>
+            simp [hq] at h
+            cases hrec : decodeSlots (p := p) c cd rest (cur + g1EipWidth) with
+            | none =>
+                simp [hrec] at h
+            | some p =>
+                obtain ⟨ms0, cur0⟩ := p
+                simp [hrec] at h
+                obtain ⟨hms, hcur⟩ := h
+                exact ⟨b, Q, ms0, cur0, hg, rfl, hq, rfl, hms.symm, hcur.symm⟩
+  · rw [if_neg hg] at h
+    simp at h
+
+theorem decodeSlots_g1_provenance {c : G1Codec G₁} {cd : Bytes} (n : Nat)
+    (rest : List Midfall.Lowering.WireSlot) (cur : Nat)
+    (Qs : List G₁) (ms' : List (Msg (Fr p) G₁)) (cur' : Nat)
+    (hlen : Qs.length = n)
+    (h : decodeSlots (p := p) c cd
+        (List.replicate n Midfall.Lowering.WireSlot.g1 ++ rest) cur =
+      some (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ ms', cur')) :
+    ∀ i < n, ∃ (b : Bytes) (Q : G₁),
+      bytesTake cd (cur + g1EipWidth * i) g1EipWidth = some b ∧
+        c.ofEip? b = some Q ∧ Qs[i]? = some Q := by
+  induction n generalizing cur Qs ms' cur' with
+  | zero =>
+      intro i hi
+      omega
+  | succ n ih =>
+      cases Qs with
+      | nil => simp at hlen
+      | cons Q Qs' =>
+          have hlen' : Qs'.length = n := by simpa using hlen
+          have hslot : List.replicate (n + 1) Midfall.Lowering.WireSlot.g1 ++ rest =
+              Midfall.Lowering.WireSlot.g1 ::
+                (List.replicate n Midfall.Lowering.WireSlot.g1 ++ rest) := by
+            rw [List.replicate_succ, List.cons_append]
+          rw [hslot] at h
+          obtain ⟨b, Q0, ms0, cur0, hg, hb, hq, hrec, hms, hcur⟩ :=
+            decodeSlots_g1_inv (List.replicate n Midfall.Lowering.WireSlot.g1 ++ rest) cur ((Q :: Qs').map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ ms') cur' h
+          have hms' : Msg.g1 Q0 :: ms0 =
+              (Msg.g1 Q :: Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ ms' := by
+            simpa using hms.symm
+          have hhead : Q0 = Q := by
+            have h1 := congrArg (fun l => l.head?) hms'
+            simp at h1
+            exact h1
+          have htail : ms0 = Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ ms' := by
+            have h2 := congrArg List.tail hms'
+            simpa using h2
+          rw [htail] at hrec
+          intro i hi
+          cases i with
+          | zero =>
+              exact ⟨b, Q0, hb, hq, by rw [hhead]; rfl⟩
+          | succ k =>
+              have hk : k < n := by omega
+              obtain ⟨b', Q', hb', hq', hidx⟩ :=
+                ih (cur + g1EipWidth) Qs' ms' cur0 hlen' hrec k hk
+              refine ⟨b', Q', ?_, hq', ?_⟩
+              · rw [show cur + g1EipWidth * (k + 1) =
+                    cur + g1EipWidth + g1EipWidth * k by ring]
+                exact hb'
+              · simpa using hidx
+
 def XcriptAlgebraTail (R : Render p G₁ G₂ Gₜ) (H : Hash)
     (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) : Prop :=
   ∃ (s2 : SnapAlgebra p G₁) (t2 : Transcript) (pref : Bytes) (fCom pi : G₁)
@@ -8695,6 +8780,86 @@ theorem holdsG1_of_mirrorsSection (E : VerifierEnv p G₁ G₂ Gₜ) {st : EvmSt
   rw [hbytes]
   exact beq_self_eq_true _
 
+theorem bytesAt_size_local (st : EvmState) (a n : Nat) : (bytesAt st a n).size = n := by
+  unfold bytesAt
+  show (List.map (fun i => st.memory (a + i)) (List.range n)).toArray.size = n
+  simp [List.size_toArray, List.length_map, List.length_range]
+
+theorem cdSlice_size_of_le {cd : Bytes} {a n : Nat} (h : a + n ≤ cd.size) :
+    (cdSlice cd a n).size = n := by
+  unfold cdSlice
+  show (List.take n (List.drop a cd.data.toList)).toArray.size = n
+  simp [List.size_toArray, List.length_take, List.length_drop]
+  omega
+
+theorem bytesAt_frame_eq_of_window (st : EvmState) (cd : Bytes) (base start n : Nat)
+    (h : bytesAt st base (g1EipWidth * n) = cdSlice cd start (g1EipWidth * n))
+    (hcd : start + g1EipWidth * n ≤ cd.size) :
+    ∀ i < n, bytesAt st (base + g1EipWidth * i) g1EipWidth =
+      cdSlice cd (start + g1EipWidth * i) g1EipWidth := by
+  induction n generalizing base start with
+  | zero => intro i hi; omega
+  | succ n ih =>
+      have h128 : g1EipWidth * (n + 1) = g1EipWidth + g1EipWidth * n := by ring
+      rw [h128] at h hcd
+      have hsplit : bytesAt st base (g1EipWidth + g1EipWidth * n) =
+          bytesAt st base g1EipWidth ++ bytesAt st (base + g1EipWidth) (g1EipWidth * n) :=
+        bytesAt_append st base g1EipWidth (g1EipWidth * n)
+      have hcdsplit : cdSlice cd start (g1EipWidth + g1EipWidth * n) =
+          cdSlice cd start g1EipWidth ++
+            cdSlice cd (start + g1EipWidth) (g1EipWidth * n) :=
+        cdSlice_append cd start g1EipWidth (g1EipWidth * n)
+      rw [hsplit, hcdsplit] at h
+      have hstart : start + g1EipWidth ≤ cd.size := by omega
+      have hX : bytesAt st base g1EipWidth = cdSlice cd start g1EipWidth :=
+        bytes_prefix_cancel h (by rw [bytesAt_size_local, cdSlice_size_of_le hstart])
+      have hY : bytesAt st (base + g1EipWidth) (g1EipWidth * n) =
+          cdSlice cd (start + g1EipWidth) (g1EipWidth * n) := by
+        rw [hX] at h
+        exact bytes_append_cancel_left h
+      have hcd' : start + g1EipWidth + g1EipWidth * n ≤ cd.size := by omega
+      intro i hi
+      cases i with
+      | zero => simpa using hX
+      | succ k =>
+          have hk : k < n := by omega
+          have := ih (base + g1EipWidth) (start + g1EipWidth) hY hcd' k hk
+          simpa [show base + g1EipWidth * (k + 1) = base + g1EipWidth + g1EipWidth * k by ring,
+            show start + g1EipWidth * (k + 1) = start + g1EipWidth + g1EipWidth * k by ring]
+            using this
+
+theorem holdsG1s_section (E : VerifierEnv p G₁ G₂ Gₜ) (st : EvmState) (cd : Bytes)
+    (base start : Nat) (Qs : List G₁)
+    (h : bytesAt st base (g1EipWidth * Qs.length) = cdSlice cd start (g1EipWidth * Qs.length))
+    (hcd : start + g1EipWidth * Qs.length ≤ cd.size)
+    (hprov : ∀ i (hi : i < Qs.length), ∃ b : Bytes,
+      bytesTake cd (start + g1EipWidth * i) g1EipWidth = some b ∧
+        E.g1.ofEip? b = some (Qs[i]'hi))
+    (hc : E.g1.eipRoundtrip) :
+    holdsG1s E st base Qs.toArray = true := by
+  have hframes := bytesAt_frame_eq_of_window st cd base start Qs.length h hcd
+  unfold holdsG1s
+  rw [List.all_eq_true]
+  intro pair hp
+  obtain ⟨Q, i⟩ := pair
+  have hmem : (Q, i) ∈ Qs.toArray.toList.zipIdx 0 := by
+    simpa using hp
+  have hinfo := List.mem_zipIdx hmem
+  have hi : i < Qs.length := by
+    simpa using hinfo.2.1
+  have hQ : Q = Qs[i] := by simpa using hinfo.2.2
+  subst hQ
+  have hframe := hframes i hi
+  obtain ⟨b, hb, hq⟩ := hprov i hi
+  have hslice : cdSlice cd (start + g1EipWidth * i) g1EipWidth =
+      E.g1.toEip (Qs[i]'hi) := by
+    rw [cdSlice_eq_of_bytesTake hb]
+    exact (hc b (Qs[i]'hi) hq).symm
+  change (bytesAt st (base + g1EipWidth * i) g1EipWidth ==
+    E.g1.toEip (Qs[i]'hi)) = true
+  rw [hframe, hslice]
+  exact beq_self_eq_true _
+
 /-- **THE COORDINATE RANGE CHECK AS A `Nat` FACT.** `common_uncompressed_g1` writes
     its two coordinate checks as `iszero(or(lt(hi, BLS_P_HI), and(eq(hi, BLS_P_HI),
     iszero(gt(lo, BLS_P_MINUS_ONE_LO)))))`; at `BitVec 256` the *passing* check (the
@@ -9889,6 +10054,12 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_append [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_eq_of_bytesTake [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.holdsG1_of_mirrorsSection [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_inv [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_provenance [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_size_local [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_size_of_le [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_frame_eq_of_window [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.holdsG1s_section [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1WalkCT_sound [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_venv_set_overwrite [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons [propext, Classical.choice, Quot.sound] native []
