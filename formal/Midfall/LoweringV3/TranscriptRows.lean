@@ -9105,6 +9105,90 @@ theorem instSucc_stmt {c : ExternalCalls} {g : ExternalGas}
   | assignHalt he => exact (and_lt_no_halt he).elim
 
 
+theorem instBody_inner {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {decl : FDecl (Bridge.Dialect c g)}
+    {cenv : FunEnv (Bridge.Dialect c g)}
+    (hlook : lookupFun funs "common_word" = some (decl, cenv))
+    (hbody : decl.body = commonWordBody)
+    (hparams : decl.params = ["buf_len", "word"])
+    (hrets : decl.rets = ["ret"])
+    (cd : Bytes) (cptr : U256) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (buf s rv : U256)
+    (hcp : VEnv.get V "instance_cptr" = some cptr)
+    (hcd : st.env.calldata = cd.data.toList)
+    (hbound : cptr.toNat + 32 ≤ cd.data.toList.length)
+    (hbuf : VEnv.get V "buf_len" = some buf)
+    (hs : VEnv.get V "success" = some s)
+    (hr : VEnv.get V "r" = some rv) :
+    let word := cdWord cd cptr.toNat
+    let s1 := s &&& b2w (word.ult rv)
+    let V1 := ("inst_be", word) :: V
+    let V2 := ("inst_be", word) :: VEnv.set V "success" s1
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ]
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun _ _ V' st' o => o = .normal ∧
+        V' = VEnv.set V2 "buf_len" (buf + BitVec.ofNat 256 32) ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ x, st'.memory x = storeWord st.memory buf.toNat word x)) := by
+  intro word s1 V1 V2
+  let Mid1 : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+    fun _ _ V' st' => V' = V1 ∧ st' = st
+  let Mid2 : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+    fun _ _ V' st' => V' = V2 ∧ st' = st
+  refine StmtsContractAll.head_tail_ex (Mid := Mid1) ?head ?tail
+  · intro V0 st0 hpre V' st' o hrun
+    have h := instLet_stmt (funs := funs) (V := V) (st := st) (cd := cd) (cptr := cptr)
+      hcp hcd hbound V0 st0 hpre V' st' o hrun
+    rcases h with ⟨ho, hV, hst⟩
+    exact Or.inl ⟨ho, hV, hst⟩
+  · intro V0 st0 Vm stm hpre hmid
+    obtain ⟨hVm, hstm⟩ := hmid
+    refine StmtsContractAll.head_tail_ex (Mid := Mid2) ?head2 ?tail2
+    · intro V0' st0' hpre' V' st' o hrun'
+      have hVm' : Vm = ("inst_be", word) :: V := hVm
+      have hstm' : stm = st := hstm
+      have hsV : VEnv.get Vm "success" = some s := by
+        rw [hVm', t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+        exact hs
+      have hrV : VEnv.get Vm "r" = some rv := by
+        rw [hVm', t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+        exact hr
+      have hwV : VEnv.get Vm "inst_be" = some word := by
+        rw [hVm']
+        simp [VEnv.get, List.find?]
+      have h := instSucc_stmt (funs := funs) (V := Vm) (st := stm)
+        (s := s) (rv := rv) (word := word) hsV hrV hwV V0' st0' hpre' V' st' o hrun'
+      rcases h with ⟨ho, hV', hst'⟩
+      refine Or.inl ⟨ho, ?_, ?_⟩
+      · rw [hV', hVm']
+        rw [t_venv_set_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+      · rw [hst', hstm]
+    · intro V0'' st0'' Vm' stm' hpre'' hmid''
+      obtain ⟨hVm', hstm'⟩ := hmid''
+      have hbufV2 : VEnv.get (D := Bridge.Dialect c g) V2 "buf_len" = some buf := by
+        dsimp only [V2]
+        change VEnv.get (("inst_be", word) :: VEnv.set V "success" s1) "buf_len" = some buf
+        rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+        rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "success") (h := by decide)]
+        exact (hbuf : VEnv.get (D := Bridge.Dialect c g) V "buf_len" = some buf)
+      have hwordV2 : VEnv.get (D := Bridge.Dialect c g) V2 "inst_be" = some word := by
+        dsimp only [V2]
+        simp [VEnv.get, List.find?]
+      have hcw := commonWord_stmt_var_contract (funs := funs) (decl := decl) (cenv := cenv)
+        (name := "inst_be") (V := V2) (st := st) (buf := buf) (word := word)
+        hlook hbody hparams hrets hbufV2 hwordV2
+      have hsingle := stmtsContractAll_single hcw
+      intro V0 st0 hpre3
+      apply hsingle V0 st0
+      rw [hVm', hstm'] at hpre3
+      exact hpre3
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9719,5 +9803,6 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instLet_stmt [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.and_lt_no_halt [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instSucc_stmt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instBody_inner [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
