@@ -4991,6 +4991,102 @@ theorem runsAllP_logup_readCommitment (E : VerifierEnv p G₁ G₂ Gₜ)
   refine RunsAllP.pure E _ _ ?_
   exact hsz
 
+def logupEvalSum (out : Array (Logup.Committed G₁)) : Nat :=
+  (out.toList.map (fun c => c.helperPolys.size + 3)).sum
+
+theorem logupEvalSum_push (acc : Array (Logup.Committed G₁)) (c : Logup.Committed G₁) :
+    logupEvalSum (acc.push c) = logupEvalSum acc + (c.helperPolys.size + 3) := by
+  unfold logupEvalSum
+  rw [Array.toList_push, List.map_append, List.sum_append]
+  simp
+
+theorem sum_map_add_three (l : List Nat) :
+    (l.map (fun n => n + 3)).sum = (l.map (fun n => n + 1)).sum + 2 * l.length := by
+  induction l with
+  | nil => simp
+  | cons a as ih => simp only [List.map_cons, List.sum_cons, List.length_cons, ih]; omega
+
+theorem runsAllP_lookupCommitments_row_count (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (row : List (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+      (acc : Array (Logup.Committed G₁)) (Qs : List G₁),
+      Qs.length = (row.map (fun p => p.2.numChunks + 1)).sum →
+      RunsAllP E (row.foldlM (init := acc) fun acc' p => do
+          let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+          pure (acc'.push c)) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun out => logupEvalSum out = logupEvalSum acc +
+          (row.map (fun p => p.2.numChunks + 3)).sum) := by
+  intro row
+  induction row with
+  | nil =>
+      intro acc Qs hlen
+      have h0 : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst h0
+      refine RunsAllP.pure E acc _ ?_
+      simp
+  | cons p ps ih =>
+      intro acc Qs hlen
+      obtain ⟨m, chunked⟩ := p
+      have hsum : Qs.length = (chunked.numChunks + 1) +
+          (ps.map (fun p => p.2.numChunks + 1)).sum := by
+        simpa only [List.map_cons, List.sum_cons] using hlen
+      have hlen1 : (Qs.take (chunked.numChunks + 1)).length = chunked.numChunks + 1 := by
+        rw [List.length_take]; omega
+      have hlen2 : (Qs.drop (chunked.numChunks + 1)).length =
+          (ps.map (fun p => p.2.numChunks + 1)).sum := by
+        rw [List.length_drop, hsum]; omega
+      have hsplit : Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          (Qs.take (chunked.numChunks + 1)).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop (chunked.numChunks + 1)).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.foldlM_cons, hsplit]
+      have hhead : RunsAllP E ((fun acc => do
+          let c ← m.readCommitment chunked.numChunks (hashableG1 E.g1)
+          pure (acc.push c)) acc)
+          ((Qs.take (chunked.numChunks + 1)).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (fun out => logupEvalSum out = logupEvalSum acc + (chunked.numChunks + 3)) := by
+        refine RunsAllP.bind_nil E (m := m.readCommitment chunked.numChunks (hashableG1 E.g1))
+          (ms := (Qs.take (chunked.numChunks + 1)).map
+            (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (runsAllP_logup_readCommitment E m chunked.numChunks
+            (Qs.take (chunked.numChunks + 1)) hlen1) ?_
+        intro c hc
+        refine RunsAllP.pure E (acc.push c) _ ?_
+        rw [logupEvalSum_push, hc]
+      have hb : RunsAllP E
+          (((fun acc => do
+            let c ← m.readCommitment chunked.numChunks (hashableG1 E.g1)
+            pure (acc.push c)) acc) >>= fun acc' =>
+              ps.foldlM (init := acc') fun acc' p => do
+                let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+                pure (acc'.push c))
+          ((Qs.take (chunked.numChunks + 1)).map
+              (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop (chunked.numChunks + 1)).map
+              (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (fun out => ∃ acc' : Array (Logup.Committed G₁),
+            logupEvalSum acc' = logupEvalSum acc + (chunked.numChunks + 3) ∧
+            logupEvalSum out = logupEvalSum acc' +
+              (ps.map (fun p => p.2.numChunks + 3)).sum) :=
+        RunsAllP.bind E
+          (ms₁ := (Qs.take (chunked.numChunks + 1)).map
+            (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (ms₂ := (Qs.drop (chunked.numChunks + 1)).map
+            (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (Q := fun (out : Array (Logup.Committed G₁)) =>
+            ∃ acc' : Array (Logup.Committed G₁),
+            logupEvalSum acc' = logupEvalSum acc + (chunked.numChunks + 3) ∧
+            logupEvalSum out = logupEvalSum acc' +
+              (ps.map (fun p => p.2.numChunks + 3)).sum)
+          hhead (fun acc' hacc' => by
+            have hb2 := ih acc' (Qs.drop (chunked.numChunks + 1)) hlen2
+            exact RunsAllP.mono E hb2 (fun out hout => ⟨acc', hacc', hout⟩))
+      refine RunsAllP.mono E hb ?_
+      intro out hout
+      obtain ⟨acc' : Array (Logup.Committed G₁), hacc', hout'⟩ := hout
+      rw [hout', hacc', List.map_cons, List.sum_cons]
+      simp only [Prod.snd]
+      omega
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -7611,6 +7707,10 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_trashcansFold [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceTrashcans_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_logup_readCommitment [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.logupEvalSum [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.logupEvalSum_push [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.sum_map_add_three [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupCommitments_row_count [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
