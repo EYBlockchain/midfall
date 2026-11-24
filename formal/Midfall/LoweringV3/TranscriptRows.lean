@@ -6892,6 +6892,20 @@ theorem instOfWords?_size {p : ℕ} [Fact (Nat.Prime p)]
   obtain ⟨l, hl, rfl⟩ := h
   rw [List.size_toArray, mapM_option_length (Midfall.LoweringV2.frOfWord? (p := p)) instW.toList l hl, Array.length_toList]
 
+/-- **THE EXACT CALADATA BOUND THAT WOULD SUPPLY `hnum`.** `Decoded` fixes
+    `cd.size = proofEnd + 32 + 32 * numInstances`; a calldata-size bound
+    `cd.size < 2^36` therefore gives `numInstances < 2^31`. No such bound is in
+    the tree: `EntryFrameV3.cdSize` is `< 2^256`, and
+    `SupportedInput.sizeBound` is `< 2^64` on the generator input, not on `cd`. -/
+theorem numInstances_lt_of_cd_size {R : Render p G₁ G₂ Gₜ} {cd : Bytes}
+    {ms : List (Msg (Fr p) G₁)} {instW : Array Word256} {inst : Array (Fr p)}
+    (h : Decoded R cd ms instW inst) (hcd : cd.size < 2 ^ 36) :
+    R.cfg.numInstances < 2 ^ 31 := by
+  obtain ⟨hdec, -⟩ := h
+  obtain ⟨_, _, _, _, _, _, _, hsz, _, _⟩ :=
+    decodeCalldata_facts R.plan.proofLayout R.cfg.numInstances R.E.g1 cd ms instW hdec
+  omega
+
 set_option maxHeartbeats 1000000 in
 theorem decoded_inst_size {R : Render p G₁ G₂ Gₜ} {cd : Bytes} {ms : List (Msg (Fr p) G₁)}
     {instW : Array Word256} {inst : Array (Fr p)}
@@ -7120,6 +7134,99 @@ theorem decodeSlots_g1_inv {c : G1Codec G₁} {cd : Bytes} (rest : List Midfall.
                 exact ⟨b, Q, ms0, cur0, hg, rfl, hq, rfl, hms.symm, hcur.symm⟩
   · rw [if_neg hg] at h
     simp at h
+
+theorem decodeSlots_append {c : G1Codec G₁} {cd : Bytes} :
+    ∀ (s1 s2 : List Midfall.Lowering.WireSlot) (cur : Nat)
+      (ms1 ms2 : List (Msg (Fr p) G₁)) (cur1 cur2 : Nat),
+      decodeSlots (p := p) c cd s1 cur = some (ms1, cur1) →
+      decodeSlots (p := p) c cd s2 cur1 = some (ms2, cur2) →
+      decodeSlots (p := p) c cd (s1 ++ s2) cur = some (ms1 ++ ms2, cur2) := by
+  intro s1
+  induction s1 with
+  | nil =>
+      intro s2 cur ms1 ms2 cur1 cur2 h1 h2
+      simp only [decodeSlots, Option.some.injEq, Prod.mk.injEq] at h1
+      obtain ⟨rfl, rfl⟩ := h1
+      simpa using h2
+  | cons sl rest ih =>
+      intro s2 cur ms1 ms2 cur1 cur2 h1 h2
+      cases sl with
+      | g1 =>
+          obtain ⟨b, Q, ms0, cur0, hg, hb, hq, hrec, hms, hcur⟩ :=
+            decodeSlots_g1_inv rest cur ms1 cur1 h1
+          rw [hcur] at h2
+          have hrec2 := ih s2 (cur + g1EipWidth) ms0 ms2 cur0 cur2 hrec h2
+          rw [List.cons_append]
+          rw [decodeSlots_g1_step (p := p) c cd (rest ++ s2) cur b Q
+            (ms0 ++ ms2) cur2 hg hb hq hrec2]
+          rw [hms]
+          rfl
+      | fr =>
+          -- invert the fr step
+          unfold decodeSlots at h1
+          simp only [guard] at h1
+          by_cases hlt : (cdWord cd cur).toNat < p
+          · rw [if_pos hlt] at h1
+            cases hrec : decodeSlots (p := p) c cd rest (cur + 32) with
+            | none => rw [hrec] at h1; simp at h1
+            | some pair =>
+                obtain ⟨ms0, cur0⟩ := pair
+                rw [hrec] at h1
+                simp at h1
+                obtain ⟨hms, hcur⟩ := h1
+                subst hms
+                subst hcur
+                have hrec2 := ih s2 (cur + 32) ms0 ms2 cur0 cur2 hrec h2
+                rw [List.cons_append]
+                rw [decodeSlots_fr_step (p := p) c cd (rest ++ s2) cur (ms0 ++ ms2) cur2
+                  hlt hrec2]
+                rfl
+          · rw [if_neg hlt] at h1
+            simp at h1
+
+theorem decodeSlots_split {c : G1Codec G₁} {cd : Bytes} :
+    ∀ (s1 s2 : List Midfall.Lowering.WireSlot) (cur : Nat)
+      (ms : List (Msg (Fr p) G₁)) (cur' : Nat),
+      decodeSlots (p := p) c cd (s1 ++ s2) cur = some (ms, cur') →
+      ∃ (ms1 : List (Msg (Fr p) G₁)) (cur1 : Nat) (ms2 : List (Msg (Fr p) G₁)),
+        decodeSlots (p := p) c cd s1 cur = some (ms1, cur1) ∧
+          decodeSlots (p := p) c cd s2 cur1 = some (ms2, cur') ∧ ms = ms1 ++ ms2 := by
+  intro s1
+  induction s1 with
+  | nil =>
+      intro s2 cur ms cur' h
+      exact ⟨[], cur, ms, rfl, h, rfl⟩
+  | cons sl rest ih =>
+      intro s2 cur ms cur' h
+      rw [List.cons_append] at h
+      cases sl with
+      | g1 =>
+          obtain ⟨b, Q, ms0, cur0, hg, hb, hq, hrec, hms, hcur⟩ :=
+            decodeSlots_g1_inv (rest ++ s2) cur ms cur' h
+          obtain ⟨ms1, cur1, ms2, h1, h2, rfl⟩ := ih s2 (cur + g1EipWidth) ms0 cur0 hrec
+          rw [← hcur] at h2
+          refine ⟨Msg.g1 Q :: ms1, cur1, ms2, ?_, h2, ?_⟩
+          · rw [decodeSlots_g1_step (p := p) c cd rest cur b Q ms1 cur1 hg hb hq h1]
+          · rw [hms]; rfl
+      | fr =>
+          unfold decodeSlots at h
+          simp only [guard] at h
+          by_cases hlt : (cdWord cd cur).toNat < p
+          · rw [if_pos hlt] at h
+            cases hrec : decodeSlots (p := p) c cd (rest ++ s2) (cur + 32) with
+            | none => rw [hrec] at h; simp at h
+            | some pair =>
+                obtain ⟨ms0, cur0⟩ := pair
+                rw [hrec] at h
+                simp at h
+                obtain ⟨hms, hcur⟩ := h
+                subst hms
+                subst hcur
+                obtain ⟨ms1, cur1, ms2, h1, h2, rfl⟩ := ih s2 (cur + 32) ms0 cur0 hrec
+                refine ⟨Msg.fr (Nat.cast (cdWord cd cur).toNat) :: ms1, cur1, ms2, ?_, h2, rfl⟩
+                rw [decodeSlots_fr_step (p := p) c cd rest cur ms1 cur1 hlt h1]
+          · rw [if_neg hlt] at h
+            simp at h
 
 theorem decodeSlots_g1_provenance {c : G1Codec G₁} {cd : Bytes} (n : Nat)
     (rest : List Midfall.Lowering.WireSlot) (cur : Nat)
@@ -7536,6 +7643,181 @@ theorem snapshotXcriptRun_fields_of_tail (R : Render p G₁ G₂ Gₜ) (H : Hash
   have hxeq : x = ({ toSnapAlgebra := s2, r := r } : SnapXcript p G₁) := (Except.ok.inj hx).symm
   subst hxeq
   exact ⟨s2, t2, pref, fCom, pi, qs, hAlg, hbuf, hpos, hlen, rfl, rfl, hf, hpi⟩
+
+theorem xcript_advice_value (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
+    (horder : AdvicePhasesColumnOrder R.vk)
+    {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    (hTail : XcriptAlgebraTail R H inst ms)
+    {x : SnapXcript p G₁}
+    (hx : snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x)
+    (QAdv QMult QPerm QLook QTrash : List G₁) (rest : List (Msg (Fr p) G₁))
+    (hms : ms = QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))) ++ rest)
+    (hAdv : QAdv.length = (R.vk.cs.phases.map (fun ph => (phaseCols R.vk.cs ph).length)).sum)
+    (hMult : QMult.length = R.vk.cs.lookups.size)
+    (hPerm : QPerm.length = Permutation.numChunksOf R.vk.cs.permutation.columns.size
+      (R.vk.csDegree - 2))
+    (hLook : QLook.length = (R.vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum R.vk.csDegree l + 1)).sum)
+    (hTrash : QTrash.length = R.vk.cs.trashcans.size) :
+    x.trace.adviceCommitments.getD 0 #[] = QAdv.toArray := by
+  have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
+  have hnc : 2 = R.vk.cs.numInstanceColumns := hR.supported.instShape.1.symm
+  have hsp : R.vk.cs.numChallenges = 0 := hf.singlePhase
+  have hdeg : 3 ≤ R.vk.csDegree := hf.chunkLenPositive
+  have hs : ∀ l ∈ R.vk.cs.lookups.toList, ∃ c, l.chunkByDegree R.vk.csDegree = .ok c :=
+    fun l hl => chunkByDegree_ok_of_wf hf hl
+  have hp : p ≤ 2 ^ 256 := by
+    rw [hR.env.modulus]; norm_num [frModulusConstant]
+  have henc : ∀ Q, R.E.g1.ofCompressed? (R.E.g1.toCompressed Q) = some Q :=
+    hcodec.compressedEncoderFirst
+  have hwidth : ∀ Q, (R.E.g1.toCompressed Q).size = g1CompressedWidth :=
+    hcodec.compressedWidth
+  obtain ⟨s2, t2, pref, fCom, pi, qs, hAlg, hbuf, hpos, hlen, hxtr, hxalg, hfcom, hpi⟩ :=
+    snapshotXcriptRun_fields_of_tail R H hTail hx henc hwidth hp
+  obtain ⟨t1, htrace, hread⟩ :=
+    Midfall.Lowering.snapshotAlgebraRun_readAlgebra R.E H R.vk inst ms s2 t2 hAlg
+  obtain hparse :=
+    Midfall.Lowering.snapshotTraceRun_parseTrace R.E H R.vk inst ms s2.toSnapTrace t1 htrace
+  have hAdvRun := runsAllP_parseTrace_advice R.E R.vk inst hf hnc hsp horder hdeg hs
+    QAdv QMult QPerm QLook QTrash hAdv hMult hPerm hLook hTrash
+  have hbuf0 : (transcriptOf R.E H ms).buffer =
+      Bytes.empty ++ (wireMsgs R.E (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))) ++
+        wireMsgs R.E rest) := by
+    rw [(transcriptOf_buffer R.E H ms).1, hms, wireMsgs_append]
+    simp [bytes_empty_append_local]
+  have hpos0 : (transcriptOf R.E H ms).pos = Bytes.empty.size := by
+    rw [(transcriptOf_buffer R.E H ms).2]
+    rfl
+  obtain ⟨tr, t1', hrun', hbuf', hpos', hadv'⟩ :=
+    hAdvRun (transcriptOf R.E H ms) Bytes.empty (wireMsgs R.E rest) hbuf0 hpos0 hp henc hwidth
+  have heq : (tr, t1') = (s2.trace, t1) := by
+    rw [hrun'] at hparse
+    exact Except.ok.inj hparse
+  have htr : tr = s2.trace := congrArg Prod.fst heq
+  rw [htr] at hadv'
+  rw [hxtr]
+  exact hadv'
+
+theorem xcript_quotient_value (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
+    {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
+    (hTail : XcriptAlgebraTail R H inst ms)
+    {x : SnapXcript p G₁}
+    (hx : snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x)
+    (QAdv QMult QPerm QLook QTrash Qg : List G₁)
+    (Qi Qa Qf Qc Qp Ql Qt qs : List (Fr p)) (fCom pi : G₁)
+    (hms : ms = xcriptPt QAdv QMult QPerm QLook QTrash ++
+      xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt ++ xcriptTail fCom qs pi)
+    (hAdv : QAdv.length = (R.vk.cs.phases.map (fun ph => (phaseCols R.vk.cs ph).length)).sum)
+    (hMult : QMult.length = R.vk.cs.lookups.size)
+    (hPerm : QPerm.length = Permutation.numChunksOf R.vk.cs.permutation.columns.size
+      (R.vk.csDegree - 2))
+    (hLook : QLook.length = (R.vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum R.vk.csDegree l + 1)).sum)
+    (hTrash : QTrash.length = R.vk.cs.trashcans.size)
+    (hQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else R.vk.domain.getQuotientPolyDegree))
+    (hI : Qi.length = (instanceShape inst).size *
+      (R.vk.cs.instanceQueries.toList.filter (fun q => decide (q.1.index < 1))).length)
+    (hA : Qa.length = (instanceShape inst).size * R.vk.cs.adviceQueries.size)
+    (hF : Qf.length = R.vk.cs.numFixedColumns - R.vk.cs.numSimpleSelectors)
+    (hC : Qc.length = R.vk.permutation.commitments.size)
+    (hP : Qp.length = (Permutation.numChunksOf R.vk.cs.permutation.columns.size
+      (R.vk.csDegree - 2)) * 3 - 1)
+    (hL : Ql.length = (R.vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum R.vk.csDegree l + 3)).sum)
+    (hT : Qt.length = R.vk.cs.trashcans.size)
+    (hinstQ : ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1)
+    (hinstSize : inst.size < 2 ^ 31) :
+    x.alg.quotientLimbComs.toList = Qg := by
+  have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
+  have hnc : 2 = R.vk.cs.numInstanceColumns := hR.supported.instShape.1.symm
+  have hsp : R.vk.cs.numChallenges = 0 := hf.singlePhase
+  have hdeg : 3 ≤ R.vk.csDegree := hf.chunkLenPositive
+  have hs : ∀ l ∈ R.vk.cs.lookups.toList, ∃ c, l.chunkByDegree R.vk.csDegree = .ok c :=
+    fun l hl => chunkByDegree_ok_of_wf hf hl
+  have hp : p ≤ 2 ^ 256 := by
+    rw [hR.env.modulus]; norm_num [frModulusConstant]
+  have henc : ∀ Q, R.E.g1.ofCompressed? (R.E.g1.toCompressed Q) = some Q :=
+    hcodec.compressedEncoderFirst
+  have hwidth : ∀ Q, (R.E.g1.toCompressed Q).size = g1CompressedWidth :=
+    hcodec.compressedWidth
+  obtain ⟨s2, t2, pref, fCom0, pi0, qs0, hAlg, hbuf, hpos, hlen, hxtr, hxalg, hfcom, hpi⟩ :=
+    snapshotXcriptRun_fields_of_tail R H hTail hx henc hwidth hp
+  obtain ⟨t1, htrace, hread⟩ :=
+    Midfall.Lowering.snapshotAlgebraRun_readAlgebra R.E H R.vk inst ms s2 t2 hAlg
+  obtain hparse :=
+    Midfall.Lowering.snapshotTraceRun_parseTrace R.E H R.vk inst ms s2.toSnapTrace t1 htrace
+  have hmax : maxInstanceLen (instanceShape inst) < 2 ^ 31 := by
+    simpa [maxInstanceLen, instanceShape] using hinstSize
+  have hrows : ∀ row ∈ (instanceShape inst).toList,
+      ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 →
+        ∃ col, row[q.1.index - 1]? = some col := by
+    intro row hrow q hq hnc'
+    have hrow' : row = #[inst] := by simpa [instanceShape] using hrow
+    subst hrow'
+    have hq1 := hinstQ q hq hnc'
+    exact ⟨inst, by rw [hq1]; rfl⟩
+  let Ra := xcriptRa (p := p) Qg Qi Qa Qf Qc Qp Ql Qt
+  let Tail := xcriptTail (p := p) fCom qs pi
+  let Pt := xcriptPt (p := p) QAdv QMult QPerm QLook QTrash
+  have hms' : ms = Pt ++ (Ra ++ Tail) := by
+    simpa only [Pt, Ra, Tail, List.append_assoc] using hms
+  have hmsP : ms = Pt ++ (Ra ++ Tail) := hms'
+  obtain ⟨trace, t1', hrun', hbuf1, hpos1, hperm, hlook, htrash⟩ :=
+    parseTrace_run_of_ms_sizes_rest R.E H R.vk inst hf hnc hsp hdeg hs
+      QAdv QMult QPerm QLook QTrash hAdv hMult hPerm hLook hTrash hp henc hwidth ms
+      (Ra ++ Tail) hmsP
+  have heq : (trace, t1') = (s2.trace, t1) := by
+    rw [hrun'] at hparse
+    exact Except.ok.inj hparse
+  have htr : trace = s2.trace := congrArg Prod.fst heq
+  have ht1 : t1' = t1 := congrArg Prod.snd heq
+  rw [ht1] at hbuf1 hpos1
+  -- readAlgebra value at t1
+  have hbufRead : t1.buffer = wireMsgs R.E Pt ++ (wireMsgs R.E Ra ++ wireMsgs R.E Tail) := by
+    rw [hbuf1, (transcriptOf_buffer R.E H ms).1, hms']
+    simp only [Pt, Ra, Tail, wireMsgs_append, ByteArray.append_assoc]
+  have hposRead : t1.pos = (wireMsgs R.E Pt).size := hpos1
+  have hlenA' : Qa.length = 1 * R.vk.cs.adviceQueries.size := by
+    simpa [instanceShape] using hA
+  have hlenP' : Qp.length = (trace.permutations.toList.map (fun pc =>
+      3 * pc.permutationProductCommitments.size - 1)).sum := by
+    rw [hperm]; omega
+  have hlenL' : Ql.length = (trace.lookups.toList.map (fun row =>
+      (row.toList.map (fun c => c.helperPolys.size + 3)).sum)).sum := by
+    rw [hlook]; exact hL
+  have hlenT' : Qt.length = (trace.trashcans.toList.map (fun row => row.size)).sum := by
+    rw [htrash]; exact hT
+  obtain ⟨alg, t2', hread', hbuf2, hpos2, hquot⟩ :=
+    runsAllP_readAlgebra_quotient_values R.E R.vk hf trace.permutations trace.lookups trace.trashcans
+      1 1 (instanceShape inst) hmax hrows Qg Qi Qa Qf Qc Qp Ql Qt hQ hI hlenA' hF hC hlenP' hlenL' hlenT'
+      t1 (wireMsgs R.E Pt) (wireMsgs R.E Tail) (by
+        rw [hbufRead]; dsimp only [Pt, Ra, Tail, xcriptPt, xcriptRa])
+      (by rw [hposRead]) hp henc hwidth
+  have hread1 : StateT.run
+      (Midfall.Halo2.Verifier.readAlgebra (p := p) R.E.g1 Features.solidity R.vk
+        trace.permutations trace.lookups trace.trashcans 1 1 (instanceShape inst)) t1 =
+      .ok (s2.alg, t2) := by
+    -- s2.trace is trace, and the actual readAlgebra uses the same arguments
+    subst htr
+    simpa [committedShape, instanceShape] using hread
+  have heq2 : (alg, t2') = (s2.alg, t2) := by
+    rw [hread'] at hread1
+    exact Except.ok.inj hread1
+  have halg : alg = s2.alg := congrArg Prod.fst heq2
+  rw [halg] at hquot
+  rw [hxalg]
+  exact hquot
 
 theorem xcript_tail_fCom_pi (R : Render p G₁ G₂ Gₜ) (H : Hash)
     {inst : Array (Fr p)} {ms : List (Msg (Fr p) G₁)}
@@ -12108,11 +12390,14 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     now `WellFormed.instanceQueriesBound` (D-GATE15(c)), so the old `hinstQ` premise is
     gone, and `PlanReadCounts` itself is PROVED downstream in
     `EndToEndAlgebra.planReadCounts_of_valid` (`planPrefixG1_eq` + `planNumEvals_eq`).
-    THE FIXED STATEMENT'S RESIDUAL is therefore exactly the calldata bound `hnum` (only
-    `< 2^64` is available from `SupportedInput.sizeBound`, not `< 2^31`) and Calldata's
-    `XcriptG1`; `EndToEndAlgebra.tp_agrees_of_valid` is the fixed row's fully wired
-    consumer (`ValidV3` + `hnum` + `XcriptG1`). The proof of the fixed statement itself
-    cannot be imported here: `EndToEndAlgebra` imports this file.
+    THE FIXED STATEMENT'S RESIDUAL is therefore exactly the calldata bound `hnum` and
+    Calldata's `XcriptG1`; `EndToEndAlgebra.tp_agrees_of_valid` is the fixed row's fully
+    wired consumer (`ValidV3` + `hnum` + `XcriptG1`). `Decoded` gives
+    `cd.size = proofEnd + 32 + 32 * numInstances` (`numInstances_lt_of_cd_size`), so a
+    calldata-size bound `cd.size < 2^36` would supply `hnum`; no such bound is in the
+    tree (`EntryFrameV3.cdSize` is `< 2^256`; `SupportedInput.sizeBound` is `< 2^64` on
+    the generator input, not on `cd`). The proof of the fixed statement itself cannot be
+    imported here: `EndToEndAlgebra` imports this file.
     THE `Inv .transcript` HALF IS LANDED as `invAt_transcript_of_xcriptG1`, and
     `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
     decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
@@ -12377,6 +12662,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_eq_of_bytesTake [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.holdsG1_of_mirrorsSection [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_inv [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_split [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_provenance [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.takeCommitmentSection_cursor [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_take_cursor [propext, Classical.choice, Quot.sound] native []
@@ -12520,6 +12807,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.mapM_option_length [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instOfWords?_size [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_inst_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.numInstances_lt_of_cd_size [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.XcriptSchedule [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcriptAlgebraRun_of_schedule [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_schedule [propext, Classical.choice, Quot.sound] native []
@@ -12568,6 +12856,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotAlgebraRun_buffer [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotXcriptRun_fields_of_tail [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_tail_fCom_pi [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_advice_value [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcript_quotient_value [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.advicePhaseTotal_not_columnOrder [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
