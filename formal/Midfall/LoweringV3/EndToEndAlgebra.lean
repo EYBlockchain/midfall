@@ -4468,6 +4468,227 @@ theorem KzgMultiPrepareWidths_of_upstreamDatum
     hUp inst trace alg queries hlin
   exact ⟨upstreamQueries, setsG, qm, hGok, hLen⟩
 
+/-- **ITEM 1: THE PLAN COUNT FROM THE QUERY MAP.** The Halo2 point-set count at
+    `linearize`'s query vector equals the generator's upstream count
+    (`constructIntermediateSets_pointSets_size_eq_of_queryMap`), and the generator's
+    count is the plan's `numPointSets` (`planMeta_numPointSets_generator_of_validV3`
+    plus `fromProtocol_qEvals_itemCount` through `plan_numPointSets_eq_meta`). The
+    `KzgQueryMapData` is used for the Halo2-to-generator transfer. -/
+theorem pointSets_length_eq_plan_of_queryMap
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    {queries : Array (VerifierQuery (Fr p) G₁)}
+    {cm : Array (CD (Fr p) G₁)} {pointSets : Array (Array (Fr p))}
+    {queriesG : List Generator.Query} {setsG : Generator.IntermediateSets}
+    {generatorOrder : List Generator.Query} {generatorSets : Generator.IntermediateSets}
+    (qm : @KzgQueryMapData (Fr p) G₁ _
+      (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries queriesG)
+    (hV : constructIntermediateSets (F := Fr p) (C := G₁)
+      (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries = .ok (cm, pointSets))
+    (hG : Generator.constructIntermediateSetsImpl queriesG = .ok setsG)
+    (hgen : Generator.queries R.plan.meta_ R.plan.data = .ok generatorOrder)
+    (hgenSets : Generator.constructIntermediateSetsImpl generatorOrder = .ok generatorSets)
+    (hpoint : generatorSets.pointSets = setsG.pointSets) :
+    setsG.pointSets.length =
+      (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets := by
+  have hsize : pointSets.size = setsG.pointSets.length :=
+    (KzgPartitionBridge_of_queryMap queries queriesG qm) (cm, pointSets) setsG hV hG
+  obtain ⟨qs, sets, out, hq, hci, hsort, hlen⟩ :=
+    planMeta_numPointSets_generator_of_validV3 R hR
+  have hqs : qs = generatorOrder := by
+    rw [hgen] at hq
+    exact (Except.ok.inj hq).symm
+  have hsets : sets = generatorSets := by
+    rw [hqs] at hci
+    exact Except.ok.inj (hci.symm.trans hgenSets)
+  have hsort' : Generator.sortSets generatorSets = .ok out := by
+    rw [← hsets]
+    exact hsort
+  have hout : out.pointSets.length = setsG.pointSets.length := by
+    rw [sortSets_pointSets_length generatorSets out hsort', hpoint]
+  have hpointSize : pointSets.size =
+      (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets :=
+    hsize.trans (hout.symm.trans (hlen.symm.trans (plan_numPointSets_eq_meta R hR).symm))
+  exact hsize.symm.trans hpointSize
+
+/-- The generator-side count, without the Halo2 success premise. This is the form
+    the `LinearizeQueryMap` assembly consumes. -/
+theorem setsG_pointSets_length_eq_plan_of_generator
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    {upstreamQueries : List Generator.Query} {setsG : Generator.IntermediateSets}
+    {generatorOrder : List Generator.Query} {generatorSets : Generator.IntermediateSets}
+    (hgen : Generator.queries R.plan.meta_ R.plan.data = .ok generatorOrder)
+    (hgenSets : Generator.constructIntermediateSetsImpl generatorOrder = .ok generatorSets)
+    (hG : Generator.constructIntermediateSetsImpl upstreamQueries = .ok setsG)
+    (hpoint : generatorSets.pointSets = setsG.pointSets) :
+    setsG.pointSets.length =
+      (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets := by
+  obtain ⟨qs, sets, out, hq, hci, hsort, hlen⟩ :=
+    planMeta_numPointSets_generator_of_validV3 R hR
+  have hqs : qs = generatorOrder := by
+    rw [hgen] at hq
+    exact (Except.ok.inj hq).symm
+  have hsets : sets = generatorSets := by
+    rw [hqs] at hci
+    exact Except.ok.inj (hci.symm.trans hgenSets)
+  have hsort' : Generator.sortSets generatorSets = .ok out := by
+    rw [← hsets]
+    exact hsort
+  have hout : out.pointSets.length = setsG.pointSets.length := by
+    rw [sortSets_pointSets_length generatorSets out hsort', hpoint]
+  exact hout.symm.trans (hlen.symm.trans (plan_numPointSets_eq_meta R hR).symm)
+
+/-- `ValidV3`'s `generated`/`supported` clauses pin the plan's protocol to
+    `fromConstraintSystem`, and `fromConstraintSystem` writes the literal
+    `pcsBlockList`. This is the `dg`/`lc` decomposition item 2 consumes. -/
+theorem plan_meta_pcsBlockList (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    ∃ (dg : Nat) (lc : List Nat),
+      R.vk.cs.degree = .ok dg ∧
+      R.plan.meta_.protocol.pcsQueries = pcsBlockList R.vk.cs 1 dg lc := by
+  obtain ⟨dg, lc, hdeg, hpcs⟩ :=
+    fromConstraintSystem_pcsQueries Features.solidity R.vk.cs 1 R.plan.meta_.protocol
+      (plan_protocol_fromConstraintSystem R hR)
+  exact ⟨dg, lc.toList, hdeg, hpcs⟩
+
+/-- **ITEM 2: THE `queryFromPlan` MAPM HALF.** On a `ValidV3` render, the upstream
+    source block A5 identifies (the literal `pcsBlockList` with the permutation-Z
+    slice in upstream order) maps through `queryFromPlan` to an upstream query list,
+    because `Generator.queries` succeeded and therefore ran the I-6 upstream-order
+    check (`queries_assert_ok`). The z-position list is supplied explicitly, as in
+    A5's `upstreamSources_filter_pcsBlockList`; nonemptiness is the datum's
+    permutation-set condition, not a new `ValidV3` clause. -/
+theorem upstreamDatum_of_validV3
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (dg : Nat) (lc : List Nat)
+    (hPcs : R.plan.meta_.protocol.pcsQueries = pcsBlockList R.vk.cs 1 dg lc)
+    (zPositions : List Nat)
+    (hzdef : zPositions = List.filterMap
+      (fun x => if Generator.isPermutationZSource x.2 = true then some x.1 else none)
+      ((List.range R.plan.meta_.protocol.pcsQueries.length).zip
+        R.plan.meta_.protocol.pcsQueries))
+    (hzNonempty : zPositions ≠ []) :
+    ∃ (upstreamSources : List PcsQuerySource)
+      (upstreamQueries generatorOrder : List Generator.Query)
+      (generatorSets upstreamSets : Generator.IntermediateSets),
+      upstreamSources = (pcsAdviceBlock R.vk.cs ++
+          pcsCommittedInstanceBlock R.vk.cs 1) ++
+        permZUpstream (pcsNumPermutationZs R.vk.cs dg) ++
+        (pcsLookupBlock R.vk.cs dg lc ++ pcsTrashBlock R.vk.cs ++
+          pcsFixedBlock R.vk.cs ++ pcsPermutationCommonBlock R.vk.cs ++
+          [PcsQuerySource.linearization]) ∧
+      upstreamSources.mapM (fun source =>
+        Generator.queryFromPlan source R.plan.meta_ R.plan.data) = .ok upstreamQueries ∧
+      Generator.queries R.plan.meta_ R.plan.data = .ok generatorOrder ∧
+      Generator.constructIntermediateSetsImpl generatorOrder = .ok generatorSets ∧
+      Generator.constructIntermediateSetsImpl upstreamQueries = .ok upstreamSets ∧
+      generatorSets.pointSets = upstreamSets.pointSets := by
+  obtain ⟨qs, _sets, _out, hq, _hci, _hsort, _hlen⟩ :=
+    planMeta_numPointSets_generator_of_validV3 R hR
+  have hassert := queries_assert_ok R.plan.meta_ R.plan.data qs hq
+  obtain ⟨upstreamSources, upstreamQueries, generatorSets, upstreamSets,
+    hsrc, _hzfilter, hmap, hgenSets, hupSets, hpoint⟩ :=
+    upstreamSources_filter_pcsBlockList R.plan.meta_ R.plan.data qs R.vk.cs 1 dg lc
+      zPositions hzdef hzNonempty hPcs hassert
+  exact ⟨upstreamSources, upstreamQueries, qs, generatorSets, upstreamSets,
+    hsrc, hmap, hq, hgenSets, hupSets, hpoint⟩
+
+/-- The mapM half alone, in the exact `upstreamSources.mapM (queryFromPlan · meta
+    data) = .ok upstreamQueries` shape `KzgMultiPrepareWidths_of_upstreamDatum`
+    consumes. -/
+theorem upstreamSources_mapM_of_validV3
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (dg : Nat) (lc : List Nat)
+    (hPcs : R.plan.meta_.protocol.pcsQueries = pcsBlockList R.vk.cs 1 dg lc)
+    (zPositions : List Nat)
+    (hzdef : zPositions = List.filterMap
+      (fun x => if Generator.isPermutationZSource x.2 = true then some x.1 else none)
+      ((List.range R.plan.meta_.protocol.pcsQueries.length).zip
+        R.plan.meta_.protocol.pcsQueries))
+    (hzNonempty : zPositions ≠ []) :
+    ∃ (upstreamSources : List PcsQuerySource) (upstreamQueries : List Generator.Query),
+      upstreamSources = (pcsAdviceBlock R.vk.cs ++
+          pcsCommittedInstanceBlock R.vk.cs 1) ++
+        permZUpstream (pcsNumPermutationZs R.vk.cs dg) ++
+        (pcsLookupBlock R.vk.cs dg lc ++ pcsTrashBlock R.vk.cs ++
+          pcsFixedBlock R.vk.cs ++ pcsPermutationCommonBlock R.vk.cs ++
+          [PcsQuerySource.linearization]) ∧
+      upstreamSources.mapM (fun source =>
+        Generator.queryFromPlan source R.plan.meta_ R.plan.data) = .ok upstreamQueries := by
+  obtain ⟨upstreamSources, upstreamQueries, _generatorOrder, _generatorSets, _upstreamSets,
+    hsrc, hmap, _hgen, _hgenSets, _hupSets, _hpoint⟩ :=
+    upstreamDatum_of_validV3 R hR dg lc hPcs zPositions hzdef hzNonempty
+  exact ⟨upstreamSources, upstreamQueries, hsrc, hmap⟩
+
+/-- **ITEM 2, FROM `ValidV3` ALONE (MODULO THE Z-POSITION DATUM).** The
+    `dg`/`lc` decomposition is derived, so the only inputs are the rendered key's
+    z-position list and its nonemptiness. The conclusion is the full upstream
+    source block, its `queryFromPlan` map, the generator `queries` result, both
+    set constructions, and the set equality. -/
+theorem upstreamDatum_of_validV3'
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (zPositions : List Nat)
+    (hzdef : zPositions = List.filterMap
+      (fun x => if Generator.isPermutationZSource x.2 = true then some x.1 else none)
+      ((List.range R.plan.meta_.protocol.pcsQueries.length).zip
+        R.plan.meta_.protocol.pcsQueries))
+    (hzNonempty : zPositions ≠ []) :
+    ∃ (dg : Nat) (lc : List Nat),
+      R.vk.cs.degree = .ok dg ∧
+      ∃ (upstreamSources : List PcsQuerySource)
+        (upstreamQueries generatorOrder : List Generator.Query)
+        (generatorSets upstreamSets : Generator.IntermediateSets),
+        upstreamSources = (pcsAdviceBlock R.vk.cs ++
+            pcsCommittedInstanceBlock R.vk.cs 1) ++
+          permZUpstream (pcsNumPermutationZs R.vk.cs dg) ++
+          (pcsLookupBlock R.vk.cs dg lc ++ pcsTrashBlock R.vk.cs ++
+            pcsFixedBlock R.vk.cs ++ pcsPermutationCommonBlock R.vk.cs ++
+            [PcsQuerySource.linearization]) ∧
+        upstreamSources.mapM (fun source =>
+          Generator.queryFromPlan source R.plan.meta_ R.plan.data) = .ok upstreamQueries ∧
+        Generator.queries R.plan.meta_ R.plan.data = .ok generatorOrder ∧
+        Generator.constructIntermediateSetsImpl generatorOrder = .ok generatorSets ∧
+        Generator.constructIntermediateSetsImpl upstreamQueries = .ok upstreamSets ∧
+        generatorSets.pointSets = upstreamSets.pointSets := by
+  obtain ⟨dg, lc, hdeg, hPcs⟩ := plan_meta_pcsBlockList R hR
+  obtain ⟨upstreamSources, upstreamQueries, generatorOrder, generatorSets, upstreamSets,
+    hsrc, hmap, hgen, hgenSets, hupSets, hpoint⟩ :=
+    upstreamDatum_of_validV3 R hR dg lc hPcs zPositions hzdef hzNonempty
+  exact ⟨dg, lc, hdeg, upstreamSources, upstreamQueries, generatorOrder, generatorSets,
+    upstreamSets, hsrc, hmap, hgen, hgenSets, hupSets, hpoint⟩
+
+/-- **THE `LinearizeQueryMap` ASSEMBLY.** Once the per-pair datum supplies, for
+    every `linearize` output, the generator query list, the generator's own
+    `queries` result, both `constructIntermediateSetsImpl` results, the point-set
+    equality and the `KzgQueryMapData`, the plan/count half closes the existential
+    `LinearizeQueryMap` requires. The mapM/source-block half is
+    `upstreamDatum_of_validV3`, used by the datum's producer. -/
+theorem LinearizeQueryMap_of_upstreamDatum
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hUp : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
+      (alg : Verifier.AlgebraRead (Fr p) G₁)
+      (queries : Array (VerifierQuery (Fr p) G₁)),
+      Verifier.linearize (p := p) (delta := R.E.delta) R.vk
+        (adviceCommitments := trace.adviceCommitments)
+        (committedInstances := if Features.solidity.committedInstances then
+          #[#[(1 : G₁)]] else arrayReplicate (#[#[inst.toList.toArray]]).size
+            (#[] : Array G₁))
+        (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+        (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg
+        = .ok queries →
+      ∃ (upstreamQueries generatorOrder : List Generator.Query)
+        (generatorSets setsG : Generator.IntermediateSets)
+        (qm : @KzgQueryMapData (Fr p) G₁ _
+          (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries upstreamQueries),
+        Generator.queries R.plan.meta_ R.plan.data = .ok generatorOrder ∧
+        Generator.constructIntermediateSetsImpl generatorOrder = .ok generatorSets ∧
+        Generator.constructIntermediateSetsImpl upstreamQueries = .ok setsG ∧
+        generatorSets.pointSets = setsG.pointSets) :
+    LinearizeQueryMap R := by
+  intro inst trace alg queries hlin
+  obtain ⟨upstreamQueries, generatorOrder, generatorSets, setsG, qm,
+    hgen, hgenSets, hGok, hpoint⟩ := hUp inst trace alg queries hlin
+  exact ⟨upstreamQueries, setsG, qm, hGok,
+    setsG_pointSets_length_eq_plan_of_generator R hR hgen hgenSets hGok hpoint⟩
+
 /-- **`PrepareLogSlots` FROM EXACTLY THE TWO NAMED RESIDUALS.** The parseTrace
     block, the KZG scalar block, and the plan's eval count (`numEvals`, proved in
     this file) are the whole of the bridge; nothing else is assumed. -/
@@ -4557,6 +4778,47 @@ theorem end_to_end_of_validV3 (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
   end_to_end_of_A6_KZG R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside
     (KzgMultiPrepareWidths_of_linearizeQueryMap R hMap)
+
+/-- **END-TO-END FROM THE PER-PAIR DATUM.** The same `EndToEndV3` statement as
+    `end_to_end_of_validV3`, with the per-pair datum supplied directly: the
+    generator query list, its `queries` result, both `constructIntermediateSetsImpl`
+    results, the point-set equality and the `KzgQueryMapData`. The plan/count half
+    is discharged by `LinearizeQueryMap_of_upstreamDatum`; the mapM/source-block
+    half is the producer's `upstreamDatum_of_validV3`. -/
+theorem end_to_end_of_validV3_of_upstreamDatum
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (product : Midfall.Yul.PairingProduct)
+    (hR : ValidV3 R) (hEq : LoweringEquivalenceV3 R product)
+    (W : YulSemantics.EVM.ExecEnv) (Lyt : YulSemantics.EVM.Layout) (vkAddr : YulSemantics.EVM.U256)
+    (hdep : Midfall.LoweringV2.DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
+    (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
+    (hcodec : G1CodecLawsV3 R.E.g1)
+    (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
+      Midfall.LoweringV2.SoundSide R keccak256 cd ∧
+        Midfall.LoweringV2.CompleteSide R keccak256 cd)
+    (hUp : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
+      (alg : Verifier.AlgebraRead (Fr p) G₁)
+      (queries : Array (VerifierQuery (Fr p) G₁)),
+      Verifier.linearize (p := p) (delta := R.E.delta) R.vk
+        (adviceCommitments := trace.adviceCommitments)
+        (committedInstances := if Features.solidity.committedInstances then
+          #[#[(1 : G₁)]] else arrayReplicate (#[#[inst.toList.toArray]]).size
+            (#[] : Array G₁))
+        (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+        (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg
+        = .ok queries →
+      ∃ (upstreamQueries generatorOrder : List Generator.Query)
+        (generatorSets setsG : Generator.IntermediateSets)
+        (qm : @KzgQueryMapData (Fr p) G₁ _
+          (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries upstreamQueries),
+        Generator.queries R.plan.meta_ R.plan.data = .ok generatorOrder ∧
+        Generator.constructIntermediateSetsImpl generatorOrder = .ok generatorSets ∧
+        Generator.constructIntermediateSetsImpl upstreamQueries = .ok setsG ∧
+        generatorSets.pointSets = setsG.pointSets) :
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
+  end_to_end_of_validV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside
+    (LinearizeQueryMap_of_upstreamDatum R hR hUp)
 
 /-- **END-TO-END FROM THE A6 STATIC SCHEDULE.** The A6 half is stated exactly as
     the project-level refinement between `prepare`'s log widths and `R.tpEvents`;
@@ -4670,6 +4932,8 @@ open Midfall.Tools.Done in
 #assert_axioms mapM_getLast?_some
   [propext, Classical.choice, Quot.sound]
 #assert_axioms queries_mapM_ok
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queries_assert_ok
   [propext, Classical.choice, Quot.sound]
 #assert_axioms queries_getLast?_some
   [propext, Classical.choice, Quot.sound]
@@ -4860,6 +5124,22 @@ open Midfall.Tools.Done in
 #assert_axioms readScheduleAgrees_of_validV3
   [propext, Classical.choice, Quot.sound]
 #assert_axioms end_to_end_of_validV3
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms pointSets_length_eq_plan_of_queryMap
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms setsG_pointSets_length_eq_plan_of_generator
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamDatum_of_validV3
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamSources_mapM_of_validV3
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms plan_meta_pcsBlockList
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamDatum_of_validV3'
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms LinearizeQueryMap_of_upstreamDatum
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms end_to_end_of_validV3_of_upstreamDatum
   [propext, Classical.choice, Quot.sound]
 
 end Composition
