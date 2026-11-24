@@ -726,6 +726,99 @@ theorem funSigs_emitPcsFromPlan (pv : PlanView) :
 
 
 
+theorem topBinders_append_subset {S : List String} {a b : YulBlock}
+    (ha : ∀ x ∈ LoweringV2.topBinders a, x ∈ S)
+    (hb : ∀ x ∈ LoweringV2.topBinders b, x ∈ S) :
+    ∀ x ∈ LoweringV2.topBinders (a ++ b), x ∈ S := by
+  intro x hx
+  rw [mem_topBinders_append] at hx
+  rcases hx with h | h
+  · exact ha x h
+  · exact hb x h
+
+theorem mem_topBinders_flatten_map_subset {α : Type} {S : List String} {l : List α}
+    {f : α → YulBlock}
+    (h : ∀ a ∈ l, ∀ x ∈ LoweringV2.topBinders (f a), x ∈ S) :
+    ∀ x ∈ LoweringV2.topBinders (List.flatten (l.map f)), x ∈ S := by
+  intro x hx
+  rw [mem_topBinders_flatten_map] at hx
+  obtain ⟨a, ha, hx⟩ := hx
+  exact h a ha x hx
+
+/-! ### The transcript parser's list-mapped binder groups
+
+  `emitTranscriptParserAt` splices two list-mapped families: one per `UserPhase` (a walk loop plus
+  one squeeze per challenge) and one per `ProofLookupCommitmentsLayout`. Their binder sets are
+  constant per element, which is what the two inductions below record. The final assembly of the
+  whole slice over the four shape flags is the remaining child of this group. -/
+
+/-- Every binder name the transcript parser can emit. -/
+def parserTopNames : List String :=
+  ["buf_len", "proof_cptr", "advice_walk", "lookup_m_walk", "perm_z_walk",
+    "lookup_helper_walk", "lookup_z_walk", "trashcan_walk", "quotient_walk"]
+
+theorem parser_phase_binders (ph : UserPhase) :
+    ∀ x ∈ LoweringV2.topBinders
+      ([GenAst.g1WalkLoop "advice_walk" ph.adviceBytes] ++
+        (List.map (fun j => GenAst.yset "buf_len"
+          (GenAst.ycall "squeeze_to" [GenAst.yvar "buf_len",
+            GenAst.yop Op.add [GenAst.yvar "CHALLENGE_MPTR",
+              GenAst.ylit ((ph.challengeOffset + j) * 32)]]))
+          (List.range ph.numChallenges))),
+      x ∈ parserTopNames := by
+  intro x hx
+  rw [mem_topBinders_append] at hx
+  rcases hx with h1 | h2
+  · simp only [LoweringV2.topBinders, GenAst.g1WalkLoop, GenAst.yfor, List.flatMap_cons,
+      List.flatMap_nil, List.append_nil, boundOf_forLoop] at h1
+    exact absurd h1 (by simp)
+  · rw [mem_topBinders_map] at h2
+    obtain ⟨j, _, hx⟩ := h2
+    simp only [GenAst.yset, boundOf_assign] at hx
+    simp only [List.mem_singleton] at hx
+    subst hx
+    simp [parserTopNames]
+
+theorem parser_phases_binders (phases : List UserPhase) :
+    ∀ x ∈ LoweringV2.topBinders
+      (List.flatten (phases.map (fun ph =>
+        [GenAst.g1WalkLoop "advice_walk" ph.adviceBytes] ++
+          (List.map (fun j => GenAst.yset "buf_len"
+            (GenAst.ycall "squeeze_to" [GenAst.yvar "buf_len",
+              GenAst.yop Op.add [GenAst.yvar "CHALLENGE_MPTR",
+                GenAst.ylit ((ph.challengeOffset + j) * 32)]]))
+            (List.range ph.numChallenges))))),
+      x ∈ parserTopNames := by
+  apply mem_topBinders_flatten_map_subset
+  intro ph _ x hx
+  exact parser_phase_binders ph x hx
+
+theorem parser_lookup_binders (lk : ProofLookupCommitmentsLayout) :
+    ∀ x ∈ LoweringV2.topBinders
+      ([GenAst.g1WalkLoop "lookup_helper_walk" lk.helpers.byteLen] ++
+        GenAst.g1WalkBody "lookup_z_walk"),
+      x ∈ parserTopNames := by
+  intro x hx
+  rw [mem_topBinders_append] at hx
+  rcases hx with h1 | h2
+  · simp only [LoweringV2.topBinders, GenAst.g1WalkLoop, GenAst.yfor, List.flatMap_cons,
+      List.flatMap_nil, List.append_nil, boundOf_forLoop] at h1
+    exact absurd h1 (by simp)
+  · simp [LoweringV2.topBinders, GenAst.g1WalkBody, GenAst.yset, GenAst.yexpr, GenAst.yop,
+      GenAst.yvar, GenAst.ylit, GenAst.ycall, Inline.boundOf] at h2
+    simp [parserTopNames] at h2 ⊢
+    tauto
+
+theorem parser_lookups_binders (lookups : List ProofLookupCommitmentsLayout) :
+    ∀ x ∈ LoweringV2.topBinders
+      (List.flatten (lookups.map (fun lk =>
+        [GenAst.g1WalkLoop "lookup_helper_walk" lk.helpers.byteLen] ++
+          GenAst.g1WalkBody "lookup_z_walk"))),
+      x ∈ parserTopNames := by
+  apply mem_topBinders_flatten_map_subset
+  intro lk _ x hx
+  exact parser_lookup_binders lk x hx
+
 /-! ## 4. THE COMPOSITION OVER `mainAsmRaw`
 
   `mainAsmRaw` is the guard, the helper blocks, the two main locals, and the seven slices in
