@@ -5584,6 +5584,104 @@ theorem runsAllP_parseTraceTail (E : VerifierEnv p G₁ G₂ Gₜ)
   intro y _
   exact RunsAllP.pure E _ _ ⟨hperm, hlook, htrash⟩
 
+theorem runsAllP_parseTraceWireBody_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity) (hsp : vk.cs.numChallenges = 0)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E (parseTraceWireBody E vk inst)
+      (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))) (fun tr =>
+        (tr.permutations.toList.map (fun pc =>
+          3 * pc.permutationProductCommitments.size - 1)).sum =
+          3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+        (tr.lookups.toList.map (fun row => (row.toList.map
+          (fun c => c.helperPolys.size + 3)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+        (tr.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size) := by
+  unfold parseTraceWireBody
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (runsAll_hashInto E vk)) ?_
+  intro _ _
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (by
+      simpa only [Array.forIn_toList] using
+        runsAll_absorb_committed E (committedShape (G₁ := G₁)))) ?_
+  intro _ _
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (by
+      simpa only [Array.forIn_toList] using
+        runsAll_absorb_instance E (instanceShape inst))) ?_
+  intro _ _
+  refine RunsAllP.bind E (m := parseTraceAdvicePhases E vk)
+    (ms₁ := QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (runsAllP_parseTraceAdvicePhases_cover E vk hsp vk.cs.phases [] QAdv
+      (by simpa using hlenAdv)) ?_
+  intro st hst
+  obtain ⟨row', rfl, _, hcov⟩ := hst
+  have hcov' : ∀ pairs ∈ ([row'] : List (List (Nat × G₁))),
+      ∀ i < vk.cs.numAdviceColumns, ∃ a, (i, a) ∈ pairs := by
+    intro pairs hp i hi
+    simp only [List.mem_singleton] at hp
+    subst hp
+    obtain ⟨ph, hph, hiph⟩ := adviceCols_cover vk hf hi
+    exact hcov ph hph i hiph
+  refine RunsAllP.bind E (m := ([row'] : List (List (Nat × G₁))).foldlM
+      (init := (#[] : Array (Array G₁))) fun acc pairs => do
+        let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+          "proofs/src/plonk/verifier.rs:118")
+        pure (acc.push row))
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAll.toRunsAllP E (runsAll_adviceScatter E vk [row'] #[] hcov')) ?_
+  intro adviceCommitments _
+  obtain ⟨xs, hxs⟩ := scatterIndexed_ok_of_cover 0 ([] : List (Nat × Fr p))
+    "proofs/src/plonk/verifier.rs:134" (fun i hi => by omega)
+  rw [hsp, hxs]
+  refine RunsAllP.bind E (m := StateT.lift (.ok xs : Except Fault (Array (Fr p))))
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAllP.lift_ok E xs (fun _ => True) trivial) ?_
+  intro challenges _
+  exact runsAllP_parseTraceTail E vk hdeg hs adviceCommitments challenges
+    QMult QPerm QLook QTrash hlenMult hlenPerm hlenLook hlenTrash
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -8273,6 +8371,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceTail [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceWireBody_sizes [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
