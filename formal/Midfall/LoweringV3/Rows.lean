@@ -212,6 +212,45 @@ theorem lagBlockPoisonContract_of_inner (R : Render p G₁ G₂ Gₜ)
 
 #assert_axioms lagBlockPoisonContract_of_inner [propext, Classical.choice, Quot.sound]
 
+/-- **THE `BlockSim` POISON CONJUNCT FOR LAGRANGE, FROM THE ZERO-SUCCESS COMPOSITION.** This is
+    the second `StmtsContractAll` of `BlockSimAt R .lagrange`: every run from a poisoned boundary
+    halts reverted. It is `LagrangeBlock.lagBlockPoisonContract_of_fits_zero`, whose inputs are the
+    standard table lookups, PG-LAG-FITS and the two counts; no `Poisoned → LagPre C` bridge and no
+    clean-parser fact is used. -/
+theorem lag_poison_walk_of_fits_zero (R : Render p G₁ G₂ Gₜ)
+    (product : PairingProduct) (hR : ValidV3 R) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (g : ExternalGas)
+    (C : LagrangeBlock.LagCfg R.consts cd R.pv.k R.pv.numInstances R.pv.numNegLagranges)
+    (hr : R.consts.lookup "r" = none)
+    (hX : R.consts.lookup "X_MPTR" = some C.aX)
+    (hO : R.consts.lookup "OMEGA_MPTR" = some C.aO)
+    (hL : R.consts.lookup "OMEGA_INV_TO_L_MPTR" = some C.aL)
+    (hN : R.consts.lookup "N_INV_MPTR" = some C.aN)
+    (hI : R.consts.lookup "INSTANCE_CPTR" = some C.aI)
+    (hD : R.consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D)
+    (hS : R.consts.lookup "BATCH_INV_SCRATCH_MPTR" = some C.s)
+    (hXN : R.consts.lookup "X_N_MPTR" = some C.aXN)
+    (hXN1 : R.consts.lookup "X_N_MINUS_1_INV_MPTR" = some C.aXN1)
+    (hLL : R.consts.lookup "L_LAST_MPTR" = some C.aLL)
+    (hLB : R.consts.lookup "L_BLIND_MPTR" = some C.aLB)
+    (hL0 : R.consts.lookup "L_0_MPTR" = some C.aL0)
+    (hIE : R.consts.lookup "INSTANCE_EVAL_MPTR" = some C.aIE)
+    (hfits : LagrangeBlock.LagWindowFits C)
+    (hm : 2 ≤ R.pv.numNegLagranges) (hn : 1 ≤ R.pv.numInstances)
+    (hk : R.pv.k < 2 ^ 256) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g)
+      (R.scope (permissive (callsOf product)) g) (R.slice Partial.lagrange)
+      (fun V st => Poisoned R H vkAddr cd V st)
+      (fun _ _ V' st' o => (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+        (Partial.lagrange ≠ .traceReturn ∧ o = .normal ∧ Poisoned R H vkAddr cd V' st')) := by
+  intro V st hpois V' st' o hrun
+  exact Or.inl (LagrangeBlock.lagBlockPoisonContract_of_fits_zero R product hR H vkAddr cd g
+    C hr hX hO hL hN hI hD hS hXN hXN1 hLL hLB hL0 hIE hfits hm hn hk
+    V st hpois V' st' o hrun)
+
+#assert_axioms lag_poison_walk_of_fits_zero [propext, Classical.choice, Quot.sound]
+
+
 /-- **LEAF (T3.9, WP A4): the lagrange simulation row.** Evidence `GeneratorRows.lean:621`; children
     are loops a-e, HLP.1.b, `lag_agrees`, `lag_poison`. -/
 theorem lag_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
