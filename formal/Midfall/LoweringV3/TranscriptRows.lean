@@ -63,6 +63,7 @@
 -- no 'native_decide' (D-P17); no 'maxHeartbeats'/'maxRecDepth' raise.
 import Midfall.LoweringV3.QuotientRows
 import Midfall.Yul.VKP
+import Midfall.Yul.LoopRule
 import Midfall.LoweringV2.Blocks.EcPairing
 import Midfall.LoweringV3.VkWindow
 import Midfall.LoweringV3.MemoryPairs
@@ -6422,6 +6423,8 @@ theorem commonG1Inline_runs {c : ExternalCalls} {g : ExternalGas}
       (fun V' st' o => Hold (
         (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
         (o = .normal ∧ VEnv.get V' "ret" = some (buf + 128) ∧
+          VEnv.get (restore [("buf_len", buf), ("cptr", cptr), ("ret", (0 : U256))] V')
+            "ret" = some (buf + 128) ∧
           st'.env = st.env ∧ st'.halted = st.halted ∧
           bytesAt st' buf.toNat 128 = cdSlice cd cptr.toNat 128 ∧
           (∀ x, (x < buf.toNat ∨ buf.toNat + 128 ≤ x) → st'.memory x = st.memory x) ∧
@@ -6441,7 +6444,8 @@ theorem commonG1Inline_runs {c : ExternalCalls} {g : ExternalGas}
   wp_run
   -- the normal exit
   · rename_i hxshr hyshr hxcc hycc
-    refine Hold.intro (Or.inr ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩)
+    refine Hold.intro (Or.inr ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩)
+    · rfl
     · rfl
     · rfl
     · rfl
@@ -6543,33 +6547,297 @@ theorem commonG1Inline_runs {c : ExternalCalls} {g : ExternalGas}
 
 end CommonG1InlineRuns
 
+section G1Walk
+
+open Midfall.Yul.Wp Midfall.Yul.WpBridge Midfall.Yul.WpTac Midfall.Yul.VKP
+open Midfall.LoweringV2.Blocks Midfall.LoweringV2.Blocks.TraceReturn Midfall.Yul.Word
+open Midfall.Yul.LoopRule
+
+/-! ### VEnv algebra (the tree's LagrangeRows copies, kept local to this file) -/
+
+theorem t_venv_set_length {D : YulSemantics.Dialect} [DecidableEq D.Value] (V : VEnv D)
+    (x : Ident) (a : D.Value) : (VEnv.set V x a).length = V.length := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x <;> simp [VEnv.set, hy, ih]
+
+theorem t_venv_set_set {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x : Ident} {a b : D.Value} : VEnv.set (VEnv.set V x a) x b = VEnv.set V x b := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x <;> simp [VEnv.set, hy, ih]
+
+theorem t_venv_set_comm {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x y : Ident} {a b : D.Value} (h : x ≠ y) :
+    VEnv.set (VEnv.set V x a) y b = VEnv.set (VEnv.set V y b) x a := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨z, u⟩ := p
+      by_cases hzx : z = x
+      · subst hzx
+        have hzy : ¬ (z = y) := fun h' => h h'
+        simp [VEnv.set, hzy]
+      · by_cases hzy : z = y
+        · subst hzy
+          have hzx' : ¬ (z = x) := fun h' => hzx h'
+          simp [VEnv.set, hzx']
+        · simp [VEnv.set, hzx, hzy, ih]
+
+theorem t_venv_get_set_same {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x : Ident} {v w : D.Value} (h : VEnv.get V x = some v) :
+    VEnv.get (VEnv.set V x w) x = some w := by
+  induction V with
+  | nil => cases h
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x
+      · subst hy
+        simp [VEnv.set, VEnv.get]
+      · have hget : VEnv.get rest x = some v := by
+          have h2 : VEnv.get ((y, u) :: rest) x = some v := h
+          simpa [VEnv.get, List.find?, hy] using h2
+        have h3 := ih hget
+        simpa [VEnv.set, VEnv.get, List.find?, hy] using h3
+
+theorem t_venv_get_set_ne {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x y : Ident} {v : D.Value} (h : y ≠ x) :
+    VEnv.get (VEnv.set V x v) y = VEnv.get V y := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y', u⟩ := p
+      by_cases hyx : y' = x
+      · subst hyx
+        have hyy : ¬ (y' = y) := fun h' => h h'.symm
+        simp [VEnv.set, VEnv.get, List.find?, hyy]
+      · have hset : VEnv.set ((y', u) :: rest) x v = (y', u) :: VEnv.set rest x v := by
+          simp [VEnv.set, hyx]
+        rw [hset]
+        by_cases hyy : y' = y
+        · subst hyy
+          simp [VEnv.get, List.find?]
+        · simpa [VEnv.get, List.find?, hyy] using ih
+
+theorem t_venv_get_cons_ne {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x y : Ident} {v : D.Value} (h : y ≠ x) :
+    VEnv.get ((x, v) :: V) y = VEnv.get V y := by
+  have hd : decide (x = y) = false := decide_eq_false (fun h' => h h'.symm)
+  simp only [VEnv.get, List.find?, hd]
+
+theorem t_venv_set_self {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x : Ident} {v : D.Value} (h : VEnv.get V x = some v) : VEnv.set V x v = V := by
+  induction V with
+  | nil => cases h
+  | cons p rest ih =>
+      obtain ⟨y, u⟩ := p
+      by_cases hy : y = x
+      · subst hy
+        simp [VEnv.set, VEnv.get] at h ⊢
+        rw [h]
+      · have hget : VEnv.get rest x = some v := by
+          have h2 : VEnv.get ((y, u) :: rest) x = some v := h
+          simpa [VEnv.get, List.find?, hy] using h2
+        simp [VEnv.set, hy, ih hget]
+
+theorem t_venv_set_overwrite {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V : VEnv D) (x y z : Ident) (a b c a' b' c' : D.Value)
+    (hxy : x ≠ y) (hxz : x ≠ z) (hyz : y ≠ z) :
+    VEnv.set (VEnv.set (VEnv.set (VEnv.set (VEnv.set (VEnv.set V x a) y b) z c)
+        x a') y b') z c'
+      = VEnv.set (VEnv.set (VEnv.set V x a') y b') z c' := by
+  rw [t_venv_set_comm (x := z) (y := x) (a := c) (b := a') (h := Ne.symm hxz)]
+  rw [t_venv_set_comm (x := y) (y := x) (a := b) (b := a') (h := Ne.symm hxy)]
+  rw [t_venv_set_set]
+  rw [t_venv_set_comm (x := z) (y := y) (a := c) (b := b') (h := Ne.symm hyz)]
+  rw [t_venv_set_set]
+  rw [t_venv_set_set]
+
+theorem t_restore_cons {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V₀ V : VEnv D) (E : D.Value) (h : V.length = V₀.length) :
+    restore V₀ (("end", E) :: V) = V := by
+  rw [restore, List.length_cons, h]
+  simp
+
+/-! ### The walk's environment family -/
+
+/-- `List.append`'s compiled worker at the empty list: the kernel leaves this form in goals
+    that have been through `whnf`, where `List.nil_append` no longer matches syntactically. -/
+theorem list_append_nil_f {α : Type} (l : List α) : List.append._f [] PUnit.unit l = l := rfl
+
+/-- The walk loop's pre: the calldata and the three cursors. -/
+def g1WalkPre {c : ExternalCalls} {g : ExternalGas} (cd : Bytes) (walk : String)
+    (a w b : Nat) : VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+  fun V st => st.env.calldata = cd.data.toList ∧
+    VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 a) ∧
+    VEnv.get V walk = some (BitVec.ofNat 256 w) ∧
+    VEnv.get V "buf_len" = some (BitVec.ofNat 256 b)
+
+/-- The walk loop's post: every run reverts, or absorbs the `j` frames into both windows, advances
+    the three cursors, and leaves memory outside both windows alone. -/
+def g1WalkPost {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) (cd : Bytes) (walk : String) (j a w b : Nat) :
+    VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop :=
+  fun V' st' o => (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+    (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
+      V' = VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * j)))
+        walk (BitVec.ofNat 256 (w + 128 * j))) "proof_cptr" (BitVec.ofNat 256 (a + 128 * j)) ∧
+      bytesAt st' w (128 * j) = cdSlice cd a (128 * j) ∧
+      bytesAt st' b (128 * j) = cdSlice cd a (128 * j) ∧
+      (∀ i, i < j → g1WordsOk cd (a + 128 * i) = true) ∧
+      (∀ x, (x < w ∨ w + 128 * j ≤ x) → (x < b ∨ b + 128 * j ≤ x) →
+        st'.memory x = st.memory x))
+
+/-- The loop-head environment at `k` frames: `end` at the head, the three cursors updated in
+    place on the caller's environment. -/
+def g1WalkEnv {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g))
+    (endv : U256) (walk : String) (a w b : Nat) (k : Nat) : VEnv (Bridge.Dialect c g) :=
+  ("end", endv) :: VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * k)))
+    walk (BitVec.ofNat 256 (w + 128 * k))) "proof_cptr" (BitVec.ofNat 256 (a + 128 * k))
+
+/-- **THE `common_uncompressed_g1` CALL SUMMARY, in continuation-passing form.** Besides the
+    helper's own post facts it requires the call-site facts the helper contract needs (calldata,
+    bounds, the `(hi, lo)` split), and - because the row runs at an arbitrary function scope - the
+    declaration resolution: the looked-up body IS `commonG1Inline err hi lo` and its scope resolves
+    `fail`. -/
+def g1Summary {c : ExternalCalls} {g : ExternalGas} (funs : FunEnv (Bridge.Dialect c g))
+    (cd : Bytes) (st1 : EvmState) (buf cptr : U256) (err hi lo : Nat) :
+    (EResult (Bridge.Dialect c g) → Prop) → Prop :=
+  fun Q =>
+    (∀ (decl : FDecl (Bridge.Dialect c g)) (cenv : FunEnv (Bridge.Dialect c g)),
+        lookupFun funs "common_uncompressed_g1" = some (decl, cenv) →
+        decl.body = commonG1Inline err hi lo ∧ decl.params = ["buf_len", "cptr"] ∧
+        decl.rets = ["ret"] ∧
+        (∃ cf, lookupFun cenv "fail" = some (TraceReturn.failFDecl, cf))) ∧
+    st1.env.calldata = cd.data.toList ∧
+    cptr.toNat + 128 ≤ cd.data.toList.length ∧
+    cd.size < 2 ^ 256 ∧
+    hi * 2^256 + lo + 1 = Midfall.Assumptions.pBase ∧
+    (∀ st2, Midfall.LoweringV2.Reverted st2 → Q (.halt st2)) ∧
+    (∀ st2, st2.env = st1.env → st2.halted = st1.halted →
+      bytesAt st2 buf.toNat 128 = cdSlice cd cptr.toNat 128 →
+      (∀ x, (x < buf.toNat ∨ buf.toNat + 128 ≤ x) → st2.memory x = st1.memory x) →
+      Q (.vals [buf + 128] st2))
+
+/-- The call table the walk loop runs under: `fail` and `common_uncompressed_g1`. -/
+def g1WalkCT {c : ExternalCalls} {g : ExternalGas} (cd : Bytes) (err hi lo : Nat) :
+    CT (Bridge.Dialect c g) :=
+  fun funs fn args st =>
+    match args with
+    | [_] => if fn = "fail" then some (failT funs) else none
+    | [buf, cptr] =>
+        if fn = "common_uncompressed_g1" then
+          some (g1Summary funs cd st buf cptr err hi lo)
+        else none
+    | _ => none
+
+theorem g1WalkCT_sound {c : ExternalCalls} {g : ExternalGas} (cd : Bytes) (err hi lo : Nat) :
+    CSound (Bridge.Dialect c g) (g1WalkCT (c := c) (g := g) cd err hi lo) := by
+  intro funs fn argvals st1 T hT Q hTQ decl cenv hlook hlenV Vend st2 o hbody
+  unfold g1WalkCT at hT
+  cases argvals with
+  | nil => cases hT
+  | cons a1 rest =>
+    cases rest with
+    | nil =>
+      dsimp only at hT
+      by_cases hfn : fn = "fail"
+      · rw [if_pos hfn] at hT
+        cases hT
+        obtain ⟨⟨cenv', hl⟩, hQ⟩ := hTQ
+        subst hfn
+        rw [hl] at hlook
+        cases hlook
+        cases hbody with
+        | block hstmts =>
+            obtain ⟨ho, hrev⟩ := tr_fail_body hstmts
+            subst ho
+            refine ⟨fun h => ?_, fun _ => hQ _ hrev⟩
+            rcases h with h | h <;> cases h
+      · rw [if_neg hfn] at hT
+        cases hT
+    | cons a2 rest2 =>
+      cases rest2 with
+      | nil =>
+        dsimp only at hT
+        by_cases hfn : fn = "common_uncompressed_g1"
+        · rw [if_pos hfn] at hT
+          cases hT
+          subst hfn
+          obtain ⟨hdecl, hcd1, hlen, hsz, hkey, hhalt, hnorm⟩ := hTQ
+          obtain ⟨hbodyEq, hparams, hrets, hfailC⟩ := hdecl decl cenv hlook
+          rw [hbodyEq] at hbody
+          have hcallee : (decl.params.zip [a1, a2]) ++
+              bindZeros (Bridge.Dialect c g) decl.rets =
+              [("buf_len", a1), ("cptr", a2), ("ret", (Bridge.Dialect c g).zero)] := by
+            rw [hparams, hrets]
+            simp [bindZeros]
+          rw [hcallee] at hbody
+          cases hbody with
+          | block hstmts =>
+              have hfuns : ∃ cf, lookupFun (hoist (Bridge.Dialect c g)
+                  (commonG1Inline err hi lo) :: cenv) "fail" =
+                  some (TraceReturn.failFDecl, cf) := by
+                obtain ⟨cf, hcf⟩ := hfailC
+                exact ⟨cf, by
+                  change lookupFun cenv "fail" = some (TraceReturn.failFDecl, cf)
+                  exact hcf⟩
+              have hsum := commonG1Inline_runs (hoist (Bridge.Dialect c g)
+                (commonG1Inline err hi lo) :: cenv) st1 cd a1 a2 err hi lo hfuns hcd1 hlen hsz hkey
+              have hres := hsum _ _ _ hstmts
+              rcases hres.elim with ⟨ho, hrev⟩ | ⟨ho, hret', hretR, henv', hhalt', hbytes, hmem', hwords⟩
+              · subst ho
+                refine ⟨fun hcon => ?_, fun _ => hhalt _ hrev⟩
+                rcases hcon with h | h <;> cases h
+              · subst ho
+                refine ⟨fun _ => ?_, fun h => (by cases h)⟩
+                rw [hrets]
+                simp only [List.map_cons, List.map_nil]
+                rw [show (Bridge.Dialect c g).zero = (0 : U256) from rfl]
+                rw [hretR]
+                simp only [Option.getD_some]
+                exact hnorm _ henv' hhalt' hbytes hmem'
+        · rw [if_neg hfn] at hT
+          cases hT
+      | cons a3 rest3 => cases hT
+end G1Walk
+
+
 /-- **THE WALK LOOP (all runs), ONE LEMMA FOR SIX SECTIONS.** Bound = `j`, the section's frame
     count. Every run reverts (a frame fails the range check), or ends normally having absorbed the
     `j` frames, copied them to the walk window, and advanced the three cursors; every frame passed
-    `g1WordsOk`. LEAF ROW.TP.2 (loop rule GEN.3 + the `common_uncompressed_g1` summary). Evidence
-    :737-760, statement verbatim.
+    `g1WordsOk`. LEAF ROW.TP.2 (loop rule GEN.3 + the `common_uncompressed_g1` summary).
 
-    DEPENDENCY, NAMED AND OPEN: ROW.TP.3's `common_uncompressed_g1` helper summary (issued only by
-    ROW.TP step 1, QUEUE row 95h) and T3.5's `cdSlice` arithmetic. Neither is in the tree. -/
+    RESTATED AT THE CONSUMER BOUNDARY (A6 follow-up). The helper is the INLINED function of
+    `R.scope`, so the loop cannot execute its call without knowing the declaration at `R.scope`:
+    the two added facts are (a) `hcommon`, the resolution of `common_uncompressed_g1` to the
+    three-parameter inlined body, and (b) `hkey`, its `BLS_P_HI`/`BLS_P_MINUS_ONE_LO` split.
+    These are consumer-side, not row weakenings: `tp_computes` has `hR : ValidV3 R` and discharges
+    them from `programOkB` (`constsCoherent`) + `expectedConsts` + `commonG1_inline`, with
+    `err`/`hi`/`lo` the table's `ERR_BAD_POINT_ENCODING`/`BLS_P_HI`/`BLS_P_MINUS_ONE_LO`.
+
+    PROOF PLAN (rest of the row). `allRuns_for_cons_wp_count` under `g1WalkCT` (already sound,
+    `g1WalkCT_sound`) with the invariant `g1WalkEnv V end walk a w b k` + the three cursor reads +
+    the two `bytesAt` windows + `g1WordsOk` below `k` + the outside-window memory clause + `k ≤ j`;
+    the body is `commonG1Inline_runs` at `(ofNat (a+128k))` with `hh = hcommon`; the windows are
+    `bytesAt_append`/`cdSlice_append`; the exit is `t_restore_cons`/`t_venv_set_overwrite`. -/
 theorem g1walk_loop_sem (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
     (cd : Bytes) (walk : String) (hwalk : walk ≠ "proof_cptr" ∧ walk ≠ "buf_len" ∧ walk ≠ "end")
     (j a w b : Nat) (ha : a + 128 * j ≤ cd.size) (hcd : cd.size < 2 ^ 256)
     (hw : w + 128 * j < 2 ^ 256) (hb : b + 128 * j < 2 ^ 256)
-    (hdisj : w + 128 * j ≤ b ∨ b + 128 * j ≤ w) :
+    (hdisj : w + 128 * j ≤ b ∨ b + 128 * j ≤ w)
+    (err hi lo : Nat)
+    (hcommon : lookupFun (R.scope c g) "common_uncompressed_g1" =
+      some ({ params := ["buf_len", "cptr"], rets := ["ret"],
+              body := commonG1Inline err hi lo }, R.scope c g))
+    (hkey : hi * 2^256 + lo + 1 = Midfall.Assumptions.pBase) :
     StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) [GenAst.g1WalkLoop walk (128 * j)]
-      (fun V st => st.env.calldata = cd.data.toList ∧
-        VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 a) ∧
-        VEnv.get V walk = some (BitVec.ofNat 256 w) ∧
-        VEnv.get V "buf_len" = some (BitVec.ofNat 256 b))
-      (fun V st V' st' o => (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
-        (o = .normal ∧ st'.env = st.env ∧ st'.halted = st.halted ∧
-          V' = VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * j)))
-            walk (BitVec.ofNat 256 (w + 128 * j))) "proof_cptr" (BitVec.ofNat 256 (a + 128 * j)) ∧
-          bytesAt st' w (128 * j) = cdSlice cd a (128 * j) ∧
-          bytesAt st' b (128 * j) = cdSlice cd a (128 * j) ∧
-          (∀ i, i < j → g1WordsOk cd (a + 128 * i) = true) ∧
-          (∀ x, (x < w ∨ w + 128 * j ≤ x) → (x < b ∨ b + 128 * j ≤ x) →
-            st'.memory x = st.memory x))) := by
+      (g1WalkPre cd walk a w b)
+      (fun V st V' st' o => g1WalkPost V st cd walk j a w b V' st' o) := by
   sorry
 
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
@@ -6901,6 +7169,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_calldatacopy_cdSlice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_append [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1WalkCT_sound [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.t_venv_set_overwrite [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSize_of_envelope [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_length_of_envelope [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_slice [propext, Classical.choice, Quot.sound] native []
