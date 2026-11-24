@@ -9979,9 +9979,621 @@ theorem g1WalkCT_sound {c : ExternalCalls} {g : ExternalGas} (cd : Bytes) (err h
         · rw [if_neg hfn] at hT
           cases hT
       | cons a3 rest3 => cases hT
+theorem stepOp_add_evm (a b : U256) (st : EvmState) :
+    stepOp Op.add [a, b] st = some (.ok [a + b] st) := rfl
+
+theorem stepOp_calldatacopy_evm (dst src n : U256) (st : EvmState) :
+    stepOp Op.calldatacopy [dst, src, n] st =
+      some (.ok [] { touchMemory st dst.toNat n.toNat with
+        memory := copyInto st.memory dst.toNat src.toNat n.toNat st.env.calldata }) := rfl
+
+theorem t_setMany_one {D : YulSemantics.Dialect} [DecidableEq D.Value] (V : VEnv D)
+    (x : Ident) (v : D.Value) : VEnv.setMany V [x] [v] = VEnv.set V x v := rfl
+
+/-- A `calldatacopy` window disjoint from a read leaves the read alone. -/
+theorem bytesAt_calldatacopy_outside (st : EvmState) (dat : List UInt8)
+    (dst src n a m : Nat) (h : a + m ≤ dst ∨ dst + n ≤ a) :
+    bytesAt { touchMemory st dst n with memory := copyInto st.memory dst src n dat } a m
+      = bytesAt st a m := by
+  unfold bytesAt readBytes
+  apply ByteArray.ext
+  apply congrArg List.toArray
+  apply List.map_congr_left
+  intro i hi
+  have him : i < m := List.mem_range.mp hi
+  show (if dst ≤ a + i ∧ a + i < dst + n then byteFrom dat (src + (a + i - dst))
+      else st.memory (a + i)) = st.memory (a + i)
+  have hc : ¬ (dst ≤ a + i ∧ a + i < dst + n) := by omega
+  rw [if_neg hc]
+
+/-- A `bytesAt` window is unchanged where the memory is pointwise unchanged. -/
+theorem bytesAt_congr_mem {st st' : EvmState} {a m : Nat}
+    (h : ∀ x, a ≤ x → x < a + m → st'.memory x = st.memory x) :
+    bytesAt st' a m = bytesAt st a m := by
+  unfold bytesAt readBytes
+  apply ByteArray.ext
+  apply congrArg List.toArray
+  apply List.map_congr_left
+  intro i hi
+  have him : i < m := List.mem_range.mp hi
+  exact h (a + i) (by omega) (by omega)
+
+set_option maxHeartbeats 20000000 in
+theorem g1WalkTail_contract (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (cd : Bytes) (walk : String) (hwalk : walk ≠ "proof_cptr" ∧ walk ≠ "buf_len" ∧ walk ≠ "end")
+    (j a w b : Nat) (ha : a + 128 * j ≤ cd.size) (hcds : cd.size < 2 ^ 256)
+    (hw : w + 128 * j < 2 ^ 256) (hb : b + 128 * j < 2 ^ 256)
+    (hdisj : w + 128 * j ≤ b ∨ b + 128 * j ≤ w)
+    (st0 : EvmState) (k : Nat) (hklt : k < j) :
+    StmtsContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) ::
+        hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+          [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] ::
+        R.scope c g)
+      [GenAst.yexpr (GenAst.yop Op.calldatacopy
+          [GenAst.yvar walk, GenAst.yvar "proof_cptr", GenAst.ylit 128]),
+        GenAst.yset walk (GenAst.yop Op.add [GenAst.yvar walk, GenAst.ylit 128]),
+        GenAst.yset "proof_cptr" (GenAst.yop Op.add [GenAst.yvar "proof_cptr", GenAst.ylit 128])]
+      (fun V st =>
+        VEnv.get V walk = some (BitVec.ofNat 256 (w + 128 * k)) ∧
+        VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) ∧
+        st.env.calldata = cd.data.toList ∧ st.halted = st0.halted ∧
+        bytesAt st b (128 * k) = cdSlice cd a (128 * k) ∧
+        bytesAt st w (128 * k) = cdSlice cd a (128 * k) ∧
+        bytesAt st (b + 128 * k) 128 = cdSlice cd (a + 128 * k) 128 ∧
+        g1WordsOk cd (a + 128 * k) = true ∧
+        (∀ i, i < k → g1WordsOk cd (a + 128 * i) = true) ∧
+        (∀ x, (x < w ∨ w + 128 * k ≤ x) → (x < b ∨ b + 128 * (k + 1) ≤ x) →
+          st.memory x = st0.memory x))
+      (fun V st V' st' o => Hold (
+        (o = .normal ∧
+          V' = VEnv.set (VEnv.set V walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+            "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1))) ∧
+          st'.env = st.env ∧ st'.halted = st.halted ∧
+          bytesAt st' b (128 * (k + 1)) = cdSlice cd a (128 * (k + 1)) ∧
+          bytesAt st' w (128 * (k + 1)) = cdSlice cd a (128 * (k + 1)) ∧
+          (∀ i, i < k + 1 → g1WordsOk cd (a + 128 * i) = true) ∧
+          (∀ x, (x < w ∨ w + 128 * (k + 1) ≤ x) → (x < b ∨ b + 128 * (k + 1) ≤ x) →
+            st'.memory x = st0.memory x)) ∨
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st'))) := by
+  intro V st hpre
+  obtain ⟨hwv, hpc, hcd, hhalt, hbB, hbW, hBframe, hBwords, hwords, hmem⟩ := hpre
+  have hk_le : k ≤ j := Nat.le_of_lt hklt
+  have hmul : 128 * k ≤ 128 * j := Nat.mul_le_mul_left 128 hk_le
+  have hwlt : w + 128 * k < 2 ^ 256 := by omega
+  have hblt : b + 128 * k < 2 ^ 256 := by omega
+  have hal : a + 128 * k < 2 ^ 256 := by omega
+  have hszEq : cd.data.toList.length = cd.size := by
+    show cd.data.toList.length = cd.data.size
+    exact Array.length_toList
+  have hcdlen : (a + 128 * k) + 128 ≤ cd.data.toList.length := by
+    have := hszEq
+    omega
+  refine allRuns_of_wp (c := c) (g := g) (n := 40) ?_
+  set_option wpLets false in
+  wp_run
+  rw [hpc]
+  set_option wpLets false in
+  wp_run
+  rw [hwv]
+  set_option wpLets false in
+  wp_run
+  rw [hwv]
+  set_option wpLets false in
+  wp_run
+  have hpc2 : VEnv.get (VEnv.setMany V [walk]
+      [(fun x1 x2 : U256 => x1 + x2) (BitVec.ofNat 256 (w + 128 * k))
+        ((Bridge.Dialect c g).litValue (Literal.number 128))]) "proof_cptr" =
+      some (BitVec.ofNat 256 (a + 128 * k)) := by
+    rw [t_setMany_one (D := Bridge.Dialect c g)]
+    rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := walk) (y := "proof_cptr") (by
+      obtain ⟨h1, h2, h3⟩ := hwalk
+      exact Ne.symm h1)]
+    exact hpc
+  rw [hpc2]
+  set_option wpLets false in
+  wp_run
+  have hWk1 : (fun x1 x2 : U256 => x1 + x2) (BitVec.ofNat 256 (w + 128 * k))
+      ((Bridge.Dialect c g).litValue (Literal.number 128)) =
+      BitVec.ofNat 256 (w + 128 * (k + 1)) := by
+    change BitVec.ofNat 256 (w + 128 * k) + BitVec.ofNat 256 128 =
+      BitVec.ofNat 256 (w + 128 * (k + 1))
+    calc BitVec.ofNat 256 (w + 128 * k) + BitVec.ofNat 256 128
+        = BitVec.ofNat 256 ((w + 128 * k) + 128) := (BitVec.ofNat_add _ _).symm
+      _ = BitVec.ofNat 256 (w + 128 * (k + 1)) := by
+          rw [show (w + 128 * k) + 128 = w + 128 * (k + 1) from by omega]
+  have hPk1 : (fun x1 x2 : U256 => x1 + x2) (BitVec.ofNat 256 (a + 128 * k))
+      ((Bridge.Dialect c g).litValue (Literal.number 128)) =
+      BitVec.ofNat 256 (a + 128 * (k + 1)) := by
+    change BitVec.ofNat 256 (a + 128 * k) + BitVec.ofNat 256 128 =
+      BitVec.ofNat 256 (a + 128 * (k + 1))
+    calc BitVec.ofNat 256 (a + 128 * k) + BitVec.ofNat 256 128
+        = BitVec.ofNat 256 ((a + 128 * k) + 128) := (BitVec.ofNat_add _ _).symm
+      _ = BitVec.ofNat 256 (a + 128 * (k + 1)) := by
+          rw [show (a + 128 * k) + 128 = a + 128 * (k + 1) from by omega]
+  refine Hold.intro (Or.inl ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩)
+  · -- environment: the two assignments, with the normalized add results
+    rw [t_setMany_one (D := Bridge.Dialect c g), t_setMany_one (D := Bridge.Dialect c g)]
+    rw [hWk1, hPk1]
+  · rfl
+  · rfl
+  · -- buffer window: the k-window is untouched, the new frame is the helper's copy
+    rw [show 128 * (k + 1) = 128 * k + 128 by omega, bytesAt_append]
+    dsimp only
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hwlt, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hal,
+      show (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number 128))) = 128 from rfl]
+    rw [bytesAt_calldatacopy_outside st st.env.calldata (w + 128 * k) (a + 128 * k) 128
+      b (128 * k) (by omega)]
+    rw [bytesAt_calldatacopy_outside st st.env.calldata (w + 128 * k) (a + 128 * k) 128
+      (b + 128 * k) 128 (by omega)]
+    rw [hbB, hBframe, cdSlice_append]
+  · -- walk window: the k-window is untouched, the new frame is the loop's copy
+    rw [show 128 * (k + 1) = 128 * k + 128 by omega, bytesAt_append]
+    dsimp only
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hwlt, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hal,
+      show (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number 128))) = 128 from rfl]
+    rw [bytesAt_calldatacopy_outside st st.env.calldata (w + 128 * k) (a + 128 * k) 128
+      w (128 * k) (by omega)]
+    rw [bytesAt_calldatacopy_cdSlice st cd (w + 128 * k) (a + 128 * k) 128 hcd hcdlen]
+    rw [hbW, cdSlice_append]
+  · -- the frame's range check
+    intro i hi
+    by_cases hik : i < k
+    · exact hwords i hik
+    · have hik' : i = k := by omega
+      subst i
+      exact hBwords
+  · -- memory outside both windows
+    intro x hxw hxb
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hwlt, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hal,
+      show (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number 128))) = 128 from rfl]
+    show copyInto st.memory (w + 128 * k) (a + 128 * k) 128 st.env.calldata x = st0.memory x
+    have hxc : copyInto st.memory (w + 128 * k) (a + 128 * k) 128 st.env.calldata x = st.memory x := by
+      unfold copyInto
+      rw [if_neg]
+      omega
+    rw [hxc]
+    exact hmem x (by omega) (by omega)
+
+set_option maxHeartbeats 20000000 in
+theorem g1Call_contract (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (cd : Bytes) (walk : String) (hwalk : walk ≠ "proof_cptr" ∧ walk ≠ "buf_len" ∧ walk ≠ "end")
+    (j a w b : Nat) (ha : a + 128 * j ≤ cd.size) (hcds : cd.size < 2 ^ 256)
+    (hb : b + 128 * j < 2 ^ 256)
+    (err hi lo : Nat)
+    (hcommon : lookupFun (R.scope c g) "common_uncompressed_g1" =
+      some ({ params := ["buf_len", "cptr"], rets := ["ret"],
+              body := commonG1Inline err hi lo }, R.scope c g))
+    (hkey : hi * 2^256 + lo + 1 = Midfall.Assumptions.pBase)
+    (st0 : EvmState) (k : Nat) (hklt : k < j) :
+    StmtContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) ::
+        hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+          [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] ::
+        R.scope c g)
+      (Stmt.assign ["buf_len"] (Expr.call "common_uncompressed_g1"
+        [Expr.var "buf_len", Expr.var "proof_cptr"]))
+      (fun V st =>
+        VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) ∧
+        VEnv.get V walk = some (BitVec.ofNat 256 (w + 128 * k)) ∧
+        VEnv.get V "buf_len" = some (BitVec.ofNat 256 (b + 128 * k)) ∧
+        st.env.calldata = cd.data.toList ∧ st.halted = st0.halted)
+      (fun V st V' st' o => Hold (
+        (o = .normal ∧
+          V' = VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * (k + 1))) ∧
+          st'.env = st.env ∧ st'.halted = st.halted ∧
+          bytesAt st' (b + 128 * k) 128 = cdSlice cd (a + 128 * k) 128 ∧
+          g1WordsOk cd (a + 128 * k) = true ∧
+          (∀ x, (x < b + 128 * k ∨ b + 128 * k + 128 ≤ x) → st'.memory x = st.memory x)) ∨
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st'))) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hpc, hwv, hbuf, hcd, hhalt⟩ := hpre
+  have hk_le : k ≤ j := Nat.le_of_lt hklt
+  have hmul : 128 * k ≤ 128 * j := Nat.mul_le_mul_left 128 hk_le
+  have hclt : a + 128 * k < 2 ^ 256 := by omega
+  have hszEq : cd.data.toList.length = cd.size := by
+    show cd.data.toList.length = cd.data.size
+    exact Array.length_toList
+  have hlen : (BitVec.ofNat 256 (a + 128 * k)).toNat + 128 ≤ cd.data.toList.length := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hclt, hszEq]
+    omega
+  have hfail : ∃ cenv, lookupFun (R.scope c g) "fail" =
+      some (TraceReturn.failFDecl, cenv) := by
+    have h := fail_lookupV3 (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ) R (c := c) (g := g)
+    rw [show scopeV3 R c g = R.scope c g from rfl] at h
+    exact ⟨R.scope c g, h⟩
+  have hhB : hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) = [] := rfl
+  have hhI : hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+      [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] = [] := rfl
+  have hlook0 : lookupFun (hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) ::
+      hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+        [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] ::
+      R.scope c g) "common_uncompressed_g1" =
+      some ({ params := ["buf_len", "cptr"], rets := ["ret"],
+              body := commonG1Inline err hi lo }, R.scope c g) := by
+    rw [hhB, hhI]
+    change lookupFun (R.scope c g) "common_uncompressed_g1" = _
+    exact hcommon
+  have hfail' : ∃ cf, lookupFun (hoist (Bridge.Dialect c g) (commonG1Inline err hi lo) ::
+      R.scope c g) "fail" = some (TraceReturn.failFDecl, cf) := by
+    have hhC : hoist (Bridge.Dialect c g) (commonG1Inline err hi lo) = [] := rfl
+    obtain ⟨cf, hcf⟩ := hfail
+    refine ⟨cf, ?_⟩
+    rw [hhC]
+    change lookupFun (R.scope c g) "fail" = some (TraceReturn.failFDecl, cf)
+    exact hcf
+  have hcallee : ((["buf_len", "cptr"] : List String).zip
+      [BitVec.ofNat 256 (b + 128 * k), BitVec.ofNat 256 (a + 128 * k)]) ++
+      bindZeros (Bridge.Dialect c g) ["ret"] =
+      [("buf_len", BitVec.ofNat 256 (b + 128 * k)),
+        ("cptr", BitVec.ofNat 256 (a + 128 * k)),
+        ("ret", (Bridge.Dialect c g).zero)] := by
+    simp [bindZeros]
+  cases hrun with
+  | assignVal he hlenV =>
+      cases he with
+      | callOk hargs hlook harglen hbodyrun hnorm =>
+          cases hargs with
+          | argsCons hrest hhead2 =>
+            cases hrest with
+            | argsCons hrest2 hhead1 =>
+              cases hrest2 with
+              | argsNil =>
+                cases hhead2 with
+                | var hget2 =>
+                  cases hhead1 with
+                  | var hget1 =>
+                    rename_i v2 v1
+                    have hv2 : v2 = BitVec.ofNat 256 (b + 128 * k) := by
+                      have h := hget2
+                      rw [hbuf] at h
+                      exact (Option.some.inj h).symm
+                    have hv1 : v1 = BitVec.ofNat 256 (a + 128 * k) := by
+                      have h := hget1
+                      rw [hpc] at h
+                      exact (Option.some.inj h).symm
+                    rw [hlook0] at hlook
+                    cases hlook
+                    rw [hv2, hv1] at hbodyrun
+                    rw [hcallee] at hbodyrun
+                    cases hbodyrun with
+                    | block hstmts =>
+                      have hsum := commonG1Inline_runs
+                        (hoist (Bridge.Dialect c g) (commonG1Inline err hi lo) :: R.scope c g)
+                        st cd (BitVec.ofNat 256 (b + 128 * k)) (BitVec.ofNat 256 (a + 128 * k))
+                        err hi lo hfail' hcd hlen hcds hkey
+                      have hres := hsum _ _ _ hstmts
+                      rcases hres.elim with ⟨hobh, hrev⟩ |
+                          ⟨hobn, hret, hretR, henv, hhalt', hbytes, hmem', hwords⟩
+                      · rcases hnorm with h | h <;> rw [h] at hobh <;> cases hobh
+                      · have hBk1 : BitVec.ofNat 256 (b + 128 * k) + 128 =
+                            BitVec.ofNat 256 (b + 128 * (k + 1)) := by
+                          calc BitVec.ofNat 256 (b + 128 * k) + BitVec.ofNat 256 128
+                              = BitVec.ofNat 256 ((b + 128 * k) + 128) :=
+                                (BitVec.ofNat_add _ _).symm
+                            _ = BitVec.ofNat 256 (b + 128 * (k + 1)) := by
+                                rw [show (b + 128 * k) + 128 = b + 128 * (k + 1) from by omega]
+                        have hBkNat : (BitVec.ofNat 256 (b + 128 * k)).toNat = b + 128 * k := by
+                          rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by omega)]
+                        have hPkNat : (BitVec.ofNat 256 (a + 128 * k)).toNat = a + 128 * k := by
+                          rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hclt]
+                        refine Hold.intro (Or.inl ⟨rfl, ?_, henv, hhalt', ?_, ?_, ?_⟩)
+                        · simp only [List.map_cons, List.map_nil]
+                          rw [show (Bridge.Dialect c g).zero = (0 : U256) from rfl]
+                          rw [t_setMany_one (D := Bridge.Dialect c g), hretR]
+                          simp only [Option.getD_some]
+                          rw [hBk1]
+                        · rw [hBkNat, hPkNat] at hbytes
+                          exact hbytes
+                        · rw [hPkNat] at hwords
+                          exact hwords
+                        · intro x hx
+                          exact hmem' x (by simpa [hBkNat] using hx)
+  | assignHalt he =>
+      cases he with
+      | callHalt hargs hlook harglen hbodyrun =>
+          cases hargs with
+          | argsCons hrest hhead2 =>
+            cases hrest with
+            | argsCons hrest2 hhead1 =>
+              cases hrest2 with
+              | argsNil =>
+                cases hhead2 with
+                | var hget2 =>
+                  cases hhead1 with
+                  | var hget1 =>
+                    rename_i v2 v1
+                    have hv2 : v2 = BitVec.ofNat 256 (b + 128 * k) := by
+                      have h := hget2
+                      rw [hbuf] at h
+                      exact (Option.some.inj h).symm
+                    have hv1 : v1 = BitVec.ofNat 256 (a + 128 * k) := by
+                      have h := hget1
+                      rw [hpc] at h
+                      exact (Option.some.inj h).symm
+                    rw [hlook0] at hlook
+                    cases hlook
+                    rw [hv2, hv1] at hbodyrun
+                    rw [hcallee] at hbodyrun
+                    cases hbodyrun with
+                    | block hstmts =>
+                      have hsum := commonG1Inline_runs
+                        (hoist (Bridge.Dialect c g) (commonG1Inline err hi lo) :: R.scope c g)
+                        st cd (BitVec.ofNat 256 (b + 128 * k)) (BitVec.ofNat 256 (a + 128 * k))
+                        err hi lo hfail' hcd hlen hcds hkey
+                      have hres := hsum _ _ _ hstmts
+                      rcases hres.elim with ⟨hobh, hrev⟩ |
+                          ⟨hobn, hret, hretR, henv, hhalt', hbytes, hmem', hwords⟩
+                      · exact Hold.intro (Or.inr ⟨rfl, hrev⟩)
+                      · cases hobn
+      | callArgsHalt hargs =>
+          exact (Midfall.LoweringV2.Blocks.EcPairing.args_vars_ne_halt
+            (D := Bridge.Dialect c g) ["buf_len", "proof_cptr"] hargs).elim
+
+
+
 end G1Walk
 
 
+open Midfall.Yul.Wp Midfall.Yul.WpBridge Midfall.Yul.WpTac Midfall.Yul.VKP
+open Midfall.LoweringV2.Blocks Midfall.LoweringV2.Blocks.TraceReturn Midfall.Yul.Word
+open Midfall.Yul.LoopRule
+
+set_option maxHeartbeats 20000000 in
+theorem g1WalkBody_step (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (cd : Bytes) (walk : String) (hwalk : walk ≠ "proof_cptr" ∧ walk ≠ "buf_len" ∧ walk ≠ "end")
+    (j a w b : Nat) (ha : a + 128 * j ≤ cd.size) (hcds : cd.size < 2 ^ 256)
+    (hw : w + 128 * j < 2 ^ 256) (hb : b + 128 * j < 2 ^ 256)
+    (hdisj : w + 128 * j ≤ b ∨ b + 128 * j ≤ w)
+    (err hi lo : Nat)
+    (hcommon : lookupFun (R.scope c g) "common_uncompressed_g1" =
+      some ({ params := ["buf_len", "cptr"], rets := ["ret"],
+              body := commonG1Inline err hi lo }, R.scope c g))
+    (hkey : hi * 2^256 + lo + 1 = Midfall.Assumptions.pBase)
+    (st0 : EvmState) (k : Nat) (hklt : k < j) :
+    StmtsContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (GenAst.g1WalkBody walk) ::
+        hoist (Bridge.Dialect c g) [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+          [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] ::
+        R.scope c g)
+      (GenAst.g1WalkBody walk)
+      (fun V st =>
+        VEnv.get V "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) ∧
+        VEnv.get V walk = some (BitVec.ofNat 256 (w + 128 * k)) ∧
+        VEnv.get V "buf_len" = some (BitVec.ofNat 256 (b + 128 * k)) ∧
+        st.env.calldata = cd.data.toList ∧ st.halted = st0.halted ∧
+        bytesAt st b (128 * k) = cdSlice cd a (128 * k) ∧
+        bytesAt st w (128 * k) = cdSlice cd a (128 * k) ∧
+        (∀ i, i < k → g1WordsOk cd (a + 128 * i) = true) ∧
+        (∀ x, (x < w ∨ w + 128 * k ≤ x) → (x < b ∨ b + 128 * k ≤ x) →
+          st.memory x = st0.memory x))
+      (fun V st V' st' o =>
+        (o = .halt ∧ Midfall.LoweringV2.Reverted st') ∨
+        (o = .normal ∧
+          V' = VEnv.set (VEnv.set (VEnv.set V "buf_len"
+              (BitVec.ofNat 256 (b + 128 * (k + 1)))) walk
+              (BitVec.ofNat 256 (w + 128 * (k + 1)))) "proof_cptr"
+              (BitVec.ofNat 256 (a + 128 * (k + 1))) ∧
+          st'.env = st.env ∧ st'.halted = st.halted ∧
+          bytesAt st' b (128 * (k + 1)) = cdSlice cd a (128 * (k + 1)) ∧
+          bytesAt st' w (128 * (k + 1)) = cdSlice cd a (128 * (k + 1)) ∧
+          (∀ i, i < k + 1 → g1WordsOk cd (a + 128 * i) = true) ∧
+          (∀ x, (x < w ∨ w + 128 * (k + 1) ≤ x) → (x < b ∨ b + 128 * (k + 1) ≤ x) →
+            st'.memory x = st.memory x))) := by
+  let Mid : VEnv (Bridge.Dialect c g) → EvmState →
+      VEnv (Bridge.Dialect c g) → EvmState → Prop := fun V0 st1 Vm stm =>
+    Vm = VEnv.set V0 "buf_len" (BitVec.ofNat 256 (b + 128 * (k + 1))) ∧
+    stm.env = st1.env ∧ stm.halted = st1.halted ∧
+    bytesAt stm (b + 128 * k) 128 = cdSlice cd (a + 128 * k) 128 ∧
+    g1WordsOk cd (a + 128 * k) = true ∧
+    (∀ x, (x < b + 128 * k ∨ b + 128 * k + 128 ≤ x) → stm.memory x = st1.memory x)
+  refine StmtsContractAll.head_tail_ex (D := Bridge.Dialect c g) (Mid := Mid) ?_ ?_
+  · -- the helper call
+    intro V0 st1 hpre0 V1 st1' o1 h1
+    obtain ⟨hpc0, hwv0, hbuf0, hcd0, hhalt0, _⟩ := hpre0
+    have hc := g1Call_contract (R := R) (c := c) (g := g) cd walk hwalk j a w b ha hcds hb
+      err hi lo hcommon hkey st0 k hklt V0 st1 ⟨hpc0, hwv0, hbuf0, hcd0, hhalt0⟩ V1 st1' o1 h1
+    rcases hc.elim with ⟨ho, hmid⟩ | ⟨hoh, hrev⟩
+    · exact Or.inl ⟨ho, hmid⟩
+    · refine Or.inr ⟨?_, Or.inl ⟨hoh, hrev⟩⟩
+      intro h
+      rw [hoh] at h
+      cases h
+  · -- the copy and the two cursor updates
+    intro V0 st1 Vm stm hpre0 hmid
+    obtain ⟨hpc0, hwv0, hbuf0, hcd0, hhalt0, hbB0, hbW0, hwords0, hmem0⟩ := hpre0
+    obtain ⟨hVm, hmEnv, hmHalt, hmBytes, hmWords, hmFrame⟩ := hmid
+    intro Vm' stm' hpre' V' st' o hrun'
+    obtain ⟨hVmeq, hstmeq⟩ := hpre'
+    rw [hVmeq, hstmeq] at hrun'
+    have hwalkM : VEnv.get Vm walk = some (BitVec.ofNat 256 (w + 128 * k)) := by
+      rw [hVm]
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (y := walk)
+        (by obtain ⟨h1, h2, h3⟩ := hwalk; exact h2)]
+      exact hwv0
+    have hpcM : VEnv.get Vm "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) := by
+      rw [hVm]
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (y := "proof_cptr")
+        (by decide)]
+      exact hpc0
+    have hmemTail : ∀ x, (x < w ∨ w + 128 * k ≤ x) → (x < b ∨ b + 128 * (k + 1) ≤ x) →
+        stm.memory x = st1.memory x := by
+      intro x hx1 hx2
+      exact hmFrame x (by omega)
+    have hbBTail : bytesAt stm b (128 * k) = cdSlice cd a (128 * k) :=
+      (bytesAt_congr_mem (fun x h1 h2 => by rw [hmFrame x (by omega)])).trans hbB0
+    have hbWTail : bytesAt stm w (128 * k) = cdSlice cd a (128 * k) :=
+      (bytesAt_congr_mem (fun x h1 h2 => by rw [hmFrame x (by omega)])).trans hbW0
+    have hp := g1WalkTail_contract (R := R) (c := c) (g := g) cd walk hwalk j a w b
+      ha hcds hw hb hdisj st1 k hklt Vm stm
+      ⟨hwalkM, hpcM, by simpa [hmEnv] using hcd0, by simpa [hmHalt] using hhalt0,
+        hbBTail, hbWTail, hmBytes, hmWords, hwords0, hmemTail⟩
+    have hp' := hp V' st' o hrun'
+    rcases hp'.elim with ⟨ho, henvEq, hse, hsh, hbB', hbW', hwords', hmem'⟩ |
+        ⟨hoh, hrev⟩
+    · refine Or.inr ⟨ho, ?_, ?_, ?_, hbB', hbW', hwords', hmem'⟩
+      · rw [henvEq, hVm]
+      · rw [hse, hmEnv]
+      · rw [hsh, hmHalt]
+    · exact Or.inl ⟨hoh, hrev⟩
+
+
+/-! ### Local inversions for the walk loop's guard and init -/
+
+theorem g1Walk_list_length_one {α : Type} {l : List α} (h : l.length = 1) : ∃ a, l = [a] := by
+  cases l with
+  | nil => simp at h
+  | cons a rest =>
+      cases rest with
+      | nil => exact ⟨a, rfl⟩
+      | cons b rest => simp at h
+
+theorem g1Walk_eval_var_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : Ident} {av : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.var x) (.vals [av] st')) :
+    VEnv.get V x = some av ∧ st' = st := by
+  cases h with
+  | var hget => exact ⟨hget, rfl⟩
+
+theorem g1Walk_eval_lit_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {n : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (.number n)) (.vals [cv] st')) :
+    cv = BitVec.ofNat 256 n ∧ st' = st := by
+  cases h
+  exact ⟨rfl, rfl⟩
+
+theorem g1Walk_eval_builtin_vals_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {op : EVM.Op} {args : List (Expr EVM.Op)}
+    {vals : List U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.builtin op args) (.vals vals st')) :
+    ∃ argvals st1, EvalArgs (Bridge.Dialect c g) funs V st args (.vals argvals st1) ∧
+      (Bridge.Dialect c g).Builtin op argvals st1 (.ok vals st') := by
+  cases h with
+  | builtinOk hargs hbi => exact ⟨_, _, hargs, hbi⟩
+
+theorem g1Walk_eval_add_var_lit_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : String} {k : Nat} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.add [Expr.var x, Expr.lit (Literal.number k)]) (.vals [cv] st')) :
+    ∃ a, VEnv.get V x = some a ∧ cv = a + BitVec.ofNat 256 k ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := g1Walk_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil hlit =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hk, rfl⟩ := g1Walk_eval_lit_inv hlit
+              obtain ⟨ha, rfl⟩ := g1Walk_eval_var_inv hhead
+              simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin, hk] at hbi
+              cases hbi
+              exact ⟨_, ha, rfl, rfl⟩
+
+theorem g1Walk_eval_lt_vars_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x y : String} {cv : U256} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.lt [Expr.var x, Expr.var y]) (.vals [cv] st')) :
+    ∃ xv yv, VEnv.get V x = some xv ∧ VEnv.get V y = some yv ∧
+      cv = b2w (xv.ult yv) ∧ st' = st := by
+  obtain ⟨argvals, st1, hargs, hbi⟩ := g1Walk_eval_builtin_vals_inv h
+  cases hargs with
+  | argsCons hrest hhead =>
+      cases hrest with
+      | argsCons hnil htail =>
+          cases hnil with
+          | argsNil =>
+              obtain ⟨hyv, rfl⟩ := g1Walk_eval_var_inv htail
+              obtain ⟨hxv, rfl⟩ := g1Walk_eval_var_inv hhead
+              simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨_, _, hxv, hyv, rfl, rfl⟩
+
+theorem g1Walk_eval_add_var_lit_halt_false {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x : String} {k : Nat} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.add [Expr.var x, Expr.lit (Literal.number k)]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := Op.add)
+    (fun a b st r hr => by
+      simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh)
+    h
+
+theorem g1Walk_eval_lt_vars_halt_false {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {x y : String} {st' : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.lt [Expr.var x, Expr.var y]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := Op.lt)
+    (fun a b st r hr => by
+      simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    h
+
+theorem g1Walk_exec_block_inv {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {body : Block EVM.Op} {o : Outcome}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.block body) V' st' o) :
+    ∃ Vb stb, ExecStmts (Bridge.Dialect c g) (hoist (Bridge.Dialect c g) body :: funs)
+      V st body Vb stb o ∧ V' = restore V Vb ∧ st' = stb := by
+  cases h with
+  | block hb => exact ⟨_, _, hb, rfl, rfl⟩
+
+theorem t_venv_set_cons_ne {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V : VEnv D} {x y : Ident} {v a : D.Value} (h : x ≠ y) :
+    VEnv.set ((x, v) :: V) y a = (x, v) :: VEnv.set V y a := by
+  simp [VEnv.set, h]
+
+theorem stmtsContractAll_single {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {s : Stmt D.Op} {pre : VEnv D → D.State → Prop}
+    {post : VEnv D → D.State → VEnv D → D.State → Outcome → Prop}
+    (h : StmtContractAll funs s pre post) : StmtsContractAll funs [s] pre post := by
+  intro V st hpre V' st' o hrun
+  cases hrun with
+  | seqCons h1 h2 =>
+      cases h2 with
+      | seqNil => exact h V st hpre V' st' .normal h1
+  | seqStop h1 _ => exact h V st hpre V' st' o h1
+
+/-- The init run of the walk loop: `let end := proof_cptr + 128*j`. -/
+theorem g1WalkInit_run {c : ExternalCalls} {g : ExternalGas} (j : Nat)
+    {funs : FunEnv (Bridge.Dialect c g)} {V Vinit : VEnv (Bridge.Dialect c g)}
+    {st stinit : EvmState}
+    (h : Step (Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g)
+          [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+            [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] :: funs)
+      V st
+      (.stmts [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+        [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))])
+      (.sres Vinit stinit .normal)) :
+    ∃ ev, VEnv.get V "proof_cptr" = some ev ∧
+      Vinit = ("end", ev + BitVec.ofNat 256 (128 * j)) :: V ∧ stinit = st := by
+  cases h with
+  | seqCons h1 h2 =>
+      cases h2 with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              obtain ⟨v, rfl⟩ := g1Walk_list_length_one hlen
+              obtain ⟨ev, hget, hv, hst⟩ := g1Walk_eval_add_var_lit_inv he
+              exact ⟨ev, hget, by simp [hv], hst⟩
+  | seqStop h1 hne =>
+      cases h1 with
+      | letVal _ _ => exact absurd rfl hne
+
+set_option maxHeartbeats 20000000 in
 /-- **THE WALK LOOP (all runs), ONE LEMMA FOR SIX SECTIONS.** Bound = `j`, the section's frame
     count. Every run reverts (a frame fails the range check), or ends normally having absorbed the
     `j` frames, copied them to the walk window, and advanced the three cursors; every frame passed
@@ -10013,7 +10625,261 @@ theorem g1walk_loop_sem (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : E
     StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) [GenAst.g1WalkLoop walk (128 * j)]
       (g1WalkPre cd walk a w b)
       (fun V st V' st' o => g1WalkPost V st cd walk j a w b V' st' o) := by
-  sorry
+  apply stmtsContractAll_single
+  intro V st hpre V' st' o hrun
+  obtain ⟨hcdat, hpc0, hwv0, hbuf0⟩ := hpre
+  let init : Block EVM.Op :=
+    [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+      [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))]
+  let cond : Expr EVM.Op := Expr.builtin Op.lt [Expr.var "proof_cptr", Expr.var "end"]
+  let body : Block EVM.Op := GenAst.g1WalkBody walk
+  let funsI : FunEnv (Bridge.Dialect c g) := hoist (Bridge.Dialect c g) init :: R.scope c g
+  have hinitEx : init = [Stmt.letDecl ["end"] (some (Expr.builtin Op.add
+      [Expr.var "proof_cptr", Expr.lit (Literal.number (128 * j))]))] := rfl
+  let endv : U256 := BitVec.ofNat 256 (a + 128 * j)
+  let Ve : Nat → VEnv (Bridge.Dialect c g) := fun k =>
+    VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * k)))
+      walk (BitVec.ofNat 256 (w + 128 * k))) "proof_cptr" (BitVec.ofNat 256 (a + 128 * k))
+  let Inv : VEnv (Bridge.Dialect c g) → EvmState → Prop := fun Vh sth =>
+    ∃ k, k ≤ j ∧ Vh = ("end", endv) :: Ve k ∧
+      VEnv.get Vh "proof_cptr" = some (BitVec.ofNat 256 (a + 128 * k)) ∧
+      VEnv.get Vh walk = some (BitVec.ofNat 256 (w + 128 * k)) ∧
+      VEnv.get Vh "buf_len" = some (BitVec.ofNat 256 (b + 128 * k)) ∧
+      VEnv.get Vh "end" = some endv ∧
+      sth.env = st.env ∧ sth.halted = st.halted ∧
+      bytesAt sth b (128 * k) = cdSlice cd a (128 * k) ∧
+      bytesAt sth w (128 * k) = cdSlice cd a (128 * k) ∧
+      (∀ i, i < k → g1WordsOk cd (a + 128 * i) = true) ∧
+      (∀ x, (x < w ∨ w + 128 * k ≤ x) → (x < b ∨ b + 128 * k ≤ x) →
+        sth.memory x = st.memory x)
+  let Q : VEnv (Bridge.Dialect c g) → EvmState → Outcome → Prop := fun Vend stend o =>
+    g1WalkPost V st cd walk j a w b (restore V Vend) stend o
+  change ExecStmt (Bridge.Dialect c g) (R.scope c g) V st
+    (Stmt.forLoop init cond [] body) V' st' o at hrun
+  have hVe0 : Ve 0 = V := by
+    have hg : VEnv.get (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * 0)))
+        walk (BitVec.ofNat 256 (w + 128 * 0))) "proof_cptr" =
+        some (BitVec.ofNat 256 (a + 128 * 0)) := by
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := walk)
+        (h := fun h => hwalk.1 h.symm)]
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (h := by decide)]
+      simpa using hpc0
+    show VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * 0)))
+      walk (BitVec.ofNat 256 (w + 128 * 0))) "proof_cptr" (BitVec.ofNat 256 (a + 128 * 0)) = V
+    have hgw : VEnv.get (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * 0)))
+        walk = some (BitVec.ofNat 256 (w + 128 * 0)) := by
+      rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (h := hwalk.2.1)]
+      exact hwv0
+    have hgb : VEnv.get V "buf_len" = some (BitVec.ofNat 256 (b + 128 * 0)) := by
+      simpa using hbuf0
+    rw [t_venv_set_self hg]
+    rw [t_venv_set_self hgw]
+    rw [t_venv_set_self hgb]
+  have hVeLen : ∀ k, (Ve k).length = V.length := by
+    intro k
+    show (VEnv.set (VEnv.set (VEnv.set V "buf_len" (BitVec.ofNat 256 (b + 128 * k)))
+      walk (BitVec.ofNat 256 (w + 128 * k))) "proof_cptr"
+      (BitVec.ofNat 256 (a + 128 * k))).length = V.length
+    rw [t_venv_set_length (D := Bridge.Dialect c g),
+      t_venv_set_length (D := Bridge.Dialect c g),
+      t_venv_set_length (D := Bridge.Dialect c g)]
+  have hstep : ∀ Vh sth, Inv Vh sth →
+      IterAll (D := Bridge.Dialect c g) funsI cond [] body Inv Q Vh sth := by
+    intro Vh sth hInv
+    obtain ⟨k, hk_le, hVh, hpc, hwv, hbuf, hend, hEnv, hHalt, hbB, hbW, hWords, hMem⟩ := hInv
+    refine ⟨?condHalt, ?exit, ?iter⟩
+    · intro st1 hc
+      exact (g1Walk_eval_lt_vars_halt_false hc).elim
+    · intro cv st1 hc hz
+      obtain ⟨xv, yv, hxget, hyget, hcv, hst1⟩ := g1Walk_eval_lt_vars_inv hc
+      have hxv : xv = BitVec.ofNat 256 (a + 128 * k) :=
+        Option.some.inj (hxget.symm.trans hpc)
+      have hyv : yv = endv := Option.some.inj (hyget.symm.trans hend)
+      rw [hxv, hyv] at hcv
+      have h0 : b2w ((BitVec.ofNat 256 (a + 128 * k)).ult
+          (BitVec.ofNat 256 (a + 128 * j))) = (0 : U256) := by
+        rw [← hcv]; exact hz
+      have hipos : a + 128 * k < 2 ^ 256 := by omega
+      have hnpos : a + 128 * j < 2 ^ 256 := by omega
+      have hkj : j ≤ k := by
+        have := lt_guard_false (i := a + 128 * k) (n := a + 128 * j) hipos hnpos h0
+        omega
+      have hkeq : k = j := Nat.le_antisymm hk_le hkj
+      rw [hkeq] at hVh hpc hwv hbuf hbB hbW hWords hMem
+      have hlen : (Ve j).length = V.length := hVeLen j
+      have hrest : restore V Vh = Ve j := by
+        rw [hVh]
+        exact t_restore_cons V (Ve j) endv hlen
+      change g1WalkPost V st cd walk j a w b (restore V Vh) st1 .normal
+      rw [hst1, hrest]
+      refine Or.inr ⟨rfl, hEnv, hHalt, rfl, hbW, hbB, hWords, ?_⟩
+      intro x hx1 hx2
+      exact hMem x hx1 hx2
+    · intro cv st1 hc hnz Vb stb ob hbody
+      obtain ⟨xv, yv, hxget, hyget, hcv, hst1⟩ := g1Walk_eval_lt_vars_inv hc
+      have hxv : xv = BitVec.ofNat 256 (a + 128 * k) :=
+        Option.some.inj (hxget.symm.trans hpc)
+      have hyv : yv = endv := Option.some.inj (hyget.symm.trans hend)
+      rw [hxv, hyv] at hcv
+      have h0 : b2w ((BitVec.ofNat 256 (a + 128 * k)).ult
+          (BitVec.ofNat 256 (a + 128 * j))) ≠ (0 : U256) := by
+        rw [← hcv]; exact hnz
+      have hipos : a + 128 * k < 2 ^ 256 := by omega
+      have hnpos : a + 128 * j < 2 ^ 256 := by omega
+      have hklt : k < j := by
+        have := lt_guard_true (i := a + 128 * k) (n := a + 128 * j) hipos hnpos h0
+        omega
+      obtain ⟨Vbin, stbb, hbrun, hVbEq, hstbEq⟩ := g1Walk_exec_block_inv hbody
+      rw [hVbEq, hstbEq]
+      have hbp := g1WalkBody_step (R := R) (c := c) (g := g) cd walk hwalk j a w b
+        ha hcd hw hb hdisj err hi lo hcommon hkey (st0 := st) k hklt Vh st1
+        ⟨hpc, hwv, hbuf, by rw [hst1, hEnv]; exact hcdat, by rw [hst1]; exact hHalt,
+          by rw [hst1]; exact hbB, by rw [hst1]; exact hbW, hWords,
+          by intro x hx1 hx2; rw [hst1]; exact hMem x hx1 hx2⟩
+      rcases hbp Vbin stbb ob hbrun with ⟨hob, hrev⟩ | ⟨hob, hVbin, hse, hsh, hbB', hbW', hWords', hMem'⟩
+      · subst hob
+        change g1WalkPost V st cd walk j a w b (restore V (restore Vh Vbin)) stbb .halt
+        exact Or.inl ⟨rfl, hrev⟩
+      · subst hob
+        have hVbin' : Vbin = ("end", endv) :: Ve (k + 1) := by
+          rw [hVbin, hVh]
+          rw [t_venv_set_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          rw [t_venv_set_cons_ne (D := Bridge.Dialect c g)
+            (h := fun h' => hwalk.2.2 h'.symm)]
+          rw [t_venv_set_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          show ("end", endv) :: VEnv.set (VEnv.set (VEnv.set (VEnv.set (VEnv.set (VEnv.set V
+              "buf_len" (BitVec.ofNat 256 (b + 128 * k)))
+              walk (BitVec.ofNat 256 (w + 128 * k)))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * k)))
+              "buf_len" (BitVec.ofNat 256 (b + 128 * (k + 1))))
+              walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1))) =
+            ("end", endv) :: Ve (k + 1)
+          rw [t_venv_set_overwrite V "buf_len" walk "proof_cptr"
+            (BitVec.ofNat 256 (b + 128 * k)) (BitVec.ofNat 256 (w + 128 * k))
+            (BitVec.ofNat 256 (a + 128 * k))
+            (BitVec.ofNat 256 (b + 128 * (k + 1)))
+            (BitVec.ofNat 256 (w + 128 * (k + 1)))
+            (BitVec.ofNat 256 (a + 128 * (k + 1)))
+            (fun h => hwalk.2.1 h.symm) (by decide) (fun h => hwalk.1 h)]
+        have hlenVbin : Vbin.length = Vh.length := by
+          rw [hVbin', hVh]
+          simp [hVeLen]
+        have hVb : restore Vh Vbin = ("end", endv) :: Ve (k + 1) := by
+          rw [hVbin', hVh]
+          simp [restore, hVeLen]
+        have hpc1 : VEnv.get (("end", endv) :: Ve (k + 1)) "proof_cptr" =
+            some (BitVec.ofNat 256 (a + 128 * (k + 1))) := by
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          change VEnv.get (VEnv.set (VEnv.set (VEnv.set V "buf_len"
+              (BitVec.ofNat 256 (b + 128 * (k + 1)))) walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1)))) "proof_cptr" =
+            some (BitVec.ofNat 256 (a + 128 * (k + 1)))
+          rw [t_venv_get_set_same (D := Bridge.Dialect c g)]
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := walk) (h := fun h => hwalk.1 h.symm)]
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (h := by decide)]
+          exact hpc0
+        have hwv1 : VEnv.get (("end", endv) :: Ve (k + 1)) walk =
+            some (BitVec.ofNat 256 (w + 128 * (k + 1))) := by
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := fun h => hwalk.2.2 h)]
+          change VEnv.get (VEnv.set (VEnv.set (VEnv.set V "buf_len"
+              (BitVec.ofNat 256 (b + 128 * (k + 1)))) walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1)))) walk =
+            some (BitVec.ofNat 256 (w + 128 * (k + 1)))
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "proof_cptr") (h := fun h => hwalk.1 h)]
+          rw [t_venv_get_set_same (D := Bridge.Dialect c g)]
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (h := hwalk.2.1)]
+          exact hwv0
+        have hbuf1 : VEnv.get (("end", endv) :: Ve (k + 1)) "buf_len" =
+            some (BitVec.ofNat 256 (b + 128 * (k + 1))) := by
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          change VEnv.get (VEnv.set (VEnv.set (VEnv.set V "buf_len"
+              (BitVec.ofNat 256 (b + 128 * (k + 1)))) walk (BitVec.ofNat 256 (w + 128 * (k + 1))))
+              "proof_cptr" (BitVec.ofNat 256 (a + 128 * (k + 1)))) "buf_len" =
+            some (BitVec.ofNat 256 (b + 128 * (k + 1)))
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "proof_cptr") (h := by decide)]
+          rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := walk) (h := fun h => hwalk.2.1 h.symm)]
+          rw [t_venv_get_set_same (D := Bridge.Dialect c g)]
+          exact hbuf0
+        have hend1 : VEnv.get (("end", endv) :: Ve (k + 1)) "end" = some endv := by
+          simp [VEnv.get, List.find?]
+        have hmem1 : ∀ x, (x < w ∨ w + 128 * (k + 1) ≤ x) →
+            (x < b ∨ b + 128 * (k + 1) ≤ x) →
+            stbb.memory x = st.memory x := by
+          intro x hx1 hx2
+          have hx1' : x < w ∨ w + 128 * k ≤ x := by
+            rcases hx1 with h | h
+            · exact Or.inl h
+            · exact Or.inr (by omega)
+          have hx2' : x < b ∨ b + 128 * k ≤ x := by
+            rcases hx2 with h | h
+            · exact Or.inl h
+            · exact Or.inr (by omega)
+          rw [hMem' x hx1 hx2, hst1]
+          exact hMem x hx1' hx2'
+        have hInvNext : Inv (restore Vh Vbin) stbb := by
+          refine ⟨k + 1, by omega, hVb, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hWords', hmem1⟩
+          · rw [hVb]; exact hpc1
+          · rw [hVb]; exact hwv1
+          · rw [hVb]; exact hbuf1
+          · rw [hVb]; exact hend1
+          · rw [hse, hst1]; exact hEnv
+          · rw [hsh, hst1]; exact hHalt
+          · exact hbB'
+          · exact hbW'
+        intro Vp stp op hpost
+        obtain ⟨Vpb, stpb, hpb, hVpEq, hstpEq⟩ := g1Walk_exec_block_inv hpost
+        cases hpb with
+        | seqNil =>
+            constructor
+            · intro _
+              rw [hVpEq, hstpEq]
+              rw [show restore (restore Vh Vbin) (restore Vh Vbin) =
+                  restore Vh Vbin from by simp [restore]]
+              exact hInvNext
+            · intro hop
+              cases hop
+  cases hrun with
+  | forLoop hinit hloop =>
+      rw [hinitEx] at hinit
+      obtain ⟨ev, hget, hVinit, hstinit⟩ := g1WalkInit_run (c := c) (g := g) j
+        (funs := R.scope c g) hinit
+      have hev : ev = BitVec.ofNat 256 a := Option.some.inj (hget.symm.trans hpc0)
+      have hendv : ev + BitVec.ofNat 256 (128 * j) = endv := by
+        rw [hev]
+        exact (BitVec.ofNat_add _ _).symm
+      rw [hVinit, hstinit] at hloop
+      have hInv0 : Inv (("end", ev + BitVec.ofNat 256 (128 * j)) :: V) st := by
+        refine ⟨0, Nat.zero_le _, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [hendv, hVe0]
+        · rw [hendv]
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          simpa using hpc0
+        · rw [hendv]
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := fun h => hwalk.2.2 h)]
+          simpa using hwv0
+        · rw [hendv]
+          rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+          simpa using hbuf0
+        · rw [hendv]
+          simp [VEnv.get, List.find?]
+        · rfl
+        · rfl
+        · simp [bytesAt, readBytes, cdSlice]
+        · simp [bytesAt, readBytes, cdSlice]
+        · intro i hi; omega
+        · intro x _ _; rfl
+      exact allRuns_loop (D := Bridge.Dialect c g) (funs := funsI) (c := cond)
+        (post := []) (body := body) Inv Q hstep (("end", ev + BitVec.ofNat 256 (128 * j)) :: V)
+        st hInv0 _ _ _ hloop
+  | forInitHalt hinit =>
+      rw [hinitEx] at hinit
+      exfalso
+      cases hinit with
+      | seqCons h1 h2 => cases h2
+      | seqStop h1 hne =>
+          cases h1 with
+          | letHalt he => exact g1Walk_eval_add_var_lit_halt_false he
 
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
@@ -10471,6 +11337,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_frame_eq_of_window [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.holdsG1s_section [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1WalkCT_sound [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1WalkTail_contract [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1Call_contract [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_venv_set_overwrite [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSize_of_envelope [propext, Classical.choice, Quot.sound] native []
@@ -10681,5 +11549,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.invAt_transcript_of_xcriptG1 [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcriptG1 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1WalkBody_step [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1walk_loop_sem [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
