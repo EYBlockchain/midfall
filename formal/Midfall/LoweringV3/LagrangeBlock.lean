@@ -273,6 +273,51 @@ theorem batchArgs_vals {consts : Inline.Consts} {D aS : Nat}
 
 #assert_axioms batchArgs_vals [propext, Classical.choice, Quot.sound]
 
+/-- A list of expressions that individually never halt cannot halt as an argument list. -/
+theorem args_ne_halt_of {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {es : List (Expr EVM.Op)}
+    (hne : ∀ e ∈ es, ∀ (st st' : EvmState),
+      ¬ Step (Bridge.Dialect c g) funs V st (Code.expr e) (Res.eres (EResult.halt st'))) :
+    ∀ (st st' : EvmState), ¬ Step (Bridge.Dialect c g) funs V st
+      (Code.args es) (Res.eres (EResult.halt st')) := by
+  induction es with
+  | nil => intro st st' h; cases h
+  | cons e rest ih =>
+    intro st st' h
+    cases h with
+    | argsRestHalt hrest =>
+      exact ih (fun x hx => hne x (List.mem_cons_of_mem e hx)) st st' hrest
+    | argsHeadHalt _ hhead => exact hne e (by simp) _ st' hhead
+
+/-- The five `batch_invert` arguments never halt: vars and literals cannot, and the only
+    built-in is the `add` whose halt is ruled out by `expr_add_var_lit_ne_halts`. -/
+theorem batchArgs_ne_halt {consts : Inline.Consts} {D aS : Nat}
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    ¬ Step (Bridge.Dialect c g) funs V st
+      (Code.args
+        [Expr.var "success",
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+         Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+         Expr.var "r"])
+      (Res.eres (EResult.halt st)) := by
+  apply args_ne_halt_of
+  intro e he st0 st1 h
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+  rcases he with rfl | rfl | rfl | rfl | rfl
+  · exact Midfall.LoweringV2.Blocks.TraceReturn.trExprVar_ne_halts h
+  · simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hD] at h
+    exact Midfall.LoweringV2.Blocks.TraceReturn.trExprLit_ne_halts h
+  · exact Midfall.LoweringV3.ScalarInv.expr_add_var_lit_ne_halts
+      (funs := funs) (V := V) (x := "mptr_end") (n := 0x20) h
+  · simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hS] at h
+    exact Midfall.LoweringV2.Blocks.TraceReturn.trExprLit_ne_halts h
+  · exact Midfall.LoweringV2.Blocks.TraceReturn.trExprVar_ne_halts h
+
+#assert_axioms batchArgs_ne_halt [propext, Classical.choice, Quot.sound]
+
 /-- **`BatchInvertPost → BatchInvertCallPost` THROUGH `VEnv.setMany`.** The A5 summary is stated
     over the callee environment (`ret` / `precompile_failed`); the caller binds those two words to
     `success` / `lagrange_precompile_failed`. This lemma is the whole environment conversion: the
