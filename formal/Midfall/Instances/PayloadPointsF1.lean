@@ -659,7 +659,8 @@ theorem f1VkResourced_wf : f1VkResourced.WellFormed Features.solidity :=
     fixedQueriesBound := by native_decide
     simpleSelectorQueriesBound := by native_decide
     instanceRotZero := by native_decide
-    instanceQueriesBound := by native_decide }
+    instanceQueriesBound := by native_decide,
+    advicePhaseColumnOrder := by native_decide }
 
 
 /-- **`supported` AT THE RE-SOURCED RENDER.** The only changed field is `vkPoints`, which is

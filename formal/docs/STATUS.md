@@ -271,6 +271,26 @@ for `prog_programFits`; not a row/root hypothesis.
 `BUILD_ID` input line; raw `ArtifactEq` at the tracked dump is refuted only by that line
 (machine-checked). The positive gates and VK byte-exactness are proved at the model with the input.
 
+**D-GATE18 (signed, 2026-11-24)**: `VerifyingKey.WellFormed` gains
+`advicePhaseColumnOrder : vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph) =
+List.range vk.cs.numAdviceColumns`. `advicePhaseTotal` only fixes the phase vector's LENGTH;
+the parser's advice block is phase-indexed while the trace's advice commitments are
+column-indexed (`scatterIndexed`), so the phase-to-column order is a separate decidable
+key-side clause. It is not a row, bundle or `ValidV3` field; `advicePhaseTotal_not_columnOrder`
+is the falsifier showing it is not derivable from the old fields. `AdvicePhasesColumnOrder`
+is now a theorem of `WellFormed` (`advicePhaseColumnOrder_of_wellFormed`), so the closed
+`tp` consumer takes only the calldata bound.
+
+**D-GATE19 (decision, 2026-11-24)**: the calldata predicate needed for `hnum`
+(`R.cfg.numInstances < 2^31`) is `cd.size < 2^36` (`numInstances_lt_of_cd_size`: `Decoded`
+fixes `cd.size = proofEnd + 32 + 32 * numInstances`). It is exposed at the consumer
+`tp_agrees_of_valid_closed_cdSize`, NOT added to `EntryFrameV3`/`Frame`/`TpPost` or `ValidV3`:
+`tp_agrees` has no entry-frame parameter, and adding the bound to `Frame` would be a bundle
+field. `EntryFrameV3.cdSize` remains the existing `< 2^256` length bound; adding `< 2^36`
+there would not reach `TpPost`. The exact minimal alternative is therefore the single
+consumer predicate `cd.size < 2^36` (or, if the entry frame must carry it, a `Frame.cdSize36`
+field, which is the bundle change this decision declines).
+
 **D-GATE15 (signed, 2026-11-23)**: `WellFormed` gains the `readAlgebra` totality bundle: fixed
 insert bound (`fixedQueries.size ≤ numFixedColumns` + simple-selector coverage), rotation-not-`i32::MIN`,
 and the instance slice-window bound. VK sanity clauses, not row/root hypotheses.

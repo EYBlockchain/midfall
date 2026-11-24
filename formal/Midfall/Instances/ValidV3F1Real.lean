@@ -441,6 +441,7 @@ theorem f1VkResourced_wf : f1VkResourced.WellFormed Features.solidity where
   simpleSelectorQueriesBound := by native_decide
   instanceRotZero := by native_decide
   instanceQueriesBound := by native_decide
+  advicePhaseColumnOrder := by native_decide
 
 
 /-- **`supported` AT THE RE-SOURCED RENDER.** `wf` is D.2's `WellFormed` (the re-source changes

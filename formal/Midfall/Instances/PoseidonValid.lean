@@ -522,7 +522,8 @@ theorem deciding_supported_wf : poseidonVkExec.WellFormed Features.solidity :=
     fixedQueriesBound := by native_decide,
     simpleSelectorQueriesBound := by native_decide,
     instanceRotZero := by native_decide,
-    instanceQueriesBound := by native_decide }
+    instanceQueriesBound := by native_decide,
+    advicePhaseColumnOrder := by native_decide }
 
 
 /- **THE SUPPORTED CLAUSE WAS REFUTED HERE UNTIL R.7.** The refutation `poseidonValid_supported_not` ran

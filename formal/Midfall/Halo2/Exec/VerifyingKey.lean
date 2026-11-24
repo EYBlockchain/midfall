@@ -122,7 +122,14 @@ def VerifyingKey.hashInto (vk : VerifyingKey (Fr p) G₁) : TranscriptM Unit :=
     keep `listInsertAt` in range during `readFixedEvals`'s insert fold.
   * instanceRotZero - D-GATE15: instance-query rotations are `0` (the deployed
     `noRotInst` profile), making `i32Abs minRot` and the instance slice window
-    well-defined. -/
+    well-defined.
+  * instanceQueriesBound - D-GATE15(c): every instance query names an in-range
+    instance column, so the readAlgebra matrix index is safe.
+  * advicePhaseColumnOrder - D-GATE18: the advice phases enumerate the advice
+    columns in COLUMN order. `advicePhaseTotal` fixes only the phase vector's
+    length; the parser's block is phase-indexed and `scatterIndexed` is
+    column-indexed, so the order is a separate decidable key-side clause
+    (`advicePhaseTotal_not_columnOrder` shows it is not derivable). -/
 structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features) : Prop where
   csDegreeMatches : vk.cs.degree = .ok vk.csDegree
   chunkLenPositive : 3 ≤ vk.csDegree
@@ -192,6 +199,16 @@ structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features)
       `inst.size < 2^31`, stays at the walk). -/
   instanceQueriesBound : ∀ q ∈ vk.cs.instanceQueries.toList,
     q.1.index < vk.cs.numInstanceColumns
+  /-- **D-GATE18: the advice phases enumerate the advice columns in column order.**
+      The parser's advice block is phase-indexed (`phaseCols`), while the trace's
+      advice commitments are column-indexed (`scatterIndexed`); `advicePhaseTotal`
+      only fixes the phase vector's length, so the order is a separate decidable
+      key-side clause (the falsifier `advicePhaseTotal_not_columnOrder` shows it is
+      not derivable). -/
+  advicePhaseColumnOrder : vk.cs.phases.flatMap (fun ph =>
+    (List.range vk.cs.numAdviceColumns).filterMap fun i =>
+      if (vk.cs.adviceColumnPhase[i]?.map (fun q => q.val)) == some ph.val
+      then some i else none) = List.range vk.cs.numAdviceColumns
 
 /-! rust: plonk/mod.rs:94-120 (write), :124-150 (read), :151-186
     (read_from_cs), :218-221 (bytes_length), :293-300 (pinned), and
