@@ -13258,6 +13258,59 @@ theorem instLoop_Vp_eq {c : ExternalCalls} {g : ExternalGas}
     rw [hs1, hb1]
 
 
+theorem instLoop_get_success {c : ExternalCalls} {g : ExternalGas}
+    (start N k : Nat) (V : VEnv (Bridge.Dialect c g)) (rv s : U256)
+    (words : List U256) (buf : U256)
+    (hs : VEnv.get V "success" = some s) :
+    VEnv.get (("instance_cptr_end", g1InstEndv start N) ::
+      ("instance_cptr", g1InstCptrv start (k + 1)) ::
+      g1InstV3 V rv s words buf (k + 1)) "success" =
+      some (g1SuccessFold rv s (List.take (k + 1) words)) := by
+  rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+  rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+  dsimp only [g1InstV3]
+  rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "buf_len") (h := by decide)]
+  rw [t_venv_get_set_same (D := Bridge.Dialect c g)]
+  exact hs
+
+theorem instLoop_get_buf {c : ExternalCalls} {g : ExternalGas}
+    (start N k : Nat) (V : VEnv (Bridge.Dialect c g)) (rv s : U256)
+    (words : List U256) (buf : U256)
+    (hbuf : VEnv.get V "buf_len" = some buf) :
+    VEnv.get (("instance_cptr_end", g1InstEndv start N) ::
+      ("instance_cptr", g1InstCptrv start (k + 1)) ::
+      g1InstV3 V rv s words buf (k + 1)) "buf_len" =
+      some (buf + BitVec.ofNat 256 (32 * (k + 1))) := by
+  rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+  rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+  dsimp only [g1InstV3]
+  rw [t_venv_get_set_same (D := Bridge.Dialect c g)]
+  rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "success") (h := by decide)]
+  simpa using hbuf
+
+theorem instLoop_mem {c : ExternalCalls} {g : ExternalGas}
+    (cd : Bytes) (start N k : Nat) (st sth stb : EvmState)
+    (buf bufk word : U256) (words : List U256)
+    (hwords : words = g1InstanceWords cd start N)
+    (hsth : sth.memory = g1AppendWords st.memory buf.toNat (List.take k words) 0)
+    (hstb : stb.memory = storeWord sth.memory bufk.toNat word)
+    (hbufk : bufk = buf + BitVec.ofNat 256 (32 * k))
+    (hword : word = cdWord cd (start + 32 * k))
+    (hklt : k < N) (hbound : start + 32 * N < 2 ^ 256)
+    (hbufbound : buf.toNat + 32 * N < 2 ^ 256) :
+    stb.memory = g1AppendWords st.memory buf.toNat
+      (List.take (k + 1) (g1InstanceWords cd start N)) 0 := by
+  rw [hwords] at hsth
+  rw [hstb, hsth, hbufk, hword]
+  rw [g1InstanceWords_take_succ cd start N k hklt, g1AppendWords_append]
+  rw [show (List.take k (g1InstanceWords cd start N)).length = k by
+    rw [List.length_take, g1InstanceWords_length,
+      Nat.min_eq_left (Nat.le_of_lt hklt)]]
+  rw [toNat_add_ofNat buf (32 * k) (by omega)]
+  rw [Nat.zero_add]
+  rfl
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -13999,5 +14052,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_take_all [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instLoop_exit [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instLoop_Vp_eq [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instLoop_get_success [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instLoop_get_buf [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instLoop_mem [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
