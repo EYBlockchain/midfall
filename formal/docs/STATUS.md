@@ -1,16 +1,20 @@
 # STATUS - midfall
 
-**As of:** `41a19a71` (2026-11-23). **Full gate GREEN at `7e1e7a29`** (`verify.sh: ok (full)`, KAT 1648/119). D-GATE12 and
-PlanMeta later re-pinned the closure at **5252 declarations / digest `fa2cfd35f9d64826`**; a final
-full gate is owed on the current tree. Current report: root **11 / sound 5**, register
-**94 rows / 11 ROOT / 21 CERT / 5 TP**, 0 REFUTED, 1 legacy VACUOUS, exhibits **4 / 4**;
-260 modules.
+**As of:** `b0c2947f` + final assembly (2026-11-24). **Register:** **93 rows / 14 ROOT**, 0 REFUTED,
+1 legacy VACUOUS, exhibits **4 / 4**. Current report: root `lowering_correct` **14 / sound 6**.
+The final assembly moved `block_live` and `totalV3_correct` to
+`Midfall/LoweringV3/BlockLive.lean` (see §1 and the architecture section); the generic claim
+surface is `Midfall/LoweringV3/FinalClaims.lean`, the F1-real `DoneAt` stays in
+`Midfall/Instances/GeneratorDoneAt.lean` with its index in `Instances/FinalClaimsF1.lean`.
+A full `verify.sh` is owed after the lane merges; the targeted build
+(`lake build Midfall.LoweringV3.BlockLive Midfall`) is green on this tree.
 
 ## 1. Verified - PROGRESS
 
-    root lowering_correct .... 11 OPEN sorried leaves (q_blockProgS, q_blockSim, block_live,
-                               fp_blockProgS, fp_blockSim, lag_blockProgS, lag_blockSim,
-                               pcs_blockProgS, pcs_blockSim, tp_blockProgS, tp_blockSim)
+    root lowering_correct .... 14 OPEN sorried leaves (q_blockProgS, q_blockSim,
+                               block_live_case_{lagrange,pcs,quotientLin,transcriptParser},
+                               lag_blockProgS, lag_blockSim, pcs_blockProgS, pcs_blockSim,
+                               tp_blockProgS, TranscriptRows.{tp_agrees,tp_computes,tp_poison})
     root lowering_sound ...... 5 OPEN sorried leaves (q_blockSim, fp_blockSim, lag_blockSim,
                                pcs_blockSim, tp_blockSim)
     block rows ............... 1 INTEGRATED of 7 (traceReturn); 2 SORRY, 4 NONE
@@ -91,8 +95,9 @@ gate last ran at `d0bf226`.
   merged.
 - **QVMHDR / QVMGREEN**: the MODARITH7 header is PROVED (`7225a47`); both paused, the existing
   QVM agent keeps the `q_blockSim`/`q_blockProgS` lane.
-- **A12/totality** (`t/A12`): per-block liveness from the proved vk/tr progress rows; the root
-  `block_live` stays the single registered hole until the other five progress rows land.
+- **A12/totality** (`t/A12`): per-block liveness from the proved vk/tr progress rows. The root
+  `block_live` now lives in `BlockLive.lean` as a seven-way table: vkLoading/finalPairing/traceReturn
+  are CLOSED, the four conditional progress rows are the exact remaining case inputs.
 - **QVM** (`t/MODELF`, `t/TERMFOLD`, other agent): fixed-segment/spill/validator lane.
 - **QVM compile-correctness** (`t/QVMIDGREEN`): LIN7/ROW decoder ties, MODSHIFT block/fold shifts,
   four compaction arm-value lemmas merged. `PG_identity_emitterValue`/`compactionValue` remain;
@@ -392,14 +397,55 @@ was regenerated after D-GATE8 and again after D2's generator refactor (5250 decl
   config/selector bounds. No `ValidV3`, row, bundle or root hypothesis was added, and
   `SupportedInput` was strengthened.
 
-### `block_live` assembly architecture (critical)
+### `block_live` assembly - **LANDED** (`Midfall/LoweringV3/BlockLive.lean`)
 
-The closed case proofs (`FpFit.block_live_finalPairing`, `PcsBlock4.pcsBlock_contract`,
-`LagrangeBlock.lagBlock_contract`, `TranscriptRows.tp_blockProgS`, `QuotientRows.q_blockProgS`) live
-ABOVE `Totality`. `block_live`/`totalV3_correct` therefore cannot be closed in `Totality`; they move
-to a new `Midfall.LoweringV3.BlockLive` module that imports `Totality` + the case modules and sits
-below `Composition` (which will import it for `totalV3_correct`). The current `Totality` versions
-stay as the per-case lemmas only.
+The move is done. `BlockLive.lean` imports `Totality` + the case modules (`FpFit`,
+`LagrangeBlock`, `PcsBlock4`) and sits below `Composition`, which now imports it for
+`totalV3_correct`. The statements of `block_live` and `totalV3_correct` are `Totality`'s,
+verbatim; no hypothesis was added. `Totality` keeps the per-case reductions
+(`block_live_of_blockProgS`, `block_live_pcs`, `block_live_transcriptParser_of_prog`,
+`block_live_quotientLin_of_prog`) and `prefix_live`/`slices_live`.
+
+`block_live` is a seven-way named case table (`cases q` only), not a hole:
+
+| block | case theorem | state |
+|---|---|---|
+| vkLoading | `block_live_case_vkLoading` | CLOSED - wires `Totality.block_live_vkLoading` |
+| transcriptParser | `block_live_case_transcriptParser` | **OPEN** |
+| lagrange | `block_live_case_lagrange` | **OPEN** |
+| quotientLin | `block_live_case_quotientLin` | **OPEN** |
+| pcs | `block_live_case_pcs` | **OPEN** |
+| finalPairing | `block_live_case_finalPairing` | CLOSED - wires `FpFit.block_live_finalPairing` |
+| traceReturn | `block_live_case_traceReturn` | CLOSED - wires `Totality.block_live_traceReturn` |
+
+The four open rows are the exact remaining case inputs (`#cone_sorries block_live: 4`).
+`totalV3_correct` is PROVED from the table plus `prefix_live`/`slices_live` and the two gas leaves;
+its cone is the same four rows.
+
+**Statement mismatch, measured (the reason the rows are not wired directly).** The generic
+packers close a case from a `BlockProgS` over `StageInv` with NO acceptance premise. The landed
+row statements are stronger: `TranscriptRows.tp_blockProgS`, `Rows.tp_blockProgS`,
+`Rows.lag_blockProgS`, `Rows.pcs_blockProgS` and `QuotientRows.q_blockProgS` all take
+`hacc : LeanAccepts R H cd` and `hcomp : CompleteSide R H cd`. `block_live` is unconditional in the
+calldata, so it cannot supply either; wiring the rows as stated would require adding those two
+facts to `block_live` (forbidden: it weakens the statement). The residual is therefore the
+**unconditional progress row** for each of the four blocks, not the landed row verbatim. The
+PCS/lagrange low-level contracts (`PcsBlock4.pcsBlock_contract`, `LagrangeBlock`'s
+`LagInnerContract`/`LagBlockContract` definitions) sit below the row and do not by themselves state
+`BlockLive`; no `block_live_lagrange`/`block_live_pcs_running` theorem exists to wire today.
+
+### Final claim surface - generic vs F1-real
+
+* `Midfall/LoweringV3/FinalClaims.lean` - the GENERIC surface: `lowering_correct`,
+  `generator_correct_V3`, and `end_to_end_of_lowering_correct` (`EndToEndV3` with the headline's
+  `hEq` discharged by `lowering_correct`, conditional on the named `PrepareLogSlots` bridge). Its
+  gates assert `native []`; `sorryAx` is named only because the four BlockLive rows are still open.
+* `Midfall/Instances/GeneratorDoneAt.lean` - the F1-REAL `DoneAt` wiring
+  (`f1PointRenderCN_doneAt`, `f1PointRenderCCN_doneAt`), conditional on `hpay`, the gate data,
+  `ArtifactEqV3` and the execution data. It consumes `totalV3_correct` from `BlockLive`.
+* `Midfall/Instances/FinalClaimsF1.lean` - the index for that F1-real claim and the record of its
+  native/data trust boundary. checks.sh's import-confinement rule keeps it out of every generic
+  theorem-bearing file; the generic module does not import it.
 
 ### Six-lane critical path (user cap)
 
@@ -409,8 +455,9 @@ same-order query shape/`hclass`; D2 CERT.5 gas scans; calldata `calldata_roundtr
 D-GATE11 generator input-fit. A12's F1 gate is data-blocked on `LeanAccepts` (test-SRS proof vs
 production key).
 
-Phase 2: `block_live` (3/7: traceReturn, vkLoading, finalPairing poison; clean finalPairing via A12),
-then the TP/PCS/lag/quotient cases, `TotalV3`, and the `Rows` glue.
+Phase 2: `block_live` - 3/7 CLOSED (traceReturn, vkLoading, finalPairing) and the seven-way table
+LANDED in `BlockLive.lean`; then the four open TP/PCS/lag/quotient case rows (as unconditional
+progress rows, not the `LeanAccepts`-guarded row statements), `TotalV3`, and the `Rows` glue.
 
 Phase 3: D2 CERT payload; `Done`/`ArtifactEq`; port audit D-GATE6/KZG; calldata; final full gate.
 QVM is with the separate external agent.

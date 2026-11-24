@@ -95,6 +95,7 @@ import Midfall.Instances.PayloadPointsF1
 import Midfall.Instances.GeneratorDone
 import Midfall.Instances.ValidV3F1Real
 import Midfall.Instances.GeneratorDoneAt
+import Midfall.Instances.FinalClaimsF1
 import Midfall.Instances.VkKats
 import Midfall.Instances.ArtifactB5Poseidon
 import Midfall.Instances.ArtifactB5F1
@@ -225,6 +226,7 @@ import Midfall.LoweringV3.MemoryPairs
 import Midfall.LoweringV3.VkWindow
 import Midfall.LoweringV3.VkClean
 import Midfall.LoweringV3.GeneratorTheorem
+import Midfall.LoweringV3.FinalClaims
 import Midfall.Generator.Certified
 import Midfall.LoweringV3.EndToEnd
 import Midfall.LoweringV3.EndToEndAlgebra
