@@ -599,6 +599,65 @@ theorem restore_set_local {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : 
     {x : Ident} {a : D.Value} : restore V (VEnv.set V x a) = VEnv.set V x a := by
   simp [restore, venv_set_length_local]
 
+/-- **THE SINGLETON INLINER STEP.** A one-statement scan whose statement becomes `s'` under
+    `inlineStmtStep` is the singleton `[s']`. This is the kernel-level form the emitted helper
+    bodies need; it avoids unfolding the whole helper list. -/
+theorem inlineScan_single_changed (fuel : Nat) (consts : Inline.Consts) (sh : List String)
+    (s s' : Stmt EVM.Op)
+    (h : (Inline.inlineStmtStep (Inline.inlineScan fuel consts) consts sh s).1 = s') :
+    (Inline.inlineScan (fuel + 1) consts sh [s]).blks = [s'] := by
+  show (Inline.inlineStep (Inline.inlineScan fuel consts) consts sh [s]).blks = [s']
+  simp [Inline.inlineStep, h]
+
+/-- The `TRANSCRIPT_MPTR` occurrence under an unshadowing `sh` becomes the constant literal. -/
+theorem inExpr_transcriptMptr_sh (consts : Inline.Consts) (sh : List String) (t : Nat)
+    (h : consts.lookup "TRANSCRIPT_MPTR" = some t)
+    (hsh : Inline.shadowed sh "TRANSCRIPT_MPTR" = false) :
+    Inline.inExpr Inline.exprFuel (Expr.var "TRANSCRIPT_MPTR") consts sh =
+      Expr.lit (Literal.number t) := by
+  change Inline.inExpr 64 (Expr.var "TRANSCRIPT_MPTR") consts sh = _
+  simp [Inline.inExpr, hsh, h]
+
+/-- The `transcript_init` body scan at an arbitrary unshadowing `sh`: one assignment to the
+    constant literal. -/
+theorem transcriptInit_body_sh (consts : Inline.Consts) (sh : List String) (t : Nat)
+    (h : consts.lookup "TRANSCRIPT_MPTR" = some t)
+    (hsh : Inline.shadowed sh "TRANSCRIPT_MPTR" = false) :
+    (Inline.inlineScan 63 consts sh
+      [Stmt.assign ["buf_len"] (Expr.var "TRANSCRIPT_MPTR")]).blks =
+      [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))] := by
+  show (Inline.inlineScan (62 + 1) consts sh
+    [Stmt.assign ["buf_len"] (Expr.var "TRANSCRIPT_MPTR")]).blks = _
+  apply inlineScan_single_changed
+  simp only [Inline.inlineStmtStep]
+  congr 1
+  exact inExpr_transcriptMptr_sh consts sh t h hsh
+
+/-- **THE SINGLETON `transcript_init` INLINER EQUATION.** The emitted helper block, inlined at a
+    table whose `TRANSCRIPT_MPTR` is `t`, is the singleton declaration with the literal body.
+    This is the semantic core of the full `R.helpers` body equation; the remaining step is the
+    prefix split of the helper list (`inlineScan_append` at `emitFail ++ emitScalarInvAt`). -/
+theorem transcriptInit_inlined (consts : Inline.Consts) (t : Nat)
+    (h : consts.lookup "TRANSCRIPT_MPTR" = some t) :
+    Inline.inlineContractConstants consts GenAst.emitTranscriptInit =
+      [Stmt.funDef "transcript_init" [] ["buf_len"]
+        [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))]] := by
+  unfold GenAst.emitTranscriptInit
+  show (Inline.inlineScan 64 consts [] [Stmt.funDef "transcript_init" [] ["buf_len"]
+    [Stmt.assign ["buf_len"] (Expr.var "TRANSCRIPT_MPTR")]]).blks = _
+  have hbody : (Inline.inlineScan 63 consts ["buf_len"]
+      [Stmt.assign ["buf_len"] (Expr.var "TRANSCRIPT_MPTR")]).blks =
+      [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))] :=
+    transcriptInit_body_sh consts ["buf_len"] t h (by rfl)
+  show (Inline.inlineScan (63 + 1) consts [] [Stmt.funDef "transcript_init" [] ["buf_len"]
+    [Stmt.assign ["buf_len"] (Expr.var "TRANSCRIPT_MPTR")]]).blks = _
+  apply inlineScan_single_changed
+  simp only [Inline.inlineStmtStep, List.nil_append]
+  rw [hbody]
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.transcriptInit_inlined
+  [propext, Classical.choice, Quot.sound] native []
+
 /-- **THE `common_word` CALL RESOLVES.** `R.scope` resolves `common_word` to the emitted
     two-parameter/one-return helper with the `mstore`/`add` body. PROVED by `rfl`. -/
 theorem commonWord_lookup_body (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} :
