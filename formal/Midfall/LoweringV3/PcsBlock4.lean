@@ -6293,6 +6293,55 @@ theorem pcsRotPtRef_bridge (distinct : List Int) {point : Int} (hmem : point ∈
     rfl
 
 
+def pcsBlock4PSet (distinct : List Int) (rotVals : Nat → U256)
+    (pointSets : List (List Int)) (s j : Nat) : U256 :=
+  rotVals ((distinct.findIdx? (fun r => r == (pointSets.getD s []).getD j 0)).getD 0)
+
+theorem mem_enumIdx {points : List Int} {r : Nat × Int}
+    (hr : r ∈ Midfall.Generator.enumIdx points) :
+    r.1 < points.length ∧ r = (r.1, points.getD r.1 0) := by
+  obtain ⟨i, hi, hri⟩ := List.mem_iff_getElem.mp hr
+  have hi' : i < points.length := by
+    unfold Midfall.Generator.enumIdx at hi
+    rwa [List.length_zip, List.length_range, Nat.min_self] at hi
+  have hpair : (Midfall.Generator.enumIdx points)[i] = (i, points.getD i 0) := by
+    unfold Midfall.Generator.enumIdx
+    rw [List.getElem_zip (h := hi)]
+    rw [List.getElem_range]
+    congr 1
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi']
+    rfl
+  have hri' : r = (i, points.getD i 0) := by rw [← hri, hpair]
+  constructor
+  · rw [congrArg Prod.fst hri']; exact hi'
+  · rw [hri']
+
+theorem pcsBlock4PSet_rot {distinct : List Int} {rotVals : Nat → U256}
+    {pointSets : List (List Int)}
+    (hsubset : ∀ s, s < pointSets.length →
+      ∀ j, j < (pointSets.getD s []).length → (pointSets.getD s []).getD j 0 ∈ distinct)
+    {s : Nat} (hs : s < pointSets.length)
+    {q : Nat × String} (hq : q ∈ pcsPointRefs (pointSets.getD s []) distinct)
+    {V : VEnv (Bridge.Dialect c g)}
+    (hrot : ∀ p ∈ Midfall.Generator.enumIdx distinct,
+      VEnv.get V ("rot_pt_" ++ toString p.1) = some (rotVals p.1)) :
+    VEnv.get V q.2 = some (pcsBlock4PSet distinct rotVals pointSets s q.1) := by
+  obtain ⟨r, hr, hqr⟩ := List.mem_map.mp hq
+  cases hqr
+  obtain ⟨hlt, hr_eq⟩ := mem_enumIdx hr
+  have hlt' : r.1 < (pointSets.getD s []).length := by simpa using hlt
+  have hpoint : (pointSets.getD s []).getD r.1 0 = r.2 := by
+    rw [hr_eq]
+  have hmem : r.2 ∈ distinct := by
+    have h := hsubset s hs r.1 hlt'
+    rwa [hpoint] at h
+  obtain ⟨i, hi_mem, hname, hival⟩ := pcsRotPtRef_bridge distinct hmem
+  have hget := hrot (i, r.2) hi_mem
+  rw [← hname] at hget
+  convert hget using 2
+  unfold pcsBlock4PSet
+  rw [hpoint, hival]
+
 theorem pcsRot_name_inj {i j : Nat}
     (h : "rot_pt_" ++ toString i = "rot_pt_" ++ toString j) : i = j := by
   apply Nat.repr_inj.mp
