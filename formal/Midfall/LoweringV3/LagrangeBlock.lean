@@ -17,6 +17,7 @@
 -- No fixture (D-P71): every statement is quantified over the table, the layout values and the
 -- window fits.
 import Midfall.LoweringV3.BatchInvert
+import Midfall.LoweringV3.ScalarInvSummary
 
 set_option autoImplicit false
 
@@ -494,7 +495,7 @@ def LagP14 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg const
         (inv i).toNat < C.rw.toNat) ∧
       loadWord mem0 (C.D + 32 * (n + m)) = inv (n + m)) ∧
     st.memory = mem ∧
-    (∀ x, C.D ≤ x → x + 32 ≤ C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
+    (∀ x, C.D ≤ x → x < C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
     st.env = st0.env ∧ st.halted = st0.halted ∧
     MemSameOut st0.memory st C.D (32 * (n + m + 1)) C.s (32 * (n + m + 1) + 0xc0)
       (lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE)
@@ -526,7 +527,7 @@ def LagP15 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg const
         (inv i).toNat < C.rw.toNat) ∧
       loadWord mem0 (C.D + 32 * (n + m)) = inv (n + m)) ∧
     st.memory = mem ∧
-    (∀ x, C.D ≤ x → x + 32 ≤ C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
+    (∀ x, C.D ≤ x → x < C.D + 32 * (n + m + 1) → mem x = mem0 x) ∧
     st.env = st0.env ∧ st.halted = st0.halted ∧
     MemSameOut st0.memory st C.D (32 * (n + m + 1)) C.s (32 * (n + m + 1) + 0xc0)
       (lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE)
@@ -1841,6 +1842,17 @@ theorem loadWord_slot_inside {D n m : Nat} {mem : Nat → UInt8} {q : Nat} {v : 
     · exact Or.inl (by omega)
     · exact Or.inr (by omega))
 
+/-- Byte-level counterpart of `loadWord_slot_inside`: a slot store outside the window leaves the
+window's bytes untouched. -/
+theorem storeWord_slot_inside {D n m : Nat} {mem : Nat → UInt8} {q : Nat} {v : U256} {x : Nat}
+    (hq : q + 32 ≤ D ∨ D + 32 * (n + m + 1) ≤ q)
+    (h1 : D ≤ x) (h2 : x < D + 32 * (n + m + 1)) :
+    storeWord mem q v x = mem x :=
+  BatchInvert.storeWord_outside mem q x v (by
+    rcases hq with hq' | hq'
+    · exact Or.inr (by omega)
+    · exact Or.inl (by omega))
+
 /-- `wSum` respects pointwise-equal summands and equal accumulators. -/
 theorem wSum_congr (r : U256) {f f' : Nat → U256} (hf : ∀ i, f i = f' i) :
     ∀ (j : Nat) (acc acc' : U256), acc = acc' → wSum r f j acc = wSum r f' j acc'
@@ -2022,6 +2034,34 @@ theorem lag_slot27 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagC
       (by rw [hst, hmemEq]) (by rw [hst]; exact henv) (by rw [hst]; exact hhalt)
 
 
+/-- The six slot-store memories, as functions of the pre-slot memory. -/
+abbrev LagM1 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord mem C.aXN (wPow2 C.rw k C.xw)
+
+abbrev LagM2 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM1 C mem) C.aXN1 (loadWord mem (C.D + 32 * (n + m)))
+
+abbrev LagM3 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM2 C mem) C.aLL (loadWord mem C.D)
+
+abbrev LagM4 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM3 C mem) C.aLB (wSum C.rw (fun i => loadWord mem (C.D + 64 + 32 * i))
+    (m - 2) (loadWord mem (C.D + 32)))
+
+abbrev LagM5 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM4 C mem) C.aL0 (loadWord mem (C.D + 32 * m))
+
+abbrev LagM6 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    (mem : Nat → UInt8) : Nat → UInt8 :=
+  storeWord (LagM5 C mem) C.aIE (wSum C.rw
+    (fun j => wMulmodAt (loadWord mem (C.D + 32 * m + 32 * j))
+      (cdWord cd (C.aI + 32 * j)) C.rw) n 0)
+
 /-- Bounded `wSum` congruence: equal summands below the bound give equal sums. -/
 theorem wSum_congr_lt (r : U256) {f f' : Nat → U256} (j : Nat)
     (hf : ∀ i, i < j → f i = f' i) :
@@ -2066,21 +2106,20 @@ theorem lagP15_of_nested {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
   have hdisj : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
       ∀ q' ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
         q' + 32 ≤ q ∨ q + 32 ≤ q' := fun q hq q' hq' => Or.symm (hpair q hq q' hq')
-  have hin : ∀ x, C.D ≤ x → x + 32 ≤ C.D + 32 * (n + m + 1) →
-      loadWord (storeWord (storeWord (storeWord (storeWord (storeWord
-        (storeWord mem0 C.aXN (wPow2 C.rw k C.xw)) C.aXN1 (loadWord mem0 (C.D + 32 * (n + m))))
-        C.aLL (loadWord mem0 C.D)) C.aLB (wSum C.rw
-          (fun i => loadWord mem0 (C.D + 64 + 32 * i)) (m - 2) (loadWord mem0 (C.D + 32))))
-        C.aL0 (loadWord mem0 (C.D + 32 * m))) C.aIE (wSum C.rw
-          (fun j => wMulmodAt (loadWord mem0 (C.D + 32 * m + 32 * j))
-            (cdWord cd (C.aI + 32 * j)) C.rw) n 0)) x = loadWord mem0 x := by
+  have hin : ∀ x, C.D ≤ x → x < C.D + 32 * (n + m + 1) → LagM6 C mem0 x = mem0 x := by
     intro x h1 h2
-    rw [loadWord_slot_inside (D := C.D) (n := n) (m := m) (q := C.aIE) (v := _) (x := x) (hslotD C.aIE (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aL0) (v := _) (x := x) (hslotD C.aL0 (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aLB) (v := _) (x := x) (hslotD C.aLB (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aLL) (v := _) (x := x) (hslotD C.aLL (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aXN1) (v := _) (x := x) (hslotD C.aXN1 (by simp [lagSlots])) h1 h2]
-    rw [loadWord_slot_inside (q := C.aXN) (v := _) (x := x) (hslotD C.aXN (by simp [lagSlots])) h1 h2]
+    simp only [LagM6, LagM5, LagM4, LagM3, LagM2, LagM1]
+    rw [storeWord_slot_inside (D := C.D) (n := n) (m := m) (q := C.aIE) (v := _) (x := x)
+      (hslotD C.aIE (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aL0) (v := _) (x := x) (hslotD C.aL0 (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aLB) (v := _) (x := x) (hslotD C.aLB (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aLL) (v := _) (x := x) (hslotD C.aLL (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aXN1) (v := _) (x := x) (hslotD C.aXN1 (by simp [lagSlots])) h1 h2]
+    rw [storeWord_slot_inside (q := C.aXN) (v := _) (x := x) (hslotD C.aXN (by simp [lagSlots])) h1 h2]
+  have hinw : ∀ X, C.D ≤ X → X + 32 ≤ C.D + 32 * (n + m + 1) →
+      loadWord (LagM6 C mem0) X = loadWord mem0 X :=
+    fun X h1 h2 => Midfall.Yul.Word.loadWord_congr _ _ _
+      (fun i hi => hin (X + i) (by omega) (by omega))
   refine ⟨hsucc, hpf, hom, ?_, ?_, ?_, ?_, ?_, ?_, hszero, hinv, hmemEq,
     (by intro x h1 h2; exact hout x h1 h2), henv, hhalt, hms⟩
   · rw [loadWord_storeWord_slot (q := C.aIE) (v := _) (x := C.aXN) (hdisj C.aXN (by simp [lagSlots]) C.aIE (by simp [lagSlots]))]
@@ -2094,12 +2133,12 @@ theorem lagP15_of_nested {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
     rw [loadWord_storeWord_slot (q := C.aLB) (v := _) (x := C.aXN1) (hdisj C.aXN1 (by simp [lagSlots]) C.aLB (by simp [lagSlots]))]
     rw [loadWord_storeWord_slot (q := C.aLL) (v := _) (x := C.aXN1) (hdisj C.aXN1 (by simp [lagSlots]) C.aLL (by simp [lagSlots]))]
     rw [loadWord_storeWord_same_at _ C.aXN1 _]
-    rw [hin (C.D + 32 * (n + m)) (by omega) (by omega)]
+    rw [hinw (C.D + 32 * (n + m)) (by omega) (by omega)]
   · rw [loadWord_storeWord_slot (q := C.aIE) (v := _) (x := C.aLL) (hdisj C.aLL (by simp [lagSlots]) C.aIE (by simp [lagSlots]))]
     rw [loadWord_storeWord_slot (q := C.aL0) (v := _) (x := C.aLL) (hdisj C.aLL (by simp [lagSlots]) C.aL0 (by simp [lagSlots]))]
     rw [loadWord_storeWord_slot (q := C.aLB) (v := _) (x := C.aLL) (hdisj C.aLL (by simp [lagSlots]) C.aLB (by simp [lagSlots]))]
     rw [loadWord_storeWord_same_at _ C.aLL _]
-    rw [hin (C.D) (by omega) (by omega)]
+    rw [hinw (C.D) (by omega) (by omega)]
   · rw [loadWord_storeWord_slot (q := C.aIE) (v := _) (x := C.aLB) (hdisj C.aLB (by simp [lagSlots]) C.aIE (by simp [lagSlots]))]
     rw [loadWord_storeWord_slot (q := C.aL0) (v := _) (x := C.aLB) (hdisj C.aLB (by simp [lagSlots]) C.aL0 (by simp [lagSlots]))]
     rw [loadWord_storeWord_same_at _ C.aLB _]
@@ -2119,11 +2158,11 @@ theorem lagP15_of_nested {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
             (cdWord cd (C.aI + 32 * j)) C.rw) n 0)) (C.D + 32)) =
       wSum C.rw (fun i => loadWord mem0 (C.D + 64 + 32 * i)) (m - 2) (loadWord mem0 (C.D + 32)) from by
       refine wSum_congr_lt C.rw (m - 2) (fun i hi => ?_) _ _ ?_
-      · exact hin _ (by omega) (by omega)
-      · exact hin _ (by omega) (by omega)]
+      · exact hinw _ (by omega) (by omega)
+      · exact hinw _ (by omega) (by omega)]
   · rw [loadWord_storeWord_slot (q := C.aIE) (v := _) (x := C.aL0) (hdisj C.aL0 (by simp [lagSlots]) C.aIE (by simp [lagSlots]))]
     rw [loadWord_storeWord_same_at _ C.aL0 _]
-    rw [hin (C.D + 32 * m) (by omega) (by omega)]
+    rw [hinw (C.D + 32 * m) (by omega) (by omega)]
   · rw [loadWord_storeWord_same_at _ C.aIE _]
     rw [show wSum C.rw (fun j => wMulmodAt (loadWord (storeWord (storeWord (storeWord (storeWord (storeWord
         (storeWord mem0 C.aXN (wPow2 C.rw k C.xw)) C.aXN1 (loadWord mem0 (C.D + 32 * (n + m))))
@@ -2136,37 +2175,9 @@ theorem lagP15_of_nested {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
       wSum C.rw (fun j => wMulmodAt (loadWord mem0 (C.D + 32 * m + 32 * j))
         (cdWord cd (C.aI + 32 * j)) C.rw) n 0 from by
       refine wSum_congr_lt C.rw n (fun j hj => ?_) _ _ rfl
-      rw [hin _ (by omega) (by omega)]]
+      rw [hinw _ (by omega) (by omega)]]
 
 
-
-/-- The six slot-store memories, as functions of the pre-slot memory. -/
-abbrev LagM1 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord mem C.aXN (wPow2 C.rw k C.xw)
-
-abbrev LagM2 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM1 C mem) C.aXN1 (loadWord mem (C.D + 32 * (n + m)))
-
-abbrev LagM3 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM2 C mem) C.aLL (loadWord mem C.D)
-
-abbrev LagM4 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM3 C mem) C.aLB (wSum C.rw (fun i => loadWord mem (C.D + 64 + 32 * i))
-    (m - 2) (loadWord mem (C.D + 32)))
-
-abbrev LagM5 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM4 C mem) C.aL0 (loadWord mem (C.D + 32 * m))
-
-abbrev LagM6 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
-    (mem : Nat → UInt8) : Nat → UInt8 :=
-  storeWord (LagM5 C mem) C.aIE (wSum C.rw
-    (fun j => wMulmodAt (loadWord mem (C.D + 32 * m + 32 * j))
-      (cdWord cd (C.aI + 32 * j)) C.rw) n 0)
 
 set_option maxHeartbeats 4000000 in
 /-- **GROUP 13 (statements 22-27: the six slot stores).** -/
@@ -2426,6 +2437,326 @@ theorem lag_inner_contract {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
     exact List.take_of_length_le (le_of_eq (lagInner_length consts k n m))
   rw [hseg] at h1
   exact h1 V0 st0 h0 V' st' o hrun
+
+
+
+set_option maxHeartbeats 4000000 in
+/-- **`LagInnerPost` FROM THE LAST PHASE.** The `LagRel` witness reads its `L` values at the
+    current memory via `LagP15`'s six slot equations; the `mem0` L-facts transport to `mem`
+    through the inside-window agreement. -/
+theorem lag_inner_post_of_p15 {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    {C : LagCfg consts cd k n m} {ret pf : U256} {inv : Nat → U256} {st0 : EvmState}
+    {mem0 mem : Nat → UInt8} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState}
+    (hm : 2 ≤ m) (hn : 1 ≤ n) (h : LagP15 C ret pf inv st0 mem0 mem V' st') :
+    LagInnerPost C V' st0 st' := by
+  obtain ⟨hsucc, hpf, hom, hXN, hXN1, hLL, hLB, hL0, hIE, hszero, hinv, hmemEq, hout, henv, hhalt, hms⟩ := h
+  have htrans : ∀ X, C.D ≤ X → X + 32 ≤ C.D + 32 * (n + m + 1) →
+      loadWord mem X = loadWord mem0 X := by
+    intro X h1 h2
+    exact Midfall.Yul.Word.loadWord_congr _ _ _ (fun i hi => hout (X + i) (by omega) (by omega))
+  refine ⟨ret, pf, hsucc, hpf, henv, hhalt, hms, hszero, ?_⟩
+  intro hret
+  obtain ⟨hreads, hvals, hlast⟩ := hinv hret
+  set L : Nat → U256 := fun i =>
+    wMulmodAt (wMulmodAt (wAddmodAt (wPow2 C.rw k C.xw) (C.rw - 1) C.rw) C.nInv C.rw)
+      (wMulmodAt (inv i) (omegaPows C.rw C.omw C.w0 i) C.rw) C.rw with hLdef
+  have hL : ∀ i, i < n + m → loadWord mem (C.D + 32 * i) = L i := by
+    intro i hi
+    rw [htrans (C.D + 32 * i) (by omega) (by omega)]
+    exact hreads i hi
+  have hLb : wSum C.rw (fun i => loadWord mem (C.D + 64 + 32 * i)) (m - 2)
+        (loadWord mem (C.D + 32)) =
+      wSum C.rw (fun i => L (2 + i)) (m - 2) (L 1) := by
+    refine wSum_congr_lt C.rw (m - 2) (fun i hi => ?_) _ _ ?_
+    · rw [show C.D + 64 + 32 * i = C.D + 32 * (2 + i) from by ring]
+      exact hL (2 + i) (by omega)
+    · rw [show C.D + 32 = C.D + 32 * 1 from by ring]
+      exact hL 1 (by omega)
+  have hIe : wSum C.rw (fun j => wMulmodAt (loadWord mem (C.D + 32 * m + 32 * j))
+        (cdWord cd (C.aI + 32 * j)) C.rw) n 0 =
+      wSum C.rw (fun j => wMulmodAt (L (m + j)) (cdWord cd (C.aI + 32 * j)) C.rw) n 0 := by
+    refine wSum_congr_lt C.rw n (fun j hj => ?_) _ _ rfl
+    rw [show C.D + 32 * m + 32 * j = C.D + 32 * (m + j) from by ring]
+    rw [hL (m + j) (by omega)]
+  refine ⟨{ xn := wPow2 C.rw k C.xw
+            lLast := L 0
+            lBlind := wSum C.rw (fun i => L (2 + i)) (m - 2) (L 1)
+            l0 := L m
+            instEval := wSum C.rw (fun j => wMulmodAt (L (m + j))
+              (cdWord cd (C.aI + 32 * j)) C.rw) n 0 }, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · dsimp only [LagRel]
+    refine ⟨rfl, inv, ?_, ?_, ?_, ?_, ?_⟩
+    · intro i hi
+      exact ⟨by simpa only [lagDen] using (hvals i hi).1, (hvals i hi).2⟩
+    · rfl
+    · rfl
+    · rfl
+    · rfl
+  · rw [hmemEq]; exact hXN
+  · rw [hmemEq]; exact hXN1
+  · rw [hmemEq]
+    show loadWord mem C.aLL = L 0
+    rw [hLL, show C.D = C.D + 32 * 0 from by omega]
+    exact hL 0 (by omega)
+  · rw [hmemEq]
+    show loadWord mem C.aLB = wSum C.rw (fun i => L (2 + i)) (m - 2) (L 1)
+    rw [hLB, hLb]
+  · rw [hmemEq]
+    show loadWord mem C.aL0 = L m
+    rw [hL0, show C.D + 32 * m = C.D + 32 * m from rfl]
+    exact hL m (by omega)
+  · rw [hmemEq]
+    show loadWord mem C.aIE = wSum C.rw (fun j => wMulmodAt (L (m + j))
+      (cdWord cd (C.aI + 32 * j)) C.rw) n 0
+    rw [hIE, hIe]
+
+
+
+/-! ## 5b. THE WHOLE SLICE AND ITS GUARD -/
+
+/-- The outer prologue: the whole slice's first statement. -/
+def lagPrologue : Block EVM.Op :=
+  [GenAst.ylet "lagrange_precompile_failed" (GenAst.ylit 0)]
+
+/-- The inliner's constant site: a lookup hit becomes the literal, a miss stays the variable. -/
+def lagSite (consts : Inline.Consts) (x : String) : Expr EVM.Op :=
+  match consts.lookup x with
+  | some v => Expr.lit (.number v)
+  | none => Expr.var x
+
+/-- The outer epilogue: the two MF-4 guards at the inliner's sites. `lagrange_precompile_failed`
+    is bound by the prologue, so it is shadowed and stays a variable; `success` and the two error
+    constants are unshadowed and carry the inliner's `lagSite` sites. -/
+def lagGuard (consts : Inline.Consts) : Block EVM.Op :=
+  [ Stmt.cond (Expr.builtin EVM.Op.iszero [lagSite consts "success"])
+      [ Stmt.cond (Expr.var "lagrange_precompile_failed")
+          [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])]
+      , Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"]) ] ]
+
+set_option maxHeartbeats 2000000 in
+/-- The inlined whole slice is prologue ++ inner scope ++ guard. -/
+theorem lag_slice_decomp (consts : Inline.Consts) (k n m : Nat) :
+    Inline.inlineContractConstants consts (GenAst.emitLagrangeAt k n m) =
+      lagPrologue ++ [Stmt.block (lagInner consts k n m)] ++ lagGuard consts := by
+  rfl
+
+/-! ## 6. T3.9.h: THE POISONED ARM -/
+
+/-- The prologue statement runs normally, leaves the state alone and binds the flag to zero. -/
+theorem lag_prologue_run {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome}
+    (h : ExecStmts (Bridge.Dialect c g) funs V st lagPrologue V' st' o) :
+    o = .normal ∧ st' = st ∧ V' = ("lagrange_precompile_failed", (0 : U256)) :: V := by
+  cases h with
+  | seqCons h1 hnil =>
+      cases hnil with
+      | seqNil =>
+          cases h1 with
+          | letVal he hlen =>
+              cases he with
+              | lit =>
+                  rw [Midfall.Yul.Bridge.litValue_number_nat]
+                  simp
+  | seqStop h1 hne =>
+      cases h1 with
+      | letVal _ _ => exact absurd rfl hne
+      | letHalt he => cases he
+
+/-- The inner guard `if lagrange_precompile_failed { fail(PF) }`: from `pf = 0` it is skipped;
+    its only halting run is the `fail` revert. -/
+theorem lag_inner_guard_run {c : ExternalCalls} {g : ExternalGas} {consts : Inline.Consts}
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (hp : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.cond (Expr.var "lagrange_precompile_failed")
+        [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])])
+      V' st' o) :
+    (o = .normal ∧ V' = V ∧ st' = st) ∨ (o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
+  cases h with
+  | ifTrue hc hnz hbody =>
+      obtain ⟨hcv, hst⟩ := Midfall.LoweringV3.ScalarInv.eval_var_eq funs V
+        "lagrange_precompile_failed" 0 hp hc
+      exact absurd hcv hnz
+  | ifFalse hc hz =>
+      obtain ⟨-, hst⟩ := Midfall.LoweringV3.ScalarInv.eval_var_eq funs V
+        "lagrange_precompile_failed" 0 hp hc
+      exact Or.inl ⟨rfl, rfl, hst⟩
+  | ifHalt hc =>
+      exact absurd hc (Midfall.LoweringV2.Blocks.TraceReturn.trExprVar_ne_halts)
+
+/-- A `fail(ERR_PROOF_REJECTED)` statement halts reverted. -/
+theorem lag_fail_lit_run {c : ExternalCalls} {g : ExternalGas} {consts : Inline.Consts}
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome} {err : Nat}
+    (hE : consts.lookup "ERR_PROOF_REJECTED" = some err)
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])) V' st' o) :
+    o = .halt ∧ Midfall.LoweringV2.Reverted st' := by
+  simp only [lagSite, hE] at h
+  exact Midfall.LoweringV3.ScalarInvSummary.fail_call_any_reverts
+    (fun st₁ st₂ hh => Midfall.LoweringV2.Blocks.VkLoading.vkLit_ne_halts hh) hfail h
+
+/-- The guard's body `{ if pf { fail(PF) }; fail(PR) }` always halts reverted at `pf = 0`. -/
+theorem lag_guard_body_run {c : ExternalCalls} {g : ExternalGas} {consts : Inline.Consts}
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {errPR : Nat}
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hfail : lookupFun (hoist (Bridge.Dialect c g)
+      [Stmt.cond (Expr.var "lagrange_precompile_failed")
+        [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+       Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])]
+      :: funs) "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (hp : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+      (Stmt.block
+        [Stmt.cond (Expr.var "lagrange_precompile_failed")
+          [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+         Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])])
+      V' st' o) :
+    o = .halt ∧ Midfall.LoweringV2.Reverted st' := by
+  cases h with
+  | block hstmts =>
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hstmts with
+          ⟨V1, st1, hInner, hRest⟩ | ⟨hInner, hne⟩
+      · rcases lag_inner_guard_run (hfail := hfail) hp hInner with
+          ⟨-, hV1, hst1⟩ | ⟨hhal, hrev⟩
+        · rw [hV1, hst1] at hRest
+          cases hRest with
+          | seqCons hf hnil =>
+              cases hnil with
+              | seqNil => exact lag_fail_lit_run hPR hfail hf
+          | seqStop hf _ => exact lag_fail_lit_run hPR hfail hf
+        · exact absurd hhal (by decide)
+      · rcases lag_inner_guard_run (hfail := hfail) hp hInner with
+          ⟨hno, -⟩ | ⟨hhal, hrev⟩
+        · exact absurd hno hne
+        · exact ⟨hhal, hrev⟩
+
+/-- The outer MF-4 guard: from `success = 0` and `lagrange_precompile_failed = 0` every run
+    halts reverted (`ERR_PROOF_REJECTED`). -/
+theorem lag_outer_guard_run {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ] [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p]
+    [PrimeOrderWith Gₜ p] [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    {c : ExternalCalls} {g : ExternalGas} (R : Render p G₁ G₂ Gₜ)
+    {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    {errPR : Nat}
+    (hPR : R.consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
+    (hs : VEnv.get V "success" = some (0 : U256))
+    (hp : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (h : ExecStmts (Bridge.Dialect c g) funs V st (lagGuard R.consts) V' st' o) :
+    o = .halt ∧ Midfall.LoweringV2.Reverted st' := by
+  have hfail' : lookupFun (hoist (Bridge.Dialect c g)
+      [Stmt.cond (Expr.var "lagrange_precompile_failed")
+        [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
+       Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])]
+      :: funs) "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv) := by
+    have hh : hoist (Bridge.Dialect c g)
+        [Stmt.cond (Expr.var "lagrange_precompile_failed")
+          [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
+         Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])] = [] := by
+      rfl
+    rw [hh]
+    exact hfail
+  cases h with
+  | seqCons h1 _ =>
+      simp only [lagGuard, lagSite,
+        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+      cases h1 with
+      | ifTrue hc hnz hbody =>
+          have hh := lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
+          exact absurd hh.1 (by decide)
+      | ifFalse hc hz =>
+          obtain ⟨hcv, hst⟩ := Midfall.LoweringV3.ScalarInv.eval_iszero_var funs V
+            "success" 0 hs hc
+          rw [hcv] at hz
+          have hz' : b2w (decide ((0 : U256) = 0)) = (0 : U256) := hz
+          exact absurd hz' (by decide)
+  | seqStop h1 hne =>
+      simp only [lagGuard, lagSite,
+        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+      cases h1 with
+      | ifTrue hc hnz hbody =>
+          exact lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
+      | ifFalse hc hz =>
+          obtain ⟨hcv, hst⟩ := Midfall.LoweringV3.ScalarInv.eval_iszero_var funs V
+            "success" 0 hs hc
+          rw [hcv] at hz
+          have hz' : b2w (decide ((0 : U256) = 0)) = (0 : U256) := hz
+          exact absurd hz' (by decide)
+      | ifHalt hc =>
+          exact absurd hc (Midfall.LoweringV3.ScalarInv.expr_iszero_var_ne_halts funs V "success")
+
+
+
+set_option maxHeartbeats 8000000 in
+/-- **THE INNER CONTRACT AT THE `LagInnerPost` POST.** `lag_inner_contract`'s `LagP15` post
+    projected to the block vocabulary: the `LagRel`/slot facts via `lag_inner_post_of_p15`. -/
+theorem lag_inner_contract_post {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) (product : PairingProduct) (g : ExternalGas)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (hr : consts.lookup "r" = none)
+    (hX : consts.lookup "X_MPTR" = some C.aX) (haX : C.aX < 2 ^ 256)
+    (hO : consts.lookup "OMEGA_MPTR" = some C.aO) (haO : C.aO < 2 ^ 256)
+    (hL : consts.lookup "OMEGA_INV_TO_L_MPTR" = some C.aL) (haL : C.aL < 2 ^ 256)
+    (hN : consts.lookup "N_INV_MPTR" = some C.aN) (haN : C.aN < 2 ^ 256)
+    (hI : consts.lookup "INSTANCE_CPTR" = some C.aI) (hIb : C.aI + 32 * n < 2 ^ 256)
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D)
+    (hfitD : C.D + 32 * (n + m) < 2 ^ 256)
+    (hfitm : C.D + 32 * m < 2 ^ 256) (hm32 : m * 32 < 2 ^ 256)
+    (haDm : C.D + m * 32 < 2 ^ 256) (haD32 : C.D + 32 < 2 ^ 256) (haD : C.D < 2 ^ 256)
+    (hLD : C.aL + 32 ≤ C.D ∨ C.D + 32 * (n + m) ≤ C.aL)
+    (haLne : C.aL + 32 ≤ C.D ∨ C.D + 32 * (n + m) + 32 ≤ C.aL)
+    (haLs : C.aL + 32 ≤ C.s ∨ C.s + (32 * (n + m + 1) + 0xc0) ≤ C.aL)
+    (haNne : C.aN + 32 ≤ C.D ∨ C.D + 32 * (n + m) + 32 ≤ C.aN)
+    (haNs : C.aN + 32 ≤ C.s ∨ C.s + (32 * (n + m + 1) + 0xc0) ≤ C.aN)
+    (haNslot : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      C.aN + 32 ≤ q ∨ q + 32 ≤ C.aN)
+    (hXN : consts.lookup "X_N_MPTR" = some C.aXN)
+    (hXN1 : consts.lookup "X_N_MINUS_1_INV_MPTR" = some C.aXN1)
+    (hLL : consts.lookup "L_LAST_MPTR" = some C.aLL)
+    (hLB : consts.lookup "L_BLIND_MPTR" = some C.aLB)
+    (hL0 : consts.lookup "L_0_MPTR" = some C.aL0)
+    (hIE : consts.lookup "INSTANCE_EVAL_MPTR" = some C.aIE)
+    (hfitXN : C.aXN + 32 < 2 ^ 256) (hfitXN1 : C.aXN1 + 32 < 2 ^ 256)
+    (hfitLL : C.aLL + 32 < 2 ^ 256) (hfitLB : C.aLB + 32 < 2 ^ 256)
+    (hfitL0 : C.aL0 + 32 < 2 ^ 256) (hfitIE : C.aIE + 32 < 2 ^ 256)
+    (hslotD : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      q + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ q)
+    (hpair : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      ∀ q' ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+        q + 32 ≤ q' ∨ q' + 32 ≤ q)
+    (hm : 2 ≤ m) (hn : 1 ≤ n) (hk : k < 2 ^ 256)
+    (hcall : BatchInvertCallSegment consts product g k n m C.D C.s funs C.succ C.rw) :
+    LagInnerContract C funs := by
+  intro V st hp V' st' o hrun
+  obtain ⟨ho, ret, pf, inv, mem, h15⟩ :=
+    lag_inner_contract C product g funs hr hX haX hO haO hL haL hN haN hI hIb hD hfitD hfitm
+      hm32 haDm haD32 haD hLD haLne haLs haNne haNs haNslot hXN hXN1 hLL hLB hL0 hIE
+      hfitXN hfitXN1 hfitLL hfitLB hfitL0 hfitIE hslotD hpair hm hn hk hcall
+      V st hp V' st' o hrun
+  exact ⟨ho, lag_inner_post_of_p15 (mem0 := mem) (mem := LagM6 C mem) hm hn h15⟩
+
+
+
+/-- **THE POISON ARM OF THE INNER SCOPE.** At `C.succ = 0` the inner contract's reject arm keeps
+    `success = 0` (`LagInnerPost`'s `succZero` clause), which is what the final guard reads. -/
+theorem lag_inner_contract_zero {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    {C : LagCfg consts cd k n m} {funs : FunEnv (Bridge.Dialect c g)}
+    (h : LagInnerContract C funs) (hsucc0 : C.succ = 0) :
+    LagInnerContractZero C funs := by
+  intro V st hp V' st' o hrun
+  obtain ⟨ho, hip⟩ := h V st hp V' st' o hrun
+  have hip' := hip
+  obtain ⟨ret, pf, hsucc, -, -, -, -, hszero, -⟩ := hip'
+  exact ⟨ho, hip, by rw [hsucc, (hszero hsucc0).1]⟩
 
 
 end Midfall.LoweringV3.LagrangeBlock
