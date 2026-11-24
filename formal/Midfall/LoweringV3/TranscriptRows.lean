@@ -5984,6 +5984,149 @@ theorem wireMsgs_tail (E : VerifierEnv p G₁ G₂ Gₜ) (fCom pi : G₁) (qs : 
   rw [wireMsgs_append, wireMsgs_append, wireMsgs_g1_singleton, wireMsgs_map_fr,
     wireMsgs_g1_singleton]
 
+def xcriptPt (QAdv QMult QPerm QLook QTrash : List G₁) : List (Msg (Fr p) G₁) :=
+  QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+
+def xcriptRa (Qg : List G₁) (Qi Qa Qf Qc Qp Ql Qt : List (Fr p)) : List (Msg (Fr p) G₁) :=
+  Qg.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (Qi.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [])))))))
+
+def xcriptTail (fCom : G₁) (qs : List (Fr p)) (pi : G₁) : List (Msg (Fr p) G₁) :=
+  [Msg.g1 fCom] ++ qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 pi]
+
+set_option maxHeartbeats 2000000 in
+theorem snapshotAlgebraRun_ok_of_schedule (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity)
+    (hnc : 2 = vk.cs.numInstanceColumns)
+    (hinstQ : ∀ q ∈ vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1)
+    (hinstSize : inst.size < 2 ^ 31)
+    (hp : p ≤ 2 ^ 256)
+    (henc : ∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth)
+    (QAdv QMult QPerm QLook QTrash Qg : List G₁)
+    (Qi Qa Qf Qc Qp Ql Qt qs : List (Fr p)) (fCom pi : G₁) (nSets : Nat)
+    (ms : List (Msg (Fr p) G₁))
+    (hms : ms = xcriptPt QAdv QMult QPerm QLook QTrash ++
+      xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt ++ xcriptTail fCom qs pi)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size)
+    (hlenQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else vk.domain.getQuotientPolyDegree))
+    (hlenI : Qi.length = (instanceShape inst).size *
+      (vk.cs.instanceQueries.toList.filter
+        (fun q => decide (q.1.index < 1))).length)
+    (hlenA : Qa.length = (instanceShape inst).size * vk.cs.adviceQueries.size)
+    (hlenF : Qf.length = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors)
+    (hlenC : Qc.length = vk.permutation.commitments.size)
+    (hlenP : Qp.length = 3 * Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2) - 1)
+    (hlenL : Ql.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 3)).sum)
+    (hlenT : Qt.length = vk.cs.trashcans.size)
+    (hlenQs : qs.length = nSets) :
+    ∃ s2 t2, snapshotAlgebraRun E H vk inst ms = .ok (s2, t2) ∧
+      t2.buffer = wireMsgs E (xcriptPt QAdv QMult QPerm QLook QTrash ++
+        xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt) ++
+        E.g1.toCompressed fCom ++ wireOf qs ++ E.g1.toCompressed pi ∧
+      t2.pos = (wireMsgs E (xcriptPt QAdv QMult QPerm QLook QTrash ++
+        xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt)).size := by
+  let Pt : List (Msg (Fr p) G₁) := xcriptPt QAdv QMult QPerm QLook QTrash
+  let Ra : List (Msg (Fr p) G₁) := xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt
+  let Tail : List (Msg (Fr p) G₁) := xcriptTail fCom qs pi
+  have hms' : ms = Pt ++ (Ra ++ Tail) := by
+    simpa only [Pt, Ra, Tail, List.append_assoc] using hms
+  have hsp : vk.cs.numChallenges = 0 := hf.singlePhase
+  have hdeg : 3 ≤ vk.csDegree := hf.chunkLenPositive
+  have hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c :=
+    fun l hl => chunkByDegree_ok_of_wf hf hl
+  obtain ⟨trace, t1, hrun, hbuf1, hpos1, hperm, hlook, htrash⟩ :=
+    parseTrace_run_of_ms_sizes_rest E H vk inst hf hnc hsp hdeg hs
+      QAdv QMult QPerm QLook QTrash hlenAdv hlenMult hlenPerm hlenLook hlenTrash hp henc
+      hwidth ms (Ra ++ Tail) hms'
+  have htrace : snapshotTraceRun E H vk inst ms = .ok (SnapTrace.mk trace, t1) := by
+    unfold snapshotTraceRun snapshotTraceStep
+    simp only [StateT.run_bind, StateT.run_pure, hrun]
+    rfl
+  have hmax : maxInstanceLen (instanceShape inst) < 2 ^ 31 := by
+    simpa [maxInstanceLen, instanceShape] using hinstSize
+  have hrows : ∀ row ∈ (instanceShape inst).toList,
+      ∀ q ∈ vk.cs.instanceQueries.toList, ¬ q.1.index < 1 →
+        ∃ col, row[q.1.index - 1]? = some col := by
+    intro row hrow q hq hnc'
+    have hrow' : row = #[inst] := by simpa [instanceShape] using hrow
+    subst hrow'
+    have hq1 := hinstQ q hq hnc'
+    exact ⟨inst, by rw [hq1]; rfl⟩
+  have hlenA' : Qa.length = 1 * vk.cs.adviceQueries.size := by
+    simpa [instanceShape] using hlenA
+  have hlenP' : Qp.length = (trace.permutations.toList.map (fun pc =>
+      3 * pc.permutationProductCommitments.size - 1)).sum := by
+    rw [hperm]; exact hlenP
+  have hlenL' : Ql.length = (trace.lookups.toList.map (fun row =>
+      (row.toList.map (fun c => c.helperPolys.size + 3)).sum)).sum := by
+    rw [hlook]; exact hlenL
+  have hlenT' : Qt.length = (trace.trashcans.toList.map (fun row => row.size)).sum := by
+    rw [htrash]; exact hlenT
+  have hbufW : (transcriptOf E H ms).buffer = wireMsgs E Pt ++
+      (wireMsgs E Ra ++ wireMsgs E Tail) := by
+    rw [(transcriptOf_buffer E H ms).1, hms']
+    simp only [Pt, Ra, Tail, wireMsgs_append]
+  obtain ⟨alg, t2, hread, hbuf2, hpos2⟩ :=
+    runsAll_readAlgebra E vk hf trace.permutations trace.lookups trace.trashcans 1 1
+      (instanceShape inst) hmax hrows Qg Qi Qa Qf Qc Qp Ql Qt hlenQ hlenI hlenA' hlenF
+      hlenC hlenP' hlenL' hlenT' t1 (wireMsgs E Pt) (wireMsgs E Tail)
+      (by rw [hbuf1, hbufW]; dsimp only [Pt, Ra, Tail, xcriptPt, xcriptRa, xcriptTail])
+      (by rw [hpos1]; dsimp only [Pt, xcriptPt]) hp henc hwidth
+  have hstep : snapshotAlgebraStep (G₁ := G₁) E.g1 Features.solidity vk trace 1 1
+      (instanceShape inst) t1 =
+      .ok (({ toSnapTrace := SnapTrace.mk trace, alg := alg } : SnapAlgebra p G₁), t2) := by
+    unfold snapshotAlgebraStep
+    simp only [StateT.run_bind, StateT.run_pure, hread]
+    rfl
+  refine ⟨({ toSnapTrace := SnapTrace.mk trace, alg := alg } : SnapAlgebra p G₁), t2, ?_, ?_, ?_⟩
+  · unfold snapshotAlgebraRun
+    simp only [StateT.run_bind, StateT.run_pure, htrace]
+    rw [show (if Features.solidity.committedInstances then committedShape (G₁ := G₁)
+      else arrayReplicate (instanceShape inst).size (#[] : Array G₁)) =
+      committedShape (G₁ := G₁) from rfl]
+    rw [show (committedShape (G₁ := G₁)).isEmpty = false from rfl]
+    simp only [Bool.false_eq_true, if_false]
+    simpa [committedShape, hstep]
+  · -- buffer
+    have hbuf2' : t2.buffer = wireMsgs E Pt ++ (wireMsgs E Ra ++ wireMsgs E Tail) := by
+      rw [hbuf2, hbuf1, hbufW]
+    rw [hbuf2']
+    dsimp only [Tail]
+    rw [show xcriptTail fCom qs pi = [Msg.g1 fCom] ++
+      qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 pi] from rfl]
+    rw [wireMsgs_tail]
+    dsimp only [Pt, Ra]
+    simp only [wireMsgs_append, List.append_assoc]
+    simp only [ByteArray.append_assoc]
+  · -- pos
+    rw [hpos2]
+    dsimp only [Pt, Ra, xcriptPt, xcriptRa]
+    rw [← wireMsgs_size]
+    simp only [wireMsgs_append, ByteArray.size_append, List.append_assoc]
+    omega
+
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -8684,6 +8827,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_split_of_plan [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTrace_run_of_ms_sizes_rest [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_tail [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotAlgebraRun_ok_of_schedule [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
