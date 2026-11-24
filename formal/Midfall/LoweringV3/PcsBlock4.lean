@@ -2271,6 +2271,18 @@ def pcsDenInvVal (rv : U256) (f : Nat → U256) : Nat → U256
   | 0 => 1
   | k + 1 => wMulmodAt (pcsDenInvVal rv f k) (f k) rv
 
+
+theorem pcsSIInv_one : SIInv (1 : U256) = 1 := by
+  unfold SIInv
+  rw [show (1 : U256).toNat = 1 by decide]
+  simp [ZMod.val_one]
+
+theorem pcsDenInvVal_one (f : Nat → U256)
+    (hf : (f 0).toNat < blsR) :
+    pcsDenInvVal (BitVec.ofNat 256 blsR) f 1 = f 0 := by
+  simp [pcsDenInvVal]
+  exact pcs_wMulmodAt_one_left hf
+
 def pcsDenInvSetStmt (j : Nat) (invName : Nat → String) : Stmt EVM.Op :=
   GenAst.yset "den_inv" (GenAst.yop EVM.Op.mulmod
     [GenAst.yvar "den_inv", GenAst.yvar (invName j), GenAst.yvar "r"])
