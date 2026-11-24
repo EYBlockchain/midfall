@@ -9045,6 +9045,66 @@ theorem instLet_stmt {c : ExternalCalls} {g : ExternalGas}
 
 
 
+theorem and_lt_no_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {x y z : String}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.and [Expr.var x, Expr.builtin Op.lt [Expr.var y, Expr.var z]])
+      (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_binary (op := .and)
+    (by
+      intro a b st r hr
+      simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh)
+    (fun _ _ hh => g1Walk_eval_lt_vars_halt_false hh) h
+
+set_option maxHeartbeats 4000000 in
+theorem instSucc_stmt {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) (s rv word : U256)
+    (hs : VEnv.get V "success" = some s)
+    (hr : VEnv.get V "r" = some rv)
+    (hw : VEnv.get V "inst_be" = some word) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.assign ["success"] (Expr.builtin Op.and
+        [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]]))
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun V0 st0 V' st' o => o = .normal ∧
+        V' = VEnv.set V "success" (s &&& b2w (word.ult rv)) ∧ st' = st) := by
+  intro V0 st0 hpre V' st' o hrun
+  obtain ⟨hV0, hst0⟩ := hpre
+  cases hrun with
+  | assignVal he hlen =>
+      obtain ⟨argvals, st2, hargs, hbi⟩ := g1Walk_eval_builtin_vals_inv he
+      cases hargs with
+      | argsCons hrest hhead =>
+          cases hrest with
+          | argsCons hnil htail =>
+              cases hnil with
+              | argsNil =>
+                  rename_i stA stB vhead vtail
+                  obtain ⟨xv, yv, hx, hy, hltv, hstlt⟩ := g1Walk_eval_lt_vars_inv htail
+                  rw [hV0] at hx hy
+                  have hxv : xv = word := Option.some.inj (hx.symm.trans hw)
+                  have hyv : yv = rv := Option.some.inj (hy.symm.trans hr)
+                  subst hxv
+                  subst hyv
+                  subst hltv
+                  rw [hstlt] at hhead
+                  obtain ⟨hsv, hstsv⟩ := g1Walk_eval_var_inv hhead
+                  rw [hV0] at hsv
+                  have hsvv : vhead = s := Option.some.inj (hsv.symm.trans hs)
+                  subst hsvv
+                  simp only [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+                  cases hbi
+                  refine ⟨rfl, ?_, ?_⟩
+                  · rw [hV0, t_setMany_one (D := Bridge.Dialect c g) V "success" _]
+                  · rw [hstsv, hst0]
+  | assignHalt he => exact (and_lt_no_halt he).elim
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9657,5 +9717,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_get? [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.calldataload_var_no_halt [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instLet_stmt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.and_lt_no_halt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instSucc_stmt [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
