@@ -976,12 +976,12 @@ theorem commonWord_call_run_expr {c : ExternalCalls} {g : ExternalGas}
     (decl : FDecl (Bridge.Dialect c g)) (cenv : FunEnv (Bridge.Dialect c g))
     (hlook : lookupFun funs "common_word" = some (decl, cenv))
     (hparams : decl.params = ["buf_len", "word"]) (hrets : decl.rets = ["ret"])
-    (hbody : decl.body = commonWordBody) (arg2 : Expr EVM.Op) (b w : U256)
+    (hbody : decl.body = commonWordBody) (arg2 : Expr EVM.Op) (x : Ident) (b w : U256)
     (hb : VEnv.get V "buf_len" = some b)
     (harg : Step (Bridge.Dialect c g) funs V st (.expr arg2) (.eres (.vals [w] st))) :
     ∃ st', ExecStmt (D := Bridge.Dialect c g) funs V st
-      (Stmt.assign ["out"] (Expr.call "common_word" [Expr.var "buf_len", arg2]))
-      (VEnv.setMany V ["out"] [b + BitVec.ofNat 256 32]) st' .normal ∧
+      (Stmt.assign [x] (Expr.call "common_word" [Expr.var "buf_len", arg2]))
+      (VEnv.setMany V [x] [b + BitVec.ofNat 256 32]) st' .normal ∧
       st' = { touchMemory st b.toNat 32 with memory := storeWord st.memory b.toNat w } := by
   let Vc : VEnv (Bridge.Dialect c g) :=
     (decl.params.zip [b, w]) ++ bindZeros (Bridge.Dialect c g) decl.rets
@@ -1010,6 +1010,115 @@ theorem commonWord_call_run_expr {c : ExternalCalls} {g : ExternalGas}
   exact ⟨_, Step.assignVal hcall rfl, hst2⟩
 
 #assert_axioms Midfall.LoweringV3.TranscriptRows.commonWord_call_run_expr
+  [propext, Classical.choice, Quot.sound] native []
+
+/-- Reading a different variable from a cons. -/
+theorem venv_get_cons_ne_local {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x y : Ident} {v : D.Value} (h : y ≠ x) :
+    VEnv.get ((x, v) :: V) y = VEnv.get V y := by
+  have hd : decide (x = y) = false := decide_eq_false (fun h' => h h'.symm)
+  simp only [VEnv.get, List.find?, hd]
+
+/-- Reading a different variable after a set. -/
+theorem venv_get_set_ne_local {D : YulSemantics.Dialect} [DecidableEq D.Value] {V : VEnv D}
+    {x y : Ident} {v : D.Value} (h : y ≠ x) :
+    VEnv.get (VEnv.set V x v) y = VEnv.get V y := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y', u⟩ := p
+      by_cases hyx : y' = x
+      · subst hyx
+        have hyy : ¬ (y' = y) := fun h' => h h'.symm
+        simp [VEnv.set, VEnv.get, List.find?, hyy]
+      · have hset : VEnv.set ((y', u) :: rest) x v = (y', u) :: VEnv.set rest x v := by
+          simp [VEnv.set, hyx]
+        rw [hset]
+        by_cases hyy : y' = y
+        · subst hyy
+          simp [VEnv.get, List.find?]
+        · simpa [VEnv.get, List.find?, hyy] using ih
+
+/-- The instance loop's body:
+    `let inst_be := calldataload(instance_cptr);
+     success := and(success, lt(inst_be, r));
+     buf_len := common_word(buf_len, inst_be)`. -/
+def instanceBody : Block EVM.Op :=
+  [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+  , Stmt.assign ["success"] (Expr.builtin Op.and
+      [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+  , Stmt.assign ["buf_len"] (Expr.call "common_word" [Expr.var "buf_len", Expr.var "inst_be"]) ]
+
+set_option maxHeartbeats 4000000 in
+/-- **THE INSTANCE LOOP BODY HAS AN ACTUAL RUN.** From `instance_cptr`, `success`, `r`, `buf_len`
+    bindings, the body executes normally. This is the body half of
+    `forLoop_stmts_exists_of_countdown` for the instance loop; the countdown and the loop wrapper
+    are the remaining pieces. -/
+theorem instanceBody_run (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (cv sv rv bv : U256)
+    (hc : VEnv.get V "instance_cptr" = some cv)
+    (hs : VEnv.get V "success" = some sv)
+    (hr : VEnv.get V "r" = some rv)
+    (hb : VEnv.get V "buf_len" = some bv) :
+    ∃ V' st', ExecStmts (D := Bridge.Dialect c g) (R.scope c g) V st
+      instanceBody V' st' .normal := by
+  let inst : U256 := wordFrom st.env.calldata cv.toNat
+  have h1 : Step (Bridge.Dialect c g) (R.scope c g) V st
+      (.stmt (.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))))
+      (.sres (("inst_be", inst) :: V) st .normal) := by
+    apply Step.letVal (D := Bridge.Dialect c g) (vars := ["inst_be"]) (vals := [inst])
+    · apply Step.builtinOk (D := Bridge.Dialect c g)
+      · exact Step.argsCons (D := Bridge.Dialect c g) Step.argsNil (Step.var hc)
+      · show (Bridge.Dialect c g).Builtin Op.calldataload [cv] st (.ok [inst] st)
+        rfl
+    · rfl
+  let V1 : VEnv (Bridge.Dialect c g) := ("inst_be", inst) :: V
+  let vlt : U256 := b2w (inst.ult rv)
+  let vand : U256 := sv &&& vlt
+  have hinst1 : VEnv.get V1 "inst_be" = some inst := rfl
+  have hs1 : VEnv.get V1 "success" = some sv := by
+    rw [venv_get_cons_ne_local (D := Bridge.Dialect c g) (x := "inst_be") (y := "success")
+      (v := inst) (V := V) (by decide)]
+    exact hs
+  have h2 : Step (Bridge.Dialect c g) (R.scope c g) V1 st
+      (.stmt (.assign ["success"] (Expr.builtin Op.and
+        [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])))
+      (.sres (VEnv.setMany V1 ["success"] [vand]) st .normal) := by
+    apply Step.assignVal (D := Bridge.Dialect c g)
+    · apply Step.builtinOk (D := Bridge.Dialect c g)
+      · apply Step.argsCons (D := Bridge.Dialect c g)
+        · apply Step.argsCons (D := Bridge.Dialect c g)
+          · exact Step.argsNil (D := Bridge.Dialect c g)
+          · apply Step.builtinOk (D := Bridge.Dialect c g)
+            · exact Step.argsCons (D := Bridge.Dialect c g)
+                (Step.argsCons (D := Bridge.Dialect c g) Step.argsNil (Step.var hr))
+                (Step.var hinst1)
+            · show (Bridge.Dialect c g).Builtin Op.lt [inst, rv] st (.ok [vlt] st)
+              rfl
+        · exact Step.var hs1
+      · show (Bridge.Dialect c g).Builtin Op.and [sv, vlt] st (.ok [vand] st)
+        rfl
+    · rfl
+  let V2 : VEnv (Bridge.Dialect c g) := VEnv.setMany V1 ["success"] [vand]
+  have hb2 : VEnv.get V2 "buf_len" = some bv := by
+    rw [show V2 = VEnv.set V1 "success" vand from rfl]
+    rw [venv_get_set_ne_local (D := Bridge.Dialect c g) (x := "success") (y := "buf_len")
+      (v := vand) (V := V1) (by decide)]
+    rw [venv_get_cons_ne_local (D := Bridge.Dialect c g) (x := "inst_be") (y := "buf_len")
+      (v := inst) (V := V) (by decide)]
+    exact hb
+  have hi2 : VEnv.get V2 "inst_be" = some inst := by
+    rw [show V2 = VEnv.set V1 "success" vand from rfl]
+    rw [venv_get_set_ne_local (D := Bridge.Dialect c g) (x := "success") (y := "inst_be")
+      (v := vand) (V := V1) (by decide)]
+    exact hinst1
+  obtain ⟨decl, hlook, hparams, hrets, hbody⟩ := commonWord_lookup_body R (c := c) (g := g)
+  obtain ⟨st2, hcall, -⟩ := commonWord_call_run_expr (c := c) (g := g) (funs := R.scope c g)
+    V2 st decl (R.scope c g) hlook hparams hrets hbody (Expr.var "inst_be") "buf_len" bv inst
+    hb2 (Step.var hi2)
+  exact ⟨_, st2, Step.seqCons h1 (Step.seqCons h2 (Step.seqCons hcall Step.seqNil))⟩
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instanceBody_run
   [propext, Classical.choice, Quot.sound] native []
 
 /-- **THE SECOND PARSER STATEMENT'S INLINER SHAPE.** At the shadow list left by the first

@@ -310,8 +310,10 @@ lookup/body equation `transcriptInit_lookup_body` and the unconditional first-st
 `tp_head_run` are now in the tree. The `VK_DIGEST_MPTR` lookup (`vkDigestMptr_of_valid`),
 the second statement's inliner shape (`secondStmt_inlined`), and its actual run
 (`secondStmt_run` / `secondStmt_run_of_valid`) are also PROVED. The exact head post
-(`tp_head_run_exact`) and the two-statement prefix run (`tp_head_second_run`) are PROVED; the
-remaining emitted loop segments are the open part.
+(`tp_head_run_exact`) and the two-statement prefix run (`tp_head_second_run`) are PROVED. The
+instance loop body (`instanceBody_run`) is PROVED from `commonWord_call_run_expr` and the scalar
+step lemmas; its `forLoop_stmts_exists_of_countdown` wrapper, the eval loop body, the walk
+sections and the tail guards remain.
 `tp_blockProgS` is factored as
 `tp_blockProgS_of_exists_and_all`: its two remaining facts are the full emitted-AST
 `StmtsContract` existence walk and the normal all-runs contract. The model-level
