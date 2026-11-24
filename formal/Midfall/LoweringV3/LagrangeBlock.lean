@@ -2745,4 +2745,18 @@ theorem lag_inner_contract_post {consts : Inline.Consts} {cd : Bytes} {k n m : N
   exact ⟨ho, lag_inner_post_of_p15 (mem0 := mem) (mem := LagM6 C mem) hm hn h15⟩
 
 
+
+/-- **THE POISON ARM OF THE INNER SCOPE.** At `C.succ = 0` the inner contract's reject arm keeps
+    `success = 0` (`LagInnerPost`'s `succZero` clause), which is what the final guard reads. -/
+theorem lag_inner_contract_zero {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    {C : LagCfg consts cd k n m} {funs : FunEnv (Bridge.Dialect c g)}
+    (h : LagInnerContract C funs) (hsucc0 : C.succ = 0) :
+    LagInnerContractZero C funs := by
+  intro V st hp V' st' o hrun
+  obtain ⟨ho, hip⟩ := h V st hp V' st' o hrun
+  have hip' := hip
+  obtain ⟨ret, pf, hsucc, -, -, -, -, hszero, -⟩ := hip'
+  exact ⟨ho, hip, by rw [hsucc, (hszero hsucc0).1]⟩
+
+
 end Midfall.LoweringV3.LagrangeBlock
