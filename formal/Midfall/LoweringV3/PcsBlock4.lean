@@ -6236,6 +6236,29 @@ structure PcsBlock4SetFacts (rv x2v x3v cptr qep : U256) (scratch : Nat)
     "F_EVAL_MPTR" ∉ pcsSetBlockLocalsAll (pointSets.getD s []) distinct
 
 set_option maxHeartbeats 16000000 in
+theorem pcsBlock4_store_contract {funs : FunEnv (Bridge.Dialect c g)} (fp fv : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [GenAst.yvar "F_EVAL_MPTR", GenAst.yvar "f_eval"])]
+      (fun V st => VEnv.get V "F_EVAL_MPTR" = some fp ∧
+        VEnv.get V "f_eval" = some fv)
+      (fun V st V' st' o => o = .normal ∧ V' = V ∧
+        st'.memory = storeWord st.memory fp.toNat fv ∧
+        st'.env = st.env ∧ st'.halted = st.halted) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hfp, hfv⟩ := hpre
+  have hstep := b1_stmt_of_singleton hrun
+  obtain ⟨pv, vv, hpv, hvv, ho, hV, hst⟩ :=
+    Midfall.LoweringV3.BatchInvert.exec_mstore_var_inv (x := "F_EVAL_MPTR") (y := "f_eval") hstep
+  have hpv' : pv = fp := Option.some.inj (hpv.symm.trans hfp)
+  have hvv' : vv = fv := Option.some.inj (hvv.symm.trans hfv)
+  subst hpv'; subst hvv'
+  refine ⟨ho, hV, ?_, ?_, ?_⟩
+  · rw [hst]
+  · rw [hst]; rfl
+  · rw [hst]; rfl
+
+
 theorem pcsBlock4_walk_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
     {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
