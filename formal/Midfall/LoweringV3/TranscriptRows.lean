@@ -9279,6 +9279,65 @@ theorem instBody_block {c : ExternalCalls} {g : ExternalGas}
   · exact hmem
 
 
+theorem t_restore_cons2_any {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V0 W : VEnv D) (x y : Ident) (E C : D.Value) (h : W.length = V0.length) :
+    restore V0 ((x, E) :: (y, C) :: W) = W := by
+  rw [restore, List.length_cons, List.length_cons, h]
+  rw [show List.length V0 + 1 + 1 - List.length V0 = 2 by omega]
+  rfl
+
+theorem g1SuccessFold_append (rv s : U256) (xs ys : List U256) :
+    g1SuccessFold rv s (xs ++ ys) =
+      g1SuccessFold rv (g1SuccessFold rv s xs) ys := by
+  simp [g1SuccessFold, List.foldl_append]
+
+theorem g1AppendWords_append (mem : Nat → UInt8) (buf j : Nat) (xs ys : List U256) :
+    g1AppendWords mem buf (xs ++ ys) j =
+      g1AppendWords (g1AppendWords mem buf xs j) buf ys (j + xs.length) := by
+  induction xs generalizing mem j with
+  | nil => simp [g1AppendWords]
+  | cons w ws ih =>
+      simp only [List.cons_append, g1AppendWords_cons, List.length_cons]
+      rw [ih]
+      congr 1
+      omega
+
+theorem g1InstanceWords_take_succ (cd : Bytes) (start N k : Nat) (hk : k < N) :
+    List.take (k + 1) (g1InstanceWords cd start N) =
+      List.take k (g1InstanceWords cd start N) ++ [cdWord cd (start + 32 * k)] := by
+  rw [List.take_add_one]
+  rw [g1InstanceWords_get? cd start N k hk]
+  rfl
+
+
+theorem instStep_stmt {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) (cptr : U256)
+    (hcp : VEnv.get V "instance_cptr" = some cptr) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.assign ["instance_cptr"] (Expr.builtin Op.add
+        [Expr.var "instance_cptr", Expr.lit (Literal.number 32)]))
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun V0 st0 V' st' o => o = .normal ∧
+        V' = VEnv.set V "instance_cptr" (cptr + BitVec.ofNat 256 32) ∧ st' = st) := by
+  intro V0 st0 hpre V' st' o hrun
+  obtain ⟨hV0, hst0⟩ := hpre
+  cases hrun with
+  | assignVal he hlen =>
+      obtain ⟨cv, hvals⟩ := g1Walk_list_length_one hlen
+      subst hvals
+      obtain ⟨a, hget, hcv, hst1⟩ := g1Walk_eval_add_var_lit_inv (c := c) (g := g) (funs := funs) (V := V0) (st := st0) (x := "instance_cptr") (k := 32) he
+      rw [hV0] at hget
+      have ha : a = cptr := Option.some.inj (hget.symm.trans hcp)
+      subst ha
+      refine ⟨rfl, ?_, ?_⟩
+      · rw [hV0]
+        rw [hcv]
+        exact t_setMany_one (D := Bridge.Dialect c g) V "instance_cptr" _
+      · rw [hst1, hst0]
+  | assignHalt he => exact (g1Walk_eval_add_var_lit_halt_false he).elim
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9896,5 +9955,10 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instBody_inner [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons_any [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instBody_block [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons2_any [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1SuccessFold_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1AppendWords_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_take_succ [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instStep_stmt [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
