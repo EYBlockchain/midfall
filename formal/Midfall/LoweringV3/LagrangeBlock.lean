@@ -213,6 +213,46 @@ theorem eval_batchArgs {consts : Inline.Consts} {D aS : Nat}
 
 #assert_axioms eval_batchArgs [propext, Classical.choice, Quot.sound]
 
+/-- **`BatchInvertPost → BatchInvertCallPost` THROUGH `VEnv.setMany`.** The A5 summary is stated
+    over the callee environment (`ret` / `precompile_failed`); the caller binds those two words to
+    `success` / `lagrange_precompile_failed`. This lemma is the whole environment conversion: the
+    two gets after `setMany`, the set equation, and the unchanged state/memory/reject arms. -/
+theorem batchInvertCallPost_of_post
+    {V Vc V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    {succ rw : U256} {a e s : Nat}
+    (hpost : BatchInvertPost (c := c) (g := g) st succ a e s (BitVec.ofNat 256 Midfall.Yul.blsR) Vc st')
+    (hrw : rw = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hsuccV : VEnv.get V "success" = some succ)
+    (hpfV : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (hV' : ∀ ret pf, VEnv.get Vc "ret" = some ret →
+      VEnv.get Vc "precompile_failed" = some pf →
+      V' = VEnv.setMany V ["success", "lagrange_precompile_failed"] [ret, pf]) :
+    BatchInvertCallPost (c := c) (g := g) V st st' V' succ a e s rw := by
+  obtain ⟨ret, pf, hret, hpf, henv, hhalt, hout, hszero, hpfzero, hinv⟩ := hpost
+  have hV'ret := hV' ret pf hret hpf
+  refine ⟨ret, pf, ?_, ?_, ?_, henv, hhalt, hout, hszero, hpfzero, ?_⟩
+  · rw [hV'ret]
+    simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
+      List.foldl_nil]
+    rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "lagrange_precompile_failed")
+      (y := "success") (by decide)]
+    exact venv_get_set_same hsuccV
+  · rw [hV'ret]
+    simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
+      List.foldl_nil]
+    rw [venv_get_set_same (D := Bridge.Dialect c g)]
+    rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "success")
+      (y := "lagrange_precompile_failed") (by decide)]
+    exact hpfV
+  · rw [hV'ret]
+    simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
+      List.foldl_nil]
+  · intro hretne
+    rw [hrw]
+    exact hinv hretne
+
+#assert_axioms batchInvertCallPost_of_post [propext, Classical.choice, Quot.sound]
+
 /-! ## 2. THE MEMORY-OUTSIDE WINDOW VOCABULARY -/
 
 /-- `st.memory` agrees with `m0` outside the denominator window `[D, D+lenS)`, the scratch window
