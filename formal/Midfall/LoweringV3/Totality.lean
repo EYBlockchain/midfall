@@ -14,7 +14,9 @@
     * `runBody_gas_oblivious` - a gas-free program has the same runs under every gas oracle;
     * `block_live`            - per block, a run exists from a boundary a run can actually be at;
     * `prefix_live`           - the same for the prefix.
-  `live_append`, `slices_live`, `stmts_append_stop` and `totalV3_correct` itself are PROVED glue.
+  `live_append`, `slices_live`, `stmts_append_stop` are PROVED glue here. `block_live` and
+  `totalV3_correct` MOVED to `Midfall.LoweringV3.BlockLive` (the case proofs they spend live above
+  this module); their statements are unchanged there.
 
   D-P71: every statement here is generic in the render and carries no fixture. The evidence's
   `hR : R.Valid` is read as `ValidV3 R` and its `SimPins R` as `G1CodecHeadlineLaws` - the same
@@ -3987,16 +3989,11 @@ theorem block_live_quotientLin_of_prog (R : Render p G₁ G₂ Gₜ) (product : 
   block_live_of_blockProgS R product H vkAddr cd Partial.quotientLin
     (by decide) (by decide) hprog
 
-/-- **LEAF (TOT.1): PER-BLOCK EXISTENCE, FOR EVERY RENDER.** Leaves TOT.1.b-h, one per block: the
-    existence form of the loop rule (GEN.3) at each loop, of each helper summary, the honest relation
-    answering at the four precompile addresses, and the block's all-runs row to classify the
-    exhibited run. Owner: TOT.1 (WP A12). WITNESS: `gap_lowering_correct_witness_unexhibited`.
-    FALSIFIER: `mid_start_not_vacuous` (Stages.lean:672, PROVED). -/
-theorem block_live (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
-    (hcodec : G1CodecHeadlineLaws R.E.g1)
-    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
-    (vkAddr : U256) (cd : Bytes) (q : Partial) : BlockLive R q H vkAddr product cd := by
-  sorry
+/-! **`block_live` MOVED TO `Midfall.LoweringV3.BlockLive`.** The per-block case proofs live above
+    this module (`FpFit.block_live_finalPairing` and the case modules), so the seven-way case table
+    and the leaf itself cannot be stated here without a cycle. The per-case reductions that stay
+    useful to `BlockLive` are `block_live_of_blockProgS`, `block_live_pcs`,
+    `block_live_transcriptParser_of_prog` and `block_live_quotientLin_of_prog` above. -/
 
 /-! ### 2b. THE REVERT RUNS THE PREFIX LEAVES TOT.1 NEEDS
 
@@ -4162,25 +4159,12 @@ theorem slices_live (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (H 
     (h7 .vkLoading) (h7 .transcriptParser)) (h7 .lagrange)) (h7 .quotientLin)) (h7 .pcs))
     (h7 .finalPairing)) (h7 .traceReturn)
 
-/-- **OBLIGATION 4, PROVED from the four named leaves** (`gasFree_of_valid`,
-    `runBody_gas_oblivious`, `block_live`, `prefix_live`). This replaces `totalV3_of_stages`,
-    which the unfolding of `BodyTotal` shows cannot be derived from `ProgRowsV3` at all (header).
-    The `GasTotal` hypothesis is carried by the statement and not used by the glue: the gas oracle is
-    arbitrary precisely because a gas-free program cannot tell one from another. -/
-theorem totalV3_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R) :
-    TotalV3 R product := by
-  intro W Lyt H vkAddr cd st₀ hdep hentry hpc hcodec g _hg
-  have hlive := live_append
-    (prefix_live R product hR W Lyt H vkAddr cd st₀ hdep hentry)
-    (slices_live R product H vkAddr cd
-      (fun q => block_live R product hR hcodec hpc H vkAddr cd q))
-  obtain ⟨V', st', o, hrun, _⟩ := hlive [] st₀ ⟨rfl, rfl⟩
-  exact ⟨_, runBody_gas_oblivious R vkAddr (gasFree_of_valid R hR vkAddr) _ _ g st₀ _
-    (run_joinV3 R (noShadowB_of_valid hR) vkAddr _ _ st₀ V' st' o hrun)⟩
+/-! **`totalV3_correct` MOVED TO `Midfall.LoweringV3.BlockLive`.** It spends `block_live`, whose
+    case proofs live above this module, so both move together. `prefix_live` and `slices_live`
+    stay here: they are the prefix leaf and the run-composition glue `BlockLive` imports. -/
 
 /-! ## 3. Cone lists and axiom prints -/
 
-#cone_sorries Midfall.LoweringV3.totalV3_correct
 #cone_sorries Midfall.LoweringV3.prefix_live
 #cone_sorries Midfall.LoweringV3.slices_live
 #cone_sorries Midfall.LoweringV3.live_append
@@ -4190,7 +4174,6 @@ theorem totalV3_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
 #print axioms Midfall.LoweringV3.pfxHead_mem_revert_exists
 #assert_axioms Midfall.LoweringV3.prefix_live [propext, Classical.choice, Quot.sound] native []
 
-#print axioms Midfall.LoweringV3.totalV3_correct
 #print axioms Midfall.LoweringV3.slices_live
 #print axioms Midfall.LoweringV3.live_append
 #print axioms Midfall.LoweringV3.stmts_append_stop

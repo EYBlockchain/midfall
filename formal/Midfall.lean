@@ -201,6 +201,7 @@ import Midfall.Tools.ConeReport
 import Midfall.LoweringV3.Statements
 import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV3.Composition
+import Midfall.LoweringV3.BlockLive
 import Midfall.LoweringV3.CompositionW
 import Midfall.LoweringV3.Widening
 import Midfall.LoweringV3.WideningStages

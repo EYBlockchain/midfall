@@ -10,7 +10,7 @@
   `CompositionW.lean` lemmas that only compared against them went in the same commit. RECON.3 measured
   the two boundaries as INCOMPARABLE and refused to re-point another card's deliverable; D-P74 makes
   it this card's. (2) `lowering_equivalenceV3_of_rows` is now the route the root takes, and conjunct 4
-  comes from `totalV3_correct` (Totality.lean), not from `totalV3_of_stages`, which is deleted:
+  comes from `totalV3_correct` (BlockLive.lean), not from `totalV3_of_stages`, which is deleted:
   `BodyTotal` quantifies over EVERY calldata while `ProgRowsV3` assumes `LeanAccepts`.
 
   THE HAZARD THIS FILE IS WRITTEN AGAINST. There is exactly ONE `ValidV3` in the tree:
@@ -40,7 +40,7 @@
   card adds none. No `native_decide` occurs in this file or in the cone of `lowering_correct`.
 -/
 import Midfall.LoweringV3.Statements
-import Midfall.LoweringV3.Totality
+import Midfall.LoweringV3.BlockLive
 import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV2.Stages
 import Midfall.Lowering.Stage
@@ -255,7 +255,7 @@ theorem completeV3_of_progs (R : Render p G₁ G₂ Gₜ) (product : PairingProd
 /-- **THE HEADLINE, V3, FROM THE FOUR OBLIGATIONS.** The only V3 composition in the tree. PROVED with
     no sorry of its own: the gluing lemma `lowering_equivalenceV3_of` is already proved at
     Statements.lean:1442, obligations 1-3 are proved above, and conjunct 4 is `totalV3_correct`
-    (Totality.lean:proved glue over four named leaves). Every `sorryAx` in this theorem's cone comes
+    (BlockLive.lean:proved glue over the seven-block case table and four named leaves). Every `sorryAx` in this theorem's cone comes
     from a ROW, a PREFIX row, a TOTALITY leaf or a shared scan/decomposition leaf. -/
 theorem lowering_equivalenceV3_of_rows (R : Render p G₁ G₂ Gₜ)
     (product : PairingProduct) (hR : ValidV3 R) (hsim : SimRowsV3 R product)
