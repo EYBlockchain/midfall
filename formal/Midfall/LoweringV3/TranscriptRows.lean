@@ -8996,6 +8996,55 @@ theorem g1InstanceWords_get? (cd : Bytes) (start N j : Nat) (hj : j < N) :
     (g1InstanceWords cd start N)[j]? = some (cdWord cd (start + 32 * j)) := by
   simp [g1InstanceWords, hj]
 
+theorem calldataload_var_no_halt {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {x : String}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.calldataload [Expr.var x]) (.halt st')) : False :=
+  Midfall.LoweringV2.Blocks.VkLoading.vk_nh_unary (op := .calldataload)
+    (by
+      intro a st r hr
+      simp only [Bridge.Dialect, builtinWithExternal, stepOp, rd1] at hr
+      cases hr
+      exact ⟨_, _, rfl⟩)
+    (fun _ _ hh => Midfall.LoweringV2.Blocks.VkLoading.vkVar_ne_halts hh) h
+
+set_option maxHeartbeats 2000000 in
+theorem instLet_stmt {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) (cd : Bytes) (cptr : U256)
+    (hcp : VEnv.get V "instance_cptr" = some cptr)
+    (hcd : st.env.calldata = cd.data.toList)
+    (hbound : cptr.toNat + 32 ≤ cd.data.toList.length) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload
+        [Expr.var "instance_cptr"])))
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun V0 st0 V' st' o => o = .normal ∧
+        V' = ("inst_be", cdWord cd cptr.toNat) :: V ∧ st' = st) := by
+  intro V0 st0 hpre V' st' o hrun
+  obtain ⟨hV0, hst0⟩ := hpre
+  cases hrun with
+  | letVal he hlen =>
+      obtain ⟨argvals, st2, hargs, hbi⟩ := g1Walk_eval_builtin_vals_inv he
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              rename_i vval
+              obtain ⟨hget, hst2⟩ := g1Walk_eval_var_inv hvar
+              rw [hV0] at hget
+              have hv : vval = cptr := Option.some.inj (hget.symm.trans hcp)
+              simp only [Bridge.Dialect, builtinWithExternal, stepOp, rd1] at hbi
+              cases hbi
+              refine ⟨rfl, ?_, ?_⟩
+              · rw [hV0, hv, hst2, hst0, hcd, wordFrom_eq_cdWord]
+                rfl
+              · rw [hst2, hst0]
+  | letHalt he => exact (calldataload_var_no_halt he).elim
+
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9606,5 +9655,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1AppendWords_cons [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_length [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_get? [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.calldataload_var_no_halt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instLet_stmt [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
