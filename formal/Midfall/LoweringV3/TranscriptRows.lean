@@ -5779,6 +5779,138 @@ theorem parseTrace_run_of_ms_sizes (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
         simp) (by rw [(transcriptOf_buffer E H _).2]; rfl) hp henc hwidth
   exact ⟨trace, t1, hrun, hP⟩
 
+theorem map_slot_split (s2 : List Midfall.Lowering.WireSlot) :
+    ∀ (s1 : List Midfall.Lowering.WireSlot) (ms : List (Msg (Fr p) G₁)),
+      ms.map Msg.slot = s1 ++ s2 →
+      ∃ ms1 ms2, ms = ms1 ++ ms2 ∧ ms1.map Msg.slot = s1 ∧ ms2.map Msg.slot = s2
+  | [], ms, h => ⟨[], ms, rfl, rfl, h⟩
+  | s :: s1, ms, h => by
+      rw [List.cons_append, List.map_eq_cons_iff] at h
+      obtain ⟨m, ms', rfl, hm, htail⟩ := h
+      obtain ⟨ms1, ms2, rfl, h1, h2⟩ := map_slot_split s2 s1 ms' htail
+      exact ⟨m :: ms1, ms2, rfl, by simp [hm, h1], h2⟩
+
+theorem map_slot_eq_replicate_g1 {n : Nat} :
+    ∀ (ms : List (Msg (Fr p) G₁)),
+      ms.map Msg.slot = List.replicate n Midfall.Lowering.WireSlot.g1 →
+      ∃ P : List G₁, ms = P.map Msg.g1 ∧ P.length = n
+  | [], h => by
+      have hn : n = 0 := by
+        by_contra hn
+        have : List.replicate n Midfall.Lowering.WireSlot.g1 ≠ [] := by
+          cases n with
+          | zero => exact absurd rfl hn
+          | succ k => simp
+        exact this (by simpa using h.symm)
+      subst hn
+      exact ⟨[], rfl, rfl⟩
+  | m :: ms, h => by
+      rw [List.map_cons] at h
+      cases n with
+      | zero => simp at h
+      | succ n' =>
+          rw [List.replicate_succ] at h
+          injection h with hm htail
+          cases m with
+          | g1 Q =>
+              obtain ⟨P, rfl, hlen⟩ := map_slot_eq_replicate_g1 ms htail
+              exact ⟨Q :: P, rfl, by simp [hlen]⟩
+          | fr q => simp [Msg.slot] at hm
+
+theorem map_slot_eq_replicate_fr {n : Nat} :
+    ∀ (ms : List (Msg (Fr p) G₁)),
+      ms.map Msg.slot = List.replicate n Midfall.Lowering.WireSlot.fr →
+      ∃ R : List (Fr p), ms = R.map Msg.fr ∧ R.length = n
+  | [], h => by
+      have hn : n = 0 := by
+        by_contra hn
+        have : List.replicate n Midfall.Lowering.WireSlot.fr ≠ [] := by
+          cases n with
+          | zero => exact absurd rfl hn
+          | succ k => simp
+        exact this (by simpa using h.symm)
+      subst hn
+      exact ⟨[], rfl, rfl⟩
+  | m :: ms, h => by
+      rw [List.map_cons] at h
+      cases n with
+      | zero => simp at h
+      | succ n' =>
+          rw [List.replicate_succ] at h
+          injection h with hm htail
+          cases m with
+          | g1 Q => simp [Msg.slot] at hm
+          | fr q =>
+              obtain ⟨R, rfl, hlen⟩ := map_slot_eq_replicate_fr ms htail
+              exact ⟨q :: R, rfl, by simp [hlen]⟩
+
+theorem map_slot_eq_singleton_g1 :
+    ∀ (ms : List (Msg (Fr p) G₁)),
+      ms.map Msg.slot = [Midfall.Lowering.WireSlot.g1] →
+      ∃ Q : G₁, ms = [Msg.g1 Q]
+  | [], h => by simp at h
+  | m :: ms, h => by
+      rw [List.map_cons] at h
+      injection h with hm htail
+      cases m with
+      | g1 Q =>
+          have : ms = [] := by simpa using htail
+          subst this
+          exact ⟨Q, rfl⟩
+      | fr q => simp [Msg.slot] at hm
+
+theorem decoded_coarse_split (ms : List (Msg (Fr p) G₁)) (a b c : Nat)
+    (h : ms.map Msg.slot = List.replicate a Midfall.Lowering.WireSlot.g1 ++
+      (List.replicate b Midfall.Lowering.WireSlot.fr ++
+        ([Midfall.Lowering.WireSlot.g1] ++ (List.replicate c Midfall.Lowering.WireSlot.fr ++
+          [Midfall.Lowering.WireSlot.g1])))) :
+    ∃ (P : List G₁) (R : List (Fr p)) (fCom : G₁) (qs : List (Fr p)) (pi : G₁),
+      ms = P.map Msg.g1 ++ R.map Msg.fr ++ [Msg.g1 fCom] ++ qs.map Msg.fr ++ [Msg.g1 pi] ∧
+      P.length = a ∧ R.length = b ∧ qs.length = c := by
+  obtain ⟨A, r1, rfl, hA, h1⟩ := map_slot_split (List.replicate b Midfall.Lowering.WireSlot.fr ++
+    ([Midfall.Lowering.WireSlot.g1] ++ (List.replicate c Midfall.Lowering.WireSlot.fr ++
+      [Midfall.Lowering.WireSlot.g1]))) (List.replicate a Midfall.Lowering.WireSlot.g1) ms h
+  obtain ⟨P, rfl, hPlen⟩ := map_slot_eq_replicate_g1 A hA
+  obtain ⟨B, r2, rfl, hB, h2⟩ := map_slot_split ([Midfall.Lowering.WireSlot.g1] ++
+    (List.replicate c Midfall.Lowering.WireSlot.fr ++ [Midfall.Lowering.WireSlot.g1]))
+    (List.replicate b Midfall.Lowering.WireSlot.fr) r1 h1
+  obtain ⟨R, rfl, hRlen⟩ := map_slot_eq_replicate_fr B hB
+  obtain ⟨F, r3, rfl, hF, h3⟩ := map_slot_split (List.replicate c Midfall.Lowering.WireSlot.fr ++ [Midfall.Lowering.WireSlot.g1]) [Midfall.Lowering.WireSlot.g1] r2 h2
+  obtain ⟨fCom, rfl⟩ := map_slot_eq_singleton_g1 F hF
+  obtain ⟨C, r4, rfl, hC, h4⟩ := map_slot_split [Midfall.Lowering.WireSlot.g1] (List.replicate c Midfall.Lowering.WireSlot.fr) r3 h3
+  obtain ⟨qs, rfl, hClen⟩ := map_slot_eq_replicate_fr C hC
+  obtain ⟨G, r5, rfl, hG, h5⟩ := map_slot_split [] [Midfall.Lowering.WireSlot.g1] r4 h4
+  obtain ⟨pi, rfl⟩ := map_slot_eq_singleton_g1 G hG
+  have h5' : r5 = [] := by simpa using h5
+  subst h5'
+  refine ⟨P, R, fCom, qs, pi, ?_, hPlen, hRlen, hClen⟩
+  simp
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem decoded_split_of_plan (L : Midfall.Generator.ProofCalldataLayout)
+    (ms : List (Msg (Fr p) G₁))
+    (h : ms.map Msg.slot =
+      (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).slots) :
+    ∃ (P : List G₁) (R : List (Fr p)) (fCom : G₁) (qs : List (Fr p)) (pi : G₁),
+      ms = P.map Msg.g1 ++ R.map Msg.fr ++ [Msg.g1 fCom] ++ qs.map Msg.fr ++ [Msg.g1 pi] ∧
+      P.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).prefixG1Count ∧
+      R.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).numEvals ∧
+      qs.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).numPointSets := by
+  unfold Midfall.Generator.RepackedProofLayoutPlan.slots at h
+  simp only [List.append_assoc] at h
+  exact decoded_coarse_split ms _ _ _ h
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -8471,6 +8603,12 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceWireBody_sizes [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTrace_one_sizes [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTrace_run_of_ms_sizes [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.map_slot_split [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.map_slot_eq_replicate_g1 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.map_slot_eq_replicate_fr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.map_slot_eq_singleton_g1 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_coarse_split [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_split_of_plan [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
