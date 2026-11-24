@@ -4779,6 +4779,16 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms collectQueries_single_blocks
   [propext, Classical.choice, Quot.sound]
+#assert_axioms mapM_flatten_length_const
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Permutation.Evaluated.queries_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Logup.Evaluated.queries_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Permutation.CommonEvaluated.queries_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Trash.Evaluated.queries_length
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms permZBlock_three
   [propext, Classical.choice, Quot.sound]
 #assert_axioms permZUpstream_three

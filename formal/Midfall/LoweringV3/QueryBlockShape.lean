@@ -505,5 +505,111 @@ theorem collectQueries_single_blocks (nbCommitted : Nat) (vk : VerifyingKey (Fr 
   refine ⟨adv, inst, perm, fixed, ?_⟩
   simp [List.flatten_cons]
 
+theorem mapM_flatten_length_const {α β ε : Type} {f : α → Except ε (List β)} :
+    ∀ (l : List α) (l' : List (List β)) (n : Nat), l.mapM f = .ok l' →
+      (∀ a ∈ l, ∀ out, f a = .ok out → out.length = n) →
+      l'.flatten.length = n * l.length := by
+  intro l
+  induction l with
+  | nil =>
+      intro l' n h _hconst
+      cases h
+      simp
+  | cons a as ih =>
+      intro l' n h hconst
+      rw [List.mapM_cons] at h
+      obtain ⟨b, hb, h1⟩ := except_bind_ok h
+      obtain ⟨bs, hbs, h2⟩ := except_bind_ok h1
+      cases h2
+      have hb_len : b.length = n := hconst a (by simp) b hb
+      have hconst' : ∀ a' ∈ as, ∀ out, f a' = .ok out → out.length = n :=
+        fun a' ha' => hconst a' (by simp [ha'])
+      have ih' := ih bs n hbs hconst'
+      simp only [List.flatten_cons, List.length_append, hb_len, ih', List.length_cons]
+      rw [Nat.mul_succ]
+      omega
+
+theorem Permutation.Evaluated.queries_length
+    (ev : Permutation.Evaluated (Fr p) G₁)
+    (domain : EvaluationDomain (Fr p)) (blindingFactors : Nat) (x : Fr p)
+    (proof : Nat) (result : Array (VerifierQuery (Fr p) G₁))
+    (h : Permutation.Evaluated.queries ev domain blindingFactors x proof = .ok result) :
+    result.toList.length = 2 * ev.sets.size + (ev.sets.size - 1) := by
+  unfold Permutation.Evaluated.queries at h
+  obtain ⟨head, hhead, h1⟩ := except_bind_ok h
+  obtain ⟨tail, htail, h2⟩ := except_bind_ok h1
+  cases h2
+  have hhead_len : head.flatten.length = 2 * ev.sets.size := by
+    have hlen := mapM_flatten_length_const
+      (f := fun (a : Nat × Permutation.SetEvaluated (Fr p)) => do
+        let c ← Permutation.atIndex ev.coms.permutationProductCommitments a.1
+          "proofs/src/plonk/permutation/verifier.rs:161"
+        let c' ← Permutation.atIndex ev.coms.permutationProductCommitments a.1
+          "proofs/src/plonk/permutation/verifier.rs:167"
+        pure [VerifierQuery.new x CommitmentLabel.noLabel (.permProduct proof a.1) c
+            a.2.permutationProductEval,
+          VerifierQuery.new (domain.rotateOmega x Rotation.next) CommitmentLabel.noLabel
+            (.permProduct proof a.1) c' a.2.permutationProductNextEval])
+      ((List.range ev.sets.size).zip ev.sets.toList) head 2 hhead
+      (by
+        intro a ha out hout
+        obtain ⟨c, _, hb⟩ := except_bind_ok hout
+        obtain ⟨c', _, hb2⟩ := except_bind_ok hb
+        cases hb2
+        rfl)
+    simpa using hlen
+  have htail_len : tail.flatten.length = ev.sets.size - 1 := by
+    have hlen := mapM_flatten_length_const
+      (f := fun (i : Nat) => do
+        let set ← Permutation.atIndex ev.sets i
+          "proofs/src/plonk/permutation/verifier.rs:173"
+        let c ← Permutation.atIndex ev.coms.permutationProductCommitments i
+          "proofs/src/plonk/permutation/verifier.rs:177"
+        match set.permutationProductLastEval with
+        | none => .error (Fault.panic "proofs/src/plonk/permutation/verifier.rs:178")
+        | some e => pure [VerifierQuery.new
+            (domain.rotateOmega x (Rotation.value
+              (Permutation.negI32 (Permutation.asI32 (blindingFactors + 1)))))
+            CommitmentLabel.noLabel (.permProduct proof i) c e])
+      ((List.range ev.sets.size).reverse.drop 1) tail 1 htail
+      (by
+        intro i hi out hout
+        obtain ⟨set, _, hb⟩ := except_bind_ok hout
+        obtain ⟨c, _, hb2⟩ := except_bind_ok hb
+        split at hb2
+        · cases hb2
+        · cases hb2
+          rfl)
+    simpa using hlen
+  simp only [Array.toList_append, List.length_append, hhead_len, htail_len,
+    List.length_reverse, List.length_drop, List.length_range]
+
+
+
+theorem Trash.Evaluated.queries_length (ev : Trash.Evaluated (Fr p) G₁)
+    (x : Fr p) (proof idx : Nat) :
+    (Trash.Evaluated.queries ev x proof idx).toList.length = 1 := by
+  unfold Trash.Evaluated.queries
+  rfl
+
+theorem Logup.Evaluated.queries_length (ev : Logup.Evaluated (Fr p) G₁)
+    (domain : EvaluationDomain (Fr p)) (x : Fr p) (proof lookup : Nat) :
+    (Logup.Evaluated.queries ev domain x proof lookup).toList.length =
+      3 + min ev.committed.helperPolys.size ev.evaluated.helperEvals.size := by
+  unfold Logup.Evaluated.queries
+  simp only [List.length_append, List.length_cons, List.length_nil,
+    List.length_map, List.length_zip, List.length_range, Array.length_toList]
+  omega
+
+theorem Permutation.CommonEvaluated.queries_length
+    (common : Permutation.CommonEvaluated (Fr p))
+    (vkey : Permutation.VerifyingKey G₁) (x : Fr p) :
+    (Permutation.CommonEvaluated.queries common vkey x).toList.length =
+      min vkey.commitments.size common.permutationEvals.size := by
+  unfold Permutation.CommonEvaluated.queries
+  simp only [List.length_map, List.length_zip, List.length_range, Array.length_toList]
+  omega
+
+
 
 end Midfall.LoweringV3
