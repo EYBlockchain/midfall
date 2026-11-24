@@ -80,6 +80,22 @@ def BatchInvertCallSegment (consts : Inline.Consts) (product : PairingProduct) (
       BatchInvertCallPost (c := permissive (callsOf product)) (g := g) V st st' V' succ
         D (D + 32 * (n + m) + 32) aS rw)
 
+/-- The declaration `R.scope` resolves for `batch_invert`, with the inlined helper body A5's
+    `batch_invert_summary` speaks about. -/
+def batchInvertDecl (R : Render p G₁ G₂ Gₜ) (c : ExternalCalls) (g : ExternalGas) :
+    FDecl (Bridge.Dialect c g) :=
+  { params := ["success", "mptr_start", "mptr_end", "scratch_mptr", "r"],
+    rets := ["ret", "precompile_failed"],
+    body := Midfall.LoweringV3.BatchInvert.helperBody R.consts GenAst.emitBatchInvertAt }
+
+/-- **THE `batch_invert` SCOPE LOOKUP, BY KERNEL REDUCTION** (the same shape as
+    `EcPairing.ecPairing_lookup`). -/
+theorem batchInvert_lookup (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} :
+    lookupFun (R.scope c g) "batch_invert" = some (batchInvertDecl R c g, R.scope c g) := by
+  kernel_rfl
+
+#assert_axioms batchInvert_lookup [propext, Classical.choice, Quot.sound]
+
 /-! ## 2. THE MEMORY-OUTSIDE WINDOW VOCABULARY -/
 
 /-- `st.memory` agrees with `m0` outside the denominator window `[D, D+lenS)`, the scratch window
