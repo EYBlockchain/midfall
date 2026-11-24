@@ -51,14 +51,11 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Generator.Certified.prog_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `21866adc2c2e6bcd` | V3 CERT.5 - every-binder scan: binder lemma per emitter (the tree name is noShadowProg) |
 | Midfall.Generator.Certified.prog_noWriters | Midfall.Generator.Certified | theorem | OPEN | - | `028c6826839c483b` | V3 CERT.5 - scan lemma per emitter; inlining substitutes literals only |
 | Midfall.Generator.Certified.prog_programFits | Midfall.Generator.Certified | theorem | OPEN | - | `f6caf92177936208` | V3 CERT.6 (D4, D-CERT1) - D-QVM1 address-fit: VK window and quotient interpreter |
-| Midfall.Generator.Certified.prog_transcriptFloor | Midfall.Generator.Certified | theorem | OPEN | - | `1955e1c1dce3abe6` | V3 CERT.4 - memory.validate pins transcript_mptr = TRANSCRIPT_BUFFER_START |
 | Midfall.Generator.Certified.prog_transcriptRegionOk | Midfall.Generator.Certified | theorem | OPEN | - | `72ca42ee18d1554a` | V3 CERT.6 (D4, D-CERT1) - PG-TPBUF: transcript window holds the longest absorb run and meets no walk window |
-| Midfall.Generator.Certified.supported_layout | Midfall.Generator.Certified | theorem | OPEN | - | `597b8c9ded24f2fb` | V3 CERT.4 - validateGeneratorInvariants runs memory.validate, which implies WellFormed and isOk |
 | Midfall.Generator.Certified.v3_closed | Midfall.Generator.Certified | theorem | OPEN | - | `4b3ac30edb4fe645` | V3 CERT.5 - mainClosed restricted to the main block |
 | Midfall.Generator.Certified.v3_codegen | Midfall.Generator.Certified | theorem | OPEN | - | `dfc804e64b6ba392` | V3 CERT.2 - route A: CodegenAgrees (today false until WP-G1 is certified) |
 | Midfall.Generator.Certified.v3_exitDiscipline | Midfall.Generator.Certified | theorem | OPEN | - | `1e98f03044edf5bb` | V3 CERT.5 - exit-scan lemma per emitter |
 | Midfall.Generator.Certified.v3_noShadow | Midfall.Generator.Certified | theorem | OPEN | - | `6eebd740e722a4cd` | V3 CERT.5 - top-level binder scan, as prog_noShadow |
-| Midfall.Generator.Certified.v3_pins_of_valid | Midfall.Generator.Certified | theorem | OPEN | - | `8649414d6a6af241` | V3 CERT.6 - the pin bundles are consequences of the one ValidV3, not of generation |
 | Midfall.Halo2.Spec.accepts | Midfall.Halo2.Spec.Piop | def | OPEN | - | `6db1418cbda599b6` | Phase 4 (spec layer) |
 | Midfall.Instances.PoseidonV2.poseidon_quotient_block | Midfall.Instances.PoseidonV2 | theorem | OPEN | - | `f2571a03d4164a52` | V3 ROW.Q - the quotient row: the one block the generic hinge does not cover |
 | Midfall.Instances.PoseidonV2.poseidon_rejects | Midfall.Instances.PoseidonV2 | theorem | OPEN | - | `3e7a72dcd164821a` | V3 PL.H via rejectsV3_of_rows - V2 C.3 staged rejection contracts |

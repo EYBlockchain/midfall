@@ -970,7 +970,10 @@ theorem prog_closed (hg : Generates gi o) (hs : SupportedInput gi) :
 /-- P6. The transcript base is above Solidity's reserved words. -/
 theorem prog_transcriptFloor (hg : Generates gi o) (hs : SupportedInput gi) :
     decide (0x80 ≤ (renderOf gi o).pv.memory.transcriptMptr) = true := by
-  sorry -- CERT.4
+  obtain ⟨meta_, vkMptr, config, vkBase, hmem, hvk, hsize⟩ :=
+    Midfall.LoweringV3.plan_size_of_generated (generated_of hg)
+  rw [hmem, Midfall.LoweringV3.MemoryPairs.new_transcriptMptr_eq]
+  decide
 
 /-! ### P: no writers -/
 
@@ -2576,10 +2579,142 @@ theorem payload_comms (hg : Generates gi o) (hs : SupportedInput gi) :
 
 /-! ### S: the one scope clause that mentions the plan -/
 
-theorem supported_layout (hg : Generates gi o) (hs : SupportedInput gi) :
-    (renderOf gi o).plan.memory.map.WellFormed ∧
-      (renderOf gi o).plan.memory.validate.isOk = true := by
-  sorry -- CERT.4
+/-- A successful `MemoryMap::validate` gives the `WellFormed` Bool: the reserved loop yields
+    alignment and the spill-window floor, and the pair loop yields disjointness. PROVED. -/
+theorem memoryMapValidateReserved_all {rs : List MemoryRegion}
+    (h : memoryMapValidateReserved rs = .ok ()) :
+    rs.all (fun r => r.len == 0 || r.start % wordBytes == 0) = true ∧
+      rs.all (fun r => r.len == 0 || solidityReservedMemoryBytes <= r.start) = true := by
+  induction rs with
+  | nil => simp [memoryMapValidateReserved]
+  | cons r rest ih =>
+    unfold memoryMapValidateReserved at h
+    by_cases h1 : r.len != 0 && r.start < solidityReservedMemoryBytes
+    · simp [h1] at h
+    · by_cases h2 : r.start % wordBytes != 0
+      · simp [h1, h2] at h
+      · by_cases h3 : r.len % wordBytes != 0
+        · simp [h1, h2, h3] at h
+        · simp [h1, h2, h3] at h
+          obtain ⟨ih1, ih2⟩ := ih h
+          constructor
+          · rw [List.all_cons, Bool.and_eq_true]
+            constructor
+            · have hz : r.len = 0 ∨ r.start % wordBytes = 0 := by
+                by_cases hlen : r.len = 0
+                · exact Or.inl hlen
+                · right
+                  have hne : (r.start % wordBytes != 0) = false := by simpa using h2
+                  simpa using hne
+              simpa [Bool.or_eq_true, beq_iff_eq] using hz
+            · exact ih1
+          · rw [List.all_cons, Bool.and_eq_true]
+            constructor
+            · have hz : r.len = 0 ∨ solidityReservedMemoryBytes <= r.start := by
+                by_cases hlen : r.len = 0
+                · exact Or.inl hlen
+                · right
+                  have hnot : ¬ (r.start < solidityReservedMemoryBytes) := by
+                    intro hlt
+                    have : (r.len != 0 && r.start < solidityReservedMemoryBytes) = true := by
+                      simp [hlen, hlt]
+                    simp [h1] at this
+                  exact Nat.le_of_not_lt hnot
+              simpa [Bool.or_eq_true, beq_iff_eq] using hz
+            · exact ih2
+
+theorem memoryMapValidateAgainst_all {lhs : MemoryRegion} {rest : List MemoryRegion}
+    (h : memoryMapValidateAgainst lhs rest = .ok ()) :
+    rest.all (fun rhs => ! (lhs.overlaps rhs && memoryLifetimeIntersects lhs.lifetime rhs.lifetime)) = true := by
+  induction rest with
+  | nil => simp
+  | cons rhs tl ih =>
+    unfold memoryMapValidateAgainst at h
+    cases hb : lhs.overlaps rhs <;>
+      cases hl : memoryLifetimeIntersects lhs.lifetime rhs.lifetime <;>
+      simp [hb, hl, List.all_cons] at h ⊢
+    all_goals simpa [List.all_eq_true] using ih h
+
+theorem memoryMapValidatePairs_all {rs : List MemoryRegion}
+    (h : memoryMapValidatePairs rs = .ok ()) : memoryRegionsPairwiseDisjoint rs = true := by
+  induction rs with
+  | nil => rfl
+  | cons r rest ih =>
+    unfold memoryMapValidatePairs at h
+    simp only [Bind.bind, Except.bind] at h
+    cases hb : memoryMapValidateAgainst r rest with
+    | error e => simp [hb] at h
+    | ok u =>
+      cases hp : memoryMapValidatePairs rest with
+      | error e => simp [hb, hp] at h
+      | ok u2 =>
+        simp [hb, hp] at h
+        unfold memoryRegionsPairwiseDisjoint
+        rw [Bool.and_eq_true]
+        exact ⟨memoryMapValidateAgainst_all hb, ih hp⟩
+
+theorem memoryMap_validate_wellFormed {map : MemoryMap} (h : map.validate = .ok ()) :
+    map.WellFormed := by
+  unfold MemoryMap.validate at h
+  simp only [Bind.bind, Except.bind] at h
+  cases hres : memoryMapValidateReserved map.regions with
+  | error e => simp [hres] at h
+  | ok u =>
+    cases hpairs : memoryMapValidatePairs map.regions with
+    | error e => simp [hres, hpairs] at h
+    | ok u2 =>
+      simp [hres, hpairs] at h
+      obtain ⟨h1, h2⟩ := memoryMapValidateReserved_all hres
+      have h3 := memoryMapValidatePairs_all hpairs
+      unfold MemoryMap.WellFormed MemoryMap.wellFormedBool
+      rw [Bool.and_eq_true, Bool.and_eq_true]
+      exact ⟨⟨h1, h2⟩, h3⟩
+
+theorem invThen_ok_ok {x : Except String Unit}
+    {k : Unit → Except Midfall.Halo2.Fault (Except String Unit)} {u : Unit}
+    (h : Midfall.Generator.invThen x k = .ok (.ok u)) :
+    ∃ v, x = .ok v ∧ k v = .ok (.ok u) := by
+  unfold Midfall.Generator.invThen at h
+  cases x with
+  | error e => simp at h
+  | ok v => exact ⟨v, rfl, h⟩
+
+theorem memory_validate_of_validateGeneratorInvariants
+    (L : Midfall.Generator.LoweringPlan Unit Unit)
+    (h : L.validateGeneratorInvariants = .ok (.ok ())) :
+    L.memory.validate = .ok () := by
+  unfold Midfall.Generator.LoweringPlan.validateGeneratorInvariants at h
+  obtain ⟨_, _, h2⟩ := invThen_ok_ok h
+  obtain ⟨v, hv, _⟩ := invThen_ok_ok h2
+  cases hL : L.memory.validate with
+  | error e =>
+      rw [hL] at hv
+      cases hv
+  | ok u =>
+      cases u
+      rfl
+
+theorem verifierMemoryLayout_validate_map {self : VerifierMemoryLayout}
+    (h : self.validate = .ok ()) : self.map.validate = .ok () := by
+  unfold VerifierMemoryLayout.validate at h
+  simp only [Bind.bind, Except.bind] at h
+  obtain ⟨_, _, h⟩ := cert_except_bind_ok h
+  obtain ⟨_, _, h⟩ := cert_except_bind_ok h
+  split at h
+  · simp at h
+  · by_cases h1 : self.pcs.rotPointsWords > self.thetaWindows.rotPointsCapWords
+    · simp [h1] at h
+    · simp only [h1, ite_false] at h
+      by_cases h2 : self.pcs.x1PowersWords > self.thetaWindows.x1PowersCapWords
+      · simp [h2] at h
+      · simp only [h2, ite_false] at h
+        by_cases h3 : self.pcs.qComWords > self.thetaWindows.qComCapWords
+        · simp [h3] at h
+        · simp only [h3, ite_false] at h
+          by_cases h4 : self.pcs.qEvalSetWords > self.thetaWindows.qEvalSetCapWords
+          · simp [h4] at h
+          · simp only [h4, ite_false] at h
+            exact h
 
 /-! ### The 18-clause text lemmas (scratch section 5) -/
 
@@ -2681,6 +2816,24 @@ theorem newFromVk_validate {F : Type} [BEq F] (feat : Features) (field : FieldCt
     all_goals (try (simp_all))
   · cases h10
   · cases h10
+
+theorem supported_layout (hg : Generates gi o) (hs : SupportedInput gi) :
+    (renderOf gi o).plan.memory.map.WellFormed ∧
+      (renderOf gi o).plan.memory.validate.isOk = true := by
+  obtain ⟨rawMeta, plan, _hraw, hpl, hp⟩ :=
+    Midfall.LoweringV3.MemoryPairs.plan_of_generated (generated_of hg)
+  have hval : plan.validateGeneratorInvariants = .ok (.ok ()) :=
+    newFromVk_validate Features.solidity (frFieldCtx gi.E.delta) gi.vk.cs rawMeta
+      gi.cfg.numInstances gi.cfg.accumulator (renderOf gi o).plan.vk plan hpl
+  have hmem : plan.memory.validate = .ok () :=
+    memory_validate_of_validateGeneratorInvariants plan hval
+  have hmap : plan.memory.map.WellFormed :=
+    memoryMap_validate_wellFormed (verifierMemoryLayout_validate_map hmem)
+  rw [hp]
+  constructor
+  · exact hmap
+  · rw [hmem]
+    rfl
 
 theorem v3_invariants (hg : Generates gi o) (hs : SupportedInput gi) :
     (renderOf gi o).plan.validateGeneratorInvariants = .ok (.ok ()) := by
@@ -2886,7 +3039,27 @@ theorem v3_payload (hg : Generates gi o) (hs : SupportedInput gi) :
 theorem v3_pins_of_valid {R : Render p G₁ G₂ Gₜ} (h : Midfall.LoweringV3.ValidV3 R) :
     (∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t) ∧
       Midfall.LoweringV2.vkPins R ∧ Midfall.LoweringV2.vkProgressPins R := by
-  sorry -- CERT.6 (corollary of the one text, not of generation)
+  have hcode : Midfall.LoweringV2.vkCodehashArm R.model :=
+    Midfall.LoweringV3.MemoryPairs.vkCodehashArm_of_generated h.generated h.supported.separateVk
+  refine ⟨Midfall.LoweringV3.transcriptMptr_of_valid h, ?_, ?_⟩
+  · refine
+      { vkMptr := ?_
+        payloadLen := ?_
+        numInst := ?_
+        disjoint := ?_ }
+    · refine ⟨ptrAddr R.pv.memory.vkMptr, ?_, rfl⟩
+      exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 h "VK_MPTR"
+        (cAddr R.pv.memory.vkMptr) (Midfall.LoweringV2.expectedConsts_lookup_VK_MPTR _ _)
+    · refine ⟨R.pv.vk.len, ?_, rfl⟩
+      exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 h "EXPECTED_VK_PAYLOAD_LENGTH"
+        R.pv.vk.len (Midfall.LoweringV2.expectedConsts_lookup_EXPECTED_VK_PAYLOAD_LENGTH _ _ hcode)
+    · exact Midfall.LoweringV3.MemoryPairs.vkPins_numInst_of_generated h.generated h.inputs.1
+    · exact Midfall.LoweringV3.MemoryPairs.vkPins_disjoint_of_generated h.generated
+  · refine { vkLen := ?_, vkHash := ?_ }
+    · refine ⟨R.plan.vk.runtimeBytes.size, ?_, rfl⟩
+      exact Midfall.LoweringV3.VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3 h hcode
+    · refine ⟨(keccak256 R.plan.vk.runtimeBytes).toNat, ?_, rfl⟩
+      exact Midfall.LoweringV3.VkClean.consts_lookup_EXPECTED_VK_CODEHASH_WORD_V3 h hcode
 
 /-! ### D-CERT1: the eight currently-uncovered `programOk` conjuncts -/
 
