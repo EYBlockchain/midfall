@@ -223,6 +223,26 @@ theorem upstreamBlock_permZBlock (k : Nat) :
     rw [flatten_map_singleton]
 
 
+
+theorem map_flatten_length_const {α β : Type} (l : List α) (f : α → List β) (n : Nat)
+    (h : ∀ a, (f a).length = n) : (l.map f).flatten.length = n * l.length := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+      simp only [List.map_cons, List.flatten_cons, List.length_append, h a, ih,
+        List.length_cons]
+      rw [Nat.mul_succ]
+      omega
+
+theorem permZUpstream_length_eq (k : Nat) :
+    (permZUpstream k).length = 2 * k + (k - 1) := by
+  unfold permZUpstream
+  rw [List.length_append]
+  rw [map_flatten_length_const _ _ 2 (by intro set; simp),
+    map_flatten_length_const _ _ 1 (by intro set; simp)]
+  simp only [List.length_reverse, List.length_drop, List.length_range]
+  omega
+
 end Midfall.Generator
 
 namespace Midfall.LoweringV3

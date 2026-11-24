@@ -4409,6 +4409,40 @@ theorem KzgMultiPrepareWidths_of_linearizeQueryMap
     KzgMultiPrepareWidths R :=
   KzgMultiPrepareWidths_of_queryMap R h
 
+/-- **`LinearizeQueryMap` FROM THE UPSTREAM DATUM.**  This is the named
+    consumer for the final assembly: the upstream source list, its
+    `queryFromPlan` map, the generator sets, and the `KzgQueryMapData` give the
+    named `LinearizeQueryMap` fact directly. -/
+theorem LinearizeQueryMap_of_upstreamDatum
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hUp : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
+      (alg : Verifier.AlgebraRead (Fr p) G₁)
+      (queries : Array (VerifierQuery (Fr p) G₁)),
+      Verifier.linearize (p := p) (delta := R.E.delta) R.vk
+        (adviceCommitments := trace.adviceCommitments)
+        (committedInstances := if Features.solidity.committedInstances then
+          #[#[(1 : G₁)]] else arrayReplicate (#[#[inst.toList.toArray]]).size
+            (#[] : Array G₁))
+        (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+        (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg
+        = .ok queries →
+      ∃ (upstreamSources : List PcsQuerySource)
+        (upstreamQueries : List Midfall.Generator.Query)
+        (setsG : Midfall.Generator.IntermediateSets)
+        (qm : @KzgQueryMapData (Fr p) G₁ _
+          (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries upstreamQueries),
+        upstreamSources.mapM (fun source =>
+          Midfall.Generator.queryFromPlan source R.plan.meta_ R.plan.data) =
+            .ok upstreamQueries ∧
+        Midfall.Generator.constructIntermediateSetsImpl upstreamQueries = .ok setsG ∧
+        setsG.pointSets.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numPointSets) :
+    LinearizeQueryMap R := by
+  intro inst trace alg queries hlin
+  obtain ⟨upstreamSources, upstreamQueries, setsG, qm, _hsrc, hGok, hLen⟩ :=
+    hUp inst trace alg queries hlin
+  exact ⟨upstreamQueries, setsG, qm, hGok, hLen⟩
+
 /-- **THE SCHEDULE FROM `ValidV3` AND THE PARSED TRACE, WITH THE ONE NAMED FACT.**
     The width walk itself is proved (`PrepareLogSlots_of_parseTrace`); the only
     premise is `LinearizeQueryMap`, the verifier-vs-generator query correspondence. -/
@@ -4657,6 +4691,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgMultiPrepareWidths_of_upstreamDatum
   [propext, Classical.choice, Quot.sound]
+#assert_axioms LinearizeQueryMap_of_upstreamDatum
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms constructIntermediateSets_pointSets_size_eq_of_queryMap
   [propext, Classical.choice, Quot.sound]
 #assert_axioms findIdx?_eq_of_equiv
@@ -4778,6 +4814,32 @@ open Midfall.Tools.Done in
 #assert_axioms queries_pcsBlocks
   [propext, Classical.choice, Quot.sound]
 #assert_axioms collectQueries_single_blocks
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms mapM_flatten_length_const
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Permutation.Evaluated.queries_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Logup.Evaluated.queries_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Permutation.CommonEvaluated.queries_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Trash.Evaluated.queries_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms adviceBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms instanceBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms fixedBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms trashBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms mapM_flatten_length_of_filter
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms lookupBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.Generator.permZUpstream_length_eq
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Permutation.Evaluated.queries_length_permZUpstream
   [propext, Classical.choice, Quot.sound]
 #assert_axioms permZBlock_three
   [propext, Classical.choice, Quot.sound]

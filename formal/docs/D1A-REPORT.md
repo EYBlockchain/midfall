@@ -667,3 +667,33 @@ Remaining exact work:
    the slot/pointer map.
 4. Feed the resulting datum to `KzgMultiPrepareWidths_of_upstreamDatum` and the
    existing `EndToEnd` consumer.
+
+## Query-level block lengths
+
+Landed in `QueryBlockShape`:
+
+* `Permutation.Evaluated.queries_length`: `2*k + (k-1)`.
+* `Logup.Evaluated.queries_length`: `3 + min helperPolys helperEvals` per lookup.
+* `Permutation.CommonEvaluated.queries_length`: `min commitments permutationEvals`.
+* `Trash.Evaluated.queries_length`: `1`.
+* `adviceBlock_length`: `adviceQueries.size`.
+* `instanceBlock_length`: filtered committed instance query count.
+* `fixedBlock_length`: filtered non-simple fixed query count.
+* `trashBlock_length`: `trashcans.size`.
+* `lookupBlock_length`: the sum of the per-lookup formula.
+* `permZUpstream_length_eq` and
+  `Permutation.Evaluated.queries_length_permZUpstream`: the verifier
+  permutation block and the upstream `permZUpstream` block have the same
+  length `2*k + (k-1)`.
+
+These are the verifier-side length formulas.  The remaining block-alignment
+work is to identify the corresponding generator block lengths (advice/
+instance/fixed need `vk.cs = plan.cs`; lookup needs the parsed trace's helper
+counts to equal the plan's `lookupChunks`; common needs the permutation
+commitment/eval count equality) and then prove the query-level value alignment.
+
+No `hpairP`, `hpairC` or `hclass` block has been discharged yet:
+`hpairP` needs the per-index verifier-query/upstream-source alignment, while
+`hpairC`/`hclass` need the `CommitSlot` ↔ `EcPoint` allocation map.  The final
+`KzgQueryMapData` is not yet instantiated; `LinearizeQueryMap_of_upstreamDatum`
+is the named consumer that will take it.
