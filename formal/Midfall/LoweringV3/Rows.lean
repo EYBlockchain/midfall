@@ -1715,6 +1715,18 @@ theorem lagInnerPost_lagrange_slots
         simp [holdsFr, wordAt, hieSlot', hWe]
 
 #assert_axioms lagInnerPost_lagrange_slots [propext, Classical.choice, Quot.sound]
+/-- The table's `MODEXP_GAS` is the model's scheduled modexp gas. -/
+theorem consts_lookup_MODEXP_GAS (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.consts.lookup "MODEXP_GAS" = some R.model.templateConstants.gas.modexp := by
+  show (Midfall.LoweringV2.constTableOf R.model).lookup "MODEXP_GAS" =
+    some R.model.templateConstants.gas.modexp
+  rw [Midfall.LoweringV3.lookup_expectedConsts_of_programOkB (programOkB_of_valid hR)]
+  cases h1 : R.model.expectedVkCodehash <;> cases h2 : R.model.quotientExternal <;>
+    cases h3 : R.model.expectedQuotientCodehash <;> cases h4 : R.model.expectedHasAccumulator <;>
+      simp [Midfall.LoweringV3.expectedConsts, h1, h2, h3, h4, List.lookup]
+
+#assert_axioms consts_lookup_MODEXP_GAS [propext, Classical.choice, Quot.sound]
+
 
 /-- The `.vk` payload pin, extracted from `Inv .vk`. -/
 theorem inv_vk_payload {calls : ExternalCalls} {gas : ExternalGas}
