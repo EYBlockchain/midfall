@@ -1580,6 +1580,58 @@ theorem pg_omegainv_slot {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
 
 #assert_axioms pg_omegainv_slot [propext, Classical.choice, Quot.sound]
 
+theorem blindingFactors_ok_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    ∃ bf, R.vk.cs.blindingFactors = .ok bf := by
+  have hneg := hR.env.negLagranges
+  have hge := negLagranges_of_valid hR
+  cases h : R.vk.cs.blindingFactors with
+  | error e =>
+      simp [h, Except.toOption] at hneg
+      omega
+  | ok bf => exact ⟨bf, rfl⟩
+
+theorem lagrangeTriple_exists_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (s2 : SnapAlgebra p G₁) :
+    ∃ tri, lagrangeTriple (p := p) (G₁ := G₁) R.vk s2.alg.x s2.alg.xn = .ok tri := by
+  obtain ⟨bf, hbf⟩ := blindingFactors_ok_of_valid R hR
+  unfold lagrangeTriple
+  rw [hbf]
+  dsimp only [Bind.bind, Except.bind]
+  let rots : List Int :=
+    List.map (fun i => -((bf + 1 : Nat) : Int) + (i : Int))
+      (List.flatMap (fun a => pure ((a : Nat) : Int)) (List.range (bf + 2)))
+  have hone : ∀ (l : List Nat), (l.map (fun _ => 1)).sum = l.length := by
+    intro l
+    induction l with
+    | nil => rfl
+    | cons a l ih =>
+        simp only [List.map_cons, List.sum_cons, List.length_cons]
+        rw [ih]
+        omega
+  have hsz : (R.vk.domain.lIRange s2.alg.x s2.alg.xn rots).size = bf + 2 := by
+    dsimp only [rots]
+    rw [Midfall.LoweringV3.TranscriptRows.lIRange_size, List.length_map, List.length_flatMap]
+    simp [List.length_range]
+  have hcond : ((R.vk.domain.lIRange s2.alg.x s2.alg.xn rots).size == bf + 2) = true := by
+    rw [hsz]
+    exact beq_self_eq_true _
+  rw [ite_eq_left hcond]
+  exact ⟨_, rfl⟩
+
+#assert_axioms blindingFactors_ok_of_valid [propext, Classical.choice, Quot.sound]
+#assert_axioms lagrangeTriple_exists_of_valid [propext, Classical.choice, Quot.sound]
+
+theorem snapshotLagrangeStep_exists_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (s2 : SnapAlgebra p G₁) :
+    ∃ l, snapshotLagrangeStep (G₁ := G₁) R.vk s2 = .ok l := by
+  obtain ⟨tri, htri⟩ := lagrangeTriple_exists_of_valid R hR s2
+  let l : SnapLagrange p G₁ :=
+    { toSnapAlgebra := s2, lagrange := tri, instanceEval := instanceEvalOf R.vk s2.alg }
+  refine ⟨l, ?_⟩
+  simp only [snapshotLagrangeStep, htri, Bind.bind, Except.bind, pure, Except.pure, l]
+
+#assert_axioms snapshotLagrangeStep_exists_of_valid [propext, Classical.choice, Quot.sound]
+
 /-- The `.vk` payload pin, extracted from `Inv .vk`. -/
 theorem inv_vk_payload {calls : ExternalCalls} {gas : ExternalGas}
     {E : VerifierEnv p G₁ G₂ Gₜ} {params : ParamsVerifierKZG G₁ G₂}
