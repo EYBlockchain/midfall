@@ -9429,6 +9429,115 @@ theorem g1InstanceWords_take_all (cd : Bytes) (start N : Nat) :
   rw [g1InstanceWords_length]
 
 
+def g1InstInit (start N : Nat) : Block EVM.Op :=
+  [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number start)))
+  , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+      [Expr.var "instance_cptr", Expr.lit (Literal.number (N * 32))])) ]
+
+def g1InstCond : Expr EVM.Op :=
+  Expr.builtin Op.lt [Expr.var "instance_cptr", Expr.var "instance_cptr_end"]
+
+def g1InstPost : Block EVM.Op :=
+  [ Stmt.assign ["instance_cptr"] (Expr.builtin Op.add
+      [Expr.var "instance_cptr", Expr.lit (Literal.number 32)]) ]
+
+def g1InstBody : Block EVM.Op :=
+  [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+  , Stmt.assign ["success"] (Expr.builtin Op.and
+      [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+  , Stmt.assign ["buf_len"] (Expr.call "common_word"
+      [Expr.var "buf_len", Expr.var "inst_be"]) ]
+
+def g1InstEndv (start N : Nat) : U256 :=
+  BitVec.ofNat 256 (start + N * 32)
+
+def g1InstCptrv (start : Nat) (k : Nat) : U256 :=
+  BitVec.ofNat 256 (start + 32 * k)
+
+def g1InstWords (cd : Bytes) (start N : Nat) : List U256 :=
+  g1InstanceWords cd start N
+
+def g1InstV3 {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (rv s : U256) (words : List U256) (buf : U256)
+    (k : Nat) : VEnv (Bridge.Dialect c g) :=
+  VEnv.set (VEnv.set V "success" (g1SuccessFold rv s (List.take k words)))
+    "buf_len" (buf + BitVec.ofNat 256 (32 * k))
+
+def g1InstInv {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (buf s rv : U256)
+    (words : List U256) (start N : Nat) (Vh : VEnv (Bridge.Dialect c g)) (sth : EvmState) : Prop :=
+  ∃ k, k ≤ N ∧
+    Vh = ("instance_cptr_end", g1InstEndv start N) ::
+      ("instance_cptr", g1InstCptrv start k) :: g1InstV3 V rv s words buf k ∧
+    VEnv.get Vh "success" = some (g1SuccessFold rv s (List.take k words)) ∧
+    VEnv.get Vh "buf_len" = some (buf + BitVec.ofNat 256 (32 * k)) ∧
+    sth.env = st.env ∧ sth.halted = st.halted ∧
+    sth.memory = g1AppendWords st.memory buf.toNat (List.take k words) 0
+
+def g1InstQ {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (buf s rv : U256)
+    (words : List U256) (N : Nat) (Vend : VEnv (Bridge.Dialect c g))
+    (stend : EvmState) (o : Outcome) : Prop :=
+  o = .normal ∧
+  restore V Vend = VEnv.set (VEnv.set V "success" (g1SuccessFold rv s words))
+    "buf_len" (buf + BitVec.ofNat 256 (32 * N)) ∧
+  stend.env = st.env ∧ stend.halted = st.halted ∧
+  stend.memory = g1AppendWords st.memory buf.toNat words 0
+
+set_option maxHeartbeats 4000000 in
+theorem instLoop_exit {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)}
+    (cd : Bytes) (start N : Nat) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (buf s rv : U256)
+    (hbound : start + 32 * N < 2 ^ 256)
+    {Vh : VEnv (Bridge.Dialect c g)} {sth : EvmState} {cv : U256} {st1 : EvmState}
+    (hInv : g1InstInv V st buf s rv (g1InstWords cd start N) start N Vh sth)
+    (hc : EvalExpr (Bridge.Dialect c g) funs Vh sth g1InstCond (.vals [cv] st1))
+    (hz : cv = 0) :
+    g1InstQ V st buf s rv (g1InstWords cd start N) N Vh st1 .normal := by
+  obtain ⟨k, hk_le, hVh, hsucc, hbufk, hEnv, hHalt, hMem⟩ := hInv
+  obtain ⟨xv, yv, hx, hy, hcv, hst1⟩ := g1Walk_eval_lt_vars_inv hc
+  have hcptr_get : VEnv.get Vh "instance_cptr" = some (g1InstCptrv start k) := by
+    rw [hVh]
+    rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+    simp [VEnv.get, List.find?]
+  have hend_get : VEnv.get Vh "instance_cptr_end" = some (g1InstEndv start N) := by
+    rw [hVh]
+    simp [VEnv.get, List.find?]
+  have hxv : xv = g1InstCptrv start k := Option.some.inj (hx.symm.trans hcptr_get)
+  have hyv : yv = g1InstEndv start N := Option.some.inj (hy.symm.trans hend_get)
+  rw [hxv, hyv] at hcv
+  have h0 : b2w ((BitVec.ofNat 256 (start + 32 * k)).ult
+      (BitVec.ofNat 256 (start + N * 32))) = (0 : U256) := by
+    rw [show g1InstCptrv start k = BitVec.ofNat 256 (start + 32 * k) from rfl,
+      show g1InstEndv start N = BitVec.ofNat 256 (start + N * 32) from rfl] at hcv
+    rw [← hcv]; exact hz
+  have hi : start + 32 * k < 2 ^ 256 := by omega
+  have hn : start + N * 32 < 2 ^ 256 := by omega
+  have hge : start + N * 32 ≤ start + 32 * k :=
+    lt_guard_false (i := start + 32 * k) (n := start + N * 32) hi hn h0
+  have hkn : k = N := by omega
+  rw [hkn] at hVh hsucc hbufk hMem hk_le
+  refine ⟨rfl, ?_, ?_, ?_, ?_⟩
+  · rw [hVh]
+    rw [show g1InstV3 V rv s (g1InstWords cd start N) buf N = VEnv.set (VEnv.set V "success"
+        (g1SuccessFold rv s (List.take N (g1InstWords cd start N)))) "buf_len"
+        (buf + BitVec.ofNat 256 (32 * N)) from rfl]
+    dsimp only [g1InstWords]
+    rw [g1InstanceWords_take_all]
+    rw [t_restore_cons2_any (D := Bridge.Dialect c g)
+      (V0 := V) (W := VEnv.set (VEnv.set V "success" (g1SuccessFold rv s (g1InstanceWords cd start N)))
+        "buf_len" (buf + BitVec.ofNat 256 (32 * N)))
+      (x := "instance_cptr_end") (y := "instance_cptr") (E := g1InstEndv start N)
+      (C := g1InstCptrv start N)
+      (h := by rw [t_venv_set_length (D := Bridge.Dialect c g),
+        t_venv_set_length (D := Bridge.Dialect c g)])]
+  · rw [hst1, hEnv]
+  · rw [hst1, hHalt]
+  · rw [hst1, hMem]
+    dsimp only [g1InstWords]
+    rw [g1InstanceWords_take_all]
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -10055,5 +10164,6 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instInit_halt_false [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_set_overwrite2 [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_take_all [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instLoop_exit [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
