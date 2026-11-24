@@ -610,6 +610,179 @@ theorem Permutation.CommonEvaluated.queries_length
   simp only [List.length_map, List.length_zip, List.length_range, Array.length_toList]
   omega
 
+theorem flatten_length_of_singleton {α : Type} (l : List (List α))
+    (h : ∀ x ∈ l, ∃ a, x = [a]) : l.flatten.length = l.length := by
+  induction l with
+  | nil => rfl
+  | cons a as ih =>
+      obtain ⟨x, rfl⟩ := h a (by simp)
+      have ih' := ih (fun b hb => h b (by simp [hb]))
+      simp [ih']
+
+theorem adviceQueryFn_singleton (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ac : Array G₁) (ae : Array (Fr p)) (proof : Nat)
+    (q : Nat × (Column × Rotation)) (out : List (VerifierQuery (Fr p) G₁))
+    (h : adviceQueryFn vk x ac ae proof q = .ok out) :
+    ∃ q', out = [q'] := by
+  unfold adviceQueryFn at h
+  obtain ⟨com, _, h1⟩ := except_bind_ok h
+  obtain ⟨ev, _, h2⟩ := except_bind_ok h1
+  cases h2
+  exact ⟨_, rfl⟩
+
+theorem adviceBlock_length (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ac : Array G₁) (ae : Array (Fr p)) (proof : Nat)
+    (adv : List (List (VerifierQuery (Fr p) G₁)))
+    (hadv : (List.zip (List.range vk.cs.adviceQueries.size)
+        vk.cs.adviceQueries.toList).mapM (adviceQueryFn vk x ac ae proof) = .ok adv) :
+    adv.flatten.length = vk.cs.adviceQueries.size := by
+  rw [flatten_length_of_singleton adv]
+  · rw [list_mapM_length _ _ hadv]
+    simp
+  · intro l hl
+    obtain ⟨a, _, hfa⟩ := mem_mapM _ _ hadv l hl
+    exact adviceQueryFn_singleton vk x ac ae proof a l hfa
+
+theorem instanceQueryFn_singleton_or_nil (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁)
+    (x : Fr p) (ci : Array G₁) (ie : Array (Fr p)) (proof : Nat)
+    (q : Nat × (Column × Rotation)) (out : List (VerifierQuery (Fr p) G₁))
+    (h : instanceQueryFn nbCommitted vk x ci ie proof q = .ok out) :
+    out = [] ∨ ∃ q', out = [q'] := by
+  unfold instanceQueryFn at h
+  split at h
+  · obtain ⟨com, _, h1⟩ := except_bind_ok h
+    obtain ⟨ev, _, h2⟩ := except_bind_ok h1
+    cases h2
+    exact Or.inr ⟨_, rfl⟩
+  · cases h
+    exact Or.inl rfl
+
+theorem mapM_flatten_length_of_filter {α β ε : Type} {f : α → Except ε (List β)}
+    (p : α → Bool) :
+    ∀ (l : List α) (l' : List (List β)), l.mapM f = .ok l' →
+      (∀ a ∈ l, (p a = true → ∃ b, f a = .ok [b]) ∧
+        (p a = false → f a = .ok [])) →
+      l'.flatten.length = (l.filter p).length := by
+  intro l
+  induction l with
+  | nil => intro l' h _; cases h; simp
+  | cons a as ih =>
+      intro l' h hsplit
+      rw [List.mapM_cons] at h
+      obtain ⟨b, hb, h1⟩ := except_bind_ok h
+      obtain ⟨bs, hbs, h2⟩ := except_bind_ok h1
+      cases h2
+      have hsplit' := hsplit a (by simp)
+      have hsplit_as : ∀ a' ∈ as, (p a' = true → ∃ b, f a' = .ok [b]) ∧
+          (p a' = false → f a' = .ok []) :=
+        fun a' ha' => hsplit a' (by simp [ha'])
+      have ih' := ih bs hbs hsplit_as
+      by_cases hp : p a = true
+      · obtain ⟨x, hx⟩ := hsplit'.1 hp
+        have hbx : b = [x] := by
+          rw [hb] at hx
+          exact Except.ok.inj hx
+        subst hbx
+        rw [List.filter_cons_of_pos hp]
+        simp only [List.flatten_cons, List.length_append, List.length_cons, List.length_nil, ih']
+        omega
+      · have hpf : p a = false := by simpa using hp
+        have hb_nil := hsplit'.2 hpf
+        have hb0 : b = [] := by
+          rw [hb] at hb_nil
+          exact Except.ok.inj hb_nil
+        subst hb0
+        rw [List.filter_cons_of_neg (by simpa [hpf])]
+        simp only [List.flatten_cons, List.length_append, List.length_nil, ih']
+        omega
+
+theorem mapM_ok_of_mem {α β ε : Type} {f : α → Except ε β} :
+    ∀ (l : List α) (l' : List β), l.mapM f = .ok l' →
+      ∀ a ∈ l, ∃ b, f a = .ok b := by
+  intro l
+  induction l with
+  | nil => intro l' h a ha; simp at ha
+  | cons a as ih =>
+      intro l' h a' ha'
+      rw [List.mapM_cons] at h
+      obtain ⟨b, hb, h1⟩ := except_bind_ok h
+      obtain ⟨bs, hbs, h2⟩ := except_bind_ok h1
+      rcases List.mem_cons.mp ha' with rfl | ha'
+      · exact ⟨b, hb⟩
+      · exact ih bs hbs a' ha'
+
+theorem instanceBlock_length (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (ci : Array G₁) (ie : Array (Fr p)) (proof : Nat)
+    (inst : List (List (VerifierQuery (Fr p) G₁)))
+    (hinst : (List.zip (List.range vk.cs.instanceQueries.size)
+        vk.cs.instanceQueries.toList).mapM
+        (instanceQueryFn nbCommitted vk x ci ie proof) = .ok inst) :
+    inst.flatten.length =
+      ((List.zip (List.range vk.cs.instanceQueries.size)
+        vk.cs.instanceQueries.toList).filter
+        (fun q : Nat × (Column × Rotation) => decide (q.2.1.index < nbCommitted))).length := by
+  exact mapM_flatten_length_of_filter (p := fun q : Nat × (Column × Rotation) =>
+      decide (q.2.1.index < nbCommitted)) _ _ hinst (by
+    intro a ha
+    obtain ⟨out, hout⟩ := mapM_ok_of_mem _ _ hinst a ha
+    constructor
+    · intro hp
+      rcases instanceQueryFn_singleton_or_nil nbCommitted vk x ci ie proof a out hout with hnil | ⟨q, hq⟩
+      · rw [hnil] at hout
+        unfold instanceQueryFn at hout
+        rw [if_pos (by simpa using hp)] at hout
+        obtain ⟨com, _, h1⟩ := except_bind_ok hout
+        obtain ⟨ev, _, h2⟩ := except_bind_ok h1
+        cases h2
+      · rw [hq] at hout
+        exact ⟨q, hout⟩
+    · intro hp
+      rcases instanceQueryFn_singleton_or_nil nbCommitted vk x ci ie proof a out hout with hnil | ⟨q, hq⟩
+      · rw [hnil] at hout
+        exact hout
+      · rw [hq] at hout
+        unfold instanceQueryFn at hout
+        rw [if_neg (by simpa using hp)] at hout
+        cases hout)
+
+end Midfall.LoweringV3
+
+namespace Midfall.LoweringV3
+open Midfall Midfall.Halo2
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+
+theorem flatten_length_of_map_one {α β : Type} (l : List α) (f : α → List β)
+    (h : ∀ a, (f a).length = 1) : (l.map f).flatten.length = l.length := by
+  induction l with
+  | nil => rfl
+  | cons a as ih =>
+      simp only [List.map_cons, List.flatten_cons, List.length_append, h a, ih,
+        List.length_cons]
+      omega
+
+theorem fixedBlock_length (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (fixedEvals : Array (Fr p))
+    (fixed : List (VerifierQuery (Fr p) G₁))
+    (hfixed : ((List.zip (List.range vk.cs.fixedQueries.size)
+        vk.cs.fixedQueries.toList).filter
+        (fun q => !vk.cs.hasSimpleSelectorCol q.2.1.index)).mapM
+        (fixedQueryFn vk x fixedEvals) = .ok fixed) :
+    fixed.length =
+      ((List.zip (List.range vk.cs.fixedQueries.size)
+        vk.cs.fixedQueries.toList).filter
+        (fun q => !vk.cs.hasSimpleSelectorCol q.2.1.index)).length :=
+  list_mapM_length _ _ hfixed
+
+theorem trashBlock_length (vk : VerifyingKey (Fr p) G₁) (x : Fr p) (proof : Nat)
+    (te : Array (Trash.Evaluated (Fr p) G₁)) :
+    ((List.zip (List.range te.size) te.toList).flatMap fun (i, tq) =>
+      (tq.queries (p := p) x proof i).toList).length = te.size := by
+  rw [List.flatMap]
+  rw [flatten_length_of_map_one]
+  · simp
+  · intro a
+    exact Trash.Evaluated.queries_length a.2 x proof a.1
+
 
 
 end Midfall.LoweringV3
