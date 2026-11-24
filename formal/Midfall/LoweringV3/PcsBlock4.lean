@@ -1814,6 +1814,87 @@ theorem pcs_wMulmodAt_toNat_lt {a b : U256} :
 #assert_axioms Midfall.LoweringV3.PcsBlock4.pcs_wMulmodAt_toNat_lt
   [propext, Classical.choice, Quot.sound] native []
 
+theorem pcs_blsR_lt : Midfall.Yul.blsR < 2 ^ 256 := by decide
+
+theorem pcs_blsR_ne_zero : Midfall.Yul.blsR ≠ 0 :=
+  (Fact.out (p := Nat.Prime Midfall.Yul.blsR)).ne_zero
+
+theorem pcs_ofNat_blsR_toNat :
+    (BitVec.ofNat 256 Midfall.Yul.blsR : U256).toNat = Midfall.Yul.blsR := by
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt pcs_blsR_lt]
+
+theorem pcs_ofNat_blsR_ne_zero : (BitVec.ofNat 256 Midfall.Yul.blsR : U256) ≠ 0 := by
+  intro h
+  have this : Midfall.Yul.blsR = 0 := by
+    have h' := congrArg BitVec.toNat h
+    rw [pcs_ofNat_blsR_toNat] at h'
+    simpa using h'
+  exact pcs_blsR_ne_zero this
+
+theorem pcs_wAddmodAt_toNat (a b : U256) :
+    (wAddmodAt a b (BitVec.ofNat 256 Midfall.Yul.blsR)).toNat =
+      (a.toNat + b.toNat) % Midfall.Yul.blsR := by
+  rw [wAddmodAt, if_neg pcs_ofNat_blsR_ne_zero, pcs_ofNat_blsR_toNat,
+    BitVec.toNat_ofNat, Nat.mod_eq_of_lt]
+  exact Nat.lt_of_lt_of_le
+    (Nat.mod_lt _ (Fact.out (p := Nat.Prime Midfall.Yul.blsR)).pos)
+    (Nat.le_of_lt pcs_blsR_lt)
+
+theorem pcs_wMulmodAt_toNat (a b : U256) :
+    (wMulmodAt a b (BitVec.ofNat 256 Midfall.Yul.blsR)).toNat =
+      (a.toNat * b.toNat) % Midfall.Yul.blsR := by
+  rw [wMulmodAt, if_neg pcs_ofNat_blsR_ne_zero, pcs_ofNat_blsR_toNat,
+    BitVec.toNat_ofNat, Nat.mod_eq_of_lt]
+  exact Nat.lt_of_lt_of_le
+    (Nat.mod_lt _ (Fact.out (p := Nat.Prime Midfall.Yul.blsR)).pos)
+    (Nat.le_of_lt pcs_blsR_lt)
+
+theorem pcs_toNat_sub_of_lt_blsR {a : U256} (ha : a.toNat < Midfall.Yul.blsR) :
+    (BitVec.ofNat 256 Midfall.Yul.blsR - a).toNat = Midfall.Yul.blsR - a.toNat := by
+  rw [BitVec.toNat_sub, pcs_ofNat_blsR_toNat]
+  have hM := pcs_blsR_lt
+  have h : 2 ^ 256 - a.toNat + Midfall.Yul.blsR =
+      (Midfall.Yul.blsR - a.toNat) + 2 ^ 256 := by omega
+  rw [h, Nat.add_mod_right, Nat.mod_eq_of_lt]
+  omega
+
+
+theorem pcs_nat_key (C E I M : Nat) (hE : E < M) :
+    (C * I % M + (M - E * I % M)) % M = ((C + (M - E)) % M * I) % M := by
+  have hMpos : 0 < M := lt_of_le_of_lt (Nat.zero_le _) hE
+  have hB : E * I % M ≤ M := Nat.le_of_lt (Nat.mod_lt _ hMpos)
+  haveI : NeZero M := ⟨Nat.ne_of_gt hMpos⟩
+  apply Nat.ModEq.eq_of_lt_of_lt
+  · rw [← ZMod.natCast_eq_natCast_iff]
+    repeat rw [ZMod.natCast_mod]
+    push_cast [Nat.cast_sub (Nat.le_of_lt hE), Nat.cast_sub hB]
+    repeat rw [ZMod.natCast_mod]
+    rw [Nat.cast_add, Nat.cast_sub (Nat.le_of_lt hE)]
+    rw [show ((M : ZMod M) = 0) by simp]
+    push_cast
+    ring
+  · exact Nat.mod_lt _ hMpos
+  · exact Nat.mod_lt _ hMpos
+
+theorem pcs_field_distrib (c e inv : U256) (he : e.toNat < Midfall.Yul.blsR) :
+    wAddmodAt (wMulmodAt c inv (BitVec.ofNat 256 Midfall.Yul.blsR))
+      (BitVec.ofNat 256 Midfall.Yul.blsR -
+        wMulmodAt e inv (BitVec.ofNat 256 Midfall.Yul.blsR))
+      (BitVec.ofNat 256 Midfall.Yul.blsR) =
+    wMulmodAt
+      (wAddmodAt c (BitVec.ofNat 256 Midfall.Yul.blsR - e)
+        (BitVec.ofNat 256 Midfall.Yul.blsR))
+      inv (BitVec.ofNat 256 Midfall.Yul.blsR) := by
+  apply BitVec.eq_of_toNat_eq
+  simp only [pcs_wAddmodAt_toNat, pcs_wMulmodAt_toNat]
+  have hei : (wMulmodAt e inv (BitVec.ofNat 256 Midfall.Yul.blsR)).toNat <
+      Midfall.Yul.blsR := by
+    rw [pcs_wMulmodAt_toNat]
+    exact Nat.mod_lt _ (Fact.out (p := Nat.Prime Midfall.Yul.blsR)).pos
+  rw [pcs_toNat_sub_of_lt_blsR hei, pcs_toNat_sub_of_lt_blsR he,
+    pcs_wMulmodAt_toNat]
+  exact pcs_nat_key c.toNat e.toNat inv.toNat Midfall.Yul.blsR he
+
 /-- `wMulmodAt` by the field one is the identity on canonical words. -/
 theorem pcs_wMulmodAt_one_right {a : U256} (ha : a.toNat < blsR) :
     wMulmodAt a 1 (BitVec.ofNat 256 blsR) = a := by
@@ -3587,6 +3668,36 @@ def pcsGenFEval (rv x2v fev cval : U256) (ev : Nat → U256) (a : Nat → U256) 
 theorem pcsBatchInputs_length (m : Nat) : (pcsBatchInputs m).length = 2 * m := by
   simp only [pcsBatchInputs, List.length_append, List.length_map, List.length_range]
   omega
+theorem pcsGenFEval_one (x2v fev cval : U256) (ev : Nat → U256)
+    (a : Nat → U256) (ha1 : a 1 = 1) :
+    pcsGenFEval (BitVec.ofNat 256 Midfall.Yul.blsR) x2v fev cval ev a 1 =
+      wAddmodAt (wMulmodAt fev x2v (BitVec.ofNat 256 Midfall.Yul.blsR))
+        (wAddmodAt
+          (wMulmodAt cval (SIInv (a 0)) (BitVec.ofNat 256 Midfall.Yul.blsR))
+          (BitVec.ofNat 256 Midfall.Yul.blsR -
+            wMulmodAt (ev 0) (SIInv (a 0)) (BitVec.ofNat 256 Midfall.Yul.blsR))
+          (BitVec.ofNat 256 Midfall.Yul.blsR))
+        (BitVec.ofNat 256 Midfall.Yul.blsR) := by
+  unfold pcsGenFEval
+  rw [pcsDenInvVal_one (f := fun j => SIInv (a j)) (pcsSIInv_toNat_lt (a 0))]
+  unfold pcsEvalAcc pcsTermVal
+  rw [ha1, pcsSIInv_one]
+  rw [pcs_wMulmodAt_one_right (pcs_wMulmodAt_toNat_lt (a := ev 0) (b := SIInv (a 0)))]
+  simp only [Nat.zero_add]
+  rfl
+
+
+theorem pcsM1Value_eq_gen (x2v fev cval : U256) (ev : Nat → U256) (dx0v : U256)
+    (a : Nat → U256) (ha0 : a 0 = dx0v) (ha1 : a 1 = 1)
+    (hev : (ev 0).toNat < Midfall.Yul.blsR) :
+    m1FEval fev x2v (m1Eval cval (ev 0) dx0v (BitVec.ofNat 256 Midfall.Yul.blsR))
+      (BitVec.ofNat 256 Midfall.Yul.blsR) =
+    pcsGenFEval (BitVec.ofNat 256 Midfall.Yul.blsR) x2v fev cval ev a 1 := by
+  rw [pcsGenFEval_one (x2v := x2v) (fev := fev) (cval := cval) (ev := ev) (a := a) ha1]
+  rw [ha0]
+  unfold m1FEval m1Eval
+  rw [pcs_field_distrib cval (ev 0) (SIInv dx0v) hev]
+
 
 theorem pcsBatchName_dx (m i : Nat) (hi : i < m) : pcsBatchName m i = pcsDxName i := by
   unfold pcsBatchName pcsBatchInputs
@@ -5094,7 +5205,7 @@ theorem pcsGenBody_contract {g : ExternalGas} (product : PairingProduct)
 
 
 set_option maxHeartbeats 16000000 in
-theorem pcsSetBlock_contract {g : ExternalGas} (product : PairingProduct)
+theorem pcsSetBlock_multi_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
     {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
     {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
@@ -5175,6 +5286,214 @@ theorem pcsSetBlock_contract {g : ExternalGas} (product : PairingProduct)
     exact pcs_venv_get_restore_of_names hnamesExec
       (pcsGenBody_fe_notmem_added setIdx points distinctRotations off) hfget
   · exact Or.inr hh
+
+
+set_option maxHeartbeats 8000000 in
+theorem pcsSetBlock_one_contract_gen {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (setIdx : Nat) (p0 : Int) (distinctRotations : List Int)
+    (off scratch hbls gasN selN selP : Nat)
+    (p a : Nat → U256) (x3v rv x2v fev cptr qep : U256)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch hbls gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hnbls : BitVec.ofNat 256 hbls = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some
+      ((failFDecl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)), cenv'))
+    (hvalDx0 : a 0 = wAddmodAt x3v (rv - p 0) rv)
+    (hvalLb0 : a 1 = 1)
+    (hdx0pos : 0 < (m1Dx0 x3v (p 0) rv).toNat)
+    (hdx0lt : (m1Dx0 x3v (p 0) rv).toNat < Midfall.Yul.blsR)
+    (hrv : rv = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hcptr : cptr.toNat + setIdx * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hqep : qep.toNat + (off + 1) * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hdisj : qep.toNat + (off + 1) * Midfall.Generator.wordBytes ≤ scratch ∨
+      scratch + 192 ≤ qep.toNat + off * Midfall.Generator.wordBytes) :
+    StmtContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (Stmt.block (GenAstPcs.pcsSetBlockAst setIdx [p0] distinctRotations off))
+      (fun V st =>
+        PcsGPre (c := permissive (callsOf product)) (g := g)
+          x3v rv x2v fev cptr qep p [(0, pcsRotPtRef distinctRotations p0)] 2 V st ∧
+        (loadWord st.memory
+          (qep.toNat + off * Midfall.Generator.wordBytes)).toNat < Midfall.Yul.blsR)
+      (fun V st V' st' o =>
+        PcsGPost (c := permissive (callsOf product)) (g := g)
+          rv x2v fev a 1 setIdx cptr.toNat off scratch qep V st V' st' o) := by
+  intro V st hpre V' st' o hrun
+  subst rv
+  obtain ⟨hpreG, hev⟩ := hpre
+  obtain ⟨hx3, hrv', hx2, hfe, hcptrV, hqepV, hpts, _, _⟩ := hpreG
+  have hmem : (0, pcsRotPtRef distinctRotations p0) ∈
+      pcsPointRefs [p0] distinctRotations := by
+    simp [pcsPointRefs, Midfall.Generator.enumIdx]
+  have hptv : VEnv.get V (pcsRotPtRef distinctRotations p0) = some (p 0) := hpts _ hmem
+  have hqep' : qep.toNat + off * Midfall.Generator.wordBytes +
+      Midfall.Generator.wordBytes < 2 ^ 256 := by
+    have h := hqep
+    have hwb : Midfall.Generator.wordBytes = 32 := rfl
+    rw [hwb] at h ⊢
+    have h' : (off + 1) * 32 = off * 32 + 32 := by ring
+    omega
+  have hdisj' : qep.toNat + off * Midfall.Generator.wordBytes + 32 ≤ scratch ∨
+      scratch + 192 ≤ qep.toNat + off * Midfall.Generator.wordBytes := by
+    rcases hdisj with h | h
+    · left
+      have hwb : Midfall.Generator.wordBytes = 32 := rfl
+      rw [hwb] at h
+      have h' : (off + 1) * 32 = off * 32 + 32 := by ring
+      rw [h'] at h
+      exact h
+    · right
+      have h' : Midfall.Generator.wordBytes = 32 := rfl
+      rw [h'] at h ⊢
+      exact h
+  have hqepb : qep.toNat + off * Midfall.Generator.wordBytes + 32 < 2 ^ 256 := by
+    have h := hqep'
+    rwa [show Midfall.Generator.wordBytes = 32 from rfl] at h
+  have hmain := pcsSetBlock1_contract (g := g) (product := product) (funs := funs)
+    (decl := decl) (cenv := cenv) (cenv' := cenv')
+    distinctRotations setIdx off scratch hbls gasN selN selP p0
+    (pcsRotPtRef distinctRotations p0) x3v (p 0) (BitVec.ofNat 256 Midfall.Yul.blsR) cptr qep x2v fev
+    rfl hlook hbody hparams hrets hnbls hscratch hscratch256 hfail
+    hdx0pos hdx0lt hcptr hqepb hdisj'
+    V st ⟨hx3, hrv', hx2, hfe, hcptrV, hqepV, hptv⟩ V' st' o hrun
+  rcases hmain with ⟨ho, hV', hfr, henv⟩ | ⟨ho, hrev⟩
+  · refine Or.inl ⟨ho, ?_, hfr, henv⟩
+    rw [hV']
+    have hget : VEnv.get (VEnv.set V "f_eval" (m1FEval fev x2v
+        (m1Eval (wordFrom st.env.calldata
+          (cptr.toNat + setIdx * Midfall.Generator.wordBytes))
+          (loadWord st.memory (qep.toNat + off * Midfall.Generator.wordBytes))
+          (m1Dx0 x3v (p 0) (BitVec.ofNat 256 Midfall.Yul.blsR))
+          (BitVec.ofNat 256 Midfall.Yul.blsR))
+        (BitVec.ofNat 256 Midfall.Yul.blsR))) "f_eval" =
+        some (m1FEval fev x2v
+        (m1Eval (wordFrom st.env.calldata
+          (cptr.toNat + setIdx * Midfall.Generator.wordBytes))
+          (loadWord st.memory (qep.toNat + off * Midfall.Generator.wordBytes))
+          (m1Dx0 x3v (p 0) (BitVec.ofNat 256 Midfall.Yul.blsR))
+          (BitVec.ofNat 256 Midfall.Yul.blsR))
+        (BitVec.ofNat 256 Midfall.Yul.blsR)) :=
+      venv_get_set_same (D := Bridge.Dialect (permissive (callsOf product)) g)
+        (V := V) (x := "f_eval") (v := fev)
+        (w := m1FEval fev x2v
+          (m1Eval (wordFrom st.env.calldata
+            (cptr.toNat + setIdx * Midfall.Generator.wordBytes))
+            (loadWord st.memory (qep.toNat + off * Midfall.Generator.wordBytes))
+            (m1Dx0 x3v (p 0) (BitVec.ofNat 256 Midfall.Yul.blsR))
+            (BitVec.ofNat 256 Midfall.Yul.blsR))
+          (BitVec.ofNat 256 Midfall.Yul.blsR)) hfe
+    rw [hget]
+    have hval := pcsM1Value_eq_gen x2v fev
+      (wordFrom st.env.calldata (cptr.toNat + setIdx * Midfall.Generator.wordBytes))
+      (fun j => loadWord st.memory
+        (qep.toNat + (off + j) * Midfall.Generator.wordBytes))
+      (m1Dx0 x3v (p 0) (BitVec.ofNat 256 Midfall.Yul.blsR)) a
+      hvalDx0 hvalLb0 (by
+        simpa [Midfall.Generator.wordBytes] using hev)
+    simpa [Nat.add_zero] using congrArg some hval
+  · exact Or.inr ⟨ho, hrev⟩
+
+
+
+set_option maxHeartbeats 16000000 in
+theorem pcsSetBlock_contract {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off scratch hbls gasN selN selP : Nat)
+    (p a : Nat → U256) (x3v rv x2v fev cptr qep : U256)
+    (hm : 0 < points.length)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch hbls gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hnbls : BitVec.ofNat 256 hbls = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some
+      ((failFDecl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)), cenv'))
+    (hnames : PcsGenNames points.length (pcsPointRefs points distinctRotations)
+      (pcsKs points distinctRotations))
+    (hainlt : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat < blsR)
+    (hain0 : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat ≠ 0)
+    (hvalDx : ∀ i, i < points.length → a i = wAddmodAt x3v (rv - p i) rv)
+    (hvalLb : ∀ j, j < points.length →
+      a (points.length + j) = pcsLbasisVal rv (p j) p (pcsKs points distinctRotations j))
+    (hks_sub : ∀ g ∈ pcsPointRefs points distinctRotations,
+      ∀ k ∈ pcsKs points distinctRotations g.1, k ∈ pcsPointRefs points distinctRotations)
+    (hinv0Dist : ∀ j, 1 ≤ j → j < (pcsBatchInputs points.length).length →
+      pcsInvName points.length 0 ≠ pcsInvName points.length j)
+    (hinvEvalAll : ∀ i, pcsInvName points.length i ≠ "eval")
+    (hinvQSetAll : ∀ i, pcsInvName points.length i ≠ "Q_EVAL_SET_MPTR")
+    (hinvR0 : pcsInvName points.length 0 ≠ "r")
+    (htermF : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "f_eval")
+    (htermX2 : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "x2")
+    (hdenInvAll : ∀ i, i < (pcsBatchInputs points.length).length →
+      "den_inv" ≠ pcsInvName points.length i)
+    (hrv : rv = BitVec.ofNat 256 blsR)
+    (hcptr : cptr.toNat + setIdx * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hqep : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hdisj : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes ≤ scratch ∨
+      scratch + 192 ≤ qep.toNat + off * Midfall.Generator.wordBytes) :
+    StmtContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (Stmt.block (GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off))
+      (fun V st =>
+        PcsGPre (c := permissive (callsOf product)) (g := g)
+          x3v rv x2v fev cptr qep p (pcsPointRefs points distinctRotations)
+          (pcsBatchInputs points.length).length V st ∧
+        (∀ j, j < points.length → (loadWord st.memory
+          (qep.toNat + (off + j) * Midfall.Generator.wordBytes)).toNat < blsR))
+      (fun V st V' st' o =>
+        PcsGPost (c := permissive (callsOf product)) (g := g)
+          rv x2v fev a points.length setIdx cptr.toNat off scratch qep V st V' st' o) := by
+  by_cases h1 : 1 < points.length
+  · intro V st hpre V' st' o hrun
+    exact pcsSetBlock_multi_contract (g := g) (product := product) (funs := funs)
+      (decl := decl) (cenv := cenv) (cenv' := cenv')
+      setIdx points distinctRotations off scratch hbls gasN selN selP p a
+      x3v rv x2v fev cptr qep h1 hlook hbody hparams hrets hnbls hscratch
+      hscratch256 hfail hnames hainlt hain0 hvalDx hvalLb hks_sub hinv0Dist
+      hinvEvalAll hinvQSetAll hinvR0 htermF htermX2 hdenInvAll hrv hcptr
+      hqep hdisj V st hpre.1 V' st' o hrun
+  · have hlen : points.length = 1 := by omega
+    obtain ⟨p0, hp⟩ := List.length_eq_one_iff.mp hlen
+    subst hp
+    intro V st hpre V' st' o hrun
+    have hvalDx0 : a 0 = wAddmodAt x3v (rv - p 0) rv := hvalDx 0 (by simp)
+    have hvalLb0 : a 1 = 1 := by
+      have h := hvalLb 0 (by simp)
+      simpa [pcsKs, Midfall.Generator.enumIdx, pcsLbasisVal, pcsLbasisAcc,
+        Nat.add_zero] using h
+    have hdx0pos : 0 < (m1Dx0 x3v (p 0) rv).toNat := by
+      have h := hain0 0 (by simp [pcsBatchInputs])
+      rw [hvalDx0] at h
+      simpa [m1Dx0] using Nat.pos_of_ne_zero h
+    have hdx0lt : (m1Dx0 x3v (p 0) rv).toNat < blsR := by
+      have h := hainlt 0 (by simp [pcsBatchInputs])
+      rw [hvalDx0] at h
+      simpa [m1Dx0] using h
+    have hpre1 : PcsGPre (c := permissive (callsOf product)) (g := g)
+        x3v rv x2v fev cptr qep p
+        [(0, pcsRotPtRef distinctRotations p0)] 2 V st ∧
+        (loadWord st.memory
+          (qep.toNat + off * Midfall.Generator.wordBytes)).toNat < blsR := by
+      constructor
+      · simpa [pcsPointRefs, Midfall.Generator.enumIdx, pcsBatchInputs] using hpre.1
+      · simpa [Nat.add_zero] using hpre.2 0 (by simp)
+    have hmain := pcsSetBlock_one_contract_gen (g := g) (product := product)
+      (funs := funs) (decl := decl) (cenv := cenv) (cenv' := cenv')
+      setIdx p0 distinctRotations off scratch hbls gasN selN selP p a
+      x3v rv x2v fev cptr qep hlook hbody hparams hrets hnbls hscratch
+      hscratch256 hfail hvalDx0 hvalLb0 hdx0pos hdx0lt hrv hcptr
+      (by simpa using hqep) (by simpa using hdisj) V st hpre1 V' st' o hrun
+    simpa using hmain
 
 
 end Midfall.LoweringV3.PcsBlock4
