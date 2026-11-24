@@ -4801,6 +4801,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms lookupBlock_length
   [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.Generator.permZUpstream_length_eq
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Permutation.Evaluated.queries_length_permZUpstream
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms permZBlock_three
   [propext, Classical.choice, Quot.sound]
 #assert_axioms permZUpstream_three

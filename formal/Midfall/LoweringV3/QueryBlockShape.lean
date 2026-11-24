@@ -10,6 +10,7 @@ import Midfall.Halo2.Exec.Permutation
 import Midfall.Halo2.Exec.Verifier
 import Midfall.LoweringV3.KzgQueryMap
 import Midfall.LoweringV3.LinearizeEntry
+import Midfall.LoweringV3.PcsOrder
 import Midfall.Halo2.Exec.Logup
 import Midfall.Halo2.Exec.Trash
 
@@ -816,5 +817,16 @@ theorem lookupBlock_length (le : Array (Logup.Evaluated (Fr p) G₁))
   rw [hmap]
 
 
+
+
+theorem Permutation.Evaluated.queries_length_permZUpstream
+    (ev : Permutation.Evaluated (Fr p) G₁)
+    (domain : EvaluationDomain (Fr p)) (blindingFactors : Nat) (x : Fr p)
+    (proof : Nat) (result : Array (VerifierQuery (Fr p) G₁))
+    (h : Permutation.Evaluated.queries ev domain blindingFactors x proof = .ok result) :
+    result.toList.length =
+      (Midfall.Generator.permZUpstream ev.sets.size).length := by
+  rw [Permutation.Evaluated.queries_length ev domain blindingFactors x proof result h,
+    Midfall.Generator.permZUpstream_length_eq]
 
 end Midfall.LoweringV3
