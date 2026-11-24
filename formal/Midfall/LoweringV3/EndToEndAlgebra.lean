@@ -4557,7 +4557,7 @@ theorem plan_meta_pcsBlockList (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) 
     check (`queries_assert_ok`). The z-position list is supplied explicitly, as in
     A5's `upstreamSources_filter_pcsBlockList`; nonemptiness is the datum's
     permutation-set condition, not a new `ValidV3` clause. -/
-theorem upstreamDatum_of_validV3
+theorem upstreamDatum_of_validV3_ofZDatum
     (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (dg : Nat) (lc : List Nat)
     (hPcs : R.plan.meta_.protocol.pcsQueries = pcsBlockList R.vk.cs 1 dg lc)
@@ -4595,7 +4595,7 @@ theorem upstreamDatum_of_validV3
 /-- The mapM half alone, in the exact `upstreamSources.mapM (queryFromPlan · meta
     data) = .ok upstreamQueries` shape `KzgMultiPrepareWidths_of_upstreamDatum`
     consumes. -/
-theorem upstreamSources_mapM_of_validV3
+theorem upstreamSources_mapM_of_validV3_ofZDatum
     (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (dg : Nat) (lc : List Nat)
     (hPcs : R.plan.meta_.protocol.pcsQueries = pcsBlockList R.vk.cs 1 dg lc)
@@ -4616,22 +4616,50 @@ theorem upstreamSources_mapM_of_validV3
         Generator.queryFromPlan source R.plan.meta_ R.plan.data) = .ok upstreamQueries := by
   obtain ⟨upstreamSources, upstreamQueries, _generatorOrder, _generatorSets, _upstreamSets,
     hsrc, hmap, _hgen, _hgenSets, _hupSets, _hpoint⟩ :=
-    upstreamDatum_of_validV3 R hR dg lc hPcs zPositions hzdef hzNonempty
+    upstreamDatum_of_validV3_ofZDatum R hR dg lc hPcs zPositions hzdef hzNonempty
   exact ⟨upstreamSources, upstreamQueries, hsrc, hmap⟩
 
-/-- **ITEM 2, FROM `ValidV3` ALONE (MODULO THE Z-POSITION DATUM).** The
-    `dg`/`lc` decomposition is derived, so the only inputs are the rendered key's
-    z-position list and its nonemptiness. The conclusion is the full upstream
-    source block, its `queryFromPlan` map, the generator `queries` result, both
-    set constructions, and the set equality. -/
-theorem upstreamDatum_of_validV3'
+/-- `ValidV3`/`SupportedV2` do not force the permutation argument to have a column:
+    `permutationCommitmentsMatch` only equates the two sizes, so the empty permutation
+    argument satisfies every frozen clause. The minimal key-side clause the upstream
+    datum needs is therefore that the key's permutation argument is nonempty. The
+    deployed poseidon profile observes eight columns (see `PoseidonCoherence`/
+    `PoseidonEnv`), so this is not an extra statement about the deployment, only the
+    generic interface clause. -/
+def PermutationColumnsNonempty (vk : VerifyingKey (Fr p) G₁) : Prop :=
+  vk.cs.permutation.getColumns.toList ≠ []
+
+/-- Nonempty permutation columns plus `WellFormed`'s `3 ≤ csDegree` make the literal
+    `pcsBlockList`'s permutationZ set count positive. -/
+theorem pcsNumPermutationZs_pos_of_columns
     (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
-    (zPositions : List Nat)
-    (hzdef : zPositions = List.filterMap
-      (fun x => if Generator.isPermutationZSource x.2 = true then some x.1 else none)
-      ((List.range R.plan.meta_.protocol.pcsQueries.length).zip
-        R.plan.meta_.protocol.pcsQueries))
-    (hzNonempty : zPositions ≠ []) :
+    (dg : Nat) (hdeg : R.vk.cs.degree = .ok dg)
+    (hcols : PermutationColumnsNonempty R.vk) :
+    0 < pcsNumPermutationZs R.vk.cs dg := by
+  have hdg : dg = R.vk.csDegree := by
+    have h1 := hR.supported.wf.csDegreeMatches
+    rw [hdeg] at h1
+    exact Except.ok.inj h1
+  have hchunk : 3 ≤ dg := by rw [hdg]; exact hR.supported.wf.chunkLenPositive
+  unfold pcsNumPermutationZs
+  rw [ite_eq_right ?h]
+  · unfold Midfall.Halo2.divCeil
+    have hlen : 0 < R.vk.cs.permutation.getColumns.toList.length :=
+      List.length_pos_of_ne_nil hcols
+    exact Nat.div_pos (by omega) (by omega)
+  · intro h
+    exact hcols (List.isEmpty_iff.mp h)
+
+/-- **ITEM 2, NOW WITH ONLY THE KEY-SIDE CLAUSE.** The z-position list, its
+    nonemptiness and the `dg`/`lc` decomposition are all derived: `dg`/`lc` from
+    `plan_meta_pcsBlockList`, the z list as `pcsZPositions` at that literal block,
+    and nonemptiness from `PermutationColumnsNonempty` via
+    `pcsNumPermutationZs_pos_of_columns`/`pcsZPositions_nonempty`. The conclusion is
+    the full upstream source block, its `queryFromPlan` map, the generator `queries`
+    result, both set constructions, and the set equality. -/
+theorem upstreamDatum_of_validV3
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcols : PermutationColumnsNonempty R.vk) :
     ∃ (dg : Nat) (lc : List Nat),
       R.vk.cs.degree = .ok dg ∧
       ∃ (upstreamSources : List PcsQuerySource)
@@ -4650,18 +4678,49 @@ theorem upstreamDatum_of_validV3'
         Generator.constructIntermediateSetsImpl upstreamQueries = .ok upstreamSets ∧
         generatorSets.pointSets = upstreamSets.pointSets := by
   obtain ⟨dg, lc, hdeg, hPcs⟩ := plan_meta_pcsBlockList R hR
+  have hk : 0 < pcsNumPermutationZs R.vk.cs dg :=
+    pcsNumPermutationZs_pos_of_columns R hR dg hdeg hcols
+  let z := pcsZPositions (p := p) R.vk.cs 1 dg lc
+  have hzdef : z = List.filterMap
+      (fun x => if Generator.isPermutationZSource x.2 = true then some x.1 else none)
+      ((List.range R.plan.meta_.protocol.pcsQueries.length).zip
+        R.plan.meta_.protocol.pcsQueries) := by
+    rw [hPcs]
+    rfl
+  have hzn : z ≠ [] := pcsZPositions_nonempty R.vk.cs 1 dg lc hk
   obtain ⟨upstreamSources, upstreamQueries, generatorOrder, generatorSets, upstreamSets,
     hsrc, hmap, hgen, hgenSets, hupSets, hpoint⟩ :=
-    upstreamDatum_of_validV3 R hR dg lc hPcs zPositions hzdef hzNonempty
+    upstreamDatum_of_validV3_ofZDatum R hR dg lc hPcs z hzdef hzn
   exact ⟨dg, lc, hdeg, upstreamSources, upstreamQueries, generatorOrder, generatorSets,
     upstreamSets, hsrc, hmap, hgen, hgenSets, hupSets, hpoint⟩
+
+/-- The mapM half alone, with the z/dg/lc inputs derived. -/
+theorem upstreamSources_mapM_of_validV3
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcols : PermutationColumnsNonempty R.vk) :
+    ∃ (dg : Nat) (lc : List Nat),
+      R.vk.cs.degree = .ok dg ∧
+      ∃ (upstreamSources : List PcsQuerySource) (upstreamQueries : List Generator.Query),
+        upstreamSources = (pcsAdviceBlock R.vk.cs ++
+            pcsCommittedInstanceBlock R.vk.cs 1) ++
+          permZUpstream (pcsNumPermutationZs R.vk.cs dg) ++
+          (pcsLookupBlock R.vk.cs dg lc ++ pcsTrashBlock R.vk.cs ++
+            pcsFixedBlock R.vk.cs ++ pcsPermutationCommonBlock R.vk.cs ++
+            [PcsQuerySource.linearization]) ∧
+        upstreamSources.mapM (fun source =>
+          Generator.queryFromPlan source R.plan.meta_ R.plan.data) = .ok upstreamQueries := by
+  obtain ⟨dg, lc, hdeg, upstreamSources, upstreamQueries, _generatorOrder, _generatorSets,
+    _upstreamSets, hsrc, hmap, _hgen, _hgenSets, _hupSets, _hpoint⟩ :=
+    upstreamDatum_of_validV3 R hR hcols
+  exact ⟨dg, lc, hdeg, upstreamSources, upstreamQueries, hsrc, hmap⟩
 
 /-- **THE `LinearizeQueryMap` ASSEMBLY.** Once the per-pair datum supplies, for
     every `linearize` output, the generator query list, the generator's own
     `queries` result, both `constructIntermediateSetsImpl` results, the point-set
     equality and the `KzgQueryMapData`, the plan/count half closes the existential
     `LinearizeQueryMap` requires. The mapM/source-block half is
-    `upstreamDatum_of_validV3`, used by the datum's producer. -/
+    `upstreamDatum_of_validV3`, used by the datum's producer under the minimal
+    key-side clause `PermutationColumnsNonempty`. -/
 theorem LinearizeQueryMap_of_upstreamDatum
     (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (hUp : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
@@ -4785,7 +4844,8 @@ theorem end_to_end_of_validV3 (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     generator query list, its `queries` result, both `constructIntermediateSetsImpl`
     results, the point-set equality and the `KzgQueryMapData`. The plan/count half
     is discharged by `LinearizeQueryMap_of_upstreamDatum`; the mapM/source-block
-    half is the producer's `upstreamDatum_of_validV3`. -/
+    half is the producer's `upstreamDatum_of_validV3` under the minimal key-side
+    clause `PermutationColumnsNonempty`. -/
 theorem end_to_end_of_validV3_of_upstreamDatum
     (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (product : Midfall.Yul.PairingProduct)
@@ -5156,13 +5216,19 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms setsG_pointSets_length_eq_plan_of_generator
   [propext, Classical.choice, Quot.sound]
-#assert_axioms upstreamDatum_of_validV3
+#assert_axioms upstreamDatum_of_validV3_ofZDatum
   [propext, Classical.choice, Quot.sound]
-#assert_axioms upstreamSources_mapM_of_validV3
+#assert_axioms upstreamSources_mapM_of_validV3_ofZDatum
   [propext, Classical.choice, Quot.sound]
 #assert_axioms plan_meta_pcsBlockList
   [propext, Classical.choice, Quot.sound]
-#assert_axioms upstreamDatum_of_validV3'
+#assert_axioms PermutationColumnsNonempty
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms pcsNumPermutationZs_pos_of_columns
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamDatum_of_validV3
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms upstreamSources_mapM_of_validV3
   [propext, Classical.choice, Quot.sound]
 #assert_axioms LinearizeQueryMap_of_upstreamDatum
   [propext, Classical.choice, Quot.sound]

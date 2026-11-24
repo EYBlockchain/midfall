@@ -453,6 +453,70 @@ theorem singleton_linearization_zfree :
   subst hs
   rfl
 
+/-- The permutationZ block is nonempty whenever its set count is positive. The
+    first set alone contributes its `cur` and `next` openings. -/
+theorem permZBlock_length_pos {k : Nat} (hk : 0 < k) :
+    0 < (Generator.permZBlock k).length := by
+  have hmem : PcsQuerySource.permutationZ 0 PermutationZEval.cur ∈ Generator.permZBlock k := by
+    unfold Generator.permZBlock
+    rw [List.mem_flatten]
+    refine ⟨[PcsQuerySource.permutationZ 0 PermutationZEval.cur,
+             PcsQuerySource.permutationZ 0 PermutationZEval.next]
+              ++ (if 0 + 1 != k then
+                    [PcsQuerySource.permutationZ 0 PermutationZEval.last] else []),
+            ?_, by simp⟩
+    rw [List.mem_map]
+    exact ⟨0, List.mem_range.mpr hk, rfl⟩
+  exact List.length_pos_of_ne_nil (by intro h; rw [h] at hmem; cases hmem)
+
+/-- The z-position list `assertPermutationQueryOrderIsUpstreamEquivalent` computes for
+    the literal `pcsBlockList`: the indices of its permutationZ block. -/
+def pcsZPositions (cs : ConstraintSystem (Fr p)) (nb dg : Nat) (lc : List Nat) : List Nat :=
+  List.filterMap (fun x => if Generator.isPermutationZSource x.2 then some x.1 else none)
+    ((List.range (Generator.pcsBlockList cs nb dg lc).length).zip
+      (Generator.pcsBlockList cs nb dg lc))
+
+/-- Nonempty permutationZ count gives a nonempty z-position list at `pcsBlockList`.
+    This is the nonemptiness A5's `upstreamSources_filter_pcsBlockList` needs, derived
+    from the block structure rather than passed in. -/
+theorem pcsZPositions_nonempty (cs : ConstraintSystem (Fr p)) (nb dg : Nat) (lc : List Nat)
+    (hk : 0 < Generator.pcsNumPermutationZs cs dg) :
+    pcsZPositions (p := p) cs nb dg lc ≠ [] := by
+  unfold pcsZPositions
+  rw [pcsBlockList_eq_permZ]
+  have hpre : ∀ s ∈ (Generator.pcsAdviceBlock cs ++
+      Generator.pcsCommittedInstanceBlock cs nb),
+      Generator.isPermutationZSource s = false := by
+    apply append_zfree
+    · exact pcsAdviceBlock_zfree cs
+    · exact pcsCommittedInstanceBlock_zfree cs nb
+  have hblock : ∀ s ∈ Generator.permZBlock (Generator.pcsNumPermutationZs cs dg),
+      Generator.isPermutationZSource s = true := permZBlock_ztrue _
+  have hpost : ∀ s ∈ (Generator.pcsLookupBlock cs dg lc ++
+      Generator.pcsTrashBlock cs ++ Generator.pcsFixedBlock cs ++
+      Generator.pcsPermutationCommonBlock cs ++ [PcsQuerySource.linearization]),
+      Generator.isPermutationZSource s = false := by
+    apply append_zfree
+    · apply append_zfree
+      · apply append_zfree
+        · apply append_zfree
+          · exact pcsLookupBlock_zfree cs dg lc
+          · exact pcsTrashBlock_zfree cs
+        · exact pcsFixedBlock_zfree cs
+      · exact pcsPermutationCommonBlock_zfree cs
+    · exact singleton_linearization_zfree
+  rw [filterMap_zip_range_append_block Generator.isPermutationZSource
+    (Generator.pcsAdviceBlock cs ++ Generator.pcsCommittedInstanceBlock cs nb)
+    (Generator.permZBlock (Generator.pcsNumPermutationZs cs dg))
+    (Generator.pcsLookupBlock cs dg lc ++ Generator.pcsTrashBlock cs ++
+      Generator.pcsFixedBlock cs ++ Generator.pcsPermutationCommonBlock cs ++
+      [PcsQuerySource.linearization]) hpre hblock hpost]
+  have hlen : 0 < (Generator.permZBlock (Generator.pcsNumPermutationZs cs dg)).length :=
+    permZBlock_length_pos hk
+  intro h
+  rw [List.map_eq_nil_iff, List.range_eq_nil] at h
+  omega
+
 theorem upstreamSources_filter_pcsBlockList
     (meta_ : ConstraintSystemMeta) (data : Data) (generatorOrder : List Query)
     (cs : ConstraintSystem (Fr p)) (nb dg : Nat) (lc : List Nat)

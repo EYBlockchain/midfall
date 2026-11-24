@@ -975,12 +975,11 @@ def gap_readScheduleAgrees : String :=
   "D1 remaining fact: the per-pair KzgQueryMapData for linearize's query vector. " ++
     "The width schedule is PROVED (PrepareLogSlots_of_parseTrace, and " ++
     "readScheduleAgrees_of_validV3 at the ValidV3 surface). The plan/count half is " ++
-    "pointSets_length_eq_plan_of_queryMap / setsG_pointSets_length_eq_plan_of_generator " ++
-    "(KzgQueryMapData -> generator count -> fromProofLayout numPointSets, via " ++
-    "constructIntermediateSets_pointSets_size_eq_of_queryMap and " ++
-    "planMeta_numPointSets_generator_of_validV3). The mapM half is " ++
-    "upstreamDatum_of_validV3' (the A5 upstream source block maps through " ++
-    "queryFromPlan, with the z-position list as the only datum). " ++
+    "pointSets_length_eq_plan_of_queryMap / setsG_pointSets_length_eq_plan_of_generator. " ++
+    "The mapM half is upstreamDatum_of_validV3, which now takes only the minimal " ++
+    "key-side clause PermutationColumnsNonempty (the permutation argument has a " ++
+    "column): the z-position list, its nonemptiness and the dg/lc decomposition are " ++
+    "derived (pcsZPositions, pcsNumPermutationZs_pos_of_columns). " ++
     "LinearizeQueryMap_of_upstreamDatum assembles LinearizeQueryMap once the " ++
     "per-pair datum supplies the upstream list, both set constructions, the " ++
     "point-set equality and the KzgQueryMapData; end_to_end_of_validV3_of_upstreamDatum " ++
