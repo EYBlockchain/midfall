@@ -9189,6 +9189,96 @@ theorem instBody_inner {c : ExternalCalls} {g : ExternalGas}
       exact hpre3
 
 
+theorem t_restore_cons_any {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V0 V : VEnv D) (x : Ident) (E : D.Value) (h : V.length = V0.length) :
+    restore V0 ((x, E) :: V) = V := by
+  rw [restore, List.length_cons, h]
+  simp
+
+set_option maxHeartbeats 4000000 in
+theorem instBody_block {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {decl : FDecl (Bridge.Dialect c g)}
+    {cenv : FunEnv (Bridge.Dialect c g)}
+    (hlook : lookupFun funs "common_word" = some (decl, cenv))
+    (hbody : decl.body = commonWordBody)
+    (hparams : decl.params = ["buf_len", "word"])
+    (hrets : decl.rets = ["ret"])
+    (cd : Bytes) (cptr : U256) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (buf s rv : U256)
+    (hcp : VEnv.get V "instance_cptr" = some cptr)
+    (hcd : st.env.calldata = cd.data.toList)
+    (hbound : cptr.toNat + 32 ≤ cd.data.toList.length)
+    (hbuf : VEnv.get V "buf_len" = some buf)
+    (hs : VEnv.get V "success" = some s)
+    (hr : VEnv.get V "r" = some rv) :
+    let word := cdWord cd cptr.toNat
+    let s1 := s &&& b2w (word.ult rv)
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.block
+        [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+        , Stmt.assign ["success"] (Expr.builtin Op.and
+            [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+        , Stmt.assign ["buf_len"] (Expr.call "common_word"
+            [Expr.var "buf_len", Expr.var "inst_be"]) ])
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun _ _ V' st' o => o = .normal ∧
+        V' = VEnv.set (VEnv.set V "success" s1) "buf_len" (buf + BitVec.ofNat 256 32) ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ x, st'.memory x = storeWord st.memory buf.toNat word x)) := by
+  intro word s1
+  refine StmtsContractAll.block (D := Bridge.Dialect c g) (funs := funs)
+    (body := [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ])
+    (pre := fun V0 st0 => V0 = V ∧ st0 = st)
+    (post := fun _ _ V' st' o => o = .normal ∧
+      V' = VEnv.set (VEnv.set V "success" s1) "buf_len" (buf + BitVec.ofNat 256 32) ∧
+      st'.env = st.env ∧ st'.halted = st.halted ∧
+      (∀ x, st'.memory x = storeWord st.memory buf.toNat word x)) ?_
+  intro V0 st0 hpre V' st' o hrun
+  have hlook' : lookupFun (hoist (Bridge.Dialect c g)
+      [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ] :: funs) "common_word" =
+      some (decl, cenv) := by
+    rw [show hoist (Bridge.Dialect c g)
+      [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ] = [] from rfl, lookupFun_nil_scope]
+    exact hlook
+  have hinner := instBody_inner (funs := hoist (Bridge.Dialect c g)
+      [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ] :: funs)
+    hlook' hbody hparams hrets cd cptr V st buf s rv hcp hcd hbound hbuf hs hr
+  have h := hinner V0 st0 hpre V' st' o hrun
+  rcases h with ⟨ho, hV', henv, hhalt, hmem⟩
+  obtain ⟨hV0, hst0⟩ := hpre
+  refine ⟨ho, ?_, ?_, ?_, ?_⟩
+  · rw [hV']
+    dsimp only [s1]
+    rw [show (("inst_be", cdWord cd cptr.toNat) :: VEnv.set V "success"
+        (s &&& b2w ((cdWord cd cptr.toNat).ult rv))) =
+        ("inst_be", cdWord cd cptr.toNat) :: VEnv.set V "success"
+          (s &&& b2w ((cdWord cd cptr.toNat).ult rv)) from rfl]
+    rw [t_venv_set_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+    rw [t_restore_cons_any (D := Bridge.Dialect c g) (V := VEnv.set (VEnv.set V "success"
+      (s &&& b2w ((cdWord cd cptr.toNat).ult rv))) "buf_len" (buf + BitVec.ofNat 256 32))
+      (h := by rw [hV0, t_venv_set_length (D := Bridge.Dialect c g),
+        t_venv_set_length (D := Bridge.Dialect c g)])]
+  · exact henv
+  · exact hhalt
+  · exact hmem
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9804,5 +9894,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.and_lt_no_halt [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instSucc_stmt [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instBody_inner [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons_any [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instBody_block [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
