@@ -16,16 +16,16 @@ namespace Midfall.Generator.SplitOnLines
   library. -/
 
 theorem newline_utf8Size : Char.utf8Size '\n' = 1 := by
-  native_decide
+  decide
 
 theorem get_newline_zero : String.Pos.Raw.get "\n" 0 = '\n' := by
-  native_decide
+  decide
 
 theorem next_newline_zero : String.Pos.Raw.next "\n" 0 = (⟨1⟩ : String.Pos.Raw) := by
-  native_decide
+  decide
 
 theorem atEnd_newline_one : String.Pos.Raw.atEnd "\n" (⟨1⟩ : String.Pos.Raw) = true := by
-  native_decide
+  decide
 
 theorem unoffset_next_eq (l m : List Char) :
     (⟨String.utf8Len (l ++ m) + Char.utf8Size '\n'⟩ : String.Pos.Raw).unoffsetBy
@@ -143,7 +143,7 @@ theorem intercalate_splitOn_newline (s : String) :
     String.intercalate "\n" (s.splitOn "\n") = s := by
   apply String.toList_inj.mp
   rw [String.toList_intercalate, map_toList_splitOn_newline]
-  rw [show ("\n".toList : List Char) = ['\n'] by native_decide]
+  rw [show ("\n".toList : List Char) = ['\n'] by decide]
   rw [List.intercalate_splitOn]
 
 /-- The inverse for a list of lines with no embedded newline. -/
@@ -155,7 +155,7 @@ theorem splitOn_intercalate_newline (l : List String) (hl : l ≠ [])
   rw [map_toList_splitOn_newline, String.toList_intercalate]
   rw [show List.splitOn '\n' ("\n".toList.intercalate (l.map String.toList)) =
       l.map String.toList by
-    rw [show ("\n".toList : List Char) = ['\n'] by native_decide]
+    rw [show ("\n".toList : List Char) = ['\n'] by decide]
     rw [List.splitOn_intercalate]
     · simpa using h
     · simpa using hl]

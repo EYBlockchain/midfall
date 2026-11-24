@@ -1,4 +1,4 @@
-# closure_fingerprint: 5253 project declarations, 620 external leaves, digest 25e18768ad636231
+# closure_fingerprint: 5253 project declarations, 620 external leaves, digest 9a4842bdce6a9b78
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws inductive 0e89d3fd0bde015d 0000000000000000
 DECL Midfall.Assumptions.Codec Midfall.Assumptions.G1CodecLaws.mk ctor 8c653d323d8fefae 0000000000000000
 DECL Midfall.Assumptions.CurvePairing Midfall.Assumptions.bls12_381Pairing axiom 3d246dc502557acb 0000000000000000
@@ -4290,8 +4290,8 @@ DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.DeploymentV2 inductive e41
 DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.DeploymentV2.mk ctor 176b705777a8053b 0000000000000000
 DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.EndToEnd def 9bfcd0647ba08d43 a0c59be305a6fd30
 DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.EntryFrame inductive 4d9857a97cda0a49 0000000000000000
-DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.EntryFrame.mk ctor 246aa543e9daf3a9 0000000000000000
-DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.EntryFrameInhabited def 5e3a3aed5dfa664c a32a1f41e49f3cf6
+DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.EntryFrame.mk ctor 1c44257b51cdf205 0000000000000000
+DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.EntryFrameInhabited def df6240f645c7c580 b4ecbd21c70bda6a
 DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.ExitDiscipline def 043a3d576bda8d4e 46856e157875dddc
 DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.GasCallOk def 043a3d576bda8d4e f297f56b4672bb57
 DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.GasTotal def 72e363d055c643ba 5d95f1229bfcf5b4
@@ -4416,7 +4416,7 @@ DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.transcriptRegionOk.match_1
 DECL Midfall.LoweringV2.Statements Midfall.LoweringV2.walkWindowsOf def 21dd450f1a922764 b07d25a15d0ba0c2
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.BodyTotal def 31c1e7593fbdf5a0 cd5ee2d0d317f1e7
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.EntryFrameV3 inductive 4d9857a97cda0a49 0000000000000000
-DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.EntryFrameV3.mk ctor 1f377b111f9b87d7 0000000000000000
+DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.EntryFrameV3.mk ctor 5a6e6effe2a2bb62 0000000000000000
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.ExitDiscipline def 043a3d576bda8d4e f642d27212da7df6
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.G1CodecHeadlineLaws inductive 0e89d3fd0bde015d 0000000000000000
 DECL Midfall.LoweringV3.Statements Midfall.LoweringV3.G1CodecHeadlineLaws.mk ctor da68eecef334d3d5 0000000000000000
