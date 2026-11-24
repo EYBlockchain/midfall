@@ -1,10 +1,12 @@
 # STATUS - midfall
 
-**As of:** `2f7377d2` (2026-11-24). **Quick gate GREEN**; a full `verify.sh` is running/owed on
-this tree. Register **90 rows / 14 ROOT**, 0 REFUTED, 1 legacy VACUOUS; closure re-pinned after
-D-GATE18 at **5253 declarations / 620 external leaves / digest `25e18768ad636231`**; KAT pin
-**1652 gates / 121 files** (the four new Moonlight gates are the delta from 1648/120).
-`lake build Midfall` is green across 273 reachable modules.
+**As of:** `33ec8c23` (2026-11-24). **Full gate GREEN** (`verify.sh: ok (full)`); register
+**90 rows / 14 ROOT**, 0 REFUTED, 1 legacy VACUOUS; closure **5253 declarations / 620 external
+leaves / digest `25e18768ad636231`**; KAT pin **1652 gates / 121 files**. `lake build Midfall` is
+green across 277 reachable modules. Lag statement 10 (`batchInvertCallSegment_of_summary`) and
+the poison lagrange units (`lagBlockPoisonContract_of_fits_zero`,
+`lag_poison_walk_of_fits_zero`) are now proved; the lag clean rows still need the parser-side
+`tp_agrees`/`lag_agrees` facts, `PG-LAG-FITS`, and a lagrange inner existence run.
 
 The final assembly moved `block_live` and `totalV3_correct` to
 `Midfall/LoweringV3/BlockLive.lean` with a seven-block case table: three cases are closed
