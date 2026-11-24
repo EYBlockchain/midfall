@@ -8635,6 +8635,81 @@ theorem tp_guard_iszero_var_fail_lit {c : ExternalCalls} {g : ExternalGas}
     | ifHalt hc => exact (tp_eval_iszero_var_no_halt (x := x) hc).elim
 
 
+def tpSqueezeAbsorbed {c : ExternalCalls} {g : ExternalGas}
+    (st : EvmState) (tm : Nat) (buf : U256) : List UInt8 :=
+  readBytes st.memory (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number tm)))
+    (BitVec.toNat (buf - (Bridge.Dialect c g).litValue (Literal.number tm)))
+
+def tpSqueezeH0 {c : ExternalCalls} {g : ExternalGas}
+    (st : EvmState) (tm : Nat) (buf : U256) : U256 :=
+  st.env.keccakOf (tpSqueezeAbsorbed (c := c) (g := g) st tm buf)
+
+def tpSqueezeState {c : ExternalCalls} {g : ExternalGas}
+    (st : EvmState) (tm fr : Nat) (buf mptr : U256) : EvmState :=
+  let st1 := touchMemory st (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number tm)))
+    (BitVec.toNat (buf - (Bridge.Dialect c g).litValue (Literal.number tm)))
+  let h0 := tpSqueezeH0 (c := c) (g := g) st tm buf
+  let st2 := { touchMemory st1 (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number tm))) 32 with
+    memory := storeWord st1.memory (BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number tm))) h0 }
+  { touchMemory st2 mptr.toNat 32 with
+    memory := storeWord st2.memory mptr.toNat
+      (if (Bridge.Dialect c g).litValue (Literal.number fr) = (0 : U256) then (0 : U256)
+       else h0 % (Bridge.Dialect c g).litValue (Literal.number fr)) }
+
+set_option maxHeartbeats 4000000 in
+theorem squeezeToBody_runs (c : ExternalCalls) (g : ExternalGas)
+    (funs : FunEnv (Bridge.Dialect c g)) (st : EvmState) (tm fr : Nat) (buf mptr : U256) :
+    AllRuns funs [("buf_len", buf), ("mptr", mptr), ("ret", (0 : U256))] st (squeezeToBody tm fr)
+      (fun V' st' o => o = .normal ∧
+        VEnv.get V' "ret" = some ((Bridge.Dialect c g).litValue (Literal.number tm) +
+          (Bridge.Dialect c g).litValue (Literal.number 32)) ∧
+        st' = tpSqueezeState (c := c) (g := g) st tm fr buf mptr) := by
+  refine allRuns_of_wp 20 ?_
+  set_option wpLets false in
+  wp_run
+  all_goals
+    first
+    | rfl
+    | (dsimp only []; rfl)
+    | (dsimp only []; simp [VEnv.get, List.find?, tpSqueezeState, tpSqueezeH0, tpSqueezeAbsorbed,
+        touchMemory]; try rfl)
+
+theorem toNat_sub_ofNat_of_le (p : U256) (k : Nat) (hk : k < 2 ^ 256) (hle : k ≤ p.toNat) :
+    (p - BitVec.ofNat 256 k).toNat = p.toNat - k := by
+  rw [BitVec.toNat_sub, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hk]
+  have h : 2 ^ 256 - k + p.toNat = (p.toNat - k) + 2 ^ 256 := by omega
+  rw [h, Nat.add_mod_right]
+  exact Nat.mod_eq_of_lt (by omega)
+
+theorem tpSqueezeState_memory (c : ExternalCalls) (g : ExternalGas)
+    (st : EvmState) (tm fr : Nat) (buf mptr : U256)
+    (htm : tm < 2 ^ 256) (hbuf : buf.toNat < 2 ^ 256) (hle : tm ≤ buf.toNat) :
+    (tpSqueezeState (c := c) (g := g) st tm fr buf mptr).memory =
+      storeWord
+        (storeWord st.memory tm
+          (st.env.keccakOf (readBytes st.memory tm (buf.toNat - tm))))
+        mptr.toNat
+        (if (BitVec.ofNat 256 fr) = (0 : U256) then (0 : U256)
+         else st.env.keccakOf (readBytes st.memory tm (buf.toNat - tm)) %
+           BitVec.ofNat 256 fr) := by
+  have htmv : BitVec.toNat ((Bridge.Dialect c g).litValue (Literal.number tm)) = tm := by
+    rw [show (Bridge.Dialect c g).litValue (Literal.number tm) = BitVec.ofNat 256 tm from rfl,
+      BitVec.toNat_ofNat, Nat.mod_eq_of_lt htm]
+  have hfrv : (Bridge.Dialect c g).litValue (Literal.number fr) = BitVec.ofNat 256 fr := rfl
+  have hsubmod : (2 ^ 256 - tm + buf.toNat) % 2 ^ 256 = buf.toNat - tm := by
+    have h := toNat_sub_ofNat_of_le buf tm htm hle
+    rw [BitVec.toNat_sub, BitVec.toNat_ofNat, Nat.mod_eq_of_lt htm] at h
+    exact h
+  dsimp [tpSqueezeState, tpSqueezeH0, tpSqueezeAbsorbed]
+  rw [htmv]
+  have hpow : (115792089237316195423570985008687907853269984665640564039457584007913129639936 : Nat) =
+      2 ^ 256 := rfl
+  rw [hpow]
+  rw [hsubmod]
+  simp only [touchMemory]
+  rfl
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -9229,5 +9304,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_guard_iszero_lt_fail_lit [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_guard_iszero_var_fail_var [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_guard_iszero_var_fail_lit [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.squeezeToBody_runs [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.toNat_sub_ofNat_of_le [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tpSqueezeState_memory [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
