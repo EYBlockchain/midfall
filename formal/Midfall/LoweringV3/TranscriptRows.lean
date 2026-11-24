@@ -7121,6 +7121,99 @@ theorem decodeSlots_g1_inv {c : G1Codec G₁} {cd : Bytes} (rest : List Midfall.
   · rw [if_neg hg] at h
     simp at h
 
+theorem decodeSlots_append {c : G1Codec G₁} {cd : Bytes} :
+    ∀ (s1 s2 : List Midfall.Lowering.WireSlot) (cur : Nat)
+      (ms1 ms2 : List (Msg (Fr p) G₁)) (cur1 cur2 : Nat),
+      decodeSlots (p := p) c cd s1 cur = some (ms1, cur1) →
+      decodeSlots (p := p) c cd s2 cur1 = some (ms2, cur2) →
+      decodeSlots (p := p) c cd (s1 ++ s2) cur = some (ms1 ++ ms2, cur2) := by
+  intro s1
+  induction s1 with
+  | nil =>
+      intro s2 cur ms1 ms2 cur1 cur2 h1 h2
+      simp only [decodeSlots, Option.some.injEq, Prod.mk.injEq] at h1
+      obtain ⟨rfl, rfl⟩ := h1
+      simpa using h2
+  | cons sl rest ih =>
+      intro s2 cur ms1 ms2 cur1 cur2 h1 h2
+      cases sl with
+      | g1 =>
+          obtain ⟨b, Q, ms0, cur0, hg, hb, hq, hrec, hms, hcur⟩ :=
+            decodeSlots_g1_inv rest cur ms1 cur1 h1
+          rw [hcur] at h2
+          have hrec2 := ih s2 (cur + g1EipWidth) ms0 ms2 cur0 cur2 hrec h2
+          rw [List.cons_append]
+          rw [decodeSlots_g1_step (p := p) c cd (rest ++ s2) cur b Q
+            (ms0 ++ ms2) cur2 hg hb hq hrec2]
+          rw [hms]
+          rfl
+      | fr =>
+          -- invert the fr step
+          unfold decodeSlots at h1
+          simp only [guard] at h1
+          by_cases hlt : (cdWord cd cur).toNat < p
+          · rw [if_pos hlt] at h1
+            cases hrec : decodeSlots (p := p) c cd rest (cur + 32) with
+            | none => rw [hrec] at h1; simp at h1
+            | some pair =>
+                obtain ⟨ms0, cur0⟩ := pair
+                rw [hrec] at h1
+                simp at h1
+                obtain ⟨hms, hcur⟩ := h1
+                subst hms
+                subst hcur
+                have hrec2 := ih s2 (cur + 32) ms0 ms2 cur0 cur2 hrec h2
+                rw [List.cons_append]
+                rw [decodeSlots_fr_step (p := p) c cd (rest ++ s2) cur (ms0 ++ ms2) cur2
+                  hlt hrec2]
+                rfl
+          · rw [if_neg hlt] at h1
+            simp at h1
+
+theorem decodeSlots_split {c : G1Codec G₁} {cd : Bytes} :
+    ∀ (s1 s2 : List Midfall.Lowering.WireSlot) (cur : Nat)
+      (ms : List (Msg (Fr p) G₁)) (cur' : Nat),
+      decodeSlots (p := p) c cd (s1 ++ s2) cur = some (ms, cur') →
+      ∃ (ms1 : List (Msg (Fr p) G₁)) (cur1 : Nat) (ms2 : List (Msg (Fr p) G₁)),
+        decodeSlots (p := p) c cd s1 cur = some (ms1, cur1) ∧
+          decodeSlots (p := p) c cd s2 cur1 = some (ms2, cur') ∧ ms = ms1 ++ ms2 := by
+  intro s1
+  induction s1 with
+  | nil =>
+      intro s2 cur ms cur' h
+      exact ⟨[], cur, ms, rfl, h, rfl⟩
+  | cons sl rest ih =>
+      intro s2 cur ms cur' h
+      rw [List.cons_append] at h
+      cases sl with
+      | g1 =>
+          obtain ⟨b, Q, ms0, cur0, hg, hb, hq, hrec, hms, hcur⟩ :=
+            decodeSlots_g1_inv (rest ++ s2) cur ms cur' h
+          obtain ⟨ms1, cur1, ms2, h1, h2, rfl⟩ := ih s2 (cur + g1EipWidth) ms0 cur0 hrec
+          rw [← hcur] at h2
+          refine ⟨Msg.g1 Q :: ms1, cur1, ms2, ?_, h2, ?_⟩
+          · rw [decodeSlots_g1_step (p := p) c cd rest cur b Q ms1 cur1 hg hb hq h1]
+          · rw [hms]; rfl
+      | fr =>
+          unfold decodeSlots at h
+          simp only [guard] at h
+          by_cases hlt : (cdWord cd cur).toNat < p
+          · rw [if_pos hlt] at h
+            cases hrec : decodeSlots (p := p) c cd (rest ++ s2) (cur + 32) with
+            | none => rw [hrec] at h; simp at h
+            | some pair =>
+                obtain ⟨ms0, cur0⟩ := pair
+                rw [hrec] at h
+                simp at h
+                obtain ⟨hms, hcur⟩ := h
+                subst hms
+                subst hcur
+                obtain ⟨ms1, cur1, ms2, h1, h2, rfl⟩ := ih s2 (cur + 32) ms0 cur0 hrec
+                refine ⟨Msg.fr (Nat.cast (cdWord cd cur).toNat) :: ms1, cur1, ms2, ?_, h2, rfl⟩
+                rw [decodeSlots_fr_step (p := p) c cd rest cur ms1 cur1 hlt h1]
+          · rw [if_neg hlt] at h
+            simp at h
+
 theorem decodeSlots_g1_provenance {c : G1Codec G₁} {cd : Bytes} (n : Nat)
     (rest : List Midfall.Lowering.WireSlot) (cur : Nat)
     (Qs : List G₁) (ms' : List (Msg (Fr p) G₁)) (cur' : Nat)
@@ -11321,6 +11414,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_eq_of_bytesTake [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.holdsG1_of_mirrorsSection [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_inv [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_split [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_provenance [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.takeCommitmentSection_cursor [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_take_cursor [propext, Classical.choice, Quot.sound] native []
