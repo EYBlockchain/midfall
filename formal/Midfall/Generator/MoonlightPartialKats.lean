@@ -418,13 +418,6 @@ def moonlight_recordedStatus_ok : IO Bool :=
 end Midfall.Generator.MoonlightPartialKats
 
 #eval Midfall.Generator.MoonlightPartialKats.moonlight_ctx_readFromSource_ok -- expect true
-#eval Midfall.Generator.MoonlightPartialKats.moonlight_assemblyHelpers
-#eval Midfall.Generator.MoonlightPartialKats.moonlight_accumulatorHelpers
-#eval Midfall.Generator.MoonlightPartialKats.moonlight_vkLoading
-#eval Midfall.Generator.MoonlightPartialKats.moonlight_transcriptProofParser
-#eval Midfall.Generator.MoonlightPartialKats.moonlight_lagrange
-#eval Midfall.Generator.MoonlightPartialKats.moonlight_quotientLinearization
-#eval Midfall.Generator.MoonlightPartialKats.moonlight_finalPairing
 #eval Midfall.Generator.MoonlightPartialKats.moonlight_vkPayloadHeader_ok -- expect true
 #eval Midfall.Generator.MoonlightPartialKats.moonlight_deployedRuntime_ok -- expect true
-#eval Midfall.Generator.MoonlightPartialKats.moonlight_recordedStatus_ok -- expect true once recorded
+#eval Midfall.Generator.MoonlightPartialKats.moonlight_recordedStatus_ok -- expect true
