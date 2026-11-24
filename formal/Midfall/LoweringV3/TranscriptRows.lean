@@ -207,6 +207,26 @@ def XcriptSlots (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) (st : EvmS
       holdsFr st (ptrAddr R.pv.memory.x3Mptr) x.r.x3 = true ∧
       holdsFr st (ptrAddr R.pv.memory.x4Mptr) x.r.x4 = true
 
+/-- **THE COMMITMENT HALF OF THE `Inv .transcript` ASSEMBLY.** For every decoding and
+    every transcript-only run witness, the four G1 windows hold `toEip` of the run's OWN
+    decoded points: the advice commitments, the quotient limbs, `fCom` and `pi`.
+
+    This is the consumer side of A11's `runsAll_readAlgebra` value bridge: the read
+    schedule identifies the run's arrays with the decoded calldata messages, and
+    `G1CodecHeadlineLaws.eipRoundtrip` turns each calldata frame into `toEip` of that
+    message. The `Inv .transcript` assembly below spends it; the parser's own `TpPost`
+    carries the matching memory windows (`MirrorAt`). -/
+def XcriptG1 (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) (st : EvmState) : Prop :=
+  ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+    Decoded R cd ms instW inst →
+    ∀ x, snapshotXcriptRun R.E H R.vk inst ms R.nSets = .ok x →
+      holdsG1s R.E st (ptrAddr R.pv.memory.adviceCommsMptrBase)
+        (x.trace.adviceCommitments.getD 0 #[]) = true ∧
+      holdsG1s R.E st (ptrAddr R.pv.memory.quotientLimbCommsMptrBase)
+        x.alg.quotientLimbComs = true ∧
+      holdsG1 R.E st (ptrAddr R.pv.memory.fComMptr) x.r.fCom = true ∧
+      holdsG1 R.E st (ptrAddr R.pv.memory.piMptr) x.r.pi = true
+
 /-- What a normal exit of the parser has established, with NO fact about a decoded point outside
     the `∀ decoding` of `XcriptSlots`. VERBATIM (:780-786). -/
 def TpPost (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
@@ -6618,12 +6638,61 @@ theorem agree_transcript_of_exists_and_inv (R : Render p G₁ G₂ Gₜ) (H : Ha
   obtain ⟨S, hS⟩ := hx ms instW inst hdec
   exact ⟨S, hS, hinv ms instW inst hdec S hS⟩
 
+/-- **THE `Inv .transcript` ASSEMBLY.** Given the parser post (`BaseInv`, `MirrorAt`,
+    `XcriptSlots`) and the commitment half `XcriptG1`, the invariant at the stage's own
+    `padSnap` witness holds: `XcriptSlots` supplies the ten scalar slots, `MirrorAt`
+    supplies the q-eval pointer, `XcriptG1` supplies the four G1 windows, and
+    `BaseInv .transcript` supplies the earlier checkpoints. No other fact is used. -/
+theorem invAt_transcript_of_xcriptG1
+    (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hpost : TpPost R H vkAddr cd V st)
+    (hG1 : XcriptG1 R H cd st)
+    (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p))
+    (hdec : Decoded R cd ms instW inst)
+    (S : Snapshot p G₁ G₂ Gₜ)
+    (hS : leanStage R H inst ms Checkpoint.transcript = .ok S) :
+    Inv R.E R.params Checkpoint.transcript R.pv S V st := by
+  obtain ⟨hframe, hsucc, hbase, hraw, hmirror, hslots⟩ := hpost
+  unfold leanStage at hS
+  change (snapshotXcriptRun R.E H R.vk inst ms R.nSets >>=
+    (fun x => Except.ok (padSnap x { lLast := 0, lBlind := 0, l0 := 0 } none #[]))) =
+      Except.ok S at hS
+  obtain ⟨x, hx, hS'⟩ := except_bind_ok _ _ hS
+  have hseq : S = padSnap x { lLast := 0, lBlind := 0, l0 := 0 } none #[] :=
+    (Except.ok.inj hS').symm
+  rw [hseq]
+  obtain ⟨hθ, hβ, hγ, htr, hy, hx0, hx1, hx2, hx3, hx4⟩ := hslots ms instW inst hdec x hx
+  obtain ⟨hadv, hquot, hfcom, hpi⟩ := hG1 ms instW inst hdec x hx
+  have hadv' : holdsG1s R.E st (ptrAddr R.pv.memory.adviceCommsMptrBase)
+      (x.trace.adviceCommitments[0]?.getD #[]) = true := by
+    simpa using hadv
+  have hq := hmirror.qEvalCptr
+  have hacc : (witnessSnapshot (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)).acc.isSome = false := rfl
+  have hpairvk : (Checkpoint.vk == Checkpoint.pairing) = false := by decide
+  have hbase' := hbase
+  unfold BaseInv at hbase'
+  rw [show baseCk Checkpoint.transcript = Checkpoint.vk from rfl] at hbase'
+  have checkpoint_le_def : ∀ a b : Checkpoint, (a ≤ b) = (a.idx ≤ b.idx) := fun a b => rfl
+  simp [Midfall.Lowering.Inv, Midfall.Lowering.InvAt, checkpoint_le_def, Checkpoint.idx,
+    padSnap, hacc, hpairvk] at hbase' ⊢
+  have hlag : ¬ Checkpoint.lagrange ≤ Checkpoint.transcript := by decide
+  have hqck : ¬ Checkpoint.quotient ≤ Checkpoint.transcript := by decide
+  have hpcs : ¬ Checkpoint.pcs ≤ Checkpoint.transcript := by decide
+  have hpair : (Checkpoint.transcript == Checkpoint.pairing) = false := by decide
+  have hvk : Checkpoint.vk ≤ Checkpoint.transcript := by decide
+  have hstart : Checkpoint.start ≤ Checkpoint.transcript := by decide
+  simp only [hlag, hqck, hpcs, hpair, hvk, hstart,
+    hθ, hβ, hγ, htr, hy, hx0, hx1, hx2, hx3, hx4, hadv', hquot, hfcom, hpi, hq] at ⊢
+  simpa [Midfall.Lowering.Inv, Midfall.Lowering.InvAt, checkpoint_le_def, Checkpoint.idx,
+    padSnap, BaseInv, baseCk, hacc] using hbase'
+
 /-- **ROW.TP.8 SHARPENED: `tp_agrees` FROM THE NAMED SIM.10 CLAUSE + THE `Inv` ASSEMBLY.** The
     first hypothesis is the missing parser-side `prepare_logSlots` analogue
     (`XcriptAlgebraRun`); the second is `Inv .transcript` at the stage's own witness, i.e. the
     slot/mirror assembly the evidence attributes to `XcriptSlots` + `MirrorAt` + `SimPins.eipRt`.
     Nothing else stands between `TpPost` and `StageInv .transcript`. -/
-theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+theorem tp_agrees_of_xcript_of_inv (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
     {c : ExternalCalls} {g : ExternalGas}
     (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TpPost R H vkAddr cd V st)
@@ -6638,6 +6707,37 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (agree_transcript_of_exists_and_inv R H cd V st
       (leanStage_transcript_exists_of_algebraRun R hR hcodec H cd h) hinv)
 
+/-- **`tp_agrees_of_xcript` WITH ITS `hinv` DISCHARGED FROM THE COMMITMENT HALF.**
+    The existence half is `leanStage_transcript_exists_of_algebraRun`; the `Inv` half is
+    `invAt_transcript_of_xcriptG1`, so the only decode-relative extra datum is
+    `XcriptG1` (the four G1 windows' decode→`toEip` assembly). This is the consumer
+    `tp_agrees_of_xcript`'s `hinv` was waiting for. -/
+theorem tp_agrees_of_xcriptG1 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TpPost R H vkAddr cd V st)
+    (h : XcriptAlgebraRun R H cd) (hG1 : XcriptG1 R H cd st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st :=
+  tp_agrees_of_agree R H vkAddr cd V st hpost
+    (agree_transcript_of_exists_and_inv R H cd V st
+      (leanStage_transcript_exists_of_algebraRun R hR hcodec H cd h)
+      (fun ms instW inst hdec S hS =>
+        invAt_transcript_of_xcriptG1 R H vkAddr cd V st hpost hG1
+          ms instW inst hdec S hS))
+
+/-- **`tp_agrees_of_xcript` WITH `hinv` DISCHARGED.** The whole-`Inv` hypothesis is
+    replaced by `XcriptG1`, the four commitment holds; the scalar slots, q-eval
+    pointer and earlier checkpoints are proved by `invAt_transcript_of_xcriptG1`.
+    `tp_agrees_of_xcript_of_inv` keeps the older whole-`Inv` form for callers that
+    already have it. -/
+theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TpPost R H vkAddr cd V st)
+    (h : XcriptAlgebraRun R H cd) (hG1 : XcriptG1 R H cd st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st :=
+  tp_agrees_of_xcriptG1 R hR hcodec H vkAddr cd V st hpost h hG1
+
 /-- **THE ALG LEAF.** `TpPost` is the staged boundary at `.transcript`: `Agree` follows from
     `xcript_total` (the Lean prefix exists), `MirrorAt` with `SimPins.eipRt` (the commitment
     windows hold `toEip` of the decoded points) and `XcriptSlots`. LEAF ROW.TP.8. No Yul.
@@ -6647,9 +6747,12 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     named SIM.10 parser-side clause, §3b) plus the `Inv .transcript` assembly, and
     `tp_agrees_of_agree` isolates the latter. DEPENDENCY, NAMED AND OPEN: `XcriptAlgebraRun` is a
     DATA clause, not a theorem of `ValidV3` + `Decoded` (no `parseTrace`/`readAlgebra`/`snapshotAlgebraRun`
-    existence theorem exists; the width schedule is pinned but conditional, see §3b), and the
-    `Inv .transcript` half still needs the decode→`toEip` commitment bridge. ROW.TP.6's `MirrorAt`
-    half is `tp_events_slots` above. -/
+    existence theorem exists; the width schedule is pinned but conditional, see §3b). THE
+    `Inv .transcript` HALF IS NOW LANDED as `invAt_transcript_of_xcriptG1`, and
+    `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
+    decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
+    producer is the value half of A11's `runsAll_readAlgebra` plus `MirrorAt`/`eipRoundtrip`;
+    ROW.TP.6's `MirrorAt` half is `tp_events_slots` above. -/
 theorem tp_agrees (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
     (vkAddr : U256) (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
@@ -6883,6 +6986,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #check @Midfall.LoweringV3.TranscriptRows.xcript_total_of_algebraRun
 #check @Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_of_algebraRun
 #check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript
+#check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript_of_inv
+#check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcriptG1
+#check @Midfall.LoweringV3.TranscriptRows.invAt_transcript_of_xcriptG1
 #check @Midfall.LoweringV3.TranscriptRows.inline_g1WalkLoop
 
 #cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockSim
@@ -7035,6 +7141,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_at [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_of_algebraRun [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.agree_transcript_of_exists_and_inv [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript_of_inv [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.invAt_transcript_of_xcriptG1 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcriptG1 [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
