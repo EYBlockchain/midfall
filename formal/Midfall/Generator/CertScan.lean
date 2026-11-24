@@ -2132,13 +2132,19 @@ theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan
     `validate_public_accumulator` from the sigs). Every other group's call sites are tabulated and
     the parser's are proved (`parser_callsOK`); the function table is `mainSigSet`.
     `CertScanPcs.callsResolved_mainAsmRaw_of_pcs` replaces the PCS slice hypothesis by the
-    per-block invariant `∀ blocks, computationsAst … = .ok blocks → ∀ b ∈ blocks, CallsOK … b`.
+    per-block invariant `∀ blocks, computationsAst … = .ok blocks → ∀ b ∈ blocks, CallsOK … b`;
+    `CertScanPcs.computationsAst_calls` closes that invariant, and
+    `CertScanPcs.callsResolved_mainAsmRaw_pcs` is the resulting PCS-free reduction (only the
+    numerator signatures/calls remain).
   * `prog_noWriters`: `noWriters_program_of` leaves the PCS slice and the parsed numerator; the
     parser (`parser_noWriters`) and all fixed groups are proved. The target's `prog` is the INLINED
-    program, so one more child remains: `NoWriters` is invariant under
+    program; `CertScanInline.noWriters_inlineContractConstants` proves `NoWriters` is preserved by
     `Inline.inlineContractConstants` (the inliner changes expressions only, and the writer scan
     reads constructors only). `CertScanPcs.noWriters_mainAsmRaw_of_pcs` replaces the PCS slice by
-    the same per-block invariant.
+    the same per-block invariant; `CertScanPcs.computationsAst_noWriters` closes it, and
+    `CertScanPcs.noWriters_mainAsmRaw_pcs` / `noWriters_program_pcs` / `noWriters_asmOf_pcs`
+    are the PCS-free reductions for `mainAsmRaw`, the guard/wrapper concatenation, and the
+    inlined `asmOf` (the last leaves only the numerator hypothesis named).
   * `prog_constsDeclared`: `freeNames_program_of` reduces the scan to one `FreeOK` hypothesis per
     emitter group; the guard/prefix facts are `constTableOf`/`expectedConsts` computations, and the
     numerator's free names are Blocker 1.
@@ -2148,14 +2154,16 @@ theorem planViewOf_hasAccumulator_none {Program Layout : Type} (L : LoweringPlan
     `inlineContractConstants`); the V3 statement records it as the only side condition.
 
   **PCS, PRECISELY.** `Midfall/Generator/CertScanPcs.lean` lands `callSitesSs`/`NoWriters` for
-  `pcsBlock1Ast`, `pcsBlock2Ast`, `pcsBlock6Ast`, `pcsX4PowersAst`, `pcsVLinesAst`,
-  `pcsSetBlockAst` (both arms, including the diagonal `List.filterMap`), `pcsBlock4Ast` (the
-  per-set `yblock` induction), and `callSitesSs` for `pcsBlock3Ast`; plus the `NoWriters_forLoop`
-  composition. STILL OPEN there, named: `pcsBlock3Ast`'s `NoWriters` (its `for`-body and the
-  `wordExpr`/`ptrExpr` codec leaves — the `NoWriters_forLoop` and the set-block `split` leaf are
-  the two halves), `pcsBlock5Ast`'s scans (the nested monadic `foldlM` over `bySet`/commitments
-  and `pcsLinExpansion`'s folds; the block has no user call and no writer builtin), and the
-  `computationsAst` assembly that extracts the emitted block list from the `Except` chain.
+  `pcsBlock1Ast`, `pcsBlock2Ast`, `pcsBlock3Ast` (including the rolled `for` body and the
+  `wordExpr`/`ptrExpr` codec leaves), `pcsBlock6Ast`, `pcsX4PowersAst`, `pcsVLinesAst`,
+  `pcsSetBlockAst` (both arms, including the diagonal `List.filterMap`), and `pcsBlock4Ast` (the
+  per-set `yblock` induction); plus the `NoWriters_forLoop` composition, the compositional
+  `ScanClean` codec leaves, and `pcsBlock5Ast`'s two scans (the nested monadic `foldlM` over
+  `bySet`/commitments and `pcsLinExpansion`'s folds, through `foldlM_invariant'` and the
+  identity/linearization/MSM step invariant). `computationsAst_calls` / `computationsAst_noWriters`
+  close the block-list extraction from the `Except` chain, so the PCS residual is discharged in
+  `callsResolved_mainAsmRaw_pcs` / `noWriters_mainAsmRaw_pcs`; the inliner side is discharged by
+  `CertScanInline.noWriters_inlineContractConstants`, leaving only the numerator residual named.
   `topBinders_emitPcsFromPlan = []` and `funSigs_emitPcsFromPlan = []` are proved in §2/§3 here. -/
 
 end Midfall.Generator.CertScan
