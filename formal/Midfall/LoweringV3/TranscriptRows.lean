@@ -1440,6 +1440,14 @@ theorem RunsAllP.mono (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} {m : Transc
   obtain ⟨a, t', hrun, hbuf', hpos', hP⟩ := h t pref rest hbuf hpos hp henc hwidth
   exact ⟨a, t', hrun, hbuf', hpos', hPQ a hP⟩
 
+theorem RunsAllP.congr (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type}
+    {m n : TranscriptM α} {ms : List (Msg (Fr p) G₁)} {P : α → Prop}
+    (h : ∀ t, m.run t = n.run t) (hm : RunsAllP E m ms P) :
+    RunsAllP E n ms P := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨a, t', hrun, hbuf', hpos', hP⟩ := hm t pref rest hbuf hpos hp henc hwidth
+  exact ⟨a, t', (h t).symm ▸ hrun, hbuf', hpos', hP⟩
+
 theorem RunsAllP.pure (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (a : α) (P : α → Prop)
     (ha : P a) : RunsAllP E (pure a : TranscriptM α) [] P := by
   intro t pref rest hbuf hpos hp henc hwidth
@@ -5107,6 +5115,1074 @@ theorem runsAllP_lookupCommitments_row_count (E : VerifierEnv p G₁ G₂ Gₜ) 
       simp only [Prod.snd]
       omega
 
+theorem runsAllP_lookupMultiplicities_fold_count (E : VerifierEnv p G₁ G₂ Gₜ)
+    (deg : Nat) :
+    ∀ (ls : List (LogupBatchedArgument (Fr p)))
+      (acc : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+      (Qs : List G₁),
+      (∀ l ∈ ls, ∃ c, l.chunkByDegree deg = .ok c) →
+      Qs.length = ls.length →
+      RunsAllP E (ls.foldlM (init := acc) fun acc' l => do
+          let chunked ← StateT.lift (l.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc'.push (m, chunked))) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun row => row.size = acc.size + ls.length) := by
+  intro ls
+  induction ls with
+  | nil =>
+      intro acc Qs hs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      simpa only [List.foldlM_nil, List.map_nil] using (RunsAllP.pure E acc _ (by simp))
+  | cons l ls ih =>
+      intro acc Qs hs hlen
+      obtain ⟨Q, Qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      obtain ⟨c, hc⟩ := hs l (by simp)
+      rw [List.foldlM_cons]
+      have hstep : RunsAllP E ((fun acc => do
+          let chunked ← StateT.lift (l.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc.push (m, chunked))) acc) ([Msg.g1 Q] : List (Msg (Fr p) G₁))
+          (fun row => row.size = acc.size + 1) := by
+        have hlift : RunsAllP E
+            (StateT.lift (l.chunkByDegree deg : Except Fault (LogupChunkedArgument (Fr p)))) []
+            (fun v => v = c) :=
+          RunsAllP.congr E (fun t => by rw [hc])
+            (RunsAllP.lift_ok E c (fun v => v = c) rfl)
+        refine RunsAllP.bind E (m := StateT.lift (l.chunkByDegree deg))
+          (ms₁ := ([] : List (Msg (Fr p) G₁)))
+          (ms₂ := ([Msg.g1 Q] : List (Msg (Fr p) G₁))) hlift ?_
+        intro chunked hchunked
+        subst hchunked
+        refine RunsAllP.bind_nil E (m := Logup.readMultiplicities chunked (hashableG1 E.g1))
+          (ms := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (RunsAll.toRunsAllP E (runsAll_logup_readMultiplicities E chunked Q)) ?_
+        intro m _
+        refine RunsAllP.pure E (acc.push (m, chunked)) _ ?_
+        simp
+      have hb : RunsAllP E
+          (((fun acc => do
+            let chunked ← StateT.lift (l.chunkByDegree deg)
+            let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+            pure (acc.push (m, chunked))) acc) >>= fun acc' =>
+              ls.foldlM (init := acc') fun acc' l => do
+                let chunked ← StateT.lift (l.chunkByDegree deg)
+                let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+                pure (acc'.push (m, chunked)))
+          ((Msg.g1 Q : Msg (Fr p) G₁) :: Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (fun row => ∃ acc' : Array (Logup.CommittedMultiplicities G₁ ×
+              LogupChunkedArgument (Fr p)),
+            acc'.size = acc.size + 1 ∧ row.size = acc'.size + ls.length) := by
+        refine RunsAllP.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (ms₂ := Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) hstep ?_
+        intro acc' hacc'
+        have hb2 := ih acc' Qs' (fun l' hl' => hs l' (by simp [hl'])) (by simpa using hlen)
+        exact RunsAllP.mono E hb2 (fun row hrow => ⟨acc', hacc', hrow⟩)
+      refine RunsAllP.mono E hb ?_
+      intro row hrow
+      obtain ⟨acc' : Array (Logup.CommittedMultiplicities G₁ ×
+        LogupChunkedArgument (Fr p)), hacc', hrow'⟩ := hrow
+      rw [List.length_cons, hrow', hacc']
+      omega
+
+def rowEvalSum (row : Array (Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p))) : Nat :=
+  (row.toList.map (fun p => p.2.numChunks + 3)).sum
+
+def rowsEvalSum (rows : Array (Array (Logup.Committed G₁))) : Nat :=
+  (rows.toList.map logupEvalSum).sum
+
+theorem rowsEvalSum_push (acc : Array (Array (Logup.Committed G₁)))
+    (row : Array (Logup.Committed G₁)) :
+    rowsEvalSum (acc.push row) = rowsEvalSum acc + logupEvalSum row := by
+  unfold rowsEvalSum
+  rw [Array.toList_push, List.map_append, List.sum_append]
+  simp
+
+theorem runsAllP_lookupCommitments_rows_count (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (rows : List (Array (Logup.CommittedMultiplicities G₁ ×
+        LogupChunkedArgument (Fr p))))
+      (acc : Array (Array (Logup.Committed G₁))) (Qs : List G₁),
+      Qs.length = (rows.map (fun row => (row.toList.map
+        (fun p => p.2.numChunks + 1)).sum)).sum →
+      RunsAllP E (rows.foldlM (init := acc) fun acc row => do
+          let out ← row.toList.foldlM (init := #[]) fun acc' p => do
+            let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+            pure (acc'.push c)
+          pure (acc.push out)) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun out => rowsEvalSum out = rowsEvalSum acc +
+          (rows.map rowEvalSum).sum) := by
+  intro rows
+  induction rows with
+  | nil =>
+      intro acc Qs hlen
+      have h0 : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst h0
+      refine RunsAllP.pure E acc _ ?_
+      simp [rowsEvalSum]
+  | cons row rows ih =>
+      intro acc Qs hlen
+      have hsum : Qs.length = (row.toList.map (fun p => p.2.numChunks + 1)).sum +
+          (rows.map (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum := by
+        simpa only [List.map_cons, List.sum_cons] using hlen
+      obtain ⟨rowLen, hrowLen⟩ : ∃ k, (row.toList.map (fun p => p.2.numChunks + 1)).sum = k :=
+        ⟨_, rfl⟩
+      have hlen1 : (Qs.take rowLen).length =
+          (row.toList.map (fun p => p.2.numChunks + 1)).sum := by
+        rw [List.length_take]; omega
+      have hlen2 : (Qs.drop rowLen).length =
+          (rows.map (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum := by
+        rw [List.length_drop]; omega
+      have hsplit : Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          (Qs.take rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.foldlM_cons, hsplit]
+      have hhead : RunsAllP E ((fun acc => do
+          let out ← row.toList.foldlM (init := #[]) fun acc' p => do
+            let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+            pure (acc'.push c)
+          pure (acc.push out)) acc)
+          ((Qs.take rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (fun out => rowsEvalSum out = rowsEvalSum acc + rowEvalSum row) := by
+        refine RunsAllP.bind_nil E (m := row.toList.foldlM (init := #[])
+          fun acc' p => do
+            let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+            pure (acc'.push c))
+          (ms := (Qs.take rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (runsAllP_lookupCommitments_row_count E row.toList #[] (Qs.take rowLen) hlen1) ?_
+        intro out hout
+        refine RunsAllP.pure E (acc.push out) _ ?_
+        rw [rowsEvalSum_push, hout]
+        simp [logupEvalSum, rowEvalSum]
+      have hb : RunsAllP E
+          (((fun acc => do
+            let out ← row.toList.foldlM (init := #[]) fun acc' p => do
+              let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+              pure (acc'.push c)
+            pure (acc.push out)) acc) >>= fun acc' =>
+              rows.foldlM (init := acc') fun acc' row => do
+                let out ← row.toList.foldlM (init := #[]) fun acc' p => do
+                  let c ← p.1.readCommitment p.2.numChunks (hashableG1 E.g1)
+                  pure (acc'.push c)
+                pure (acc'.push out))
+          ((Qs.take rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (Qs.drop rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (fun out => ∃ acc' : Array (Array (Logup.Committed G₁)),
+            rowsEvalSum acc' = rowsEvalSum acc + rowEvalSum row ∧
+            rowsEvalSum out = rowsEvalSum acc' + (rows.map rowEvalSum).sum) := by
+        refine RunsAllP.bind E
+          (ms₁ := (Qs.take rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (ms₂ := (Qs.drop rowLen).map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) hhead ?_
+        intro acc' hacc'
+        have hb2 := ih acc' (Qs.drop rowLen) hlen2
+        exact RunsAllP.mono E hb2 (fun out hout => ⟨acc', hacc', hout⟩)
+      refine RunsAllP.mono E hb ?_
+      intro out hout
+      obtain ⟨acc' : Array (Array (Logup.Committed G₁)), hacc', hout'⟩ := hout
+      rw [hout', hacc', List.map_cons, List.sum_cons]
+      omega
+
+theorem sum_rows_flatMap (rows : List (List (Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p)))) (f : Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p) → Nat) :
+    (rows.map (fun row => (row.map f).sum)).sum = ((rows.flatMap (fun row => row)).map f).sum := by
+  induction rows with
+  | nil => rfl
+  | cons row rows ih =>
+      simp only [List.map_cons, List.sum_cons, List.flatMap_cons, List.map_append,
+        List.sum_append, ih]
+
+theorem rowEvalSum_eq (row : Array (Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p))) :
+    rowEvalSum row = (row.toList.map (fun p => p.2.numChunks + 1)).sum +
+      2 * row.toList.length := by
+  unfold rowEvalSum
+  have h := sum_map_add_three (row.toList.map (fun p => p.2.numChunks))
+  simpa only [List.map_map, Function.comp_def, List.length_map] using h
+
+theorem sum_rows_rowEvalSum_eq (rows : List (Array (Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p)))) :
+    (rows.map rowEvalSum).sum =
+      (rows.map (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum +
+      2 * (rows.map (fun row => row.toList.length)).sum := by
+  induction rows with
+  | nil => simp
+  | cons row rows ih =>
+      rw [List.map_cons, List.sum_cons, ih, rowEvalSum_eq]
+      rw [List.map_cons, List.sum_cons, List.map_cons, List.sum_cons]
+      omega
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem lookupChunkSum_add_three (l : List (LogupBatchedArgument (Fr p))) (deg : Nat) :
+    (l.map (fun x => lookupChunkNum deg x + 3)).sum =
+      (l.map (fun x => lookupChunkNum deg x + 1)).sum + 2 * l.length := by
+  have h := sum_map_add_three (l.map (fun x => lookupChunkNum deg x))
+  simpa only [List.map_map, Function.comp_def, List.length_map] using h
+
+theorem runsAllP_parseTraceLookupCommitments_count (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁)
+    (rows : Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) (Qs : List G₁)
+    (hlen : Qs.length = (rows.toList.map (fun row => (row.toList.map
+      (fun p => p.2.numChunks + 1)).sum)).sum)
+    (hledger : (rows.toList.map (fun row => (row.toList.map
+      (fun p => p.2.numChunks + 1)).sum)).sum =
+      (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hcount : (rows.toList.map (fun row => row.toList.length)).sum =
+      vk.cs.lookups.size) :
+    RunsAllP E (parseTraceLookupCommitments E rows)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun out => (out.toList.map (fun row => (row.toList.map
+        (fun c => c.helperPolys.size + 3)).sum)).sum =
+        (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum) := by
+  rw [parseTraceLookupCommitments]
+  have h := runsAllP_lookupCommitments_rows_count E rows.toList
+    (#[] : Array (Array (Logup.Committed G₁))) Qs hlen
+  refine RunsAllP.mono E h ?_
+  intro out hout
+  have hzero : rowsEvalSum (#[] : Array (Array (Logup.Committed G₁))) = 0 := rfl
+  rw [hzero, Nat.zero_add] at hout
+  change rowsEvalSum out = (vk.cs.lookups.toList.map
+    (fun l => lookupChunkNum vk.csDegree l + 3)).sum
+  rw [hout, sum_rows_rowEvalSum_eq, hledger, hcount, lookupChunkSum_add_three,
+    Array.length_toList]
+
+theorem runsAllP_lookupMultiplicities_fold_both (E : VerifierEnv p G₁ G₂ Gₜ)
+    (deg : Nat) :
+    ∀ (ls : List (LogupBatchedArgument (Fr p)))
+      (acc : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+      (Qs : List G₁),
+      (∀ l ∈ ls, ∃ c, l.chunkByDegree deg = .ok c) →
+      Qs.length = ls.length →
+      RunsAllP E (ls.foldlM (init := acc) fun acc' l => do
+          let chunked ← StateT.lift (l.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc'.push (m, chunked))) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun row => ledgerPairs row = ledgerPairs acc +
+          (ls.map (fun l => lookupChunkNum deg l + 1)).sum ∧
+          row.size = acc.size + ls.length) := by
+  intro ls
+  induction ls with
+  | nil =>
+      intro acc Qs hs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      refine RunsAllP.pure E acc _ ⟨?_, ?_⟩ <;> simp
+  | cons l ls ih =>
+      intro acc Qs hs hlen
+      obtain ⟨Q, Qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      obtain ⟨c, hc⟩ := hs l (by simp)
+      rw [List.foldlM_cons]
+      have hhead : RunsAllP E
+          ((fun acc => do
+            let chunked ← StateT.lift (l.chunkByDegree deg)
+            let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+            pure (acc.push (m, chunked))) acc)
+          ([Msg.g1 Q] : List (Msg (Fr p) G₁))
+          (fun row => ledgerPairs row = ledgerPairs acc + (lookupChunkNum deg l + 1) ∧
+            row.size = acc.size + 1) := by
+        have hstep := RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+          (ms₂ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (RunsAllP.lift_ok E c (fun chunked => l.chunkByDegree deg = .ok chunked) hc)
+          (fun chunked hchunked =>
+            RunsAllP.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁))) (ms₂ := [])
+              (RunsAll.toRunsAllP E (runsAll_logup_readMultiplicities E chunked Q))
+              (fun m _ => RunsAllP.pure E (acc.push (m, chunked))
+                (fun row => ledgerPairs row = ledgerPairs acc + (lookupChunkNum deg l + 1) ∧
+                  row.size = acc.size + 1)
+                (by
+                  refine ⟨?_, ?_⟩
+                  · rw [ledgerPairs_push, chunkNum_eq deg l chunked hchunked]
+                  · simp)))
+        simpa only [List.nil_append, hc] using hstep
+      have hb : RunsAllP E
+          ((fun acc => do
+            let chunked ← StateT.lift (l.chunkByDegree deg)
+            let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+            pure (acc.push (m, chunked))) acc >>= fun acc' =>
+              ls.foldlM (init := acc') fun acc' l => do
+                let chunked ← StateT.lift (l.chunkByDegree deg)
+                let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+                pure (acc'.push (m, chunked)))
+          ([Msg.g1 Q] ++ Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (fun row => ∃ acc', ledgerPairs acc' = ledgerPairs acc +
+              (lookupChunkNum deg l + 1) ∧ acc'.size = acc.size + 1 ∧
+            ledgerPairs row = ledgerPairs acc' +
+              (ls.map (fun l => lookupChunkNum deg l + 1)).sum ∧
+            row.size = acc'.size + ls.length) :=
+        RunsAllP.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (ms₂ := Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          hhead (fun acc' hacc' => by
+            have hb2 := ih acc' Qs' (fun l' hl' => hs l' (by simp [hl'])) (by simpa using hlen)
+            exact RunsAllP.mono E hb2 (fun row hrow =>
+              ⟨acc', hacc'.1, hacc'.2, hrow.1, hrow.2⟩))
+      refine RunsAllP.mono E hb ?_
+      intro row hrow
+      obtain ⟨acc', hled, hsz, hrowl, hrowsz⟩ := hrow
+      refine ⟨?_, ?_⟩
+      · rw [hrowl, hled, List.map_cons, List.sum_cons]; omega
+      · rw [hrowsz, hsz, List.length_cons]
+        omega
+
+theorem runsAllP_parseTraceLookupMultiplicities_one_both (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (Qs : List G₁) (hlen : Qs.length = vk.cs.lookups.size) :
+    RunsAllP E (parseTraceLookupMultiplicities E vk 1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun rows => (rows.toList.map (fun row => (row.toList.map
+        (fun p => p.2.numChunks + 1)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 1)).sum ∧
+        (rows.toList.map (fun row => row.toList.length)).sum = vk.cs.lookups.size) := by
+  unfold parseTraceLookupMultiplicities
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil, bind_assoc, pure_bind]
+  let inner : TranscriptM (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p))) :=
+    List.foldlM (init := #[]) (fun acc' l => do
+      let chunked ← StateT.lift (l.chunkByDegree vk.csDegree)
+      let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+      pure (acc'.push (m, chunked))) vk.cs.lookups.toList
+  let Post : Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p))) → Prop :=
+    fun rows => (rows.toList.map (fun row => (row.toList.map
+        (fun p => p.2.numChunks + 1)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 1)).sum ∧
+        (rows.toList.map (fun row => row.toList.length)).sum = vk.cs.lookups.size
+  have hinner : RunsAllP E inner (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 1)).sum ∧
+        row.size = vk.cs.lookups.size) := by
+    simpa [inner, ledgerPairs] using
+      runsAllP_lookupMultiplicities_fold_both E vk.csDegree vk.cs.lookups.toList #[] Qs hs hlen
+  let f1 : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)) →
+      TranscriptM (Array (Array (Logup.CommittedMultiplicities G₁ ×
+        LogupChunkedArgument (Fr p)))) :=
+    fun row => pure (#[].push row)
+  have hstep : RunsAllP E (inner >>= f1) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) Post := by
+    have hb := RunsAllP.bind E (m := inner) (f := f1)
+      (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+      hinner (fun row hrow => by
+        refine RunsAllP.pure E (#[].push row) Post ?_
+        dsimp only [Post]
+        refine ⟨?_, ?_⟩
+        · simpa using hrow.1
+        · simpa [hrow.2])
+    rw [List.append_nil] at hb
+    exact hb
+  have hb : RunsAllP E ((inner >>= f1) >>= fun init => pure init)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) Post := by
+    have hb2 := RunsAllP.bind E (m := inner >>= f1) (f := fun init => (pure init : TranscriptM _))
+      (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+      hstep (fun acc hacc => RunsAllP.pure E acc Post hacc)
+    rw [List.append_nil] at hb2
+    exact hb2
+  simpa only [inner, f1, Post, bind_assoc, pure_bind] using hb
+
+theorem runsAllP_parseTraceTail (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (adviceCommitments : Array (Array G₁)) (challenges : Array (Fr p))
+    (QMult QPerm QLook QTrash : List G₁)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E
+      (do let theta ← tmSqueezeChallenge
+          let lookupMultiplicities ← parseTraceLookupMultiplicities E vk 1
+          let beta ← tmSqueezeChallenge
+          let gamma ← tmSqueezeChallenge
+          let permutations ← parseTracePermutations E vk 1
+          let lookups ← parseTraceLookupCommitments E lookupMultiplicities
+          let trashChallenge ← tmSqueezeChallenge
+          let trashcans ← parseTraceTrashcans E vk 1
+          let y ← tmSqueezeChallenge
+          pure ({ adviceCommitments := adviceCommitments, lookups := lookups, trashcans := trashcans, permutations := permutations, challenges := challenges, beta := beta, gamma := gamma, theta := theta, trashChallenge := trashChallenge, y := y } : VerifierTrace (Fr p) G₁))
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+      (fun tr =>
+        (tr.permutations.toList.map (fun pc =>
+          3 * pc.permutationProductCommitments.size - 1)).sum =
+          3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+        (tr.lookups.toList.map (fun row => (row.toList.map
+          (fun c => c.helperPolys.size + 3)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+        (tr.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size) := by
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAllP.squeeze E) ?_
+  intro theta _
+  refine RunsAllP.bind E (m := parseTraceLookupMultiplicities E vk 1)
+    (ms₁ := QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (runsAllP_parseTraceLookupMultiplicities_one_both E vk hs QMult hlenMult) ?_
+  intro rows hrows
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (RunsAllP.squeeze E) ?_
+  intro beta _
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (RunsAllP.squeeze E) ?_
+  intro gamma _
+  refine RunsAllP.bind E (m := parseTracePermutations E vk 1)
+    (ms₁ := QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))
+    (runsAllP_parseTracePermutations_one E vk hdeg QPerm hlenPerm) ?_
+  intro permutations hperm
+  have hlenLook' : QLook.length = (rows.toList.map
+      (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum := by
+    rw [hlenLook]
+    exact hrows.1.symm
+  refine RunsAllP.bind E (m := parseTraceLookupCommitments E rows)
+    (ms₁ := QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])
+    (runsAllP_parseTraceLookupCommitments_count E vk rows QLook hlenLook' hrows.1 hrows.2) ?_
+  intro lookups hlook
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])
+    (RunsAllP.squeeze E) ?_
+  intro trashChallenge _
+  refine RunsAllP.bind E (m := parseTraceTrashcans E vk 1)
+    (ms₁ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := ([] : List (Msg (Fr p) G₁)))
+    (runsAllP_parseTraceTrashcans_one E vk QTrash hlenTrash) ?_
+  intro trashcans htrash
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := ([] : List (Msg (Fr p) G₁)))
+    (RunsAllP.squeeze E) ?_
+  intro y _
+  exact RunsAllP.pure E _ _ ⟨hperm, hlook, htrash⟩
+
+theorem runsAllP_parseTraceWireBody_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity) (hsp : vk.cs.numChallenges = 0)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E (parseTraceWireBody E vk inst)
+      (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))) (fun tr =>
+        (tr.permutations.toList.map (fun pc =>
+          3 * pc.permutationProductCommitments.size - 1)).sum =
+          3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+        (tr.lookups.toList.map (fun row => (row.toList.map
+          (fun c => c.helperPolys.size + 3)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+        (tr.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size) := by
+  unfold parseTraceWireBody
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (runsAll_hashInto E vk)) ?_
+  intro _ _
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (by
+      simpa only [Array.forIn_toList] using
+        runsAll_absorb_committed E (committedShape (G₁ := G₁)))) ?_
+  intro _ _
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (by
+      simpa only [Array.forIn_toList] using
+        runsAll_absorb_instance E (instanceShape inst))) ?_
+  intro _ _
+  refine RunsAllP.bind E (m := parseTraceAdvicePhases E vk)
+    (ms₁ := QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (runsAllP_parseTraceAdvicePhases_cover E vk hsp vk.cs.phases [] QAdv
+      (by simpa using hlenAdv)) ?_
+  intro st hst
+  obtain ⟨row', rfl, _, hcov⟩ := hst
+  have hcov' : ∀ pairs ∈ ([row'] : List (List (Nat × G₁))),
+      ∀ i < vk.cs.numAdviceColumns, ∃ a, (i, a) ∈ pairs := by
+    intro pairs hp i hi
+    simp only [List.mem_singleton] at hp
+    subst hp
+    obtain ⟨ph, hph, hiph⟩ := adviceCols_cover vk hf hi
+    exact hcov ph hph i hiph
+  refine RunsAllP.bind E (m := ([row'] : List (List (Nat × G₁))).foldlM
+      (init := (#[] : Array (Array G₁))) fun acc pairs => do
+        let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+          "proofs/src/plonk/verifier.rs:118")
+        pure (acc.push row))
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAll.toRunsAllP E (runsAll_adviceScatter E vk [row'] #[] hcov')) ?_
+  intro adviceCommitments _
+  obtain ⟨xs, hxs⟩ := scatterIndexed_ok_of_cover 0 ([] : List (Nat × Fr p))
+    "proofs/src/plonk/verifier.rs:134" (fun i hi => by omega)
+  rw [hsp, hxs]
+  refine RunsAllP.bind E (m := StateT.lift (.ok xs : Except Fault (Array (Fr p))))
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAllP.lift_ok E xs (fun _ => True) trivial) ?_
+  intro challenges _
+  exact runsAllP_parseTraceTail E vk hdeg hs adviceCommitments challenges
+    QMult QPerm QLook QTrash hlenMult hlenPerm hlenLook hlenTrash
+
+theorem runsAllP_parseTrace_one_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity)
+    (hnc : 2 = vk.cs.numInstanceColumns)
+    (hsp : vk.cs.numChallenges = 0)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E (parseTrace (p := p) E.g1 Features.solidity vk
+        (committedShape (G₁ := G₁)) (instanceShape inst))
+      (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+      (fun tr =>
+        (tr.permutations.toList.map (fun pc =>
+          3 * pc.permutationProductCommitments.size - 1)).sum =
+          3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+        (tr.lookups.toList.map (fun row => (row.toList.map
+          (fun c => c.helperPolys.size + 3)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+        (tr.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size) := by
+  unfold parseTrace
+  simp only [Features.solidity, ite_true]
+  rw [if_neg (by simp [committedShape])]
+  rw [if_neg (by simp [committedShape])]
+  rw [if_neg (by simp [committedShape, instanceShape, hnc])]
+  exact runsAllP_parseTraceWireBody_sizes E vk inst hf hsp hdeg hs QAdv QMult QPerm QLook QTrash
+    hlenAdv hlenMult hlenPerm hlenLook hlenTrash
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem parseTrace_run_of_ms_sizes (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity) (hnc : 2 = vk.cs.numInstanceColumns)
+    (hsp : vk.cs.numChallenges = 0) (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size)
+    (hp : p ≤ 2 ^ 256)
+    (henc : ∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth)
+    (ms : List (Msg (Fr p) G₁))
+    (hms : ms = QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))) :
+    ∃ trace t1,
+      (parseTrace (p := p) E.g1 Features.solidity vk
+        (committedShape (G₁ := G₁)) (instanceShape inst)).run (transcriptOf E H ms) =
+        .ok (trace, t1) ∧
+      (trace.permutations.toList.map (fun pc =>
+        3 * pc.permutationProductCommitments.size - 1)).sum =
+        3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+      (trace.lookups.toList.map (fun row => (row.toList.map
+        (fun c => c.helperPolys.size + 3)).sum)).sum =
+        (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+      (trace.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size := by
+  subst hms
+  obtain ⟨trace, t1, hrun, _, _, hP⟩ :=
+    runsAllP_parseTrace_one_sizes E vk inst hf hnc hsp hdeg hs QAdv QMult QPerm QLook QTrash
+      hlenAdv hlenMult hlenPerm hlenLook hlenTrash
+      (transcriptOf E H (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+      ByteArray.empty ByteArray.empty (by
+        rw [(transcriptOf_buffer E H _).1]
+        simp) (by rw [(transcriptOf_buffer E H _).2]; rfl) hp henc hwidth
+  exact ⟨trace, t1, hrun, hP⟩
+
+theorem map_slot_split (s2 : List Midfall.Lowering.WireSlot) :
+    ∀ (s1 : List Midfall.Lowering.WireSlot) (ms : List (Msg (Fr p) G₁)),
+      ms.map Msg.slot = s1 ++ s2 →
+      ∃ ms1 ms2, ms = ms1 ++ ms2 ∧ ms1.map Msg.slot = s1 ∧ ms2.map Msg.slot = s2
+  | [], ms, h => ⟨[], ms, rfl, rfl, h⟩
+  | s :: s1, ms, h => by
+      rw [List.cons_append, List.map_eq_cons_iff] at h
+      obtain ⟨m, ms', rfl, hm, htail⟩ := h
+      obtain ⟨ms1, ms2, rfl, h1, h2⟩ := map_slot_split s2 s1 ms' htail
+      exact ⟨m :: ms1, ms2, rfl, by simp [hm, h1], h2⟩
+
+theorem map_slot_eq_replicate_g1 {n : Nat} :
+    ∀ (ms : List (Msg (Fr p) G₁)),
+      ms.map Msg.slot = List.replicate n Midfall.Lowering.WireSlot.g1 →
+      ∃ P : List G₁, ms = P.map Msg.g1 ∧ P.length = n
+  | [], h => by
+      have hn : n = 0 := by
+        by_contra hn
+        have : List.replicate n Midfall.Lowering.WireSlot.g1 ≠ [] := by
+          cases n with
+          | zero => exact absurd rfl hn
+          | succ k => simp
+        exact this (by simpa using h.symm)
+      subst hn
+      exact ⟨[], rfl, rfl⟩
+  | m :: ms, h => by
+      rw [List.map_cons] at h
+      cases n with
+      | zero => simp at h
+      | succ n' =>
+          rw [List.replicate_succ] at h
+          injection h with hm htail
+          cases m with
+          | g1 Q =>
+              obtain ⟨P, rfl, hlen⟩ := map_slot_eq_replicate_g1 ms htail
+              exact ⟨Q :: P, rfl, by simp [hlen]⟩
+          | fr q => simp [Msg.slot] at hm
+
+theorem map_slot_eq_replicate_fr {n : Nat} :
+    ∀ (ms : List (Msg (Fr p) G₁)),
+      ms.map Msg.slot = List.replicate n Midfall.Lowering.WireSlot.fr →
+      ∃ R : List (Fr p), ms = R.map Msg.fr ∧ R.length = n
+  | [], h => by
+      have hn : n = 0 := by
+        by_contra hn
+        have : List.replicate n Midfall.Lowering.WireSlot.fr ≠ [] := by
+          cases n with
+          | zero => exact absurd rfl hn
+          | succ k => simp
+        exact this (by simpa using h.symm)
+      subst hn
+      exact ⟨[], rfl, rfl⟩
+  | m :: ms, h => by
+      rw [List.map_cons] at h
+      cases n with
+      | zero => simp at h
+      | succ n' =>
+          rw [List.replicate_succ] at h
+          injection h with hm htail
+          cases m with
+          | g1 Q => simp [Msg.slot] at hm
+          | fr q =>
+              obtain ⟨R, rfl, hlen⟩ := map_slot_eq_replicate_fr ms htail
+              exact ⟨q :: R, rfl, by simp [hlen]⟩
+
+theorem map_slot_eq_singleton_g1 :
+    ∀ (ms : List (Msg (Fr p) G₁)),
+      ms.map Msg.slot = [Midfall.Lowering.WireSlot.g1] →
+      ∃ Q : G₁, ms = [Msg.g1 Q]
+  | [], h => by simp at h
+  | m :: ms, h => by
+      rw [List.map_cons] at h
+      injection h with hm htail
+      cases m with
+      | g1 Q =>
+          have : ms = [] := by simpa using htail
+          subst this
+          exact ⟨Q, rfl⟩
+      | fr q => simp [Msg.slot] at hm
+
+theorem decoded_coarse_split (ms : List (Msg (Fr p) G₁)) (a b c : Nat)
+    (h : ms.map Msg.slot = List.replicate a Midfall.Lowering.WireSlot.g1 ++
+      (List.replicate b Midfall.Lowering.WireSlot.fr ++
+        ([Midfall.Lowering.WireSlot.g1] ++ (List.replicate c Midfall.Lowering.WireSlot.fr ++
+          [Midfall.Lowering.WireSlot.g1])))) :
+    ∃ (P : List G₁) (R : List (Fr p)) (fCom : G₁) (qs : List (Fr p)) (pi : G₁),
+      ms = P.map Msg.g1 ++ R.map Msg.fr ++ [Msg.g1 fCom] ++ qs.map Msg.fr ++ [Msg.g1 pi] ∧
+      P.length = a ∧ R.length = b ∧ qs.length = c := by
+  obtain ⟨A, r1, rfl, hA, h1⟩ := map_slot_split (List.replicate b Midfall.Lowering.WireSlot.fr ++
+    ([Midfall.Lowering.WireSlot.g1] ++ (List.replicate c Midfall.Lowering.WireSlot.fr ++
+      [Midfall.Lowering.WireSlot.g1]))) (List.replicate a Midfall.Lowering.WireSlot.g1) ms h
+  obtain ⟨P, rfl, hPlen⟩ := map_slot_eq_replicate_g1 A hA
+  obtain ⟨B, r2, rfl, hB, h2⟩ := map_slot_split ([Midfall.Lowering.WireSlot.g1] ++
+    (List.replicate c Midfall.Lowering.WireSlot.fr ++ [Midfall.Lowering.WireSlot.g1]))
+    (List.replicate b Midfall.Lowering.WireSlot.fr) r1 h1
+  obtain ⟨R, rfl, hRlen⟩ := map_slot_eq_replicate_fr B hB
+  obtain ⟨F, r3, rfl, hF, h3⟩ := map_slot_split (List.replicate c Midfall.Lowering.WireSlot.fr ++ [Midfall.Lowering.WireSlot.g1]) [Midfall.Lowering.WireSlot.g1] r2 h2
+  obtain ⟨fCom, rfl⟩ := map_slot_eq_singleton_g1 F hF
+  obtain ⟨C, r4, rfl, hC, h4⟩ := map_slot_split [Midfall.Lowering.WireSlot.g1] (List.replicate c Midfall.Lowering.WireSlot.fr) r3 h3
+  obtain ⟨qs, rfl, hClen⟩ := map_slot_eq_replicate_fr C hC
+  obtain ⟨G, r5, rfl, hG, h5⟩ := map_slot_split [] [Midfall.Lowering.WireSlot.g1] r4 h4
+  obtain ⟨pi, rfl⟩ := map_slot_eq_singleton_g1 G hG
+  have h5' : r5 = [] := by simpa using h5
+  subst h5'
+  refine ⟨P, R, fCom, qs, pi, ?_, hPlen, hRlen, hClen⟩
+  simp
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem decoded_split_of_plan (L : Midfall.Generator.ProofCalldataLayout)
+    (ms : List (Msg (Fr p) G₁))
+    (h : ms.map Msg.slot =
+      (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).slots) :
+    ∃ (P : List G₁) (R : List (Fr p)) (fCom : G₁) (qs : List (Fr p)) (pi : G₁),
+      ms = P.map Msg.g1 ++ R.map Msg.fr ++ [Msg.g1 fCom] ++ qs.map Msg.fr ++ [Msg.g1 pi] ∧
+      P.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).prefixG1Count ∧
+      R.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).numEvals ∧
+      qs.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).numPointSets := by
+  unfold Midfall.Generator.RepackedProofLayoutPlan.slots at h
+  simp only [List.append_assoc] at h
+  exact decoded_coarse_split ms _ _ _ h
+
+theorem parseTrace_run_of_ms_sizes_rest (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity) (hnc : 2 = vk.cs.numInstanceColumns)
+    (hsp : vk.cs.numChallenges = 0) (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size)
+    (hp : p ≤ 2 ^ 256)
+    (henc : ∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth)
+    (ms rest : List (Msg (Fr p) G₁))
+    (hms : ms = QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))) ++ rest) :
+    ∃ trace t1,
+      (parseTrace (p := p) E.g1 Features.solidity vk
+        (committedShape (G₁ := G₁)) (instanceShape inst)).run (transcriptOf E H ms) =
+        .ok (trace, t1) ∧
+      t1.buffer = (transcriptOf E H ms).buffer ∧
+      t1.pos = (wireMsgs E (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))).size ∧
+      (trace.permutations.toList.map (fun pc =>
+        3 * pc.permutationProductCommitments.size - 1)).sum =
+        3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+      (trace.lookups.toList.map (fun row => (row.toList.map
+        (fun c => c.helperPolys.size + 3)).sum)).sum =
+        (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+      (trace.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size := by
+  subst hms
+  obtain ⟨trace, t1, hrun, hbuf, hpos, hP⟩ :=
+    runsAllP_parseTrace_one_sizes E vk inst hf hnc hsp hdeg hs QAdv QMult QPerm QLook QTrash
+      hlenAdv hlenMult hlenPerm hlenLook hlenTrash
+      (transcriptOf E H (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))) ++ rest))
+      ByteArray.empty (wireMsgs E rest) (by
+        rw [(transcriptOf_buffer E H _).1, wireMsgs_append]
+        simp) (by rw [(transcriptOf_buffer E H _).2]; rfl) hp henc hwidth
+  refine ⟨trace, t1, hrun, hbuf, ?_, hP.1, hP.2.1, hP.2.2⟩
+  rw [hpos, wireMsgs_size]
+  simp
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem wireMsgs_tail (E : VerifierEnv p G₁ G₂ Gₜ) (fCom pi : G₁) (qs : List (Fr p)) :
+    wireMsgs E ([Msg.g1 fCom] ++ qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 pi]) =
+      E.g1.toCompressed fCom ++ wireOf qs ++ E.g1.toCompressed pi := by
+  rw [wireMsgs_append, wireMsgs_append, wireMsgs_g1_singleton, wireMsgs_map_fr,
+    wireMsgs_g1_singleton]
+
+def xcriptPt (QAdv QMult QPerm QLook QTrash : List G₁) : List (Msg (Fr p) G₁) :=
+  QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+
+def xcriptRa (Qg : List G₁) (Qi Qa Qf Qc Qp Ql Qt : List (Fr p)) : List (Msg (Fr p) G₁) :=
+  Qg.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+  (Qi.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qa.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qf.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qc.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+  (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [])))))))
+
+def xcriptTail (fCom : G₁) (qs : List (Fr p)) (pi : G₁) : List (Msg (Fr p) G₁) :=
+  [Msg.g1 fCom] ++ qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 pi]
+
+set_option maxHeartbeats 2000000 in
+theorem snapshotAlgebraRun_ok_of_schedule (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity)
+    (hnc : 2 = vk.cs.numInstanceColumns)
+    (hinstQ : ∀ q ∈ vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1)
+    (hinstSize : inst.size < 2 ^ 31)
+    (hp : p ≤ 2 ^ 256)
+    (henc : ∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q)
+    (hwidth : ∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth)
+    (QAdv QMult QPerm QLook QTrash Qg : List G₁)
+    (Qi Qa Qf Qc Qp Ql Qt qs : List (Fr p)) (fCom pi : G₁) (nSets : Nat)
+    (ms : List (Msg (Fr p) G₁))
+    (hms : ms = xcriptPt QAdv QMult QPerm QLook QTrash ++
+      xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt ++ xcriptTail fCom qs pi)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size)
+    (hlenQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else vk.domain.getQuotientPolyDegree))
+    (hlenI : Qi.length = (instanceShape inst).size *
+      (vk.cs.instanceQueries.toList.filter
+        (fun q => decide (q.1.index < 1))).length)
+    (hlenA : Qa.length = (instanceShape inst).size * vk.cs.adviceQueries.size)
+    (hlenF : Qf.length = vk.cs.numFixedColumns - vk.cs.numSimpleSelectors)
+    (hlenC : Qc.length = vk.permutation.commitments.size)
+    (hlenP : Qp.length = 3 * Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2) - 1)
+    (hlenL : Ql.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 3)).sum)
+    (hlenT : Qt.length = vk.cs.trashcans.size)
+    (hlenQs : qs.length = nSets) :
+    ∃ s2 t2, snapshotAlgebraRun E H vk inst ms = .ok (s2, t2) ∧
+      t2.buffer = wireMsgs E (xcriptPt QAdv QMult QPerm QLook QTrash ++
+        xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt) ++
+        E.g1.toCompressed fCom ++ wireOf qs ++ E.g1.toCompressed pi ∧
+      t2.pos = (wireMsgs E (xcriptPt QAdv QMult QPerm QLook QTrash ++
+        xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt)).size := by
+  let Pt : List (Msg (Fr p) G₁) := xcriptPt QAdv QMult QPerm QLook QTrash
+  let Ra : List (Msg (Fr p) G₁) := xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt
+  let Tail : List (Msg (Fr p) G₁) := xcriptTail fCom qs pi
+  have hms' : ms = Pt ++ (Ra ++ Tail) := by
+    simpa only [Pt, Ra, Tail, List.append_assoc] using hms
+  have hsp : vk.cs.numChallenges = 0 := hf.singlePhase
+  have hdeg : 3 ≤ vk.csDegree := hf.chunkLenPositive
+  have hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c :=
+    fun l hl => chunkByDegree_ok_of_wf hf hl
+  obtain ⟨trace, t1, hrun, hbuf1, hpos1, hperm, hlook, htrash⟩ :=
+    parseTrace_run_of_ms_sizes_rest E H vk inst hf hnc hsp hdeg hs
+      QAdv QMult QPerm QLook QTrash hlenAdv hlenMult hlenPerm hlenLook hlenTrash hp henc
+      hwidth ms (Ra ++ Tail) hms'
+  have htrace : snapshotTraceRun E H vk inst ms = .ok (SnapTrace.mk trace, t1) := by
+    unfold snapshotTraceRun snapshotTraceStep
+    simp only [StateT.run_bind, StateT.run_pure, hrun]
+    rfl
+  have hmax : maxInstanceLen (instanceShape inst) < 2 ^ 31 := by
+    simpa [maxInstanceLen, instanceShape] using hinstSize
+  have hrows : ∀ row ∈ (instanceShape inst).toList,
+      ∀ q ∈ vk.cs.instanceQueries.toList, ¬ q.1.index < 1 →
+        ∃ col, row[q.1.index - 1]? = some col := by
+    intro row hrow q hq hnc'
+    have hrow' : row = #[inst] := by simpa [instanceShape] using hrow
+    subst hrow'
+    have hq1 := hinstQ q hq hnc'
+    exact ⟨inst, by rw [hq1]; rfl⟩
+  have hlenA' : Qa.length = 1 * vk.cs.adviceQueries.size := by
+    simpa [instanceShape] using hlenA
+  have hlenP' : Qp.length = (trace.permutations.toList.map (fun pc =>
+      3 * pc.permutationProductCommitments.size - 1)).sum := by
+    rw [hperm]; exact hlenP
+  have hlenL' : Ql.length = (trace.lookups.toList.map (fun row =>
+      (row.toList.map (fun c => c.helperPolys.size + 3)).sum)).sum := by
+    rw [hlook]; exact hlenL
+  have hlenT' : Qt.length = (trace.trashcans.toList.map (fun row => row.size)).sum := by
+    rw [htrash]; exact hlenT
+  have hbufW : (transcriptOf E H ms).buffer = wireMsgs E Pt ++
+      (wireMsgs E Ra ++ wireMsgs E Tail) := by
+    rw [(transcriptOf_buffer E H ms).1, hms']
+    simp only [Pt, Ra, Tail, wireMsgs_append]
+  obtain ⟨alg, t2, hread, hbuf2, hpos2⟩ :=
+    runsAll_readAlgebra E vk hf trace.permutations trace.lookups trace.trashcans 1 1
+      (instanceShape inst) hmax hrows Qg Qi Qa Qf Qc Qp Ql Qt hlenQ hlenI hlenA' hlenF
+      hlenC hlenP' hlenL' hlenT' t1 (wireMsgs E Pt) (wireMsgs E Tail)
+      (by rw [hbuf1, hbufW]; dsimp only [Pt, Ra, Tail, xcriptPt, xcriptRa, xcriptTail])
+      (by rw [hpos1]; dsimp only [Pt, xcriptPt]) hp henc hwidth
+  have hstep : snapshotAlgebraStep (G₁ := G₁) E.g1 Features.solidity vk trace 1 1
+      (instanceShape inst) t1 =
+      .ok (({ toSnapTrace := SnapTrace.mk trace, alg := alg } : SnapAlgebra p G₁), t2) := by
+    unfold snapshotAlgebraStep
+    simp only [StateT.run_bind, StateT.run_pure, hread]
+    rfl
+  refine ⟨({ toSnapTrace := SnapTrace.mk trace, alg := alg } : SnapAlgebra p G₁), t2, ?_, ?_, ?_⟩
+  · unfold snapshotAlgebraRun
+    simp only [StateT.run_bind, StateT.run_pure, htrace]
+    rw [show (if Features.solidity.committedInstances then committedShape (G₁ := G₁)
+      else arrayReplicate (instanceShape inst).size (#[] : Array G₁)) =
+      committedShape (G₁ := G₁) from rfl]
+    rw [show (committedShape (G₁ := G₁)).isEmpty = false from rfl]
+    simp only [Bool.false_eq_true, if_false]
+    simpa [committedShape, hstep]
+  · -- buffer
+    have hbuf2' : t2.buffer = wireMsgs E Pt ++ (wireMsgs E Ra ++ wireMsgs E Tail) := by
+      rw [hbuf2, hbuf1, hbufW]
+    rw [hbuf2']
+    dsimp only [Tail]
+    rw [show xcriptTail fCom qs pi = [Msg.g1 fCom] ++
+      qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 pi] from rfl]
+    rw [wireMsgs_tail]
+    dsimp only [Pt, Ra]
+    simp only [wireMsgs_append, List.append_assoc]
+    simp only [ByteArray.append_assoc]
+  · -- pos
+    rw [hpos2]
+    dsimp only [Pt, Ra, xcriptPt, xcriptRa]
+    rw [← wireMsgs_size]
+    simp only [wireMsgs_append, ByteArray.size_append, List.append_assoc]
+    omega
+
+
+theorem mapM_option_length {α β : Type} (f : α → Option β) :
+    ∀ (l : List α) (l' : List β), l.mapM f = some l' → l'.length = l.length := by
+  intro l
+  induction l with
+  | nil =>
+      intro l' h
+      cases h
+      rfl
+  | cons a as ih =>
+      intro l' h
+      simp only [List.mapM_cons] at h
+      cases ha : f a with
+      | none => rw [ha] at h; cases h
+      | some b =>
+          rw [ha] at h
+          cases hrest : as.mapM f with
+          | none => rw [hrest] at h; cases h
+          | some l0 =>
+              rw [hrest] at h
+              injection h with h
+              subst h
+              simp only [List.length_cons]
+              rw [ih l0 hrest]
+
+theorem instOfWords?_size {p : ℕ} [Fact (Nat.Prime p)]
+    {instW : Array Word256} {inst : Array (Fr p)}
+    (h : Midfall.LoweringV2.instOfWords? (p := p) instW = some inst) : inst.size = instW.size := by
+  unfold Midfall.LoweringV2.instOfWords? at h
+  rw [Option.map_eq_some_iff] at h
+  obtain ⟨l, hl, rfl⟩ := h
+  rw [List.size_toArray, mapM_option_length (Midfall.LoweringV2.frOfWord? (p := p)) instW.toList l hl, Array.length_toList]
+
+set_option maxHeartbeats 1000000 in
+theorem decoded_inst_size {R : Render p G₁ G₂ Gₜ} {cd : Bytes} {ms : List (Msg (Fr p) G₁)}
+    {instW : Array Word256} {inst : Array (Fr p)}
+    (h : Decoded R cd ms instW inst) : inst.size = R.cfg.numInstances := by
+  obtain ⟨hdec, hinst⟩ := h
+  unfold decodeCalldata at hdec
+  simp at hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec
+  obtain ⟨⟨ms0, cur0⟩, hslots, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  rw [Option.bind_eq_some_iff] at hdec; obtain ⟨_, _, hdec⟩ := hdec
+  simp only [Option.some.injEq, Prod.mk.injEq] at hdec
+  obtain ⟨-, hinstWeq⟩ := hdec
+  have hsize : inst.size = instW.size := instOfWords?_size hinst
+  rw [hsize, ← hinstWeq]
+  simp
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -5218,6 +6294,71 @@ def XcriptAlgebraTail (R : Render p G₁ G₂ Gₜ) (H : Hash)
 def XcriptAlgebraRun (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
   ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
     Decoded R cd ms instW inst → XcriptAlgebraTail R H inst ms
+
+/-- **THE NAMED READ SCHEDULE.** For every decoding of `cd`, the decoded messages split
+    into the parseTrace commitments, the readAlgebra evals, and the fCom/qs/pi tail,
+    with the block lengths the VK's own read walk consumes. This is the named
+    plan-count <-> VK-schedule link at payload granularity: the coarse split
+    (`decoded_split_of_plan`) supplies the two coarse lengths, and these fields are
+    the fine counts the walk needs. `H` is carried to match the consumer
+    (`XcriptAlgebraRun`); the schedule itself is hash-free. -/
+def XcriptSchedule (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
+  ∀ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p)),
+    Decoded R cd ms instW inst →
+      ∃ (QAdv QMult QPerm QLook QTrash Qg : List G₁)
+        (Qi Qa Qf Qc Qp Ql Qt qs : List (Fr p)) (fCom pi : G₁),
+        ms = xcriptPt QAdv QMult QPerm QLook QTrash ++
+          xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt ++ xcriptTail fCom qs pi ∧
+        QAdv.length = (R.vk.cs.phases.map (fun ph => (phaseCols R.vk.cs ph).length)).sum ∧
+        QMult.length = R.vk.cs.lookups.size ∧
+        QPerm.length = Permutation.numChunksOf R.vk.cs.permutation.columns.size
+          (R.vk.csDegree - 2) ∧
+        QLook.length = (R.vk.cs.lookups.toList.map
+          (fun l => lookupChunkNum R.vk.csDegree l + 1)).sum ∧
+        QTrash.length = R.vk.cs.trashcans.size ∧
+        Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+          else R.vk.domain.getQuotientPolyDegree) ∧
+        Qi.length = (instanceShape inst).size *
+          (R.vk.cs.instanceQueries.toList.filter
+            (fun q => decide (q.1.index < 1))).length ∧
+        Qa.length = (instanceShape inst).size * R.vk.cs.adviceQueries.size ∧
+        Qf.length = R.vk.cs.numFixedColumns - R.vk.cs.numSimpleSelectors ∧
+        Qc.length = R.vk.permutation.commitments.size ∧
+        Qp.length = 3 * Permutation.numChunksOf R.vk.cs.permutation.columns.size
+          (R.vk.csDegree - 2) - 1 ∧
+        Ql.length = (R.vk.cs.lookups.toList.map
+          (fun l => lookupChunkNum R.vk.csDegree l + 3)).sum ∧
+        Qt.length = R.vk.cs.trashcans.size ∧
+        qs.length = R.nSets
+
+/-- **`XcriptAlgebraRun` FROM THE NAMED SCHEDULE.** Every decoding is fed to
+    `snapshotAlgebraRun_ok_of_schedule`; the instance-shape facts are the supported
+    key's (`WellFormed`, `numInstanceColumns = 2`) and the two runtime inputs
+    (`hinstQ`, `hnum`). -/
+theorem xcriptAlgebraRun_of_schedule (R : Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (cd : Bytes)
+    (hsched : XcriptSchedule R H cd)
+    (hinstQ : ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1)
+    (hnum : R.cfg.numInstances < 2 ^ 31) :
+    XcriptAlgebraRun R H cd := by
+  intro ms instW inst hdec
+  obtain ⟨QAdv, QMult, QPerm, QLook, QTrash, Qg, Qi, Qa, Qf, Qc, Qp, Ql, Qt, qs,
+    fCom, pi, hms, hAdv, hMult, hPerm, hLook, hTrash, hQ, hI, hA, hF, hC, hP, hL, hT,
+    hQs⟩ := hsched ms instW inst hdec
+  have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
+  have hnc : 2 = R.vk.cs.numInstanceColumns := hR.supported.instShape.1.symm
+  have hinstSize : inst.size < 2 ^ 31 := by
+    rw [decoded_inst_size hdec]; exact hnum
+  have hp : p ≤ 2 ^ 256 := by
+    rw [hR.env.modulus]; norm_num [frModulusConstant]
+  obtain ⟨s2, t2, hrun, hbuf, hpos⟩ :=
+    snapshotAlgebraRun_ok_of_schedule R.E H R.vk inst hf hnc hinstQ hinstSize hp
+      hcodec.compressedEncoderFirst hcodec.compressedWidth
+      QAdv QMult QPerm QLook QTrash Qg Qi Qa Qf Qc Qp Ql Qt qs fCom pi R.nSets ms hms
+      hAdv hMult hPerm hLook hTrash hQ hI hA hF hC hP hL hT hQs
+  exact ⟨s2, t2, wireMsgs R.E (xcriptPt QAdv QMult QPerm QLook QTrash ++
+    xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt), fCom, pi, qs, hrun, hbuf, hpos, hQs⟩
+
 
 /-- `xcript_total` at one fixed decoded message list, directly from the tail clause. -/
 theorem xcript_total_at (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
@@ -7406,6 +8547,23 @@ theorem tp_agrees_of_xcriptG1 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
         invAt_transcript_of_xcriptG1 R H vkAddr cd V st hpost hG1
           ms instW inst hdec S hS))
 
+/-- **`tp_agrees` FROM THE NAMED SCHEDULE AND THE COMMITMENT HALF.** The fixed `tp_agrees`
+    has no room for the schedule or `XcriptG1`; this is its schedule-carrying consumer.
+    `XcriptAlgebraRun` is produced by `xcriptAlgebraRun_of_schedule` and spent by
+    `tp_agrees_of_xcriptG1`. -/
+theorem tp_agrees_of_schedule (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TpPost R H vkAddr cd V st)
+    (hsched : XcriptSchedule R H cd)
+    (hinstQ : ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1)
+    (hnum : R.cfg.numInstances < 2 ^ 31)
+    (hG1 : XcriptG1 R H cd st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st :=
+  tp_agrees_of_xcriptG1 R hR hcodec H vkAddr cd V st hpost
+    (xcriptAlgebraRun_of_schedule R hR hcodec H cd hsched hinstQ hnum) hG1
+
+
 /-- **`tp_agrees_of_xcript` WITH `hinv` DISCHARGED.** The whole-`Inv` hypothesis is
     replaced by `XcriptG1`, the four commitment holds; the scalar slots, q-eval
     pointer and earlier checkpoints are proved by `invAt_transcript_of_xcriptG1`.
@@ -7426,10 +8584,13 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
 
     THE REDUCTION IS LANDED: `tp_agrees_of_xcript` proves this row from `XcriptAlgebraRun` (the
     named SIM.10 parser-side clause, §3b) plus the `Inv .transcript` assembly, and
-    `tp_agrees_of_agree` isolates the latter. DEPENDENCY, NAMED AND OPEN: `XcriptAlgebraRun` is a
-    DATA clause, not a theorem of `ValidV3` + `Decoded` (no `parseTrace`/`readAlgebra`/`snapshotAlgebraRun`
-    existence theorem exists; the width schedule is pinned but conditional, see §3b). THE
-    `Inv .transcript` HALF IS NOW LANDED as `invAt_transcript_of_xcriptG1`, and
+    `tp_agrees_of_agree` isolates the latter. THE SCHEDULE LAYER IS NOW LANDED:
+    `xcriptAlgebraRun_of_schedule` produces `XcriptAlgebraRun` from the named
+    `XcriptSchedule` (the fine read schedule at payload granularity) plus the two runtime
+    inputs `hinstQ`/`hnum`, and `tp_agrees_of_schedule` is the schedule-carrying consumer of
+    this row. THE FIXED STATEMENT'S RESIDUAL is therefore exactly those named data -
+    `XcriptSchedule`, `hinstQ`, `hnum` and `XcriptG1` - not `ValidV3` + `Decoded` alone.
+    THE `Inv .transcript` HALF IS LANDED as `invAt_transcript_of_xcriptG1`, and
     `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
     decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
     producer is the value half of A11's `runsAll_readAlgebra` plus `MirrorAt`/`eipRoundtrip`;
@@ -7669,6 +8830,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript
 #check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcript_of_inv
 #check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcriptG1
+#check @Midfall.LoweringV3.TranscriptRows.xcriptAlgebraRun_of_schedule
+#check @Midfall.LoweringV3.TranscriptRows.tp_agrees_of_schedule
 #check @Midfall.LoweringV3.TranscriptRows.invAt_transcript_of_xcriptG1
 #check @Midfall.LoweringV3.TranscriptRows.inline_g1WalkLoop
 
@@ -7791,6 +8954,29 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.ledgerRows_push [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.chunkNum_eq [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.congr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_both [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one_both [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceTail [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceWireBody_sizes [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTrace_one_sizes [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.parseTrace_run_of_ms_sizes [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.map_slot_split [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.map_slot_eq_replicate_g1 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.map_slot_eq_replicate_fr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.map_slot_eq_singleton_g1 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_coarse_split [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_split_of_plan [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.parseTrace_run_of_ms_sizes_rest [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_tail [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotAlgebraRun_ok_of_schedule [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.mapM_option_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instOfWords?_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_inst_size [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.XcriptSchedule [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.xcriptAlgebraRun_of_schedule [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_schedule [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
@@ -7817,6 +9003,15 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.logupEvalSum_push [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.sum_map_add_three [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupCommitments_row_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.rowEvalSum [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.rowsEvalSum [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.rowsEvalSum_push [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupCommitments_rows_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.sum_rows_flatMap [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.rowEvalSum_eq [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.sum_rows_rowEvalSum_eq [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.lookupChunkSum_add_three [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupCommitments_count [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
