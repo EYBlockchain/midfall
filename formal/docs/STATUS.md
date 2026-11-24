@@ -304,8 +304,10 @@ helper now has a proved `ExecStmts` run (`TranscriptRows.commonWordBody_run` and
 `tp_slice_head` / `tp_slice_two`. The singleton inliner equation
 `transcriptInit_inlined : inlineContractConstants consts emitTranscriptInit =
 [funDef "transcript_init" [] ["buf_len"] [assign "buf_len" (lit t)]]` is PROVED from
-`consts.lookup "TRANSCRIPT_MPTR" = some t`; the full `R.helpers` instance still needs the
-`inlineScan_append` prefix split at `emitFail ++ emitScalarInvAt`.
+`consts.lookup "TRANSCRIPT_MPTR" = some t`, and the full `R.helpers` prefix split
+(`helpers_split`, `inlineScan_append` at `emitFail ++ emitScalarInvAt`) is PROVED. The
+lookup/body equation `transcriptInit_lookup_body` and the unconditional first-statement run
+`tp_head_run` are now in the tree.
 `tp_blockProgS` is factored as
 `tp_blockProgS_of_exists_and_all`: its two remaining facts are the full emitted-AST
 `StmtsContract` existence walk and the normal all-runs contract. The model-level
