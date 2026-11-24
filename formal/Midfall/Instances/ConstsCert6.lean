@@ -4,10 +4,10 @@
 -- CERT.6's concrete constant-text gate at the tracked poseidon fixture.
 --
 -- The generic `prog_constLinesLiteral`/`prog_constTable` targets in
--- `Generator/Certified.lean` require a generic line-splitting lemma for the
--- 90-line `renderConstants` template; the character-level interpolation
--- lemmas are in `Generator/ConstText.lean`. This file records the concrete
--- poseidon instance, closed by `native_decide` (D-P20's instance confinement).
+-- `Generator/Certified.lean` now reduce to the generic template reassociation
+-- plus the per-line literal/table round-trips (`Generator/ConstTextResidual.lean`).
+-- This file closes the same witness at the poseidon fixture by `native_decide`
+-- (D-P20's instance confinement).
 import Midfall.Instances.ConstsKats
 import Midfall.LoweringV3.Statements
 import Midfall.Generator.ConstTextResidual
@@ -28,29 +28,28 @@ theorem poseidon_constTable :
       Midfall.LoweringV3.expectedConsts poseidonPv poseidonM) = true := by
   native_decide
 
-
 open Midfall.Generator.ConstTextResidual
 
-/-- The poseidon render split into its exact current lines. -/
+/-- The generic transcribed line list at the poseidon fixture. -/
 def poseidonConstTextLines : List String :=
-  (renderConstants (partialCtxOfVerifier poseidonM)).splitOn "\n"
+  renderConstantsLines (partialCtxOfVerifier poseidonM)
 
+/-- The transcribed line list recomposes the poseidon render. -/
 theorem poseidon_render_eq :
     renderConstants (partialCtxOfVerifier poseidonM) =
       String.intercalate "\n" poseidonConstTextLines := by
   native_decide
 
+/-- Every transcribed line at poseidon has a literal constant RHS. -/
 theorem poseidon_lines_literal :
     poseidonConstTextLines.all LineLiteral = true := by
   native_decide
 
-/-- A concrete inhabitant of the exact generic residual interface at poseidon:
-    the line list, its recomposition, its literal proof, and the table
+/-- A concrete inhabitant of the generic residual interface at poseidon:
+    the template reassociation, the per-line literal proof, and the table
     round-trip are all closed at the fixture. -/
-def poseidonConstTextWitness : ConstTextWitness poseidonPv poseidonM :=
-  { lines := poseidonConstTextLines
-    render_eq := poseidon_render_eq
-    split_eq := rfl
+theorem poseidonConstTextWitness : ConstTextWitness poseidonPv poseidonM :=
+  { render_eq := poseidon_render_eq
     lines_literal := poseidon_lines_literal
     table_eq := poseidon_constTable }
 
