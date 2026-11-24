@@ -1,20 +1,32 @@
 # STATUS - midfall
 
-**As of:** `35544b4d` + final-assembly merge (2026-11-24). **Quick gate GREEN at `35544b4d`**; the
-last full gate is `7e1e7a29` (`verify.sh: ok (full)`, KAT 1648/119) and a final full gate is owed.
+**As of:** `33ec8c23` (2026-11-24). **Full gate GREEN** (`verify.sh: ok (full)`); register
+**90 rows / 14 ROOT**, 0 REFUTED, 1 legacy VACUOUS; closure **5253 declarations / 620 external
+leaves / digest `25e18768ad636231`**; KAT pin **1652 gates / 121 files**. `lake build Midfall` is
+green across 277 reachable modules. Lag statement 10 (`batchInvertCallSegment_of_summary`) and
+the poison lagrange units (`lagBlockPoisonContract_of_fits_zero`,
+`lag_poison_walk_of_fits_zero`) are now proved; the lag clean rows still need the parser-side
+`tp_agrees`/`lag_agrees` facts, `PG-LAG-FITS`, and a lagrange inner existence run.
+
 The final assembly moved `block_live` and `totalV3_correct` to
 `Midfall/LoweringV3/BlockLive.lean` with a seven-block case table: three cases are closed
 (`vkLoading`, `finalPairing`, `traceReturn`) and the four open inputs are
 `block_live_case_transcriptParser`, `block_live_case_lagrange`, `block_live_case_quotientLin`,
 `block_live_case_pcs`. The generic claim surface is `Midfall/LoweringV3/FinalClaims.lean`; the
 F1-real `DoneAt` stays in `Midfall/Instances/GeneratorDoneAt.lean` with its index in
-`Instances/FinalClaimsF1.lean`. Register after this merge is regenerated in `SORRY.md`; the
-remaining CERT leaves are unchanged. The targeted
-`lake build Midfall.LoweringV3.BlockLive Midfall` is green.
+`Instances/FinalClaimsF1.lean`.
 
 **CERT leaves closed since the prior status:** `prog_transcriptFloor` (CERT.4, from the generated
 layout), `supported_layout` (CERT.4, from `validateGeneratorInvariants` + `MemoryMap.validate`
 implies `WellFormed`), and `v3_pins_of_valid` (CERT.6, from `ValidV3`/`GeneratedBy`).
+
+**Moonlight artifact status:** the tracked Sepolia Moonlight VK/verifier source and fetched
+runtime are internally byte-exact (`scripts/check_moonlight_artifacts.py`); the deployed source is
+a superseded-generator artifact and does **not** byte-match the current Lean render. The current
+generator’s accumulator/batched-pairing partials match the current IVC decider dump
+(`IvcPartialKats`, 7/7). The seven-partial probe at the deployed Moonlight context and the exact
+line diffs are in `docs/MOONLIGHT-ARTIFACT.md` and `docs/MOONLIGHT-PARTIAL-DIFFS.md`; a fresh
+Moonlight render still needs its `vk.json`/`cs.json` and a dump hook.
 
 ## 1. Verified - PROGRESS
 
@@ -271,6 +283,26 @@ for `prog_programFits`; not a row/root hypothesis.
 `BUILD_ID` input line; raw `ArtifactEq` at the tracked dump is refuted only by that line
 (machine-checked). The positive gates and VK byte-exactness are proved at the model with the input.
 
+**D-GATE18 (signed, 2026-11-24)**: `VerifyingKey.WellFormed` gains
+`advicePhaseColumnOrder : vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph) =
+List.range vk.cs.numAdviceColumns`. `advicePhaseTotal` only fixes the phase vector's LENGTH;
+the parser's advice block is phase-indexed while the trace's advice commitments are
+column-indexed (`scatterIndexed`), so the phase-to-column order is a separate decidable
+key-side clause. It is not a row, bundle or `ValidV3` field; `advicePhaseTotal_not_columnOrder`
+is the falsifier showing it is not derivable from the old fields. `AdvicePhasesColumnOrder`
+is now a theorem of `WellFormed` (`advicePhaseColumnOrder_of_wellFormed`), so the closed
+`tp` consumer takes only the calldata bound.
+
+**D-GATE19 (decision, 2026-11-24)**: the calldata predicate needed for `hnum`
+(`R.cfg.numInstances < 2^31`) is `cd.size < 2^36` (`numInstances_lt_of_cd_size`: `Decoded`
+fixes `cd.size = proofEnd + 32 + 32 * numInstances`). It is exposed at the consumer
+`tp_agrees_of_valid_closed_cdSize`, NOT added to `EntryFrameV3`/`Frame`/`TpPost` or `ValidV3`:
+`tp_agrees` has no entry-frame parameter, and adding the bound to `Frame` would be a bundle
+field. `EntryFrameV3.cdSize` remains the existing `< 2^256` length bound; adding `< 2^36`
+there would not reach `TpPost`. The exact minimal alternative is therefore the single
+consumer predicate `cd.size < 2^36` (or, if the entry frame must carry it, a `Frame.cdSize36`
+field, which is the bundle change this decision declines).
+
 **D-GATE15 (signed, 2026-11-23)**: `WellFormed` gains the `readAlgebra` totality bundle: fixed
 insert bound (`fixedQueries.size ≤ numFixedColumns` + simple-selector coverage), rotation-not-`i32::MIN`,
 and the instance slice-window bound. VK sanity clauses, not row/root hypotheses.
@@ -440,6 +472,15 @@ facts to `block_live` (forbidden: it weakens the statement). The residual is the
 PCS/lagrange low-level contracts (`PcsBlock4.pcsBlock_contract`, `LagrangeBlock`'s
 `LagInnerContract`/`LagBlockContract` definitions) sit below the row and do not by themselves state
 `BlockLive`; no `block_live_lagrange`/`block_live_pcs_running` theorem exists to wire today.
+
+**Closure attempt (2026-11-24): all four remain open, no statement weakened.** The three
+requested routes were measured in `docs/BLOCKLIVE-RESIDUAL.md`: (1) `hacc` is not derivable from
+`StageInv` at any of the four pre-checkpoints (`LeanRaw` is `envelopeOk`/`rawDecode.isSome`; a
+`Decoded` can still fail at `liftRaw`, and `CompleteSide` is independent); (2) `BlockSim` is
+forall-only and its normal-poisoned arm is not the `StageInv` post for TP/lagrange/quotient (only
+PCS's `Mid` post absorbs it), while the PCS `blockSim` lives above `BlockLive` in `Rows`; (3) the
+PCS/lagrange low-level contracts are forall-only sub-block contracts, and `LagBlockContract` is a
+definition, not a theorem. Exact per-case residuals are tabulated in that file.
 
 ### Final claim surface - generic vs F1-real
 

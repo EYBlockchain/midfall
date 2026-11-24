@@ -228,6 +228,12 @@ import Midfall.LoweringV3.VkClean
 import Midfall.LoweringV3.GeneratorTheorem
 import Midfall.LoweringV3.FinalClaims
 import Midfall.Generator.Certified
+import Midfall.Generator.CertScan
+import Midfall.Generator.CertScanPcs
+import Midfall.Generator.ConstText
+import Midfall.Generator.ConstTextResidual
+import Midfall.Generator.MoonlightPartialKats
+import Midfall.Instances.ConstsCert6
 import Midfall.LoweringV3.EndToEnd
 import Midfall.LoweringV3.EndToEndAlgebra
 import Midfall.LoweringV3.KzgQueryMap

@@ -4163,6 +4163,236 @@ theorem parseTraceSchedule {G₁ G₂ Gₜ : Type}
     ParseTraceSchedule R :=
   parseTraceSchedule_of_advicePhase R hR (advicePhaseCountFit_of_wellFormed R.vk hR.supported.wf)
 
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+
+variable {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem lookupChunkNum_sum_eq_of_chunkedOf (deg k : Nat) :
+    ∀ (l : List (LogupBatchedArgument (Fr p))) (cl : List (LogupChunkedArgument (Fr p))),
+      chunkedOf deg l = some cl →
+      (l.map (fun x => TranscriptRows.lookupChunkNum deg x + k)).sum
+        = (cl.map (fun c => c.numChunks + k)).sum := by
+  intro l
+  induction l with
+  | nil =>
+      intro cl h
+      simp [chunkedOf] at h
+      cases h
+      rfl
+  | cons a as ih =>
+      intro cl h
+      unfold chunkedOf at h
+      simp only [List.mapM_cons] at h
+      cases ha : (a.chunkByDegree deg).toOption with
+      | none => simp [ha] at h
+      | some c =>
+          simp only [ha, Option.bind_some] at h
+          cases hrest : List.mapM (fun x => (x.chunkByDegree deg).toOption) as with
+          | none => simp [hrest] at h
+          | some cl0 =>
+              rw [hrest] at h
+              simp only [Option.pure_def, Option.bind_some] at h
+              injection h with h
+              subst h
+              simp only [List.map_cons, List.sum_cons]
+              have hok : a.chunkByDegree deg = .ok c := by
+                cases h : a.chunkByDegree deg with
+                | ok c' =>
+                    rw [h] at ha
+                    simp only [Except.toOption, Option.some.injEq] at ha
+                    subst ha
+                    rfl
+                | error e =>
+                    rw [h] at ha
+                    change none = some c at ha
+                    cases ha
+              have hc : c.numChunks = TranscriptRows.lookupChunkNum deg a :=
+                TranscriptRows.chunkNum_eq deg a c hok
+              rw [hc, ih cl0 hrest]
+
+
+
+
+theorem protocol_evalPlanFields {F : Type} (feat : Features) (cs : ConstraintSystem F)
+    (nb : Nat) {plan : ProtocolPlan}
+    (h : ProtocolPlan.fromConstraintSystem feat cs nb = .ok plan) :
+    plan.instanceQueries = cs.instanceQueries.toList.map
+        (fun q => QueryKey.new q.1.index q.2.int) ∧
+    plan.numCommittedInstances = nb ∧
+    plan.adviceQueries = cs.adviceQueries.toList.map
+        (fun q => QueryKey.new q.1.index q.2.int) ∧
+    plan.numFixeds = cs.numFixedColumns ∧
+    plan.simpleSelectorCols = (List.range cs.numFixedColumns).filter
+        (fun idx => cs.hasSimpleSelectorCol idx) ∧
+    plan.numSimpleSelectors = cs.numSimpleSelectors ∧
+    plan.permutationColumns = cs.permutation.getColumns.toList ∧
+    plan.validate = .ok () := by
+  unfold ProtocolPlan.fromConstraintSystem at h
+  simp only [Bind.bind] at h
+  obtain ⟨csDegree, _hdeg, h1⟩ := AlgebraWidths.except_bind_ok h
+  obtain ⟨lookupChunks, _hlu, h2⟩ := AlgebraWidths.except_bind_ok h1
+  obtain ⟨_x1, _hr1, h3⟩ := AlgebraWidths.except_bind_ok h2
+  obtain ⟨_x2, _hr2, h4⟩ := AlgebraWidths.except_bind_ok h3
+  obtain ⟨_bl, _hbl, h5⟩ := AlgebraWidths.except_bind_ok h4
+  split at h5
+  · rename_i hfix
+    split at h5
+    · rename_i hval
+      cases h5
+      refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_⟩
+      simpa using hval
+    · cases h5
+  · cases h5
+
+
+
+
+set_option maxHeartbeats 4000000 in
+theorem planPrefixG1_eq (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count
+      = TranscriptRows.planPrefixG1Count R := by
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hL, _hc1, _hc2, _hc3,
+    _hc4, _hc5, _hc6, _hc7, _hc8, _hup, _huser, _hnInst, _htrunc, _hnLook, _hnPerm,
+    _hnTrash, _hLH⟩ := TranscriptRows.tp_planFacts (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ) hR
+  have facts := TranscriptRows.tp_fromProtocol hL
+  have hcounts := protocol_parseCounts (p := p) R.vk hR.supported.wf
+    (plan_protocol_fromConstraintSystem R hR)
+  rw [hmeta] at hcounts
+  obtain ⟨hLook, ⟨cl, hcl, hChunks⟩, hPerm, hTrash, hQuot, hAdvSum⟩ := hcounts
+  have eA : adviceReadCount R.vk.cs 1
+      = Midfall.Lowering.sumNat (L.advicePhases.map (fun s => s.itemCount)) := by
+    rw [advicePhaseCountFit_of_wellFormed R.vk hR.supported.wf, ← hAdvSum, ← facts.adviceSum]
+  have eM : R.vk.cs.lookups.size = L.lookupMultiplicities.itemCount := by
+    rw [facts.lookupM, hLook]
+  have eP : Permutation.numChunksOf R.vk.cs.permutation.columns.size
+        (R.vk.csDegree - 2) = L.permutationProducts.itemCount := by
+    rw [facts.permZ, hPerm]
+  have eT : R.vk.cs.trashcans.size = L.trash.itemCount := by
+    rw [facts.trash, hTrash]
+  have eQ : readAlgebraQuotientCount Features.solidity R.vk
+      = L.quotientLimbs.itemCount := by
+    rw [facts.quotient, hQuot]
+  have eS : lookupCommitReadCount R.vk.csDegree R.vk.cs.lookups.toList
+      = Midfall.Lowering.sumNat (L.lookups.map (fun lk =>
+          lk.helpers.itemCount + lk.accumulator.itemCount)) := by
+    rw [facts.lookupSum, hChunks]
+    have hmap := zip_range_snd_map (cl.map LogupChunkedArgument.numChunks)
+      (fun c => c + 1)
+    rw [hmap, List.map_map]
+    unfold lookupCommitReadCount
+    rw [hcl]
+    simp only [Option.getD_some]
+    exact (sumNat_eq_sum _).symm
+  have eA' : adviceReadCount R.vk.cs 1
+      = (R.vk.cs.phases.map (fun ph =>
+          (TranscriptRows.phaseCols R.vk.cs ph).length)).sum := by
+    simp [adviceReadCount, TranscriptRows.phaseCols, advicePhaseCols]
+  have eS' : lookupCommitReadCount R.vk.csDegree R.vk.cs.lookups.toList
+      = (R.vk.cs.lookups.toList.map (fun l =>
+          TranscriptRows.lookupChunkNum R.vk.csDegree l + 1)).sum := by
+    unfold lookupCommitReadCount
+    rw [hcl]
+    simp only [Option.getD_some]
+    exact (lookupChunkNum_sum_eq_of_chunkedOf (p := p) R.vk.csDegree 1
+      R.vk.cs.lookups.toList cl hcl).symm
+  have hprefix : (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).prefixG1Count = L.commitmentG1Count := by
+    rw [hlay]
+    show (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).g1Groups.foldl
+      (fun acc n => acc + n) 0 = L.commitmentG1Count
+    rw [show (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout L).g1Groups
+      = L.commitmentReadGroups from rfl]
+    exact Midfall.Lowering.sum_commitmentReadGroups L
+  rw [hprefix]
+  unfold ProofCalldataLayout.commitmentG1Count ProofCalldataLayout.nonQuotientG1Count
+  dsimp only
+  unfold TranscriptRows.planPrefixG1Count
+  change Midfall.Lowering.sumNat (L.advicePhases.map (fun s => s.itemCount))
+      + L.lookupMultiplicities.itemCount + L.permutationProducts.itemCount
+      + Midfall.Lowering.sumNat (L.lookups.map (fun lk =>
+          lk.helpers.itemCount + lk.accumulator.itemCount))
+      + L.trash.itemCount + L.quotientLimbs.itemCount =
+    (List.map (fun ph => (TranscriptRows.phaseCols R.vk.cs ph).length) R.vk.cs.phases).sum
+      + R.vk.cs.lookups.size
+      + Permutation.numChunksOf R.vk.cs.permutation.columns.size (R.vk.csDegree - 2)
+      + (List.map (fun l => TranscriptRows.lookupChunkNum R.vk.csDegree l + 1)
+          R.vk.cs.lookups.toList).sum
+      + R.vk.cs.trashcans.size
+      + (if Features.solidity.outerSingleHCommitment = true then 1
+          else R.vk.domain.getQuotientPolyDegree)
+  rw [← eA, ← eM, ← eP, ← eS, ← eT, ← eQ, eA', eS']
+  rfl
+
+
+
+
+set_option maxHeartbeats 4000000 in
+theorem planNumEvals_eq (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (inst : Array (Fr p)) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals
+      = TranscriptRows.planNumEvals R inst := by
+  rw [plan_numEvals_eq_protocol R hR]
+  change R.plan.meta_.protocol.proof.evals.length = TranscriptRows.planNumEvals R inst
+  have hplan := plan_protocol_fromConstraintSystem R hR
+  rw [fromConstraintSystem_evals_length Features.solidity R.vk.cs 1 hplan]
+  obtain ⟨hInstQ, hNCI, hAdvQ, hNumFix, hSimpleCols, hNumSimple, hPermCols, hValid⟩ :=
+    protocol_evalPlanFields Features.solidity R.vk.cs 1 hplan
+  obtain ⟨hLook, ⟨cl, hcl, hChunks⟩, hPerm, hTrash, hQuot, hAdvSum⟩ :=
+    protocol_parseCounts (p := p) R.vk hR.supported.wf hplan
+  have hSimpleLen : R.plan.meta_.protocol.simpleSelectorCols.length
+      = R.vk.cs.numSimpleSelectors := by
+    rw [← validate_numSimpleSelectors hValid, hNumSimple]
+  rw [hInstQ, hNCI, hAdvQ, hNumFix, hSimpleLen, hPermCols, hPerm, hChunks, hTrash]
+  unfold TranscriptRows.planNumEvals
+  simp only [List.map_map, Function.comp_def]
+  rw [filter_map_index_length]
+  rw [← lookupChunkNum_sum_eq_of_chunkedOf (p := p) R.vk.csDegree 3
+    R.vk.cs.lookups.toList cl hcl]
+  simp only [Midfall.Halo2.PermutationArgument.getColumns, Array.length_toList]
+  rw [← hR.supported.wf.permutationCommitmentsMatch]
+  simp [instanceShape]
+
+/-- **`PlanReadCounts` FOR THE GENERATED PLAN.** The parse half is
+    `planPrefixG1_eq` (the `protocol_parseCounts` group identifications plus the
+    `fromProtocol` layout peel); the eval half is `planNumEvals_eq`
+    (`fromConstraintSystem_evals_length` plus the same peel). No count premise is
+    assumed. -/
+theorem planReadCounts_of_valid (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) : TranscriptRows.PlanReadCounts R :=
+  ⟨planPrefixG1_eq R hR, fun inst => planNumEvals_eq R hR inst⟩
+
+/-- **`XcriptAlgebraRun` FROM `ValidV3`.** The schedule is `planReadCounts_of_valid`;
+    the only remaining runtime input is `hnum`. -/
+theorem xcriptAlgebraRun_of_valid (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (cd : Bytes)
+    (hnum : R.cfg.numInstances < 2 ^ 31) :
+    TranscriptRows.XcriptAlgebraRun R H cd :=
+  TranscriptRows.xcriptAlgebraRun_of_planReadCounts R hR hcodec H cd
+    (planReadCounts_of_valid R hR) hnum
+
+/-- **THE FIXED `tp_agrees` ROW, WITH ITS TWO REMAINING NAMED INPUTS.** This is the
+    fixed row's conclusion from `ValidV3`, the schedule (now proved), the calldata
+    bound `hnum` and Calldata's `XcriptG1`. The fixed `tp_agrees` itself keeps its
+    original statement (no `hnum`/`XcriptG1` parameters) and is not weakened; this is
+    its schedule-carrying consumer. -/
+theorem tp_agrees_of_valid (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (hpost : TranscriptRows.TpPost R H vkAddr cd V st)
+    (hnum : R.cfg.numInstances < 2 ^ 31)
+    (hG1 : TranscriptRows.XcriptG1 R H cd st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st :=
+  TranscriptRows.tp_agrees_of_planReadCounts R hR hcodec H vkAddr cd V st hpost
+    (planReadCounts_of_valid R hR) hnum hG1
+
+
 /-- **THE KZG RESIDUAL, REPAIRED (D-GATE10), AT `linearize`'S QUERY VECTOR.**
     `multiPrepare` appends `[g1]`, one scalar per quotient-opening point set, `[g1]`;
     the count is the plan's `numPointSets`. The OLD `∀ queries` form is FALSE at
@@ -5253,5 +5483,897 @@ open Midfall.Tools.Done in
 
 end Composition
 
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+set_option maxHeartbeats 2000000 in
+theorem xcript_advice_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (QAdv : List G₁)
+    (hAdv : QAdv.length =
+      (R.vk.cs.phases.map (fun ph => (TranscriptRows.phaseCols R.vk.cs ph).length)).sum) :
+    QAdv.length =
+      Midfall.Lowering.sumNat (R.plan.proofLayout.advicePhases.map (fun s => s.itemCount)) := by
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hL, _hprot, _hLook, _hChunks,
+    _hPerm, _hTrash, _hQuot, _hAdv, _hChall, _hUP, _hUser, _hInst, _hTrunc, _hLookM,
+    _hPermM, _hTrashM, _hLH⟩ := TranscriptRows.tp_planFacts hR
+  subst hmeta
+  subst hlay
+  have hfacts := TranscriptRows.tp_fromProtocol hL
+  have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
+  have hcounts := protocol_parseCounts (p := p) R.vk hf
+    (plan_protocol_fromConstraintSystem R hR)
+  have hphase := advicePhaseCountFit_of_wellFormed R.vk hf
+  have hsum := hfacts.adviceSum
+  have hAdv' : (R.vk.cs.phases.map (fun ph => (TranscriptRows.phaseCols R.vk.cs ph).length)).sum =
+      adviceReadCount R.vk.cs 1 := by
+    simp [adviceReadCount, TranscriptRows.phaseCols, advicePhaseCols, Nat.one_mul]
+  rw [hAdv, hAdv', hphase]
+  exact (hsum.trans hcounts.2.2.2.2.2).symm
+
+set_option maxHeartbeats 2000000 in
+theorem xcript_quotient_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (Qg : List G₁)
+    (hQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else R.vk.domain.getQuotientPolyDegree)) :
+    Qg.length = R.plan.proofLayout.quotientLimbs.itemCount := by
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hL, _hprot, _hLook, _hChunks,
+    _hPerm, _hTrash, _hQuot, _hAdv, _hChall, _hUP, _hUser, _hInst, _hTrunc, _hLookM,
+    _hPermM, _hTrashM, _hLH⟩ := TranscriptRows.tp_planFacts hR
+  subst hmeta
+  subst hlay
+  have hfacts := TranscriptRows.tp_fromProtocol hL
+  have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
+  have hcounts := protocol_parseCounts (p := p) R.vk hf
+    (plan_protocol_fromConstraintSystem R hR)
+  rw [hQ, hfacts.quotient, hcounts.2.2.2.2.1]
+  rfl
+
+set_option maxHeartbeats 2000000 in
+theorem xcript_qs_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Render p G₁ G₂ Gₜ) (qs : List (Fr p)) (hQs : qs.length = R.nSets) :
+    qs.length = R.plan.proofLayout.qEvals.itemCount := by
+  rw [hQs]
+  rfl
+
+
+theorem xcript_prefix_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (Qg : List G₁)
+    (hQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else R.vk.domain.getQuotientPolyDegree)) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).prefixG1Count =
+      R.plan.proofLayout.nonQuotientG1Count + Qg.length := by
+  rw [Midfall.Lowering.sum_commitmentReadGroups R.plan.proofLayout,
+    ProofCalldataLayout.commitmentG1Count, xcript_quotient_count R hR Qg hQ]
+
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem xcript_evals_count (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (QEv : List (Fr p)) (hEv : QEv.length =
+      (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals) :
+    QEv.length = R.plan.proofLayout.evals.itemCount := by
+  rw [hEv]
+  rfl
+
+theorem xcript_evals_count_of_decoded (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    {cd : Bytes} {ms : List (Msg (Fr p) G₁)} {instW : Array Word256}
+    {inst : Array (Fr p)} (hdec : Decoded R cd ms instW inst) :
+    ∃ QEv : List (Fr p), QEv.length = R.plan.proofLayout.evals.itemCount := by
+  obtain ⟨QPre, QEv, fCom, qs, pi, _hms, _hPre, hEv, _hQs⟩ :=
+    TranscriptRows.decoded_ms_split R hdec
+  exact ⟨QEv, xcript_evals_count R QEv hEv⟩
+
+theorem foldl_byteLen_eq_sumNat (l : List ProofSection) :
+    l.foldl (fun a s => a + s.byteLen) 0 =
+      Midfall.Lowering.sumNat (l.map (fun s : ProofSection => s.byteLen)) := by
+  rw [show Midfall.Lowering.sumNat (l.map (fun s : ProofSection => s.byteLen)) =
+      (l.map (fun s : ProofSection => s.byteLen)).foldl (fun a b => a + b) 0 from rfl]
+  rw [List.foldl_map]
+
+/-- The four `MirrorAt` windows at the schedule's block lengths and the
+    `fromProtocol` cursor starts. -/
+structure XcriptSectionWindows (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (QAdv Qg : List G₁) : Prop where
+  adviceLen : R.plan.proofLayout.advicePhases.foldl (fun a s => a + s.byteLen) 0 =
+    g1EipWidth * QAdv.length
+  quotientStart : R.plan.proofLayout.quotientLimbs.start =
+    R.plan.proofLayout.quotientCommCptr
+  quotientLen : R.plan.proofLayout.quotientLimbs.byteLen =
+    g1EipWidth * Qg.length
+  fComStart : R.plan.proofLayout.fCom.start = R.plan.proofLayout.wCptr
+  fComLen : R.plan.proofLayout.fCom.byteLen = g1EipWidth
+  piStart : R.plan.proofLayout.pi.start =
+    R.plan.proofLayout.qEvalCptr + R.plan.proofLayout.qEvals.byteLen
+  piLen : R.plan.proofLayout.pi.byteLen = g1EipWidth
+  quotientComm : R.plan.proofLayout.quotientCommCptr =
+    R.plan.proofLayout.proofCptr + g1EipWidth * R.plan.proofLayout.nonQuotientG1Count
+  qEvalsStart : R.plan.proofLayout.qEvals.start = R.plan.proofLayout.qEvalCptr
+
+set_option maxHeartbeats 4000000 in
+theorem xcriptSectionWindows_of_valid (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) {QAdv Qg : List G₁}
+    (hAdv : QAdv.length =
+      (R.vk.cs.phases.map (fun ph => (TranscriptRows.phaseCols R.vk.cs ph).length)).sum)
+    (hQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else R.vk.domain.getQuotientPolyDegree)) :
+    XcriptSectionWindows R QAdv Qg := by
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hLay, _hc1, _hc2, _hc3,
+    _hc4, _hc5, _hc6, _hc7, _hc8, _hup, _huser, _hnInst, _htrunc, _hnLook, _hnPerm,
+    _hnTrash, _hLH⟩ := TranscriptRows.tp_planFacts (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ) hR
+  have facts := TranscriptRows.tp_fromProtocol hLay
+  have starts := TranscriptRows.fromProtocol_starts meta_.protocol meta_.numEvals
+    meta_.numPointSets hLay
+  obtain ⟨hQStart, _hEvalCptr, _hEvStart, _hW, hFStart, _hQEvalCptr, hQEvalsStart,
+    hPiStart, hFByte, hPiByte, _hFCount, _hPiCount⟩ := starts
+  have hQComm := TranscriptRows.fromProtocol_quotientComm meta_.protocol meta_.numEvals
+    meta_.numPointSets hLay
+  have hAdvCount := xcript_advice_count R hR QAdv hAdv
+  have hQCount := xcript_quotient_count R hR Qg hQ
+  have hAdvFL : QAdv.length =
+      Midfall.Lowering.sumNat (L.advicePhases.map (fun s : ProofSection => s.itemCount)) := by
+    simpa [hlay] using hAdvCount
+  have hQFL : Qg.length = L.quotientLimbs.itemCount := by
+    simpa [hlay] using hQCount
+  have hAdvL : L.advicePhases.foldl (fun a s => a + s.byteLen) 0 =
+      g1EipWidth * QAdv.length := by
+    rw [foldl_byteLen_eq_sumNat]
+    have hmap : L.advicePhases.map (fun s : ProofSection => s.byteLen) =
+        L.advicePhases.map (fun s : ProofSection => s.itemCount * Midfall.Generator.g1Bytes) := by
+      apply List.map_congr_left
+      intro s hs
+      exact facts.adviceByteLen s hs
+    rw [hmap]
+    calc
+      Midfall.Lowering.sumNat (L.advicePhases.map (fun s : ProofSection => s.itemCount * Midfall.Generator.g1Bytes))
+          = Midfall.Lowering.sumNat
+              ((L.advicePhases.map (fun s : ProofSection => s.itemCount)).map (fun c => c * Midfall.Generator.g1Bytes)) := by
+            rw [List.map_map]; rfl
+      _ = Midfall.Generator.g1Bytes * Midfall.Lowering.sumNat
+              (L.advicePhases.map (fun s : ProofSection => s.itemCount)) :=
+            Midfall.Lowering.sumNat_map_mul Midfall.Generator.g1Bytes _
+      _ = Midfall.Generator.g1Bytes * QAdv.length := by rw [← hAdvFL]
+      _ = g1EipWidth * QAdv.length := by rw [show Midfall.Generator.g1Bytes = g1EipWidth from rfl]
+  have hQuotL : L.quotientLimbs.byteLen = g1EipWidth * Qg.length := by
+    rw [facts.quotientByte, ← facts.quotient, ← hQFL,
+      show Midfall.Generator.g1Bytes = g1EipWidth from rfl, Nat.mul_comm]
+  have hgb : Midfall.Generator.g1Bytes = g1EipWidth := rfl
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · simpa [hlay, hgb] using hAdvL
+  · simpa [hlay, hgb] using hQStart
+  · simpa [hlay, hgb] using hQuotL
+  · simpa [hlay, hgb] using hFStart
+  · simpa [hlay, hgb] using hFByte
+  · simpa [hlay, hgb] using hPiStart
+  · simpa [hlay, hgb] using hPiByte
+  · simpa [hlay, hgb] using hQComm
+  · simpa [hlay, hgb] using hQEvalsStart
+
+theorem xcriptSectionWindows_of_schedule (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (H : Hash) (cd : Bytes) (hR : ValidV3 R)
+    (hs : TranscriptRows.XcriptSchedule R H cd)
+    {ms : List (Msg (Fr p) G₁)} {instW : Array Word256} {inst : Array (Fr p)}
+    (hdec : Decoded R cd ms instW inst) :
+    ∃ QAdv Qg : List G₁, XcriptSectionWindows R QAdv Qg := by
+  obtain ⟨QAdv, QMult, QPerm, QLook, QTrash, Qg, Qi, Qa, Qf, Qc, Qp, Ql, Qt, qs,
+    fCom, pi, _hms, hAdv, _hMult, _hPerm, _hLook, _hTrash, hQ, _hI, _hA, _hF, _hC,
+    _hP, _hL, _hT, _hQs⟩ := hs ms instW inst hdec
+  exact ⟨QAdv, Qg, xcriptSectionWindows_of_valid R hR hAdv hQ⟩
+
+theorem xcriptMirrorAt_windows (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    {QAdv Qg : List G₁} (hsec : XcriptSectionWindows R QAdv Qg)
+    {st : YulSemantics.EVM.EvmState} {cd : Bytes}
+    (hm : Midfall.LoweringV2.MirrorAt R cd st) :
+    bytesAt st (ptrAddr R.pv.memory.adviceCommsMptrBase)
+        (g1EipWidth * QAdv.length) =
+      cdSlice cd R.pv.proofLayout.proofCptr (g1EipWidth * QAdv.length) ∧
+    bytesAt st (ptrAddr R.pv.memory.quotientLimbCommsMptrBase)
+        (g1EipWidth * Qg.length) =
+      cdSlice cd R.pv.proofLayout.quotientCommCptr (g1EipWidth * Qg.length) ∧
+    bytesAt st (ptrAddr R.pv.memory.fComMptr) g1EipWidth =
+      cdSlice cd R.pv.proofLayout.wCptr g1EipWidth ∧
+    bytesAt st (ptrAddr R.pv.memory.piMptr) g1EipWidth =
+      cdSlice cd (R.pv.proofLayout.qEvalCptr + R.pv.proofLayout.qEvals.byteLen)
+        g1EipWidth := by
+  obtain ⟨hAdv, hQStart, hQLen, hFStart, hFLen, hPStart, hPLen, _hQComm, _hQE⟩ := hsec
+  have hpv : R.pv.proofLayout = R.plan.proofLayout := rfl
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · simpa [Midfall.LoweringV2.mirrorsSection, hpv, ← hAdv] using hm.advice
+  · simpa [Midfall.LoweringV2.mirrorsSection, hpv, ← hQStart, ← hQLen] using hm.quotientLimbs
+  · simpa [Midfall.LoweringV2.mirrorsSection, hpv, ← hFStart, ← hFLen] using hm.fCom
+  · simpa [Midfall.LoweringV2.mirrorsSection, hpv, ← hPStart, ← hPLen] using hm.pi
+
+#assert_axioms Midfall.LoweringV3.xcript_advice_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.xcript_quotient_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.xcript_prefix_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.xcript_qs_count [propext, Classical.choice, Quot.sound] native []
+
+#check @Midfall.LoweringV3.planReadCounts_of_valid
+#check @Midfall.LoweringV3.xcriptAlgebraRun_of_valid
+#check @Midfall.LoweringV3.tp_agrees_of_valid
+
+#assert_axioms Midfall.LoweringV3.lookupChunkNum_sum_eq_of_chunkedOf
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.protocol_evalPlanFields
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.planPrefixG1_eq
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.planNumEvals_eq
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.planReadCounts_of_valid
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.xcriptAlgebraRun_of_valid
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.tp_agrees_of_valid
+  [propext, Classical.choice, Quot.sound]
+set_option maxHeartbeats 8000000 in
+theorem xcriptG1_provenance (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (H : Hash)
+    (cd : Bytes) (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1)
+    {ms : List (Msg (Fr p) G₁)} {instW : Array Word256} {inst : Array (Fr p)}
+    (hdec : Decoded R cd ms instW inst) :
+    ∃ (QAdv QMult QPerm QLook QTrash Qg : List G₁)
+      (Qi Qa Qf Qc Qp Ql Qt qsF : List (Fr p))
+      (QPre : List G₁) (QEv : List (Fr p)) (fComD piD fComF piF : G₁)
+      (qsD : List (Fr p)),
+      ms = (QAdv ++ QMult ++ QPerm ++ QLook ++ QTrash ++ Qg).map
+          (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          ([Msg.g1 fComD] ++
+            (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD]))) ∧
+      ms = QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+          ([Msg.g1 fComD] ++
+            (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD]))) ∧
+      qsD.length = R.nSets ∧
+      QPre.length = (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count ∧
+      QEv.length = (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals ∧
+      QPre = QAdv ++ QMult ++ QPerm ++ QLook ++ QTrash ++ Qg ∧
+      ms = TranscriptRows.xcriptPt QAdv QMult QPerm QLook QTrash ++
+        TranscriptRows.xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt ++
+        TranscriptRows.xcriptTail fComF qsF piF ∧
+      QAdv.length = (R.vk.cs.phases.map (fun ph => (TranscriptRows.phaseCols R.vk.cs ph).length)).sum ∧
+      QMult.length = R.vk.cs.lookups.size ∧
+      QPerm.length = Permutation.numChunksOf R.vk.cs.permutation.columns.size
+        (R.vk.csDegree - 2) ∧
+      QLook.length = (R.vk.cs.lookups.toList.map
+        (fun l => TranscriptRows.lookupChunkNum R.vk.csDegree l + 1)).sum ∧
+      QTrash.length = R.vk.cs.trashcans.size ∧
+      Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+        else R.vk.domain.getQuotientPolyDegree) ∧
+      Qi.length = (instanceShape inst).size *
+        (R.vk.cs.instanceQueries.toList.filter (fun q => decide (q.1.index < 1))).length ∧
+      Qa.length = (instanceShape inst).size * R.vk.cs.adviceQueries.size ∧
+      Qf.length = R.vk.cs.numFixedColumns - R.vk.cs.numSimpleSelectors ∧
+      Qc.length = R.vk.permutation.commitments.size ∧
+      Qp.length = 3 * Permutation.numChunksOf R.vk.cs.permutation.columns.size
+        (R.vk.csDegree - 2) - 1 ∧
+      Ql.length = (R.vk.cs.lookups.toList.map
+        (fun l => TranscriptRows.lookupChunkNum R.vk.csDegree l + 3)).sum ∧
+      Qt.length = R.vk.cs.trashcans.size ∧
+      qsF.length = R.nSets ∧
+      (∀ i < QAdv.length, ∃ (b : Bytes) (Q : G₁),
+        bytesTake cd (R.plan.proofLayout.proofCptr + g1EipWidth * i) g1EipWidth = some b ∧
+          R.E.g1.ofEip? b = some Q ∧ QAdv[i]? = some Q) ∧
+      (∀ j < Qg.length, ∃ (b : Bytes) (Q : G₁),
+        bytesTake cd (R.plan.proofLayout.quotientCommCptr + g1EipWidth * j) g1EipWidth = some b ∧
+          R.E.g1.ofEip? b = some Q ∧ Qg[j]? = some Q) := by
+  have hc := planReadCounts_of_valid R hR
+  obtain ⟨QAdv, QMult, QPerm, QLook, QTrash, Qg, Qi, Qa, Qf, Qc, Qp, Ql, Qt, qsF,
+    fComF, piF, hmsF, hAdv, hMult, hPerm, hLook, hTrash, hQ, hI, hA, hF, hC, hP, hL,
+    hT, hQs⟩ := TranscriptRows.xcriptSchedule_of_planReadCounts R H cd hc ms instW inst hdec
+  obtain ⟨QPre, QEv, fComD, qsD, piD, hmsD, hPre, hEv, hQsD⟩ :=
+    TranscriptRows.decoded_ms_split R hdec
+  let G1s : List G₁ := QAdv ++ QMult ++ QPerm ++ QLook ++ QTrash ++ Qg
+  have hG1sLen : G1s.length = QPre.length := by
+    rw [hPre, hc.prefixG1]
+    simp [G1s, TranscriptRows.planPrefixG1Count, hAdv, hMult, hPerm, hLook, hTrash, hQ]
+    omega
+  have hmsG : ms = G1s.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      ((Qi ++ Qa ++ Qf ++ Qc ++ Qp ++ Ql ++ Qt).map
+        (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        ([Msg.g1 fComF] ++
+          (qsF.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piF]))) := by
+    rw [hmsF]
+    simp [G1s, TranscriptRows.xcriptPt, TranscriptRows.xcriptRa, TranscriptRows.xcriptTail,
+      List.map_append, List.append_assoc]
+  have hmsD' : ms = QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        ([Msg.g1 fComD] ++
+          (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD]))) := hmsD
+  let restG := (Qi ++ Qa ++ Qf ++ Qc ++ Qp ++ Ql ++ Qt).map
+    (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+    ([Msg.g1 fComF] ++ (qsF.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piF]))
+  have hQPreG : QPre = G1s := by
+    have hmapEq : QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+        G1s.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) := by
+      have hQ : QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          ms.take QPre.length := by
+        rw [hmsD']
+        simpa using List.take_left (l₁ := QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (l₂ := QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            ([Msg.g1 fComD] ++
+              (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD])))
+      have hG : G1s.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) =
+          ms.take G1s.length := by
+        rw [hmsG]
+        simpa using List.take_left (l₁ := G1s.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (l₂ := restG)
+      rw [hQ, hG, hG1sLen]
+    exact (List.map_injective_iff.mpr (fun a b h => by cases h; rfl)) hmapEq
+  have hQPreAdv : QPre = QAdv ++ (QMult ++ QPerm ++ QLook ++ QTrash ++ Qg) := by
+    rw [hQPreG]; simp [G1s, List.append_assoc]
+  let preN : List G₁ := QAdv ++ QMult ++ QPerm ++ QLook ++ QTrash
+  have hQPreN : QPre = preN ++ Qg := by
+    rw [hQPreG]
+  have hAdvCount : QAdv.length =
+      Midfall.Lowering.sumNat (R.plan.proofLayout.advicePhases.map (fun s => s.itemCount)) :=
+    xcript_advice_count R hR QAdv hAdv
+  have hPreNLen : preN.length = R.plan.proofLayout.nonQuotientG1Count := by
+    have hprefix := xcript_prefix_count R hR Qg hQ
+    have hQlen : Qg.length ≤ QPre.length := by rw [hQPreN]; simp
+    have hG1sSplit : G1s.length = preN.length + Qg.length := by
+      simp [G1s, preN, List.append_assoc]
+      omega
+    have hQPreLen : QPre.length =
+        (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count := hPre
+    have : preN.length + Qg.length = R.plan.proofLayout.nonQuotientG1Count + Qg.length := by
+      calc preN.length + Qg.length = G1s.length := hG1sSplit.symm
+        _ = QPre.length := hG1sLen
+        _ = _ := hQPreLen
+        _ = _ := hprefix
+    omega
+  let restSlots : List Midfall.Lowering.WireSlot :=
+    List.replicate (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals
+        Midfall.Lowering.WireSlot.fr ++
+      ([Midfall.Lowering.WireSlot.g1] ++
+        (List.replicate (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets
+            Midfall.Lowering.WireSlot.fr ++ [Midfall.Lowering.WireSlot.g1]))
+  have hslotsPre : (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots =
+      List.replicate QPre.length Midfall.Lowering.WireSlot.g1 ++ restSlots := by
+    rw [hPre]
+    simp only [RepackedProofLayoutPlan.slots, restSlots, List.append_assoc]
+  have hdecode : decodeSlots (p := p) R.E.g1 cd
+      (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots
+      R.plan.proofLayout.proofCptr = some (ms, R.plan.proofLayout.proofEnd) := by
+    obtain ⟨_, _, _, _, _, _, _, _, hds, _⟩ :=
+      Midfall.Lowering.decodeCalldata_facts R.plan.proofLayout R.cfg.numInstances R.E.g1 cd ms instW hdec.1
+    exact hds
+  have hprovAll := TranscriptRows.decodeSlots_g1_provenance_of_prefix
+    (c := R.E.g1) (cd := cd) (pre := QPre) (restSlots := restSlots)
+    (cur := R.plan.proofLayout.proofCptr) (cur' := R.plan.proofLayout.proofEnd)
+    (restMs := QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+      ([Msg.g1 fComD] ++
+        (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD])))
+    (by
+      rw [hslotsPre] at hdecode
+      rw [hmsD'] at hdecode
+      exact hdecode)
+  have hprovAdv : ∀ i < QAdv.length, ∃ (b : Bytes) (Q : G₁),
+      bytesTake cd (R.plan.proofLayout.proofCptr + g1EipWidth * i) g1EipWidth = some b ∧
+        R.E.g1.ofEip? b = some Q ∧ QAdv[i]? = some Q := by
+    intro i hi
+    have hiPre : i < QPre.length := by
+      rw [hQPreAdv]; simp; omega
+    obtain ⟨b, Q, hb, hq, hQidx⟩ := hprovAll i hiPre
+    refine ⟨b, Q, hb, hq, ?_⟩
+    rw [hQPreAdv] at hQidx
+    rw [List.getElem?_append_left hi] at hQidx
+    exact hQidx
+  have hprovQuot : ∀ j < Qg.length, ∃ (b : Bytes) (Q : G₁),
+      bytesTake cd (R.plan.proofLayout.quotientCommCptr + g1EipWidth * j) g1EipWidth = some b ∧
+        R.E.g1.ofEip? b = some Q ∧ Qg[j]? = some Q := by
+    intro j hj
+    have hiPre : preN.length + j < QPre.length := by
+      rw [hQPreN]; simp; omega
+    obtain ⟨b, Q, hb, hq, hQidx⟩ := hprovAll (preN.length + j) hiPre
+    have hqcomm := (xcriptSectionWindows_of_valid R hR hAdv hQ).quotientComm
+    have hcur : R.plan.proofLayout.proofCptr + g1EipWidth * (preN.length + j) =
+        R.plan.proofLayout.quotientCommCptr + g1EipWidth * j := by
+      rw [hqcomm, ← hPreNLen, show g1EipWidth = 128 from rfl]
+      omega
+    refine ⟨b, Q, ?_, hq, ?_⟩
+    · rwa [hcur] at hb
+    · rw [hQPreN] at hQidx
+      rw [List.getElem?_append_right (by omega)] at hQidx
+      simpa using hQidx
+  have hmsCoarseG : ms = G1s.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        ([Msg.g1 fComD] ++
+          (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD]))) := by
+    rwa [hQPreG] at hmsD
+  have hQsD' : qsD.length = R.nSets := by
+    rw [hQsD]
+    rfl
+  exact ⟨QAdv, QMult, QPerm, QLook, QTrash, Qg, Qi, Qa, Qf, Qc, Qp, Ql, Qt, qsF,
+    QPre, QEv, fComD, piD, fComF, piF, qsD, hmsCoarseG, hmsD, hQsD', hPre, hEv,
+    (by rw [hQPreG]), hmsF, hAdv,
+    hMult, hPerm, hLook, hTrash, hQ, hI, hA, hF, hC, hP, hL, hT, hQs, hprovAdv,
+    hprovQuot⟩
+
 end Midfall.LoweringV3
 
+namespace Midfall.LoweringV3
+
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+set_option maxHeartbeats 8000000 in
+theorem xcriptG1_tail_provenance (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (H : Hash)
+    (cd : Bytes) (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1)
+    {ms : List (Msg (Fr p) G₁)} {instW : Array Word256} {inst : Array (Fr p)}
+    (hdec : Decoded R cd ms instW inst)
+    (QPre : List G₁) (QEv : List (Fr p)) (fComD piD : G₁) (qsD : List (Fr p))
+    (hmsD : ms = QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        ([Msg.g1 fComD] ++
+          (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD]))))
+    (hQsD : qsD.length = R.nSets)
+    (hPre : QPre.length =
+      (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count)
+    (hEv : QEv.length =
+      (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals) :
+    ∃ (bF bP : Bytes) (QF QP : G₁),
+      bytesTake cd R.plan.proofLayout.wCptr g1EipWidth = some bF ∧
+        R.E.g1.ofEip? bF = some QF ∧ QF = fComD ∧
+      bytesTake cd (R.plan.proofLayout.qEvalCptr + R.plan.proofLayout.qEvals.byteLen)
+          g1EipWidth = some bP ∧
+        R.E.g1.ofEip? bP = some QP ∧ QP = piD := by
+  have hc := planReadCounts_of_valid R hR
+  obtain ⟨QAdv, QMult, QPerm, QLook, QTrash, Qg, Qi, Qa, Qf, Qc, Qp, Ql, Qt, qsF,
+    fComF, piF, hmsF, hAdv, hMult, hPerm, hLook, hTrash, hQ, hI, hA, hF, hC, hP, hL,
+    hT, hQs⟩ := TranscriptRows.xcriptSchedule_of_planReadCounts R H cd hc ms instW inst hdec
+  have hsec := xcriptSectionWindows_of_valid R hR hAdv hQ
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hLay, _hc1, _hc2, _hc3,
+    _hc4, _hc5, _hc6, _hc7, _hc8, _hup, _huser, _hnInst, _htrunc, _hnLook, _hnPerm,
+    _hnTrash, _hLH⟩ := TranscriptRows.tp_planFacts (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ) hR
+  have facts := TranscriptRows.tp_fromProtocol hLay
+  obtain ⟨_, _, _, _, _, _, _, _, hds, _⟩ :=
+    Midfall.Lowering.decodeCalldata_facts R.plan.proofLayout R.cfg.numInstances R.E.g1 cd ms instW hdec.1
+  let prefixMs : List (Msg (Fr p) G₁) :=
+    QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁))
+  let restD : List (Msg (Fr p) G₁) :=
+    [Msg.g1 fComD] ++ (qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ [Msg.g1 piD])
+  have hmsD' : ms = prefixMs ++ restD := by simpa [prefixMs, restD, List.append_assoc] using hmsD
+  let sF : List Midfall.Lowering.WireSlot :=
+    List.replicate (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count
+        Midfall.Lowering.WireSlot.g1 ++
+      List.replicate (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals
+        Midfall.Lowering.WireSlot.fr
+  let tailF : List Midfall.Lowering.WireSlot :=
+    List.replicate (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets
+        Midfall.Lowering.WireSlot.fr ++ [Midfall.Lowering.WireSlot.g1]
+  let restF : List Midfall.Lowering.WireSlot :=
+    [Midfall.Lowering.WireSlot.g1] ++ tailF
+  have hslotsF : (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots =
+      sF ++ restF := by
+    simp [RepackedProofLayoutPlan.slots, sF, restF, tailF, List.append_assoc]
+  have hsplitF := TranscriptRows.decodeSlots_split sF restF R.plan.proofLayout.proofCptr
+    ms R.plan.proofLayout.proofEnd (by rwa [hslotsF] at hds)
+  obtain ⟨msF, curF, msRest, hF1, hF2, hmsFsplit⟩ := hsplitF
+  have hlenF : msF.length = prefixMs.length := by
+    have hsl := TranscriptRows.decodeSlots_map_slot (p := p) R.E.g1 cd sF
+      R.plan.proofLayout.proofCptr msF curF hF1
+    have hmsl : msF.length = sF.length := by
+      simpa using congrArg List.length hsl
+    rw [hmsl]
+    simp [sF, prefixMs, hPre, hEv, List.length_append]
+  have hmsF_eq : msF = prefixMs := by
+    have htake : msF = ms.take prefixMs.length := by
+      rw [hmsFsplit]
+      simpa [hlenF] using List.take_left (l₁ := msF) (l₂ := msRest)
+    have hpre : prefixMs = ms.take prefixMs.length := by
+      rw [hmsD']
+      exact (List.take_left (l₁ := prefixMs) (l₂ := restD)).symm
+    exact htake.trans hpre.symm
+  have hmsRest : msRest = restD := by
+    have := hmsFsplit
+    rw [hmsF_eq, hmsD'] at this
+    exact (List.append_cancel_left this).symm
+  obtain ⟨bF, QF, ms0, cur0, hgF, hbF, hqF, hrecF, hms0F, hcurF⟩ :=
+    TranscriptRows.decodeSlots_g1_inv tailF curF msRest R.plan.proofLayout.proofEnd hF2
+  have hQF : QF = fComD := by
+    have := hms0F
+    rw [hmsRest] at this
+    have := congrArg (fun l => l.head?) this
+    simpa [restD] using this.symm
+  have hcurFeq : curF = R.plan.proofLayout.wCptr := by
+    have hcur := TranscriptRows.decodeSlots_cursor (c := R.E.g1) (cd := cd) sF
+      R.plan.proofLayout.proofCptr msF curF hF1
+    -- hcur : curF = proofCptr + eipWidthSum sF
+    rw [hcur]
+    have hsum : Midfall.Lowering.eipWidthSum sF =
+        (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count * g1EipWidth +
+          (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals * 32 := by
+      simp [sF, Midfall.Lowering.eipWidthSum_append, TranscriptRows.eipWidthSum_replicate_g1,
+        TranscriptRows.eipWidthSum_replicate_fr]
+    rw [hsum]
+    -- layout arithmetic
+    have hEvByte : R.plan.proofLayout.evals.byteLen =
+        (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals * 32 := by
+      have hev : L.evals.byteLen = L.evals.itemCount * 32 := by
+        simpa [← facts.evals, Midfall.Generator.wordBytes] using facts.evalsByte
+      rw [← hlay] at hev
+      change R.plan.proofLayout.evals.byteLen =
+        R.plan.proofLayout.evals.itemCount * 32
+      exact hev
+    have hQByte : R.plan.proofLayout.quotientLimbs.byteLen = Qg.length * g1EipWidth := by
+      rw [hsec.quotientLen, Nat.mul_comm]
+    have hQComm : R.plan.proofLayout.quotientCommCptr =
+        R.plan.proofLayout.proofCptr + g1EipWidth * R.plan.proofLayout.nonQuotientG1Count :=
+      hsec.quotientComm
+    have hPrefix := xcript_prefix_count R hR Qg hQ
+    have hEvalC : R.plan.proofLayout.evalCptr =
+        R.plan.proofLayout.quotientCommCptr + R.plan.proofLayout.quotientLimbs.byteLen := by
+      simpa [hlay] using (TranscriptRows.fromProtocol_starts meta_.protocol meta_.numEvals
+        meta_.numPointSets hLay).2.1
+    have hW : R.plan.proofLayout.wCptr =
+        R.plan.proofLayout.evalCptr + R.plan.proofLayout.evals.byteLen := by
+      simpa [hlay] using (TranscriptRows.fromProtocol_starts meta_.protocol meta_.numEvals
+        meta_.numPointSets hLay).2.2.2.1
+    rw [hW, hEvalC, hQComm, hQByte, hEvByte, hPrefix, Nat.add_mul]
+    ring
+
+  let prefixPi : List (Msg (Fr p) G₁) :=
+    QPre.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QEv.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+        ([Msg.g1 fComD] ++ qsD.map (fun q => (Msg.fr q : Msg (Fr p) G₁))))
+  let restPiD : List (Msg (Fr p) G₁) := [Msg.g1 piD]
+  have hmsPiD : ms = prefixPi ++ restPiD := by
+    simpa [prefixPi, restPiD, List.append_assoc] using hmsD
+  let sPi : List Midfall.Lowering.WireSlot :=
+    List.replicate (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count
+        Midfall.Lowering.WireSlot.g1 ++
+      List.replicate (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals
+        Midfall.Lowering.WireSlot.fr ++
+      (Midfall.Lowering.WireSlot.g1 ::
+        List.replicate (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets
+          Midfall.Lowering.WireSlot.fr)
+  let restPi : List Midfall.Lowering.WireSlot := [Midfall.Lowering.WireSlot.g1]
+  have hslotsPi : (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots =
+      sPi ++ restPi := by
+    simp [RepackedProofLayoutPlan.slots, sPi, restPi, List.append_assoc]
+  have hsplitPi := TranscriptRows.decodeSlots_split sPi restPi R.plan.proofLayout.proofCptr
+    ms R.plan.proofLayout.proofEnd (by rwa [hslotsPi] at hds)
+  obtain ⟨msPi, curPi, msLast, hPi1, hPi2, hmsPisplit⟩ := hsplitPi
+  have hlenPi : msPi.length = prefixPi.length := by
+    have hsl := TranscriptRows.decodeSlots_map_slot (p := p) R.E.g1 cd sPi
+      R.plan.proofLayout.proofCptr msPi curPi hPi1
+    have hmsl : msPi.length = sPi.length := by
+      simpa using congrArg List.length hsl
+    rw [hmsl]
+    simp [sPi, prefixPi, hPre, hEv, hQsD, List.length_append]
+    have hPN : (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets =
+        qsD.length := by
+      rw [show (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets = R.nSets from rfl]
+      exact hQsD.symm
+    omega
+  have hmsPi_eq : msPi = prefixPi := by
+    have htake : msPi = ms.take prefixPi.length := by
+      rw [hmsPisplit]
+      simpa [hlenPi] using List.take_left (l₁ := msPi) (l₂ := msLast)
+    have hpre : prefixPi = ms.take prefixPi.length := by
+      rw [hmsPiD]
+      exact (List.take_left (l₁ := prefixPi) (l₂ := restPiD)).symm
+    exact htake.trans hpre.symm
+  have hmsLast : msLast = restPiD := by
+    have := hmsPisplit
+    rw [hmsPi_eq, hmsPiD] at this
+    exact (List.append_cancel_left this).symm
+  obtain ⟨bP, QP, ms0P, cur0P, hgP, hbP, hqP, hrecP, hms0P, hcurP⟩ :=
+    TranscriptRows.decodeSlots_g1_inv [] curPi msLast R.plan.proofLayout.proofEnd hPi2
+  have hQP : QP = piD := by
+    have := hms0P
+    rw [hmsLast] at this
+    have := congrArg (fun l => l.head?) this
+    simpa [restPiD] using this.symm
+  have hcurPeq : curPi = R.plan.proofLayout.qEvalCptr + R.plan.proofLayout.qEvals.byteLen := by
+    have hcur := TranscriptRows.decodeSlots_cursor (c := R.E.g1) (cd := cd) sPi
+      R.plan.proofLayout.proofCptr msPi curPi hPi1
+    rw [hcur]
+    have hsum : Midfall.Lowering.eipWidthSum sPi =
+        (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count * g1EipWidth +
+          (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals * 32 + g1EipWidth +
+          (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets * 32 := by
+      simp [sPi, Midfall.Lowering.eipWidthSum_append, Midfall.Lowering.eipWidthSum_cons,
+        Midfall.Lowering.slotEipWidth, TranscriptRows.eipWidthSum_replicate_g1, TranscriptRows.eipWidthSum_replicate_fr]
+      ring
+    rw [hsum]
+    have hEvByte : R.plan.proofLayout.evals.byteLen =
+        (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numEvals * 32 := by
+      have hev : L.evals.byteLen = L.evals.itemCount * 32 := by
+        simpa [← facts.evals, Midfall.Generator.wordBytes] using facts.evalsByte
+      rw [← hlay] at hev
+      change R.plan.proofLayout.evals.byteLen =
+        R.plan.proofLayout.evals.itemCount * 32
+      exact hev
+    have hQByte : R.plan.proofLayout.quotientLimbs.byteLen = Qg.length * g1EipWidth := by
+      rw [hsec.quotientLen, Nat.mul_comm]
+    have hQComm : R.plan.proofLayout.quotientCommCptr =
+        R.plan.proofLayout.proofCptr + g1EipWidth * R.plan.proofLayout.nonQuotientG1Count :=
+      hsec.quotientComm
+    have hPrefix := xcript_prefix_count R hR Qg hQ
+    have hEvalC : R.plan.proofLayout.evalCptr =
+        R.plan.proofLayout.quotientCommCptr + R.plan.proofLayout.quotientLimbs.byteLen := by
+      simpa [hlay] using (TranscriptRows.fromProtocol_starts meta_.protocol meta_.numEvals
+        meta_.numPointSets hLay).2.1
+    have hW : R.plan.proofLayout.wCptr =
+        R.plan.proofLayout.evalCptr + R.plan.proofLayout.evals.byteLen := by
+      simpa [hlay] using (TranscriptRows.fromProtocol_starts meta_.protocol meta_.numEvals
+        meta_.numPointSets hLay).2.2.2.1
+    have hQEvalC : R.plan.proofLayout.qEvalCptr =
+        R.plan.proofLayout.wCptr + R.plan.proofLayout.fCom.byteLen := by
+      simpa [hlay] using (TranscriptRows.fromProtocol_starts meta_.protocol meta_.numEvals
+        meta_.numPointSets hLay).2.2.2.2.2.1
+    have hQEvalsByte : R.plan.proofLayout.qEvals.byteLen = qsD.length * 32 := by
+      have hev : L.qEvals.byteLen = meta_.numPointSets * Midfall.Generator.wordBytes :=
+        facts.qEvalsByte
+      have hcount : meta_.numPointSets = qsD.length := by
+        rw [← facts.qEvals]
+        have hLq : L.qEvals.itemCount =
+            (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets := by
+          rw [← hlay]; rfl
+        rw [hLq, show (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets = R.nSets from rfl, ← hQsD]
+      rw [← hlay] at hev
+      rw [hev, hcount]
+      simp [Midfall.Generator.wordBytes]
+    rw [hQEvalC, hQEvalsByte,
+      show (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).numPointSets = R.nSets from rfl,
+      ← hQsD, hW, hEvalC, hQComm, hQByte, hEvByte, hPrefix, hsec.fComLen, Nat.add_mul]
+    ring
+
+  refine ⟨bF, bP, QF, QP, ?_, hqF, hQF, ?_, hqP, hQP⟩
+  · rwa [hcurFeq] at hbF
+  · rwa [hcurPeq] at hbP
+
+end Midfall.LoweringV3
+
+namespace Midfall.LoweringV3
+
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+set_option maxHeartbeats 16000000 in
+theorem xcriptG1 (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes)
+    (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1)
+    (horder : TranscriptRows.AdvicePhasesColumnOrder R.vk)
+    (hnum : R.cfg.numInstances < 2 ^ 31)
+    {st : YulSemantics.EVM.EvmState} (hm : Midfall.LoweringV2.MirrorAt R cd st)
+    (h : TranscriptRows.XcriptAlgebraRun R H cd) :
+    TranscriptRows.XcriptG1 R H cd st := by
+  intro ms instW inst hdec x hx
+  have hTail := h ms instW inst hdec
+  obtain ⟨QAdv, QMult, QPerm, QLook, QTrash, Qg, Qi, Qa, Qf, Qc, Qp, Ql, Qt, qsF,
+    QPre, QEv, fComD, piD, fComF, piF, qsD, hmsCoarse, hmsD, hQsD, hPre, hEv, hQPreG,
+    hmsFine, hAdv, hMult, hPerm, hLook, hTrash, hQ, hI, hA, hF, hC, hP, hL, hT, hQs,
+    hprovAdv, hprovQuot⟩ := xcriptG1_provenance R H cd hR hcodec hdec
+  obtain ⟨bF, bP, QF, QP, hbF, hqF, hQF, hbP, hqP, hQP⟩ :=
+    xcriptG1_tail_provenance R H cd hR hcodec hdec QPre QEv fComD piD qsD hmsD hQsD
+      hPre hEv
+  have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
+  have hnc0 : R.vk.cs.numInstanceColumns = 2 := hR.supported.instShape.1
+  have hinstQ : ∀ q ∈ R.vk.cs.instanceQueries.toList, ¬ q.1.index < 1 → q.1.index = 1 :=
+    fun q hq hge => TranscriptRows.instanceQueries_index_eq_one R.vk hf hnc0 hq hge
+  have hinstSize : inst.size < 2 ^ 31 := by
+    rw [TranscriptRows.decoded_inst_size hdec]
+    exact hnum
+  have hp : p ≤ 2 ^ 256 := by
+    rw [hR.env.modulus]; norm_num [frModulusConstant]
+  have hmsAdv : ms = QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))) ++
+      (TranscriptRows.xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt ++
+        TranscriptRows.xcriptTail fComF qsF piF) := by
+    rw [hmsFine]
+    simp [TranscriptRows.xcriptPt, List.map_append, List.append_assoc]
+  have hAdvVal := TranscriptRows.xcript_advice_value R hR hcodec H horder hTail hx
+    QAdv QMult QPerm QLook QTrash
+    (TranscriptRows.xcriptRa Qg Qi Qa Qf Qc Qp Ql Qt ++
+      TranscriptRows.xcriptTail fComF qsF piF) hmsAdv hAdv hMult hPerm hLook hTrash
+  have hP' : Qp.length = Permutation.numChunksOf R.vk.cs.permutation.columns.size
+      (R.vk.csDegree - 2) * 3 - 1 := by rw [hP, Nat.mul_comm]
+  have hQuotVal := TranscriptRows.xcript_quotient_value R hR hcodec H hTail hx
+    QAdv QMult QPerm QLook QTrash Qg Qi Qa Qf Qc Qp Ql Qt qsF fComF piF hmsFine
+    hAdv hMult hPerm hLook hTrash hQ hI hA hF hC hP' hL hT hinstQ hinstSize
+  have hTailVal := TranscriptRows.xcript_tail_fCom_pi R H hTail hx
+    hcodec.compressedEncoderFirst hcodec.compressedWidth hp hmsD hQsD
+  have hsec := xcriptSectionWindows_of_valid R hR hAdv hQ
+  have hmw := xcriptMirrorAt_windows R hsec hm
+  obtain ⟨hAdvBytes, hQuotBytes, hFComBytes, hPiBytes⟩ := hmw
+  have hprovAdv' : ∀ i (hi : i < QAdv.length), ∃ (b : Bytes) (Q : G₁),
+      bytesTake cd (R.plan.proofLayout.proofCptr + g1EipWidth * i) g1EipWidth = some b ∧
+        R.E.g1.ofEip? b = some Q ∧ QAdv[i]'hi = Q := by
+    intro i hi
+    obtain ⟨b, Q, hb, hq, hQidx⟩ := hprovAdv i hi
+    have hQ : QAdv[i]? = some (QAdv[i]'hi) := List.getElem?_eq_getElem hi
+    have hEQ : Q = QAdv[i]'hi := by
+      rw [hQ] at hQidx
+      exact (Option.some.inj hQidx).symm
+    exact ⟨b, Q, hb, hq, hEQ.symm⟩
+  have hprovQuot' : ∀ j (hj : j < Qg.length), ∃ (b : Bytes) (Q : G₁),
+      bytesTake cd (R.plan.proofLayout.quotientCommCptr + g1EipWidth * j) g1EipWidth = some b ∧
+        R.E.g1.ofEip? b = some Q ∧ Qg[j]'hj = Q := by
+    intro j hj
+    obtain ⟨b, Q, hb, hq, hQidx⟩ := hprovQuot j hj
+    have hQ : Qg[j]? = some (Qg[j]'hj) := List.getElem?_eq_getElem hj
+    have hEQ : Q = Qg[j]'hj := by
+      rw [hQ] at hQidx
+      exact (Option.some.inj hQidx).symm
+    exact ⟨b, Q, hb, hq, hEQ.symm⟩
+  -- bounds from the layout cursor arithmetic
+  obtain ⟨_, _, _, _, _, _, _, hsz, hds, _⟩ :=
+    Midfall.Lowering.decodeCalldata_facts R.plan.proofLayout R.cfg.numInstances R.E.g1 cd ms instW hdec.1
+  have hcurAll := TranscriptRows.decodeSlots_cursor (c := R.E.g1) (cd := cd)
+    (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots
+    R.plan.proofLayout.proofCptr ms R.plan.proofLayout.proofEnd hds
+  have hwidth := Midfall.Lowering.eipWidthSum_slots
+    (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout)
+  have hboundProof : R.plan.proofLayout.proofCptr + g1EipWidth *
+      (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count ≤ cd.size := by
+    rw [hcurAll, hwidth, show g1EipWidth = 128 from rfl] at hsz
+    rw [show g1EipWidth = 128 from rfl]
+    omega
+  have hAdvLe : QAdv.length ≤
+      (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count := by
+    rw [← hPre, hQPreG]
+    simp
+  have hAdvBound : R.plan.proofLayout.proofCptr + g1EipWidth * QAdv.length ≤ cd.size := by
+    have := Nat.mul_le_mul_left g1EipWidth hAdvLe
+    omega
+  have hPrefix := xcript_prefix_count R hR Qg hQ
+  have hQuotBound : R.plan.proofLayout.quotientCommCptr + g1EipWidth * Qg.length ≤ cd.size := by
+    have hEq : R.plan.proofLayout.quotientCommCptr + g1EipWidth * Qg.length =
+        R.plan.proofLayout.proofCptr + g1EipWidth *
+          (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).prefixG1Count := by
+      rw [hsec.quotientComm, hPrefix, Nat.mul_add]
+      ring
+    rw [hEq]
+    exact hboundProof
+  have hprovAdv'' : ∀ i (hi : i < QAdv.length), ∃ b : Bytes,
+      bytesTake cd (R.plan.proofLayout.proofCptr + g1EipWidth * i) g1EipWidth = some b ∧
+        R.E.g1.ofEip? b = some (QAdv[i]'hi) := by
+    intro i hi
+    obtain ⟨b, Q, hb, hq, hQ⟩ := hprovAdv' i hi
+    exact ⟨b, hb, by rw [hQ]; exact hq⟩
+  have hprovQuot'' : ∀ j (hj : j < Qg.length), ∃ b : Bytes,
+      bytesTake cd (R.plan.proofLayout.quotientCommCptr + g1EipWidth * j) g1EipWidth = some b ∧
+        R.E.g1.ofEip? b = some (Qg[j]'hj) := by
+    intro j hj
+    obtain ⟨b, Q, hb, hq, hQ⟩ := hprovQuot' j hj
+    exact ⟨b, hb, by rw [hQ]; exact hq⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · have hAdvHold := TranscriptRows.holdsG1s_section R.E st cd
+      (ptrAddr R.pv.memory.adviceCommsMptrBase) R.plan.proofLayout.proofCptr QAdv
+      hAdvBytes hAdvBound hprovAdv'' hcodec.eipRoundtrip
+    rwa [hAdvVal]
+  · have hQuotHold := TranscriptRows.holdsG1s_section R.E st cd
+      (ptrAddr R.pv.memory.quotientLimbCommsMptrBase) R.plan.proofLayout.quotientCommCptr Qg
+      hQuotBytes hQuotBound hprovQuot'' hcodec.eipRoundtrip
+    have hArr : x.alg.quotientLimbComs = Qg.toArray := Array.toList_inj.mp hQuotVal
+    rwa [hArr]
+  · have hQF' : QF = x.r.fCom := by rw [hQF, ← hTailVal.1]
+    have hbF' : bytesTake cd R.plan.proofLayout.fCom.start g1EipWidth = some bF := by
+      rw [hsec.fComStart]
+      exact hbF
+    exact TranscriptRows.holdsG1_of_mirrorsSection R.E hm.fCom hsec.fComLen hbF' (by simpa [hQF'] using hqF)
+      hcodec.eipRoundtrip
+  · have hQP' : QP = x.r.pi := by rw [hQP, ← hTailVal.2]
+    have hbP' : bytesTake cd R.plan.proofLayout.pi.start g1EipWidth = some bP := by
+      rw [hsec.piStart]
+      exact hbP
+    exact TranscriptRows.holdsG1_of_mirrorsSection R.E hm.pi hsec.piLen hbP' (by simpa [hQP'] using hqP)
+      hcodec.eipRoundtrip
+
+/-- **THE FIXED `tp_agrees` ROW, NOW WITH `XcriptG1` AND THE PHASE ORDER CLOSED.**
+    `XcriptG1` is produced by `xcriptG1` from the schedule run and `TpPost`'s
+    `MirrorAt`; `AdvicePhasesColumnOrder` is D-GATE18's
+    `advicePhaseColumnOrder_of_wellFormed`. The only remaining named input is the
+    calldata bound `hnum`; the fixed `tp_agrees` itself keeps its statement (no
+    `hnum` parameter). -/
+theorem tp_agrees_of_valid_closed (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hpost : TranscriptRows.TpPost R H vkAddr cd V st)
+    (hnum : R.cfg.numInstances < 2 ^ 31) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st := by
+  have hpost' := hpost
+  obtain ⟨-, -, -, -, hmirror, -⟩ := hpost
+  have horder : TranscriptRows.AdvicePhasesColumnOrder R.vk :=
+    TranscriptRows.advicePhaseColumnOrder_of_wellFormed (vk := R.vk) hR.supported.wf
+  have hAlg : TranscriptRows.XcriptAlgebraRun R H cd :=
+    TranscriptRows.xcriptAlgebraRun_of_planReadCounts R hR hcodec H cd
+      (planReadCounts_of_valid R hR) hnum
+  have hG1 : TranscriptRows.XcriptG1 R H cd st :=
+    xcriptG1 R H cd hR hcodec horder hnum hmirror hAlg
+  exact Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcriptG1
+    R hR hcodec H vkAddr cd V st hpost' hAlg hG1
+
+/-- **THE CONSUMER WITH THE CALADATA BOUND INSTEAD OF `hnum`.** D-GATE19's predicate,
+    at the consumer rather than in a row/bundle: `cd.size < 2^36` supplies
+    `R.cfg.numInstances < 2^31` for every decoding (`numInstances_lt_of_cd_size`).
+    This is the exact minimal alternative to adding a field to `Frame`/`EntryFrameV3`;
+    the fixed `tp_agrees` itself still has its original statement. -/
+theorem tp_agrees_of_valid_closed_cdSize (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256)
+    (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hpost : TranscriptRows.TpPost R H vkAddr cd V st)
+    (hcd : cd.size < 2 ^ 36) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st := by
+  have hpost' := hpost
+  obtain ⟨-, -, -, -, hmirror, -⟩ := hpost
+  have horder : TranscriptRows.AdvicePhasesColumnOrder R.vk :=
+    TranscriptRows.advicePhaseColumnOrder_of_wellFormed (vk := R.vk) hR.supported.wf
+  have hAlg : TranscriptRows.XcriptAlgebraRun R H cd := by
+    intro ms instW inst hdec
+    exact TranscriptRows.xcriptAlgebraRun_of_planReadCounts R hR hcodec H cd
+      (planReadCounts_of_valid R hR) (TranscriptRows.numInstances_lt_of_cd_size hdec hcd)
+      ms instW inst hdec
+  have hG1 : TranscriptRows.XcriptG1 R H cd st := by
+    intro ms instW inst hdec x hx
+    exact xcriptG1 R H cd hR hcodec horder
+      (TranscriptRows.numInstances_lt_of_cd_size hdec hcd) hmirror hAlg
+      ms instW inst hdec x hx
+  exact TranscriptRows.tp_agrees_of_xcriptG1 R hR hcodec H vkAddr cd V st hpost' hAlg hG1
+
+#assert_axioms Midfall.LoweringV3.xcript_evals_count
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.xcript_evals_count_of_decoded
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.foldl_byteLen_eq_sumNat
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.xcriptSectionWindows_of_valid
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.xcriptSectionWindows_of_schedule
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.xcriptMirrorAt_windows
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.xcriptG1_provenance
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.xcriptG1_tail_provenance
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.xcriptG1
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.tp_agrees_of_valid_closed
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.tp_agrees_of_valid_closed_cdSize
+  [propext, Classical.choice, Quot.sound]
+
+
+end Midfall.LoweringV3

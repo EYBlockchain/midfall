@@ -129,6 +129,22 @@ theorem f1StackOk_true : f1StackOk = true := by native_decide
 #print axioms f1PayloadLen_lt
 #print axioms f1StackOk_true
 
+/-! ## CERT.6 concrete constant-text witnesses at F1 -/
+
+/-- Every `uint256 internal constant` line of the F1 render is literal. -/
+theorem f1_constLinesLiteral :
+    Midfall.LoweringV3.constLinesLiteral f1M = true := by
+  native_decide
+
+/-- The F1 table read back from the text is the plan-view data table. -/
+theorem f1_constTable :
+    (Midfall.LoweringV2.constTableOf f1M ==
+      Midfall.LoweringV3.expectedConsts f1Pv f1M) = true := by
+  native_decide
+
+#print axioms f1_constLinesLiteral
+#print axioms f1_constTable
+
 #print axioms Midfall.Generator.Certified.generate_spec
 
 end Midfall.Instances.CertMeasure
