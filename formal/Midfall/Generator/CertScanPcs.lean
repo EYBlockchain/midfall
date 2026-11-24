@@ -10,15 +10,17 @@ open Midfall.Lowering.GenAstPcs
   Midfall.Generator.CertScanPcs — THE PCS GROUP OF CERT.5(b).
 
   All PCS block functions whose statement shape is a plain Yul tree are scanned here for user
-  calls and world writers: `pcsBlock1Ast`, `pcsBlock2Ast`, `pcsBlock3Ast` (calls), `pcsBlock4Ast`,
-  `pcsBlock6Ast`, `pcsSetBlockAst`, `pcsX4PowersAst`, `pcsVLinesAst`. The set block's diagonal
-  skip is the `List.filterMap` case; the list-mapped arms use the `CallsOK`/`NoWriters` algebra
-  from `CertScan`.
+  calls and world writers: `pcsBlock1Ast`, `pcsBlock2Ast`, `pcsBlock3Ast` (both scans),
+  `pcsBlock4Ast`, `pcsBlock6Ast`, `pcsSetBlockAst`, `pcsX4PowersAst`, `pcsVLinesAst`. The set
+  block's diagonal skip is the `List.filterMap` case; the list-mapped arms use the
+  `CallsOK`/`NoWriters` algebra from `CertScan`. Block 3's `NoWriters` closes its rolled
+  `for`-body through `NoWriters_forLoop`, with compositional `ScanClean` leaves for
+  `wordExpr`/`ptrExpr`.
 
   STILL OPEN, NAMED: `pcsBlock5Ast` (the nested monadic `foldlM` over `bySet`/commitments and
   `pcsLinExpansion`'s folds — no user call, no writer builtin, but the fold invariant is not
-  landed); `pcsBlock3Ast`'s NoWriters leaves (the `wordExpr`/`ptrExpr` codec matches); and the
-  `computationsAst` assembly that turns the emitted `Except` blocks into the slice's scans.
+  landed) and the `computationsAst` assembly that turns the emitted `Except` blocks into the
+  slice's scans.
 -/
 
 namespace Midfall.Generator.CertScanPcs
@@ -505,10 +507,6 @@ theorem block3_calls (setIdx : Nat) (cis : List CommitmentEntry) (sets : Interme
            List.append_nil, callSitesE_ite]
          all_goals simp)
 
-/-! `pcsBlock3Ast`'s NoWriters fact is NOT proved here: its writer leaves include the
-    `wordExpr`/`ptrExpr` codec matches. Its CALLS fact is `block3_calls` above. -/
-
-
 /-- A `for` loop is clean from its parts: the scan splits into init/condition/post/body, and the
     fuel is the max of the four. Used by the PCS block-3 body. -/
 theorem NoWriters_forLoop {init post body : YulBlock} {c : Expr EVM.Op}
@@ -529,6 +527,146 @@ theorem NoWriters_forLoop {init post body : YulBlock} {c : Expr EVM.Op}
     noWritersScan_mono (by omega) hb
   simp only [noWritersFuel, noWritersScan, noWritersStep, hi', hc', hp', hb', Bool.and_true,
     Bool.true_and]
+
+/-! ### `pcsBlock3Ast` NoWriters: the codec leaves and the rolled for body
+
+  The writer scan reaches `wordExpr`/`ptrExpr` through `valueExpr`; both are
+  `calldataload`/`mload` trees, not writers. The helpers below build `ScanClean`
+  compositionally (no fuel recursion) and convert a clean statement to
+  `NoWriters [s]`; the rolled arm's loop is closed by `NoWriters_forLoop`, and
+  the straight arm's `wordExpr` fold reuses the same expression leaf. -/
+
+theorem scanClean_e_lit (l : Literal) : ScanClean (.e (.lit l)) := ⟨1, rfl⟩
+theorem scanClean_e_var (x : String) : ScanClean (.e (.var x)) := ⟨1, rfl⟩
+theorem scanClean_es_nil : ScanClean (.es ([] : List (Expr EVM.Op))) := ⟨1, rfl⟩
+theorem scanClean_es_of_forall {es : List (Expr EVM.Op)}
+    (h : ∀ e ∈ es, ScanClean (.e e)) : ScanClean (.es es) := by
+  induction es with
+  | nil => exact scanClean_es_nil
+  | cons e es ih =>
+      exact scanClean_es_cons_rev (h e (by simp)) (ih (fun x hx => h x (by simp [hx])))
+theorem scanClean_e_builtin_of {op : EVM.Op} {args : List (Expr EVM.Op)}
+    (hw : Op.isWriter op = false) (h : ∀ e ∈ args, ScanClean (.e e)) :
+    ScanClean (.e (.builtin op args)) :=
+  scanClean_e_builtin_rev hw (scanClean_es_of_forall h)
+
+theorem scanClean_valueExpr (v : MValue) : ScanClean (.e (valueExpr v)) := by
+  unfold valueExpr
+  split
+  · split
+    · exact scanClean_e_lit _
+    · apply scanClean_e_builtin_of (op := Op.sub) (by rfl)
+      intro e he; simp at he; rcases he with rfl | rfl
+      · exact scanClean_e_lit _
+      · exact scanClean_e_lit _
+  · exact scanClean_e_var _
+  · split
+    · apply scanClean_e_builtin_of (op := Op.add) (by rfl)
+      intro e he; simp at he; rcases he with rfl | rfl
+      · exact scanClean_e_var _
+      · exact scanClean_e_lit _
+    · apply scanClean_e_builtin_of (op := Op.sub) (by rfl)
+      intro e he; simp at he; rcases he with rfl | rfl
+      · exact scanClean_e_var _
+      · exact scanClean_e_lit _
+
+theorem scanClean_ptrExpr (p : MPtr) : ScanClean (.e (ptrExpr p)) := by
+  simpa [ptrExpr] using scanClean_valueExpr p.value
+
+theorem scanClean_wordExpr (w : MWord) : ScanClean (.e (wordExpr w)) := by
+  unfold wordExpr
+  split
+  · apply scanClean_e_builtin_of (op := Op.calldataload) (by rfl)
+    intro e he; simp at he; subst e; exact scanClean_valueExpr _
+  · apply scanClean_e_builtin_of (op := Op.mload) (by rfl)
+    intro e he; simp at he; subst e; exact scanClean_valueExpr _
+
+theorem noWriters_of_scanClean_s {s : Stmt EVM.Op} (h : ScanClean (.s s)) : NoWriters [s] :=
+  scanClean_b_cons_rev h scanClean_nil
+
+theorem noWriters_wordExpr_let (x : String) (w : MWord) :
+    NoWriters [GenAst.ylet x (wordExpr w)] := by
+  apply noWriters_of_scanClean_s
+  simpa [GenAst.ylet] using scanClean_s_letDecl_some_rev (scanClean_wordExpr w)
+
+theorem scanClean_x1Pow (i : Nat) : ScanClean (.e (x1Pow i)) := by
+  unfold x1Pow
+  apply scanClean_e_builtin_of (op := Op.mload) (by rfl)
+  intro e he; simp at he; subst e
+  apply scanClean_e_builtin_of (op := Op.add) (by rfl)
+  intro e he; simp at he; rcases he with rfl | rfl
+  · exact scanClean_e_var _
+  · exact scanClean_e_lit _
+
+theorem noWriters_wordExpr_fold (k i : Nat) (w : MWord) :
+    NoWriters [GenAst.yset ("q_eval_set_" ++ toString k)
+      (GenAst.yop Op.addmod [GenAst.yvar ("q_eval_set_" ++ toString k),
+        GenAst.yop Op.mulmod [wordExpr w, x1Pow i, GenAst.yvar "r"], GenAst.yvar "r"])] := by
+  apply noWriters_of_scanClean_s
+  apply scanClean_s_assign_rev
+  apply scanClean_e_builtin_of (op := Op.addmod) (by rfl)
+  intro e he; simp at he; rcases he with rfl | rfl | rfl
+  · exact scanClean_e_var _
+  · apply scanClean_e_builtin_of (op := Op.mulmod) (by rfl)
+    intro e he; simp at he; rcases he with rfl | rfl | rfl
+    · exact scanClean_wordExpr _
+    · exact scanClean_x1Pow _
+    · exact scanClean_e_var _
+  · exact scanClean_e_var _
+
+theorem noWriters_rolled_body_item (k : Nat) :
+    NoWriters [GenAst.yset ("q_eval_set_" ++ toString k)
+      (GenAst.yop Op.addmod [GenAst.yvar ("q_eval_set_" ++ toString k),
+        GenAst.yop Op.mulmod [GenAst.yop Op.mload [GenAst.yop Op.mload [
+          (if k == 0 then GenAst.yvar "eval_p" else GenAst.yop Op.add [GenAst.yvar "eval_p", GenAst.ylit (k * wordBytes)])]],
+          GenAst.yvar "pow", GenAst.yvar "r"], GenAst.yvar "r"])] := by
+  apply noWriters_of_scanClean_s
+  apply scanClean_s_assign_rev
+  apply scanClean_e_builtin_of (op := Op.addmod) (by rfl)
+  intro e he; simp at he; rcases he with rfl | rfl | rfl
+  · exact scanClean_e_var _
+  · apply scanClean_e_builtin_of (op := Op.mulmod) (by rfl)
+    intro e he; simp at he; rcases he with rfl | rfl | rfl
+    · apply scanClean_e_builtin_of (op := Op.mload) (by rfl)
+      intro e he; simp at he; subst e
+      apply scanClean_e_builtin_of (op := Op.mload) (by rfl)
+      intro e he; simp at he; subst e
+      split
+      · exact scanClean_e_var _
+      · apply scanClean_e_builtin_of (op := Op.add) (by rfl)
+        intro e he; simp at he; rcases he with rfl | rfl
+        · exact scanClean_e_var _
+        · exact scanClean_e_lit _
+    · exact scanClean_e_var _
+    · exact scanClean_e_var _
+  · exact scanClean_e_var _
+
+set_option maxHeartbeats 2000000 in
+theorem block3_noWriters (setIdx : Nat) (cis : List CommitmentEntry) (sets : IntermediateSets)
+    (mptr : Nat) : NoWriters (pcsBlock3Ast setIdx cis sets mptr) := by
+  unfold pcsBlock3Ast
+  dsimp only
+  split
+  · repeat first
+      | exact ⟨40, rfl⟩
+      | apply NoWriters_cons_ne
+      | apply NoWriters_cons_append
+      | apply NoWriters_append
+      | apply NoWriters_map
+      | apply NoWriters_flatMap
+      | apply NoWriters_forLoop
+      | (exact noWriters_mstore_ptr _ _)
+      | (exact noWriters_wordExpr_let _ _)
+      | (exact noWriters_rolled_body_item _)
+      | (intro a _)
+  · repeat first
+      | exact ⟨40, rfl⟩
+      | apply NoWriters_append
+      | apply NoWriters_map
+      | apply NoWriters_flatMap
+      | (exact noWriters_wordExpr_let _ _)
+      | (exact noWriters_wordExpr_fold _ _ _)
+      | (intro a _)
 
 
 /-! ### From per-block facts to the PCS slice
