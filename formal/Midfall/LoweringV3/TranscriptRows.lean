@@ -1440,6 +1440,14 @@ theorem RunsAllP.mono (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} {m : Transc
   obtain ⟨a, t', hrun, hbuf', hpos', hP⟩ := h t pref rest hbuf hpos hp henc hwidth
   exact ⟨a, t', hrun, hbuf', hpos', hPQ a hP⟩
 
+theorem RunsAllP.congr (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type}
+    {m n : TranscriptM α} {ms : List (Msg (Fr p) G₁)} {P : α → Prop}
+    (h : ∀ t, m.run t = n.run t) (hm : RunsAllP E m ms P) :
+    RunsAllP E n ms P := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨a, t', hrun, hbuf', hpos', hP⟩ := hm t pref rest hbuf hpos hp henc hwidth
+  exact ⟨a, t', (h t).symm ▸ hrun, hbuf', hpos', hP⟩
+
 theorem RunsAllP.pure (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} (a : α) (P : α → Prop)
     (ha : P a) : RunsAllP E (pure a : TranscriptM α) [] P := by
   intro t pref rest hbuf hpos hp henc hwidth
@@ -5107,6 +5115,76 @@ theorem runsAllP_lookupCommitments_row_count (E : VerifierEnv p G₁ G₂ Gₜ) 
       simp only [Prod.snd]
       omega
 
+theorem runsAllP_lookupMultiplicities_fold_count (E : VerifierEnv p G₁ G₂ Gₜ)
+    (deg : Nat) :
+    ∀ (ls : List (LogupBatchedArgument (Fr p)))
+      (acc : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)))
+      (Qs : List G₁),
+      (∀ l ∈ ls, ∃ c, l.chunkByDegree deg = .ok c) →
+      Qs.length = ls.length →
+      RunsAllP E (ls.foldlM (init := acc) fun acc' l => do
+          let chunked ← StateT.lift (l.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc'.push (m, chunked))) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+        (fun row => row.size = acc.size + ls.length) := by
+  intro ls
+  induction ls with
+  | nil =>
+      intro acc Qs hs hlen
+      have hQs : Qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst hQs
+      simpa only [List.foldlM_nil, List.map_nil] using (RunsAllP.pure E acc _ (by simp))
+  | cons l ls ih =>
+      intro acc Qs hs hlen
+      obtain ⟨Q, Qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      obtain ⟨c, hc⟩ := hs l (by simp)
+      rw [List.foldlM_cons]
+      have hstep : RunsAllP E ((fun acc => do
+          let chunked ← StateT.lift (l.chunkByDegree deg)
+          let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+          pure (acc.push (m, chunked))) acc) ([Msg.g1 Q] : List (Msg (Fr p) G₁))
+          (fun row => row.size = acc.size + 1) := by
+        have hlift : RunsAllP E
+            (StateT.lift (l.chunkByDegree deg : Except Fault (LogupChunkedArgument (Fr p)))) []
+            (fun v => v = c) :=
+          RunsAllP.congr E (fun t => by rw [hc])
+            (RunsAllP.lift_ok E c (fun v => v = c) rfl)
+        refine RunsAllP.bind E (m := StateT.lift (l.chunkByDegree deg))
+          (ms₁ := ([] : List (Msg (Fr p) G₁)))
+          (ms₂ := ([Msg.g1 Q] : List (Msg (Fr p) G₁))) hlift ?_
+        intro chunked hchunked
+        subst hchunked
+        refine RunsAllP.bind_nil E (m := Logup.readMultiplicities chunked (hashableG1 E.g1))
+          (ms := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (RunsAll.toRunsAllP E (runsAll_logup_readMultiplicities E chunked Q)) ?_
+        intro m _
+        refine RunsAllP.pure E (acc.push (m, chunked)) _ ?_
+        simp
+      have hb : RunsAllP E
+          (((fun acc => do
+            let chunked ← StateT.lift (l.chunkByDegree deg)
+            let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+            pure (acc.push (m, chunked))) acc) >>= fun acc' =>
+              ls.foldlM (init := acc') fun acc' l => do
+                let chunked ← StateT.lift (l.chunkByDegree deg)
+                let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+                pure (acc'.push (m, chunked)))
+          ((Msg.g1 Q : Msg (Fr p) G₁) :: Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+          (fun row => ∃ acc' : Array (Logup.CommittedMultiplicities G₁ ×
+              LogupChunkedArgument (Fr p)),
+            acc'.size = acc.size + 1 ∧ row.size = acc'.size + ls.length) := by
+        refine RunsAllP.bind E (ms₁ := ([Msg.g1 Q] : List (Msg (Fr p) G₁)))
+          (ms₂ := Qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) hstep ?_
+        intro acc' hacc'
+        have hb2 := ih acc' Qs' (fun l' hl' => hs l' (by simp [hl'])) (by simpa using hlen)
+        exact RunsAllP.mono E hb2 (fun row hrow => ⟨acc', hacc', hrow⟩)
+      refine RunsAllP.mono E hb ?_
+      intro row hrow
+      obtain ⟨acc' : Array (Logup.CommittedMultiplicities G₁ ×
+        LogupChunkedArgument (Fr p)), hacc', hrow'⟩ := hrow
+      rw [List.length_cons, hrow', hacc']
+      omega
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -7791,6 +7869,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.ledgerRows_push [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.chunkNum_eq [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.congr [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_count [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
