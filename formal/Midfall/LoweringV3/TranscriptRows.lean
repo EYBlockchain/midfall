@@ -7897,6 +7897,159 @@ theorem foldlM_take_prefix (protocol : ProtocolPlan) (expected : CommitmentRead)
       · simp [hlen]
 
 /-- The i-th section of the fold has the i-th count (with the initial-list offset). -/
+theorem takeCommitmentSection_cursor (protocol : ProtocolPlan) (readIdx cursor : Nat)
+    (expected : CommitmentRead) (count : Nat) (label : String)
+    {sect : ProofSection} {ri cur : Nat}
+    (h : ProofCalldataLayout.takeCommitmentSection protocol readIdx cursor expected count label
+      = .ok (sect, ri, cur)) :
+    cur = cursor + sect.byteLen := by
+  unfold ProofCalldataLayout.takeCommitmentSection at h
+  obtain ⟨ri', _, h⟩ := except_bind_ok _ _ h
+  cases h
+  rfl
+
+theorem foldlM_take_cursor (protocol : ProtocolPlan) (expected : CommitmentRead) (label : String) :
+    ∀ (counts : List Nat) (init res : List ProofSection × Nat × Nat),
+      counts.foldlM
+        (fun st count =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2 expected count label).bind
+            fun x => Except.ok (st.1 ++ [x.1], x.2.1, x.2.2)) init = .ok res →
+      res.2.2 = init.2.2 +
+        Midfall.Lowering.sumNat ((res.1.drop init.1.length).map ProofSection.byteLen) := by
+  intro counts
+  induction counts with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      simp [Midfall.Lowering.sumNat]
+  | cons c rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst⟩ := except_bind_ok _ _ h1
+      have hst_eq : st1 = (init.1 ++ [x.1], x.2.1, x.2.2) := by cases hst; rfl
+      have hcur : x.2.2 = init.2.2 + x.1.byteLen :=
+        takeCommitmentSection_cursor protocol init.2.1 init.2.2 expected c label hx
+      obtain ⟨suffix, hres, _⟩ := foldlM_take_prefix protocol expected label rest st1 res h2
+      have hst_snd : st1.2.2 = x.2.2 := by cases hst; rfl
+      have hdrop : res.1.drop init.1.length = [x.1] ++ suffix := by
+        rw [hres, hst_eq, List.append_assoc, List.drop_append,
+          List.drop_eq_nil_of_le (Nat.le_refl _), Nat.sub_self, List.drop_zero,
+          List.nil_append]
+      have hdrop2 : (st1.1 ++ suffix).drop st1.1.length = suffix := by
+        rw [List.drop_append, List.drop_eq_nil_of_le (by omega), List.nil_append, Nat.sub_self, List.drop_zero]
+      rw [hdrop, List.map_append, List.map_cons, List.map_nil,
+        Midfall.Lowering.sumNat_append, Midfall.Lowering.sumNat_cons,
+        Midfall.Lowering.sumNat_nil]
+      have ih' := ih st1 res h2
+      rw [hres, hdrop2] at ih'
+      rw [ih', hst_snd, hcur]
+      omega
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+
+theorem foldlM_lookups_prefix (protocol : ProtocolPlan) :
+    ∀ (pairs : List (Nat × Nat))
+      (init res : List ProofLookupCommitmentsLayout × Nat × Nat),
+      pairs.foldlM
+        (fun st pair =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2
+              CommitmentRead.lookupHelper pair.2 "lookup helper").bind
+            fun x =>
+          (ProofCalldataLayout.takeCommitmentSection protocol x.2.1 x.2.2
+              CommitmentRead.lookupAccumulator 1 "lookup accumulator").bind
+            fun y =>
+          Except.ok (st.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+            y.2.1, y.2.2)) init = .ok res →
+      ∃ extra, res.1 = init.1 ++ extra ∧ extra.length = pairs.length := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      exact ⟨[], by simp, rfl⟩
+  | cons pair rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, h1'⟩ := except_bind_ok _ _ h1
+      obtain ⟨y, hy, hst⟩ := except_bind_ok _ _ h1'
+      have hst1 : st1.1 = init.1 ++
+          [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }] := by cases hst; rfl
+      obtain ⟨extra, hres, hlen⟩ := ih st1 res h2
+      refine ⟨{ lookup := pair.1, helpers := x.1, accumulator := y.1 } :: extra, ?_, ?_⟩
+      · simp [hres, hst1, List.append_assoc]
+      · simp [hlen]
+
+theorem foldlM_lookups_cursor (protocol : ProtocolPlan) :
+    ∀ (pairs : List (Nat × Nat))
+      (init res : List ProofLookupCommitmentsLayout × Nat × Nat),
+      pairs.foldlM
+        (fun st pair =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2
+              CommitmentRead.lookupHelper pair.2 "lookup helper").bind
+            fun x =>
+          (ProofCalldataLayout.takeCommitmentSection protocol x.2.1 x.2.2
+              CommitmentRead.lookupAccumulator 1 "lookup accumulator").bind
+            fun y =>
+          Except.ok (st.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+            y.2.1, y.2.2)) init = .ok res →
+      res.2.2 = init.2.2 +
+        Midfall.Lowering.sumNat ((res.1.drop init.1.length).map
+          (fun lk => lk.helpers.byteLen + lk.accumulator.byteLen)) := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro init res h
+      simp only [List.foldlM_nil] at h
+      cases h
+      simp [Midfall.Lowering.sumNat]
+  | cons pair rest ih =>
+      intro init res h
+      rw [List.foldlM_cons] at h
+      obtain ⟨st1, h1, h2⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, h1'⟩ := except_bind_ok _ _ h1
+      obtain ⟨y, hy, hst⟩ := except_bind_ok _ _ h1'
+      have hst_eq : st1 = (init.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+          y.2.1, y.2.2) := by cases hst; rfl
+      have hcur1 : x.2.2 = init.2.2 + x.1.byteLen :=
+        takeCommitmentSection_cursor protocol init.2.1 init.2.2
+          CommitmentRead.lookupHelper pair.2 "lookup helper" hx
+      have hcur2 : y.2.2 = x.2.2 + y.1.byteLen :=
+        takeCommitmentSection_cursor protocol x.2.1 x.2.2
+          CommitmentRead.lookupAccumulator 1 "lookup accumulator" hy
+      obtain ⟨suffix, hres, _⟩ := foldlM_lookups_prefix protocol rest st1 res h2
+      have hst_snd : st1.2.2 = y.2.2 := by cases hst; rfl
+      have hdrop : res.1.drop init.1.length =
+          [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }] ++ suffix := by
+        rw [hres, hst_eq, List.append_assoc, List.drop_append,
+          List.drop_eq_nil_of_le (Nat.le_refl _), Nat.sub_self, List.drop_zero,
+          List.nil_append]
+      have hdrop2 : (st1.1 ++ suffix).drop st1.1.length = suffix := by
+        rw [List.drop_append, List.drop_eq_nil_of_le (by omega), List.nil_append,
+          Nat.sub_self, List.drop_zero]
+      rw [hdrop, List.map_append, List.map_cons, List.map_nil,
+        Midfall.Lowering.sumNat_append, Midfall.Lowering.sumNat_cons,
+        Midfall.Lowering.sumNat_nil]
+      have ih' := ih st1 res h2
+      rw [hres, hdrop2] at ih'
+      rw [ih', hst_snd, hcur2, hcur1]
+      simp
+      omega
+
 theorem foldlM_take_nth (protocol : ProtocolPlan) (expected : CommitmentRead) (label : String) :
     ∀ (counts : List Nat) (init res : List ProofSection × Nat × Nat) (i : Nat)
       (s : ProofSection),
@@ -10056,6 +10209,10 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.holdsG1_of_mirrorsSection [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_inv [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_provenance [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.takeCommitmentSection_cursor [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_take_cursor [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_lookups_prefix [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_lookups_cursor [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_size_local [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.cdSlice_size_of_le [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_frame_eq_of_window [propext, Classical.choice, Quot.sound] native []
