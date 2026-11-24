@@ -1729,6 +1729,28 @@ theorem lagInnerPost_lagrange_slots
         simp [holdsFr, wordAt, hieSlot', hWe]
 
 #assert_axioms lagInnerPost_lagrange_slots [propext, Classical.choice, Quot.sound]
+
+theorem readAlgebra_run_xn {g1 : G1Codec G₁} {feat : Features}
+    {vk : VerifyingKey (Fr p) G₁}
+    {permutations : Array (Permutation.Committed G₁)}
+    {lookups : Array (Array (Logup.Committed G₁))}
+    {trashcans : Array (Array (Trash.Committed G₁))}
+    {nb num : Nat} {instances : Array (Array (Array (Fr p)))}
+    {t : Transcript} {alg : Verifier.AlgebraRead (Fr p) G₁} {t' : Transcript}
+    (h : (Verifier.readAlgebra (p := p) g1 feat vk permutations lookups trashcans
+      nb num instances).run t = .ok (alg, t')) :
+    alg.xn = alg.splittingFactor * alg.x ∧
+      alg.splittingFactor = powVartime alg.x (vk.n - 1) := by
+  unfold Verifier.readAlgebra at h
+  simp only [StateT.run, StateT.bind, StateT.get, StateT.set, StateT.lift, StateT.pure,
+    Bind.bind, Pure.pure, Except.bind, Except.map, Except.pure] at h
+  repeat' (first | split at h | simp at h)
+  all_goals
+    first
+    | (obtain ⟨hrec, -⟩ := h; subst hrec; exact ⟨rfl, rfl⟩)
+    | simp_all
+
+#assert_axioms readAlgebra_run_xn [propext, Classical.choice, Quot.sound]
 /-- The table's `MODEXP_GAS` is the model's scheduled modexp gas. -/
 theorem consts_lookup_MODEXP_GAS (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
     R.consts.lookup "MODEXP_GAS" = some R.model.templateConstants.gas.modexp := by
