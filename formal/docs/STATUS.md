@@ -298,6 +298,17 @@ remains OPEN for the separate cross-lane reason recorded at `BlockLive.lean:99`:
 needs an unconditional `BlockProgS R .transcriptParser ...`, while the landed
 `tp_blockProgS` carries `LeanAccepts`/`CompleteSide`, which `BlockLive` does not assume.
 
+**D-GATE20 (A6 TP existence, in progress, 2026-11-24)**: the emitted parser's `common_word`
+helper now has a proved `ExecStmts` run (`TranscriptRows.commonWordBody_run` and
+`commonWord_call_run`), and the parser slice's first two statements are pinned by
+`tp_slice_head` / `tp_slice_two`. `tp_blockProgS` is factored as
+`tp_blockProgS_of_exists_and_all`: its two remaining facts are the full emitted-AST
+`StmtsContract` existence walk and the normal all-runs contract. The model-level
+`parseTrace_run_of_ms_sizes` / `XcriptAlgebraRun` / `runsAll_readAlgebra` facts are
+`TranscriptM`/`Snapshot` facts; no theorem in the tree turns them into `ExecStmts` of
+`R.slice .transcriptParser`. `block_live_case_transcriptParser` still has its separate
+`LeanAccepts`/`CompleteSide` cross-lane premise.
+
 **D-GATE15 (signed, 2026-11-23)**: `WellFormed` gains the `readAlgebra` totality bundle: fixed
 insert bound (`fixedQueries.size ≤ numFixedColumns` + simple-selector coverage), rotation-not-`i32::MIN`,
 and the instance slice-window bound. VK sanity clauses, not row/root hypotheses.
