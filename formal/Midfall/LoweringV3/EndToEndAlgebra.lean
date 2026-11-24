@@ -4813,6 +4813,10 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms queries_pcsBlocks
   [propext, Classical.choice, Quot.sound]
+#assert_axioms mapM_blockList_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queries_pcsBlocks_lengths
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms collectQueries_single_blocks
   [propext, Classical.choice, Quot.sound]
 #assert_axioms mapM_flatten_length_const
