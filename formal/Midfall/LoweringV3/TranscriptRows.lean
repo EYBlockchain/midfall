@@ -1052,6 +1052,69 @@ theorem secondStmt_run_of_valid (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls
 #assert_axioms Midfall.LoweringV3.TranscriptRows.secondStmt_run_of_valid
   [propext, Classical.choice, Quot.sound] native []
 
+set_option maxHeartbeats 4000000 in
+/-- **THE HEAD RUN WITH ITS EXACT POST.** `transcript_init` returns the transcript pointer, so the
+    first `let` leaves `buf_len = t` and the state unchanged. -/
+theorem tp_head_run_exact (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (hR : ValidV3 R) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧
+      ExecStmts (D := Bridge.Dialect c g) (R.scope c g) V st
+        [Stmt.letDecl ["buf_len"] (some (Expr.call "transcript_init" []))]
+        (("buf_len", BitVec.ofNat 256 t) :: V) st .normal := by
+  obtain ⟨decl, hlook, hparams, hrets, t, ht, hbody⟩ := transcriptInit_lookup_body R hR
+  refine ⟨t, ht, ?_⟩
+  let Vc : VEnv (Bridge.Dialect c g) :=
+    decl.params.zip [] ++ bindZeros (Bridge.Dialect c g) decl.rets
+  have hbodyrun : ExecStmts (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))] ::
+        R.scope c g)
+      Vc st [Stmt.assign ["buf_len"] (Expr.lit (Literal.number t))]
+      (VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t]) st .normal := by
+    exact Step.seqCons (Step.assignVal (D := Bridge.Dialect c g) (V := Vc) (st := st)
+      (Step.lit (D := Bridge.Dialect c g)) rfl) Step.seqNil
+  have hbodystep : Step (Bridge.Dialect c g) (R.scope c g) Vc st (.stmt (.block decl.body))
+      (.sres (VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t]) st .normal) := by
+    have hrest : restore Vc (VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t]) =
+        VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t] := by
+      show restore Vc (VEnv.set Vc "buf_len" (BitVec.ofNat 256 t)) = _
+      exact restore_set_local
+    simpa [hbody, hrest] using Step.block (D := Bridge.Dialect c g) hbodyrun
+  have hcall : Step (Bridge.Dialect c g) (R.scope c g) V st
+      (.expr (.call "transcript_init" []))
+      (.eres (.vals [BitVec.ofNat 256 t] st)) := by
+    have h := Step.callOk (V := V) (Vend := VEnv.setMany Vc ["buf_len"] [BitVec.ofNat 256 t])
+      (st2 := st) (o := .normal) (Step.argsNil (D := Bridge.Dialect c g)) hlook
+      (by rw [hparams]; rfl) (by simpa [Vc, hbody] using hbodystep) (Or.inl rfl)
+    simpa [hrets, hparams, Vc, VEnv.get, VEnv.set, VEnv.setMany, bindZeros, List.find?] using h
+  exact Step.seqCons
+    (Step.letVal (D := Bridge.Dialect c g) (vars := ["buf_len"])
+      (vals := [BitVec.ofNat 256 t]) hcall rfl) Step.seqNil
+
+/-- **THE TWO-STATEMENT PREFIX HAS AN ACTUAL RUN.** The head leaves `buf_len = t`; the second
+    statement then runs `common_word` over `mload(VK_DIGEST_MPTR)`, leaving `buf_len = t + 32`. -/
+theorem tp_head_second_run (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas}
+    (hR : ValidV3 R) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    ∃ t v, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧
+      R.consts.lookup "VK_DIGEST_MPTR" = some v ∧
+      ∃ st', ExecStmts (D := Bridge.Dialect c g) (R.scope c g) V st
+        [Stmt.letDecl ["buf_len"] (some (Expr.call "transcript_init" [])),
+         Stmt.assign ["buf_len"] (Expr.call "common_word"
+           [Expr.var "buf_len", Expr.builtin Op.mload [Expr.lit (Literal.number v)]])]
+        (VEnv.setMany (("buf_len", BitVec.ofNat 256 t) :: V) ["buf_len"]
+          [BitVec.ofNat 256 t + BitVec.ofNat 256 32]) st' .normal := by
+  obtain ⟨t, ht, hhead⟩ := tp_head_run_exact R hR V st
+  obtain ⟨v, hv⟩ := vkDigestMptr_of_valid R hR
+  have hb : VEnv.get (("buf_len", BitVec.ofNat 256 t) :: V) "buf_len" =
+      some (BitVec.ofNat 256 t) := by simp [VEnv.get, List.find?]
+  obtain ⟨st', hsecond, -⟩ := secondStmt_run (R := R) v
+    (("buf_len", BitVec.ofNat 256 t) :: V) st (BitVec.ofNat 256 t) hb
+  exact ⟨t, v, ht, hv, st', ExecStmts.append hhead (Step.seqCons hsecond Step.seqNil)⟩
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_head_run_exact
+  [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_head_second_run
+  [propext, Classical.choice, Quot.sound] native []
+
 /-- **THE TRANSCRIPT READ STEP (a SIM.10 prerequisite).** A read whose bytes are present and
     whose repr decodes succeeds, advances the cursor by `width`, and leaves the buffer alone.
     PROVED by unfolding `Transcript.read`. -/
