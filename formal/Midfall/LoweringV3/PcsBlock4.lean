@@ -4779,6 +4779,155 @@ theorem pcsGenBody_fe_notmem_added (setIdx : Nat) (points : List Int) (distinct 
   intro h
   exact pcsGenBody_fe_notmem setIdx points distinct off ((pcs_mem_addedNames).mp h)
 
+def PcsLetSet (s : Stmt EVM.Op) : Prop :=
+  ∃ x e, s = GenAst.ylet x e ∨ s = GenAst.yset x e
+
+theorem pcsLetSet_append {a b : Block EVM.Op}
+    (ha : ∀ s ∈ a, PcsLetSet s) (hb : ∀ s ∈ b, PcsLetSet s) :
+    ∀ s ∈ a ++ b, PcsLetSet s := by
+  intro s hs; rw [List.mem_append] at hs; rcases hs with h|h; exact ha s h; exact hb s h
+
+theorem pcsLetSet_lbasisGroup (j : Nat) (pt : String) (ks : List (Nat × String)) :
+    ∀ s ∈ pcsLbasisGroupAst j pt ks, PcsLetSet s := by
+  intro s hs
+  unfold pcsLbasisGroupAst pcsLbasisInit pcsLbasisStmt at hs
+  simp only [List.mem_cons, List.mem_map] at hs
+  rcases hs with rfl | ⟨k, _, rfl⟩
+  · exact ⟨_, _, Or.inl rfl⟩
+  · exact ⟨_, _, Or.inr rfl⟩
+
+theorem pcsLetSet_bqStep (i : Nat) (prev inp : String) (invName : Nat → String) :
+    ∀ s ∈ pcsBqStep i prev inp invName, PcsLetSet s := by
+  intro s hs
+  unfold pcsBqStep at hs
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+  rcases hs with rfl | rfl
+  · exact ⟨_, _, Or.inl rfl⟩
+  · exact ⟨_, _, Or.inr rfl⟩
+
+theorem pcsLetSet_termStmt (j evOff : Nat) (dxN lbN : String) :
+    ∀ s ∈ pcsTermStmt j evOff dxN lbN, PcsLetSet s := by
+  intro s hs
+  unfold pcsTermStmt at hs
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+  rcases hs with rfl | rfl
+  · exact ⟨_, _, Or.inl rfl⟩
+  · exact ⟨_, _, Or.inr rfl⟩
+
+theorem pcsLetSet_dx (xs : List (Nat × String)) :
+    ∀ s ∈ xs.map (fun q => pcsDxStmt q.1 q.2), PcsLetSet s := by
+  intro s hs
+  simp only [List.mem_map] at hs
+  rcases hs with ⟨q, _, rfl⟩
+  exact ⟨_, _, Or.inl rfl⟩
+
+theorem pcsLetSet_lb (xs : List (Nat × String)) (ks : Nat → List (Nat × String)) :
+    ∀ s ∈ (xs.map (fun q => pcsLbasisGroupAst q.1 q.2 (ks q.1))).flatten, PcsLetSet s := by
+  intro s hs
+  simp only [List.mem_flatten] at hs
+  rcases hs with ⟨l, hl, hsl⟩
+  simp only [List.mem_map] at hl
+  rcases hl with ⟨q, _, rfl⟩
+  exact pcsLetSet_lbasisGroup q.1 q.2 (ks q.1) s hsl
+
+theorem pcsLetSet_bp (n : Nat) (nm : Nat → String) :
+    ∀ s ∈ pcsBpLines n nm, PcsLetSet s := by
+  intro s hs
+  unfold pcsBpLines pcsBpHead pcsBpTail at hs
+  simp only [List.mem_cons, List.mem_map] at hs
+  rcases hs with rfl | ⟨i, _, rfl⟩
+  · exact ⟨_, _, Or.inl rfl⟩
+  · exact ⟨_, _, Or.inl rfl⟩
+
+theorem pcsLetSet_bq (n : Nat) (nm : Nat → String) (invName : Nat → String) :
+    ∀ s ∈ pcsBqLines n nm invName, PcsLetSet s := by
+  intro s hs
+  unfold pcsBqLines at hs
+  simp only [List.mem_flatMap] at hs
+  rcases hs with ⟨i, _, hi⟩
+  exact pcsLetSet_bqStep i (pcsBpName (i - 1)) (nm i) invName s hi
+
+theorem pcsLetSet_bqCall (prev : String) :
+    ∀ s ∈ [pcsBqStmt prev], PcsLetSet s := by
+  intro s hs
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+  rw [hs]
+  exact ⟨_, _, Or.inl rfl⟩
+
+theorem pcsLetSet_inv0 (m : Nat) :
+    ∀ s ∈ [GenAst.ylet (pcsInvName m 0) (GenAst.yvar "bq")], PcsLetSet s := by
+  intro s hs
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+  rw [hs]
+  exact ⟨_, _, Or.inl rfl⟩
+
+theorem pcsLetSet_den (m : Nat) (invName : Nat → String) :
+    ∀ s ∈ pcsDenInvLines m invName, PcsLetSet s := by
+  intro s hs
+  unfold pcsDenInvLines pcsDenInvSetStmt at hs
+  rw [List.mem_append] at hs
+  rcases hs with h | h
+  · simp only [List.mem_cons, List.not_mem_nil, or_false] at h
+    subst s
+    exact ⟨_, _, Or.inl rfl⟩
+  · simp only [List.mem_map] at h
+    rcases h with ⟨j, _, h⟩
+    subst s
+    exact ⟨_, _, Or.inr rfl⟩
+
+theorem pcsLetSet_eval (setIdx : Nat) :
+    ∀ s ∈ [pcsEvalStmt setIdx], PcsLetSet s := by
+  intro s hs
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+  rw [hs]
+  exact ⟨_, _, Or.inl rfl⟩
+
+theorem pcsLetSet_term (m off : Nat) (dxN lbN : Nat → String) :
+    ∀ s ∈ pcsTermLines m off dxN lbN, PcsLetSet s := by
+  intro s hs
+  unfold pcsTermLines at hs
+  simp only [List.mem_flatMap] at hs
+  rcases hs with ⟨j, _, hj⟩
+  exact pcsLetSet_termStmt j (off + j) (dxN j) (lbN j) s hj
+
+theorem pcsLetSet_fe :
+    ∀ s ∈ [pcsFEvalStmt], PcsLetSet s := by
+  intro s hs
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+  rw [hs]
+  exact ⟨_, _, Or.inr rfl⟩
+
+
+set_option maxHeartbeats 4000000 in
+theorem pcsGenBody_allLetSet (setIdx : Nat) (points : List Int) (distinct : List Int)
+    (off : Nat) :
+    ∀ s ∈ pcsGenBody setIdx points distinct off, PcsLetSet s := by
+  unfold pcsGenBody
+  dsimp only
+  repeat' apply pcsLetSet_append
+  all_goals
+    first
+    | apply pcsLetSet_dx
+    | apply pcsLetSet_lb
+    | apply pcsLetSet_bp
+    | apply pcsLetSet_bq
+    | apply pcsLetSet_bqCall
+    | apply pcsLetSet_inv0
+    | apply pcsLetSet_den
+    | apply pcsLetSet_eval
+    | apply pcsLetSet_term
+    | apply pcsLetSet_fe
+    | (intro s hs
+       simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+       subst s
+       exact ⟨_, _, Or.inl rfl⟩)
+    | (intro s hs
+       simp only [List.mem_map] at hs
+       rcases hs with ⟨a, _, h⟩
+       subst s
+       exact ⟨_, _, Or.inr rfl⟩)
+    | (intro s hs; simp at hs)
+
 set_option maxHeartbeats 16000000 in
 theorem pcsGenBody_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
