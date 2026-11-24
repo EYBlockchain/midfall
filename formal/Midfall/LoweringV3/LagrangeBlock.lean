@@ -80,6 +80,284 @@ def BatchInvertCallSegment (consts : Inline.Consts) (product : PairingProduct) (
       BatchInvertCallPost (c := permissive (callsOf product)) (g := g) V st st' V' succ
         D (D + 32 * (n + m) + 32) aS rw)
 
+/-- The declaration `R.scope` resolves for `batch_invert`, with the inlined helper body A5's
+    `batch_invert_summary` speaks about. -/
+def batchInvertDecl (R : Render p G₁ G₂ Gₜ) (c : ExternalCalls) (g : ExternalGas) :
+    FDecl (Bridge.Dialect c g) :=
+  { params := ["success", "mptr_start", "mptr_end", "scratch_mptr", "r"],
+    rets := ["ret", "precompile_failed"],
+    body := Midfall.LoweringV3.BatchInvert.helperBody R.consts GenAst.emitBatchInvertAt }
+
+/-- **THE `batch_invert` SCOPE LOOKUP, BY KERNEL REDUCTION** (the same shape as
+    `EcPairing.ecPairing_lookup`). -/
+theorem batchInvert_lookup (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} :
+    lookupFun (R.scope c g) "batch_invert" = some (batchInvertDecl R c g, R.scope c g) := by
+  kernel_rfl
+
+#assert_axioms batchInvert_lookup [propext, Classical.choice, Quot.sound]
+
+/-- **STATEMENT 10'S FORM, AT THE INLINER'S CONSTANT SITES.** All five arguments are `vkSite`s;
+    the inliner's `inExpr` on a variable is definitionally this site once `shadowed` is false, and
+    `success`/`r` are not shadowed inside the inner block. -/
+theorem lagInner_10_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 10 1 =
+      [Stmt.assign ["success", "lagrange_precompile_failed"]
+        (Expr.call "batch_invert"
+          [Midfall.LoweringV2.Blocks.VkLoading.vkSite "success" consts,
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+           Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "r" consts])] := by
+  kernel_rfl
+
+/-- The same statement at the two UNBOUND caller locals: `success` and `r` stay variables.
+    THIS IS THE FORM THE CALLER BRIDGE CONSUMES; the lookup hypotheses are what the inliner
+    needs to reduce its two-site match, and are exactly `consts_succ_none` / `hr`. -/
+theorem lagInner_10_form_var (consts : Inline.Consts) (k n m : Nat)
+    (hsucc : consts.lookup "success" = none) (hr : consts.lookup "r" = none) :
+    seg (lagInner consts k n m) 10 1 =
+      [Stmt.assign ["success", "lagrange_precompile_failed"]
+        (Expr.call "batch_invert"
+          [Expr.var "success",
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+           Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+           Expr.var "r"])] := by
+  rw [lagInner_10_form]
+  simp [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hsucc, hr]
+
+#assert_axioms lagInner_10_form_var [propext, Classical.choice, Quot.sound]
+
+/-- A `vkSite` that resolves to a literal evaluates to that word. -/
+theorem eval_vkSite_lit {consts : Inline.Consts} {x : String} {v : Nat}
+    (h : consts.lookup x = some v) (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.expr (Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts))
+      (Res.eres (EResult.vals [(BitVec.ofNat 256 v : U256)] st)) := by
+  have hs : Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts = Expr.lit (.number v) := by
+    simp [Midfall.LoweringV2.Blocks.VkLoading.vkSite, h]
+  rw [hs]
+  exact Step.lit
+
+/-- A `vkSite` that does not resolve evaluates its variable. -/
+theorem eval_vkSite_var {consts : Inline.Consts} {x : String}
+    (h : consts.lookup x = none) (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) {v : U256}
+    (hget : VEnv.get V x = some v) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.expr (Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts))
+      (Res.eres (EResult.vals [v] st)) := by
+  have hs : Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts = Expr.var x := by
+    simp [Midfall.LoweringV2.Blocks.VkLoading.vkSite, h]
+  rw [hs]
+  exact Step.var hget
+
+/-- **THE FIVE `batch_invert` ARGUMENTS, RIGHT-TO-LEFT.** The result list is in source order:
+    `[succ, ofNat D, mptr_end + 0x20, ofNat aS, rw]`. The `+ 0x20` step is the only arithmetic
+    one; `LagWindowFits.denomEnd` supplies its word-level fit in the caller. -/
+theorem eval_batchArgs {consts : Inline.Consts} {D aS : Nat}
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (hsucc : consts.lookup "success" = none) (hr : consts.lookup "r" = none)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    {succ rw me : U256}
+    (hsuccV : VEnv.get V "success" = some succ)
+    (hrV : VEnv.get V "r" = some rw)
+    (hme : VEnv.get V "mptr_end" = some me) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.args
+        [Midfall.LoweringV2.Blocks.VkLoading.vkSite "success" consts,
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+         Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "r" consts])
+      (Res.eres (EResult.vals [succ, BitVec.ofNat 256 D,
+        me + BitVec.ofNat 256 0x20, BitVec.ofNat 256 aS, rw] st)) := by
+  let e1 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "success" consts
+  let e2 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts
+  let e3 := Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)]
+  let e4 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts
+  let e5 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "r" consts
+  let a1 : U256 := succ
+  let a2 : U256 := BitVec.ofNat 256 D
+  let a3 : U256 := me + BitVec.ofNat 256 0x20
+  let a4 : U256 := BitVec.ofNat 256 aS
+  let a5 : U256 := rw
+  have h5 := eval_vkSite_var (consts := consts) (x := "r") hr funs V st hrV
+  have h4 := eval_vkSite_lit (consts := consts) (x := "BATCH_INV_SCRATCH_MPTR") hS funs V st
+  have h3 := Midfall.LoweringV3.LagrangeRows.eval_add_var_lit_step
+    (funs := funs) (V := V) (st := st) (x := "mptr_end") (n := 0x20) (pv := me) hme
+  have h2 := eval_vkSite_lit (consts := consts) (x := "LAGRANGE_DENOMS_MPTR") hD funs V st
+  have h1 := eval_vkSite_var (consts := consts) (x := "success") hsucc funs V st hsuccV
+  have A5 : Step (Bridge.Dialect c g) funs V st (.args [e5]) (.eres (.vals [a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (v := a5)
+      (st1 := st) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g)) h5
+  have A4 : Step (Bridge.Dialect c g) funs V st (.args [e4, e5])
+      (.eres (.vals [a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e5]) (restvals := [a5]) (v := a4)
+      (st1 := st) (st2 := st) A5 h4
+  have A3 : Step (Bridge.Dialect c g) funs V st (.args [e3, e4, e5])
+      (.eres (.vals [a3, a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e4, e5]) (restvals := [a4, a5])
+      (v := a3) (st1 := st) (st2 := st) A4 h3
+  have A2 : Step (Bridge.Dialect c g) funs V st (.args [e2, e3, e4, e5])
+      (.eres (.vals [a2, a3, a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e3, e4, e5]) (restvals := [a3, a4, a5])
+      (v := a2) (st1 := st) (st2 := st) A3 h2
+  have A1 : Step (Bridge.Dialect c g) funs V st (.args [e1, e2, e3, e4, e5])
+      (.eres (.vals [a1, a2, a3, a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e2, e3, e4, e5])
+      (restvals := [a2, a3, a4, a5]) (v := a1) (st1 := st) (st2 := st) A2 h1
+  simpa [e1, e2, e3, e4, e5, a1, a2, a3, a4, a5] using A1
+
+#assert_axioms eval_batchArgs [propext, Classical.choice, Quot.sound]
+
+/-- **THE FIVE-ARGUMENT INVERSION.** From any value run of the call's argument list, recover the
+    unique value list and the unchanged state. This is what lets `callOk`'s `argvals` be read
+    without dialect determinism (the permissive call relation is not functional). -/
+theorem batchArgs_vals {consts : Inline.Consts} {D aS : Nat}
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) {succ rw me : U256}
+    (hsuccV : VEnv.get V "success" = some succ)
+    (hrV : VEnv.get V "r" = some rw)
+    (hmpeV : VEnv.get V "mptr_end" = some me)
+    {argvals : List U256} {st1 : EvmState}
+    (h : Step (Bridge.Dialect c g) funs V st
+      (Code.args
+        [Expr.var "success",
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+         Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+         Expr.var "r"])
+      (Res.eres (EResult.vals argvals st1))) :
+    argvals = [succ, BitVec.ofNat 256 D, me + BitVec.ofNat 256 0x20,
+      BitVec.ofNat 256 aS, rw] ∧ st1 = st := by
+  cases h with
+  | argsCons hrest hhead =>
+    cases hrest with
+    | argsCons hrest2 hhead2 =>
+      cases hrest2 with
+      | argsCons hrest3 hhead3 =>
+        cases hrest3 with
+        | argsCons hrest4 hhead4 =>
+          cases hrest4 with
+          | argsCons hrest5 hhead5 =>
+            cases hrest5 with
+            | argsNil =>
+              cases hhead with
+              | var hget1 =>
+                have hsuccV' := hsuccV
+                rw [hget1] at hsuccV'
+                cases hsuccV'
+                simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hD] at hhead2
+                cases hhead2 with
+                | lit =>
+                  simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hS] at hhead4
+                  cases hhead4 with
+                  | lit =>
+                    obtain ⟨hv3, hst3⟩ := Midfall.LoweringV3.ScalarInv.eval_add_var_lit
+                      (funs := funs) (V := V) (x := "mptr_end") (n := 0x20) (pv := me)
+                      hmpeV hhead3
+                    cases hhead5 with
+                    | var hget5 =>
+                      have hrV' := hrV
+                      rw [hget5] at hrV'
+                      cases hrV'
+                      cases hv3
+                      refine ⟨?_, hst3⟩
+                      rw [Midfall.Yul.Bridge.litValue_number_nat]
+                      rw [Midfall.Yul.Bridge.litValue_number_nat]
+
+#assert_axioms batchArgs_vals [propext, Classical.choice, Quot.sound]
+
+/-- A list of expressions that individually never halt cannot halt as an argument list. -/
+theorem args_ne_halt_of {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {es : List (Expr EVM.Op)}
+    (hne : ∀ e ∈ es, ∀ (st st' : EvmState),
+      ¬ Step (Bridge.Dialect c g) funs V st (Code.expr e) (Res.eres (EResult.halt st'))) :
+    ∀ (st st' : EvmState), ¬ Step (Bridge.Dialect c g) funs V st
+      (Code.args es) (Res.eres (EResult.halt st')) := by
+  induction es with
+  | nil => intro st st' h; cases h
+  | cons e rest ih =>
+    intro st st' h
+    cases h with
+    | argsRestHalt hrest =>
+      exact ih (fun x hx => hne x (List.mem_cons_of_mem e hx)) st st' hrest
+    | argsHeadHalt _ hhead => exact hne e (by simp) _ st' hhead
+
+/-- The five `batch_invert` arguments never halt: vars and literals cannot, and the only
+    built-in is the `add` whose halt is ruled out by `expr_add_var_lit_ne_halts`. -/
+theorem batchArgs_ne_halt {consts : Inline.Consts} {D aS : Nat}
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    ¬ Step (Bridge.Dialect c g) funs V st
+      (Code.args
+        [Expr.var "success",
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+         Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+         Expr.var "r"])
+      (Res.eres (EResult.halt st)) := by
+  apply args_ne_halt_of
+  intro e he st0 st1 h
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+  rcases he with rfl | rfl | rfl | rfl | rfl
+  · exact Midfall.LoweringV2.Blocks.TraceReturn.trExprVar_ne_halts h
+  · simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hD] at h
+    exact Midfall.LoweringV2.Blocks.TraceReturn.trExprLit_ne_halts h
+  · exact Midfall.LoweringV3.ScalarInv.expr_add_var_lit_ne_halts
+      (funs := funs) (V := V) (x := "mptr_end") (n := 0x20) h
+  · simp only [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hS] at h
+    exact Midfall.LoweringV2.Blocks.TraceReturn.trExprLit_ne_halts h
+  · exact Midfall.LoweringV2.Blocks.TraceReturn.trExprVar_ne_halts h
+
+#assert_axioms batchArgs_ne_halt [propext, Classical.choice, Quot.sound]
+
+/-- **`BatchInvertPost → BatchInvertCallPost` THROUGH `VEnv.setMany`.** The A5 summary is stated
+    over the callee environment (`ret` / `precompile_failed`); the caller binds those two words to
+    `success` / `lagrange_precompile_failed`. This lemma is the whole environment conversion: the
+    two gets after `setMany`, the set equation, and the unchanged state/memory/reject arms. -/
+theorem batchInvertCallPost_of_post
+    {V Vc V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    {succ rw : U256} {a e s : Nat}
+    (hpost : BatchInvertPost (c := c) (g := g) st succ a e s (BitVec.ofNat 256 Midfall.Yul.blsR) Vc st')
+    (hrw : rw = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hsuccV : VEnv.get V "success" = some succ)
+    (hpfV : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (hV' : ∀ ret pf, VEnv.get Vc "ret" = some ret →
+      VEnv.get Vc "precompile_failed" = some pf →
+      V' = VEnv.setMany V ["success", "lagrange_precompile_failed"] [ret, pf]) :
+    BatchInvertCallPost (c := c) (g := g) V st st' V' succ a e s rw := by
+  obtain ⟨ret, pf, hret, hpf, henv, hhalt, hout, hszero, hpfzero, hinv⟩ := hpost
+  have hV'ret := hV' ret pf hret hpf
+  refine ⟨ret, pf, ?_, ?_, ?_, henv, hhalt, hout, hszero, hpfzero, ?_⟩
+  · rw [hV'ret]
+    simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
+      List.foldl_nil]
+    rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "lagrange_precompile_failed")
+      (y := "success") (by decide)]
+    exact venv_get_set_same hsuccV
+  · rw [hV'ret]
+    simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
+      List.foldl_nil]
+    rw [venv_get_set_same (D := Bridge.Dialect c g)]
+    rw [venv_get_set_ne (D := Bridge.Dialect c g) (x := "success")
+      (y := "lagrange_precompile_failed") (by decide)]
+    exact hpfV
+  · rw [hV'ret]
+    simp only [VEnv.setMany, List.zip_cons_cons, List.zip_nil_right, List.foldl_cons,
+      List.foldl_nil]
+  · intro hretne
+    rw [hrw]
+    exact hinv hretne
+
+#assert_axioms batchInvertCallPost_of_post [propext, Classical.choice, Quot.sound]
+
 /-! ## 2. THE MEMORY-OUTSIDE WINDOW VOCABULARY -/
 
 /-- `st.memory` agrees with `m0` outside the denominator window `[D, D+lenS)`, the scratch window
