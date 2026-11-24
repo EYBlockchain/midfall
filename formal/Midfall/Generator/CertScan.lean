@@ -1412,6 +1412,82 @@ theorem parser_noWriters (pv : PlanView) :
       | exact ⟨1000, rfl⟩
 
 
+
+/-! ### No function definitions in the parser slice -/
+
+def NoFunDefIn (b : YulBlock) : Prop :=
+  ∀ s ∈ b, ∀ (n : String) (ps rs : List String) (body : YulBlock), s ≠ Stmt.funDef n ps rs body
+
+theorem NoFunDefIn_append {a b : YulBlock} (ha : NoFunDefIn a) (hb : NoFunDefIn b) :
+    NoFunDefIn (a ++ b) := by
+  intro s hs n ps rs body heq
+  rw [heq] at hs
+  rw [List.mem_append] at hs
+  rcases hs with h | h
+  · exact ha _ h _ _ _ _ rfl
+  · exact hb _ h _ _ _ _ rfl
+
+theorem NoFunDefIn_flatten_map {α : Type _} {l : List α} {f : α → YulBlock}
+    (h : ∀ a ∈ l, NoFunDefIn (f a)) : NoFunDefIn ((l.map f).flatten) := by
+  intro s hs n ps rs body heq
+  rw [heq] at hs
+  rw [List.mem_flatten] at hs
+  obtain ⟨b, hb, hsb⟩ := hs
+  rw [List.mem_map] at hb
+  obtain ⟨a, ha, rfl⟩ := hb
+  exact h a ha _ hsb _ _ _ _ rfl
+
+theorem phase_noFun (ph : UserPhase) : NoFunDefIn (phaseBlock ph) := by
+  intro s hs n ps rs body heq
+  rw [heq] at hs
+  unfold phaseBlock at hs
+  rw [List.mem_append] at hs
+  rcases hs with h | h
+  · simp [GenAst.g1WalkLoop, GenAst.yfor] at h
+  · rw [List.mem_map] at h
+    obtain ⟨j, _, h⟩ := h
+    simp [GenAst.yset] at h
+
+theorem lookup_noFun (lk : ProofLookupCommitmentsLayout) : NoFunDefIn (lookupBlock lk) := by
+  intro s hs n ps rs body heq
+  rw [heq] at hs
+  unfold lookupBlock at hs
+  rw [List.mem_append] at hs
+  rcases hs with h | h
+  · simp [GenAst.g1WalkLoop, GenAst.yfor] at h
+  · simp [GenAst.g1WalkBody, GenAst.yset, GenAst.yexpr, GenAst.ycall, GenAst.yvar,
+      GenAst.yop, GenAst.ylit] at h
+
+set_option maxHeartbeats 1000000 in
+theorem funSigs_emitTranscriptParser (pv : PlanView) :
+    Midfall.LoweringV3.funSigsOf (GenAst.emitTranscriptParser pv) = [] := by
+  rw [Midfall.LoweringV3.funSigsOf, List.filterMap_eq_nil_iff]
+  have h : NoFunDefIn (GenAst.emitTranscriptParser pv) := by
+    unfold GenAst.emitTranscriptParser GenAst.emitTranscriptParserAt
+    dsimp only
+    by_cases h1 : (pv.numLookups != 0) = true <;>
+    by_cases h2 : (pv.numPermutationZs != 0) = true <;>
+    by_cases h3 : (pv.lookupHPlusAcc != 0) = true <;>
+    by_cases h4 : (pv.numTrashcans != 0) = true <;>
+    by_cases h5 : pv.truncatedChallenges = true <;>
+    all_goals try simp only [h1, h2, h3, h4, h5, if_true, if_false]
+    all_goals
+      repeat' first
+        | apply NoFunDefIn_append
+        | apply NoFunDefIn_flatten_map
+        | (intro a _; exact phase_noFun a)
+        | (intro a _; exact lookup_noFun a)
+        | (intro s hs n ps rs body heq
+           rw [heq] at hs
+           simp [GenAst.ylet, GenAst.yset, GenAst.yblock, GenAst.yfor, GenAst.yif,
+             GenAst.yexpr, GenAst.yop, GenAst.yvar, GenAst.ylit, GenAst.ycall,
+             GenAst.g1WalkLoop, GenAst.g1WalkBody, GenAst.g1AbsorbCopy] at hs)
+  intro s hs
+  cases s with
+  | funDef n ps rs body => exact absurd rfl (h _ hs n ps rs body)
+  | _ => rfl
+
+
 /-! ## 5. WHY THE NUMERATOR RESIDUAL IS NOT A TREE LEMMA (reproduction record)
 
   The three hypotheses of `noWriters_mainAsmRaw_of` are not interchangeable. The parser and PCS
