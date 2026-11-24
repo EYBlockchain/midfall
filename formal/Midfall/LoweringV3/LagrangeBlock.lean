@@ -2756,4 +2756,61 @@ theorem lag_inner_contract_zero {consts : Inline.Consts} {cd : Bytes} {k n m : N
   obtain ⟨ret, pf, hsucc, -, -, -, -, hszero, -⟩ := hip'
   exact ⟨ho, hip, by rw [hsucc, (hszero hsucc0).1]⟩
 
+
+/-! ## 5c. THE ENVIRONMENT NAME SHAPE OF A RUN -/
+
+/-- `VEnv.set` preserves the name list. -/
+theorem venv_set_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V : VEnv D) (x : Ident) (v : D.Value) :
+    (VEnv.set V x v).map Prod.fst = V.map Prod.fst := by
+  induction V with
+  | nil => rfl
+  | cons p rest ih =>
+      obtain ⟨y, w⟩ := p
+      unfold VEnv.set
+      by_cases h : y = x
+      · simp [h]
+      · simp [h, ih]
+
+/-- `VEnv.setMany` preserves the name list. -/
+theorem venv_setMany_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V : VEnv D) (xs : List Ident) (vs : List D.Value) :
+    (VEnv.setMany V xs vs).map Prod.fst = V.map Prod.fst := by
+  unfold VEnv.setMany
+  generalize xs.zip vs = ps
+  induction ps generalizing V with
+  | nil => rfl
+  | cons p ps ih =>
+      obtain ⟨x, v⟩ := p
+      simp only [List.foldl_cons]
+      rw [ih, venv_set_names]
+
+/-- The names of a zip are the prefix of the first list. -/
+theorem zip_fst_names {α β : Type} (xs : List α) (ys : List β) :
+    (xs.zip ys).map Prod.fst = xs.take ys.length := by
+  induction xs generalizing ys with
+  | nil =>
+      cases ys with
+      | nil => rfl
+      | cons b bs => simp [List.zip]
+  | cons a as ih =>
+      cases ys with
+      | nil => rfl
+      | cons b bs =>
+          rw [List.zip_cons_cons, List.map_cons, ih]
+          rfl
+
+/-- A block's `restore` drops the values but keeps the outer name list. -/
+theorem restore_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V W : VEnv D} {e : List Ident}
+    (h : W.map Prod.fst = e ++ V.map Prod.fst) :
+    (restore V W).map Prod.fst = V.map Prod.fst := by
+  have hl : W.length - V.length = e.length := by
+    have hh := congrArg List.length h
+    simp only [List.length_map, List.length_append] at hh
+    omega
+  rw [show restore V W = W.drop (W.length - V.length) from rfl, hl, List.map_drop, h]
+  exact List.drop_left
+
+
 end Midfall.LoweringV3.LagrangeBlock
