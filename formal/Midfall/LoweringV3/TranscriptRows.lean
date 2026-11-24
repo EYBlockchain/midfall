@@ -5331,6 +5331,34 @@ theorem lookupChunkSum_add_three (l : List (LogupBatchedArgument (Fr p))) (deg :
   have h := sum_map_add_three (l.map (fun x => lookupChunkNum deg x))
   simpa only [List.map_map, Function.comp_def, List.length_map] using h
 
+theorem runsAllP_parseTraceLookupCommitments_count (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁)
+    (rows : Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p)))) (Qs : List G₁)
+    (hlen : Qs.length = (rows.toList.map (fun row => (row.toList.map
+      (fun p => p.2.numChunks + 1)).sum)).sum)
+    (hledger : (rows.toList.map (fun row => (row.toList.map
+      (fun p => p.2.numChunks + 1)).sum)).sum =
+      (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hcount : (rows.toList.map (fun row => row.toList.length)).sum =
+      vk.cs.lookups.size) :
+    RunsAllP E (parseTraceLookupCommitments E rows)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun out => (out.toList.map (fun row => (row.toList.map
+        (fun c => c.helperPolys.size + 3)).sum)).sum =
+        (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum) := by
+  rw [parseTraceLookupCommitments]
+  have h := runsAllP_lookupCommitments_rows_count E rows.toList
+    (#[] : Array (Array (Logup.Committed G₁))) Qs hlen
+  refine RunsAllP.mono E h ?_
+  intro out hout
+  have hzero : rowsEvalSum (#[] : Array (Array (Logup.Committed G₁))) = 0 := rfl
+  rw [hzero, Nat.zero_add] at hout
+  change rowsEvalSum out = (vk.cs.lookups.toList.map
+    (fun l => lookupChunkNum vk.csDegree l + 3)).sum
+  rw [hout, sum_rows_rowEvalSum_eq, hledger, hcount, lookupChunkSum_add_three,
+    Array.length_toList]
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -8051,6 +8079,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.rowEvalSum_eq [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.sum_rows_rowEvalSum_eq [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.lookupChunkSum_add_three [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupCommitments_count [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
