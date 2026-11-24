@@ -96,6 +96,38 @@ theorem batchInvert_lookup (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g 
 
 #assert_axioms batchInvert_lookup [propext, Classical.choice, Quot.sound]
 
+/-- **STATEMENT 10'S FORM, AT THE INLINER'S CONSTANT SITES.** All five arguments are `vkSite`s;
+    the inliner's `inExpr` on a variable is definitionally this site once `shadowed` is false, and
+    `success`/`r` are not shadowed inside the inner block. -/
+theorem lagInner_10_form (consts : Inline.Consts) (k n m : Nat) :
+    seg (lagInner consts k n m) 10 1 =
+      [Stmt.assign ["success", "lagrange_precompile_failed"]
+        (Expr.call "batch_invert"
+          [Midfall.LoweringV2.Blocks.VkLoading.vkSite "success" consts,
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+           Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "r" consts])] := by
+  kernel_rfl
+
+/-- The same statement at the two UNBOUND caller locals: `success` and `r` stay variables.
+    THIS IS THE FORM THE CALLER BRIDGE CONSUMES; the lookup hypotheses are what the inliner
+    needs to reduce its two-site match, and are exactly `consts_succ_none` / `hr`. -/
+theorem lagInner_10_form_var (consts : Inline.Consts) (k n m : Nat)
+    (hsucc : consts.lookup "success" = none) (hr : consts.lookup "r" = none) :
+    seg (lagInner consts k n m) 10 1 =
+      [Stmt.assign ["success", "lagrange_precompile_failed"]
+        (Expr.call "batch_invert"
+          [Expr.var "success",
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+           Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+           Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+           Expr.var "r"])] := by
+  rw [lagInner_10_form]
+  simp [Midfall.LoweringV2.Blocks.VkLoading.vkSite, hsucc, hr]
+
+#assert_axioms lagInner_10_form_var [propext, Classical.choice, Quot.sound]
+
 /-! ## 2. THE MEMORY-OUTSIDE WINDOW VOCABULARY -/
 
 /-- `st.memory` agrees with `m0` outside the denominator window `[D, D+lenS)`, the scratch window
