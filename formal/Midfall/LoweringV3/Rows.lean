@@ -1546,4 +1546,77 @@ theorem lagPre_of_inv_transcript_of_payload (R : Render p G₁ G₂ Gₜ) (hR : 
 
 #assert_axioms lagPre_of_inv_transcript_of_payload [propext, Classical.choice, Quot.sound]
 
+/-! ## 10. THE PG-OMEGAINV SLOT AND THE PAYLOAD WINDOW FROM `Inv .vk` -/
+
+/-- The generated model reads `numNegLagranges` off the plan meta (the Certified proof,
+    re-derived below `GeneratorTheorem`). -/
+theorem model_numNegLagranges_of_generated_lag {R : Render p G₁ G₂ Gₜ}
+    (h : GeneratedBy R) :
+    R.model.numNegLagranges = R.plan.meta_.rotationLast.natAbs := by
+  have hg := Midfall.LoweringV3.MemoryPairs.gvfp_of_generated h
+  simp only [Midfall.Generator.generateVerifierFromPlan, Bind.bind, Except.bind] at hg
+  split at hg
+  · cases hg
+  · cases hg
+  · obtain ⟨_a1, _, h1⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp hg
+    obtain ⟨_a2, _, h2⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h1
+    obtain ⟨_a3, _, h3⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h2
+    obtain ⟨_a4, _, h4⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h3
+    obtain ⟨_a5, _, h5⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h4
+    obtain ⟨_a6, _, h6⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h5
+    obtain ⟨_a7, _, h7⟩ := (Midfall.LoweringV3.MemoryPairs.match_ok_iff _ _).mp h6
+    have hrec := Except.ok.inj h7
+    simpa [Midfall.Generator.numNegLagrangesOf] using
+      (congrArg (fun x => x.numNegLagranges) hrec).symm
+
+#assert_axioms model_numNegLagranges_of_generated_lag [propext, Classical.choice, Quot.sound]
+
+/-- **PG-OMEGAINV-SLOT**, from the generated model: the plan meta's rotation magnitude is the
+    plan view's `numNegLagranges`. -/
+theorem pg_omegainv_slot {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
+    R.plan.meta_.rotationLast.natAbs = R.pv.numNegLagranges := by
+  have h := model_numNegLagranges_of_generated_lag hR.generated
+  exact h.symm.trans (by rfl)
+
+#assert_axioms pg_omegainv_slot [propext, Classical.choice, Quot.sound]
+
+/-- The `.vk` payload pin, extracted from `Inv .vk`. -/
+theorem inv_vk_payload {calls : ExternalCalls} {gas : ExternalGas}
+    {E : VerifierEnv p G₁ G₂ Gₜ} {params : ParamsVerifierKZG G₁ G₂}
+    {PV : PlanView} {S : Snapshot p G₁ G₂ Gₜ} {V : VEnv (Bridge.Dialect calls gas)}
+    {st : EvmState}
+    (h : Midfall.Lowering.Inv E params Checkpoint.vk PV S V st) :
+    bytesAt st (ptrAddr PV.memory.vkMptr) PV.vk.len = PV.vk.bytes := by
+  have h1 := h
+  unfold Midfall.Lowering.Inv at h1
+  simp only [InvAt] at h1
+  simp only [Midfall.Lowering.checkpoint_le_def, Checkpoint.idx] at h1
+  have hvv : (1 : Nat) ≤ 1 := by decide
+  have htv : ¬ (2 : Nat) ≤ 1 := by decide
+  have hiv : ¬ (3 : Nat) ≤ 1 := by decide
+  have hlv : ¬ (4 : Nat) ≤ 1 := by decide
+  have hqv : ¬ (5 : Nat) ≤ 1 := by decide
+  simp only [hvv, htv, hiv, hlv, hqv, ite_true, ite_false, Bool.false_eq_true] at h1
+  simp only [Bool.and_eq_true] at h1
+  have hh := h1.1.1.1.1.1.2.1.1
+  change ((bytesAt st (ptrAddr PV.memory.vkMptr) PV.vk.len).data == PV.vk.bytes.data) = true at hh
+  exact ByteArray.ext (beq_iff_eq.mp hh)
+
+/-- `lagPre_of_inv_transcript_of_payload` with the payload window read off `Inv .vk`. -/
+theorem lagPre_of_inv_transcript_of_vk (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hframe : Frame R H vkAddr cd V st)
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (hpf : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (hinv : Midfall.Lowering.Inv (calls := c) (gas := g) R.E R.params Checkpoint.vk
+      R.pv S V st)
+    (hx : loadWord st.memory (lagCfgOf R cd S).aX = (lagCfgOf R cd S).xw)
+    (hrot : R.plan.meta_.rotationLast.natAbs = R.pv.numNegLagranges) :
+    LagrangeBlock.LagPre (lagCfgOf R cd S) V st :=
+  lagPre_of_inv_transcript_of_payload R hR cd S H vkAddr V st hframe hsucc hpf hx hrot
+    (readBytes_of_bytesAt (inv_vk_payload hinv))
+
+
 end Midfall.LoweringV3
