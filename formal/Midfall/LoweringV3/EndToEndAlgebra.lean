@@ -4839,6 +4839,18 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Midfall.Generator.permZUpstream_length_eq
   [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.Generator.pcsAdviceBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.Generator.pcsCommittedInstanceBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.Generator.pcsFixedBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.Generator.pcsPermutationCommonBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.Generator.pcsTrashBlock_length
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.Generator.pcsLookupBlock_length
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms Permutation.Evaluated.queries_length_permZUpstream
   [propext, Classical.choice, Quot.sound]
 #assert_axioms permZBlock_three
