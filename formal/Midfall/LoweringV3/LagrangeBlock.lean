@@ -547,6 +547,45 @@ def LagPre {consts : Inline.Consts} {cd : Bytes} {k n m : Nat} (C : LagCfg const
   loadWord st.memory C.aL = C.w0 ∧ loadWord st.memory C.aN = C.nInv ∧
   st.env.calldata = cd.data.toList
 
+/-- **THE PG-LAG-FITS INPUT PREDICATE, EXACTLY.** The address/window arithmetic the
+    `LagInnerContract` composition consumes and that `ValidV3` ALONE does not bound: the
+    Lagrange-denominator end (`D + 32(n+m+1)`), the six slot fits, the four window
+    disjointness clauses, and the six pairwise slot separations. The remaining fits in
+    `lag_inner_contract` are consequences of `denomEnd` (`omega`) or projections of
+    `programOk`/`cdBound` (`aI + 32n`); they are not repeated here. `MetaCountsBound`
+    (Generator/Certified) bounds the VK's `rotationLast` (`m`) by `2^32` but says
+    nothing about `n = numInstances`, so it does not imply `denomEnd` on its own. -/
+structure LagWindowFits {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) : Prop where
+  aX : C.aX < 2 ^ 256
+  aO : C.aO < 2 ^ 256
+  aL : C.aL < 2 ^ 256
+  aN : C.aN < 2 ^ 256
+  aIb : C.aI + 32 * n < 2 ^ 256
+  denomEnd : C.D + 32 * (n + m + 1) < 2 ^ 256
+  LD : C.aL + 32 ≤ C.D ∨ C.D + 32 * (n + m) ≤ C.aL
+  Lne : C.aL + 32 ≤ C.D ∨ C.D + 32 * (n + m) + 32 ≤ C.aL
+  Ls : C.aL + 32 ≤ C.s ∨ C.s + (32 * (n + m + 1) + 0xc0) ≤ C.aL
+  Nne : C.aN + 32 ≤ C.D ∨ C.D + 32 * (n + m) + 32 ≤ C.aN
+  Ns : C.aN + 32 ≤ C.s ∨ C.s + (32 * (n + m + 1) + 0xc0) ≤ C.aN
+  Nslot : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+    C.aN + 32 ≤ q ∨ q + 32 ≤ C.aN
+  slotFits : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE, q + 32 < 2 ^ 256
+  slotD : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+    q + 32 ≤ C.D ∨ C.D + 32 * (n + m + 1) ≤ q
+  pair : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+    ∀ q' ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
+      q + 32 ≤ q' ∨ q' + 32 ≤ q
+
+/-- **WHERE `denomEnd` COMES FROM.** The two counts D-GATE11's input predicate bounds
+    (`CountBound.instances : numInstances < 2^32`, `MetaCountsBound.rotationLast` for `m`) and
+    a layout address below `2^200` put the whole denominator window below `2^256`. -/
+theorem lagDenomEnd_of_countBound {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    {C : LagCfg consts cd k n m} (hD : C.D < 2 ^ 200)
+    (hn : n < 2 ^ 32) (hm : m < 2 ^ 32) :
+    C.D + 32 * (n + m + 1) < 2 ^ 256 := by
+  omega
+
 /-- **THE BLOCK'S POST (the card's T3.9.f statement).** `LagRel` at the block's own memory, the
     six slot stores holding the same words, and the memory outside the denominator window, the
     batch-inversion scratch window and the six slot windows unchanged. The reject arm carries
@@ -2743,7 +2782,58 @@ theorem lag_inner_contract_post {consts : Inline.Consts} {cd : Bytes} {k n m : N
       V st hp V' st' o hrun
   exact ⟨ho, lag_inner_post_of_p15 (mem0 := mem) (mem := LagM6 C mem) hm hn h15⟩
 
-
+/-- **`LagInnerContract` FROM THE EXACT PG-LAG-FITS PREDICATE.** All the window arithmetic the
+    composition consumes is in `LagWindowFits`; the consequences (`hfitD`, `hfitm`, `hm32`,
+    `haDm`, `haD32`, `haD`, the six slot fits) are `omega`/projection steps, not new inputs.
+    The constant-table lookups, `hm`/`hn`/`hk` and the A5 call segment stay explicit. -/
+theorem lag_inner_contract_post_of_fits {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) (product : PairingProduct) (g : ExternalGas)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (hr : consts.lookup "r" = none)
+    (hX : consts.lookup "X_MPTR" = some C.aX)
+    (hO : consts.lookup "OMEGA_MPTR" = some C.aO)
+    (hL : consts.lookup "OMEGA_INV_TO_L_MPTR" = some C.aL)
+    (hN : consts.lookup "N_INV_MPTR" = some C.aN)
+    (hI : consts.lookup "INSTANCE_CPTR" = some C.aI)
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D)
+    (hXN : consts.lookup "X_N_MPTR" = some C.aXN)
+    (hXN1 : consts.lookup "X_N_MINUS_1_INV_MPTR" = some C.aXN1)
+    (hLL : consts.lookup "L_LAST_MPTR" = some C.aLL)
+    (hLB : consts.lookup "L_BLIND_MPTR" = some C.aLB)
+    (hL0 : consts.lookup "L_0_MPTR" = some C.aL0)
+    (hIE : consts.lookup "INSTANCE_EVAL_MPTR" = some C.aIE)
+    (hfits : LagWindowFits C)
+    (hm : 2 ≤ m) (hn : 1 ≤ n) (hk : k < 2 ^ 256)
+    (hcall : BatchInvertCallSegment consts product g k n m C.D C.s funs C.succ C.rw) :
+    LagInnerContract C funs := by
+  have hfitD : C.D + 32 * (n + m) < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have hfitm : C.D + 32 * m < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have hm32 : m * 32 < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have haDm : C.D + m * 32 < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have haD32 : C.D + 32 < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have haD : C.D < 2 ^ 256 := by
+    have := hfits.denomEnd; omega
+  have hfitXN : C.aXN + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aXN (by simp [lagSlots])
+  have hfitXN1 : C.aXN1 + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aXN1 (by simp [lagSlots])
+  have hfitLL : C.aLL + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aLL (by simp [lagSlots])
+  have hfitLB : C.aLB + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aLB (by simp [lagSlots])
+  have hfitL0 : C.aL0 + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aL0 (by simp [lagSlots])
+  have hfitIE : C.aIE + 32 < 2 ^ 256 :=
+    hfits.slotFits C.aIE (by simp [lagSlots])
+  exact lag_inner_contract_post C product g funs hr hX hfits.aX hO hfits.aO hL hfits.aL
+    hN hfits.aN hI hfits.aIb hD hfitD hfitm hm32 haDm haD32 haD
+    hfits.LD hfits.Lne hfits.Ls hfits.Nne hfits.Ns hfits.Nslot hXN hXN1 hLL hLB hL0 hIE
+    hfitXN hfitXN1 hfitLL hfitLB hfitL0 hfitIE hfits.slotD hfits.pair hm hn hk hcall
 
 /-- **THE POISON ARM OF THE INNER SCOPE.** At `C.succ = 0` the inner contract's reject arm keeps
     `success = 0` (`LagInnerPost`'s `succZero` clause), which is what the final guard reads. -/
@@ -3313,6 +3403,8 @@ theorem lag_poison {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
   exact StmtsContractAll.append_normal hpro (fun _ _ _ => hbg)
 
 #assert_axioms lag_poison [propext, Classical.choice, Quot.sound]
+#assert_axioms lag_inner_contract_post_of_fits [propext, Classical.choice, Quot.sound]
+#assert_axioms lagDenomEnd_of_countBound [propext, Classical.choice, Quot.sound]
 
 -- Downstream `lag_poison` reads the two facts above; keep the closed 14-name list opaque so that
 -- later `decide`/`simp` does not try to unfold `lagInner` at a general table.

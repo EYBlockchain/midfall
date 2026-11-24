@@ -155,10 +155,19 @@ The lagrange rows cannot yet be assembled from the tree. The blockers are NOT on
    `C.succ = 0`, which is exactly the remaining whole-block composition. The Render-level
    assembly `lagBlockPoisonContract_of_inner` below reduces `LagBlockPoisonContract` to the two
    named bridges `hpre : Poisoned → LagPre C` and `hinner : LagInnerContract C …`.
-3. **PG-LAG-FITS remains caller-side.** `LagCfg`'s address fits and window disjointness are not
-   projections of `ValidV3` (the layout's `MemoryMap.WellFormed` has no upper bound), so the
-   `LagInnerContract` still has to come from the T3.9.f composition under those fits. The clean
-   post also awaits T3.9.g (`lag_agrees`).
+3. **PG-LAG-FITS is now an exact named predicate.** `LagrangeBlock.LagWindowFits` carries the
+   denominator window end `D + 32(n+m+1) < 2^256`, the six slot fits, the four window
+   disjointness clauses and the six pairwise slot separations; `lag_inner_contract_post_of_fits`
+   derives `LagInnerContract` from it (all weaker arithmetic is `omega`). It is NOT a
+   `ValidV3` projection: `MetaCountsBound` (`Generator/Certified.lean:207`) bounds `m` through
+   `rotationLast < 2^32`, but nothing bounds `n = numInstances`; the generator's input predicate
+   `CountBound` (`Certified.lean:286`) has `instances < 2^32` and `metaCounts`, and with a
+   layout address below `2^200` it gives the denominator end
+   (`LagrangeBlock.lagDenomEnd_of_countBound`). `Render` does not retain `CountBound`, so this
+   remains an INPUT predicate, not a row/root hypothesis. The clean post also needs T3.9.g's
+   actual premises: `lag_agrees` is landed (`LagrangeRows.lean:3515`) but consumes
+   `hl : snapshotLagrangeStep = .ok l`, `hxn`, `hinst` and the `XcriptAlgebraRun`/`XcriptG1`
+   parser facts, none of which `ValidV3` supplies.
 
 Therefore `lag_blockSim`/`lag_blockProgS` remain the existing registered leaves; no row hypothesis
 has been added and no new `sorry` is introduced here. When 1–3 land, the rows are pure glue.
@@ -1303,5 +1312,66 @@ theorem prog_rows (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
 #print axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
 #assert_axioms Midfall.LoweringV3.VkClean.vk_hdr_word_read
   [propext, Classical.choice, Quot.sound] native []
+
+/-! ## 9. The canonical Lagrange `LagCfg` and the `Inv → LagPre` field assembly
+
+The Render-level clean arm needs one `LagCfg` constructed from the snapshot the Lagrange
+post talks about. `lagCfgOf` is that record. The four memory-word equalities (`x`, `omega`,
+`omega_inv_to_l`, `n_inv`) are the only facts the assembly cannot read off `Inv` + `Frame`
+directly here: `x` comes from the `.transcript` slot (decode-relative, via `Agree`), the three
+header words from `Inv .vk`'s `bytesAt vkMptr = PV.vk.bytes` window plus `PayloadAgrees` and
+the `readBytes`/`loadWord` bridge (`PG-LOADWORD-BYTES`). They are explicit arguments so the
+missing bridge is named rather than guessed. -/
+
+/-- The canonical Lagrange block configuration at a snapshot. -/
+def lagCfgOf (R : Render p G₁ G₂ Gₜ) (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ) :
+    LagrangeBlock.LagCfg R.consts cd R.pv.k R.pv.numInstances R.pv.numNegLagranges :=
+  { D := R.pv.memory.lagrangeDenomsMptr
+    s := R.pv.memory.batchInvertScratchMptr
+    aX := ptrAddr R.pv.memory.xMptr
+    aO := ptrAddr R.pv.memory.vkMptr + 32 * vkHeaderTemplateSlotsDefault.omega
+    aL := ptrAddr R.pv.memory.vkMptr + 32 * vkHeaderTemplateSlotsDefault.omegaInvToL
+    aN := ptrAddr R.pv.memory.vkMptr + 32 * vkHeaderTemplateSlotsDefault.nInv
+    aI := R.pv.proofLayout.proofEnd + 32
+    aXN := ptrAddr R.pv.memory.xNMptr
+    aXN1 := ptrAddr R.pv.memory.xNMinus1InvMptr
+    aLL := ptrAddr R.pv.memory.lLastMptr
+    aLB := ptrAddr R.pv.memory.lBlindMptr
+    aL0 := ptrAddr R.pv.memory.l0Mptr
+    aIE := ptrAddr R.pv.memory.instanceEvalMptr
+    rw := BitVec.ofNat 256 p
+    succ := 1
+    xw := Midfall.Halo2.frWord S.alg.x
+    omw := Midfall.Halo2.frWord R.vk.domain.omega
+    w0 := Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges)
+    nInv := Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹) }
+
+/-- **THE `Inv`/`Frame` → `LagPre` FIELD ASSEMBLY.** `Frame` supplies `r` (its `FR_MODULUS`
+    word, `frModulus_of_valid` identifying the literal with `p`) and the calldata; `StageInv`'s
+    success conjunct supplies `success = 1`; the prologue supplies `pf = 0`; the four explicit
+    hypotheses are the memory words. This is the exact interface of the bridge: no row/root
+    hypothesis, and the four word facts stay visible. -/
+theorem lagPre_of_inv_transcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hframe : Frame R H vkAddr cd V st)
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    (hpf : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+    (hX : loadWord st.memory (lagCfgOf R cd S).aX = (lagCfgOf R cd S).xw)
+    (hO : loadWord st.memory (lagCfgOf R cd S).aO = (lagCfgOf R cd S).omw)
+    (hL : loadWord st.memory (lagCfgOf R cd S).aL = (lagCfgOf R cd S).w0)
+    (hN : loadWord st.memory (lagCfgOf R cd S).aN = (lagCfgOf R cd S).nInv) :
+    LagrangeBlock.LagPre (lagCfgOf R cd S) V st := by
+  obtain ⟨rv, hrv, hget⟩ := hframe.r
+  have hrvp : rv = p := by
+    have h := frModulus_of_valid hR
+    rw [hrv] at h
+    exact Option.some.inj h
+  refine ⟨?_, hsucc, hpf, hX, hO, hL, hN, hframe.calldata⟩
+  rw [hget, hrvp]
+  rfl
+
+#assert_axioms lagPre_of_inv_transcript [propext, Classical.choice, Quot.sound]
 
 end Midfall.LoweringV3
