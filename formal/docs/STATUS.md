@@ -441,6 +441,15 @@ PCS/lagrange low-level contracts (`PcsBlock4.pcsBlock_contract`, `LagrangeBlock`
 `LagInnerContract`/`LagBlockContract` definitions) sit below the row and do not by themselves state
 `BlockLive`; no `block_live_lagrange`/`block_live_pcs_running` theorem exists to wire today.
 
+**Closure attempt (2026-11-24): all four remain open, no statement weakened.** The three
+requested routes were measured in `docs/BLOCKLIVE-RESIDUAL.md`: (1) `hacc` is not derivable from
+`StageInv` at any of the four pre-checkpoints (`LeanRaw` is `envelopeOk`/`rawDecode.isSome`; a
+`Decoded` can still fail at `liftRaw`, and `CompleteSide` is independent); (2) `BlockSim` is
+forall-only and its normal-poisoned arm is not the `StageInv` post for TP/lagrange/quotient (only
+PCS's `Mid` post absorbs it), while the PCS `blockSim` lives above `BlockLive` in `Rows`; (3) the
+PCS/lagrange low-level contracts are forall-only sub-block contracts, and `LagBlockContract` is a
+definition, not a theorem. Exact per-case residuals are tabulated in that file.
+
 ### Final claim surface - generic vs F1-real
 
 * `Midfall/LoweringV3/FinalClaims.lean` - the GENERIC surface: `lowering_correct`,
