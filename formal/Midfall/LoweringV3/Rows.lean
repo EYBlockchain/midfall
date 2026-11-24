@@ -147,7 +147,16 @@ The lagrange rows cannot yet be assembled from the tree. The blockers are NOT on
    (`x_n_minus_1_inv`, `l_last`, `l_0`), and 22-27 (the six slot stores). Statement 10 (the
    `batch_invert` call) is the only inner statement not yet discharged; A5's
    `batch_invert_summary` now exists (`ModexpGeneral.lean:4331`), so what remains there is the
-   caller-side `Step.callOk`/`ysetN` bridge, not a missing summary.
+   caller-side `Step.callOk`/`ysetN` bridge, not a missing summary. Its exact inputs are:
+   `batchInvertDecl`/`lookupFun funs "batch_invert" = some (decl, cenv)` with
+   `decl.body = helperBody consts emitBatchInvertAt` and the five params/two rets (provable by
+   `kernel_rfl`, as `EcPairing.ecPairing_lookup` does); the argument evaluation of
+   `success, LAGRANGE_DENOMS_MPTR, mptr_end + 0x20, BATCH_INV_SCRATCH_MPTR, r`; the A5 pre's
+   `MODEXP_GAS` lookup, `hsp` (`lagScratchFits`), the window fits (`LagWindowFits`) and the
+   CANONICAL FIRST DENOMINATOR WORD `(loadWord st.memory C.D).toNat < blsR`; then
+   `BatchInvertPost` -> `BatchInvertCallPost` through `VEnv.setMany`. The canonical-word fact is
+   the named PG-BATCHINVERT(3) premise (it follows from `x ∉ domain` on the progress side, and
+   is not implied by `LagPre` on the soundness side).
 2. **T3.9.h `lag_poison`'s inner half is now landed** as `LagrangeBlock.lag_poison` (with
    `lag_body_poison_contract` / `lag_block_poison_contract` / `lag_guard_poison_contract`): the
    body's `restore` keeps `success`/`lagrange_precompile_failed` (the two non-membership facts
