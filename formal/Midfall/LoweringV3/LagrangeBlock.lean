@@ -2955,5 +2955,232 @@ theorem Step.sres_names {D : YulSemantics.Dialect} [DecidableEq D.Value]
       obtain ⟨e, he, hb⟩ := ihbody rfl
       exact ⟨e, he, by simpa [Code.boundNames] using hb⟩
 
+/-! ## 5d. THE INNER BLOCK'S TOP-LEVEL NAMES - THE TWO `lag_poison` FACTS
+
+The poisoned arm of T3.9.h runs the inner block from `success = 0` and then reads the outer
+guard. The block `restore`s its own scope, so the two names the guard reads survive the block
+exactly when they are NOT among the block body's top-level lets. `Step.sres_names` (5c) turns
+that into the two non-membership facts proved here.
+
+`lagInner` is the INLINED body, so its names are not syntactically the emitter's. The bridge is
+the inliner's name invariant: `inlineStmtStep` rewrites expressions only, never a `letDecl`'s
+binders (and never descends into a nested scope for `Code.boundNames`). The invariant is stated
+at three levels - one statement, the `stepAcc` fold, and the contract transform - and then
+applied to the pre-inline emitter body `lagInnerRaw`, whose 14 top-level lets are fixed by the
+template and contain neither `success` nor `lagrange_precompile_failed`. -/
+
+/-- The 14 top-level `let`s of the emitter's inner scope (`GenAst.emitLagrangeAt`'s `yblock`). -/
+def lagInnerNames : List Ident :=
+  ["k", "x", "x_n", "omega", "mptr", "mptr_end", "x_n_minus_1", "l_i_common",
+   "l_blind", "l_i_cptr", "instance_eval", "x_n_minus_1_inv", "l_last", "l_0"]
+
+/-- The names a single statement contributes to a block's top-level scope, recursing into nested
+    blocks. `Code.boundNames` is non-recursive through scopes, so every other constructor is
+    empty: a `cond`, `forLoop` or `funDef` restores its own bindings. -/
+def Stmt.names {Op : Type} : Stmt Op → List Ident
+  | Stmt.block b => Code.boundNames (.stmts b)
+  | Stmt.letDecl xs _ => xs
+  | _ => []
+
+/-- **THE STATEMENT-LEVEL INVARIANT.** One statement's contribution to the enclosing block's
+    top-level lets is unchanged by inlining, for every shadow list. The `letDecl` case is its own
+    binder list (`rfl`); the `block` case is exactly the block-level IH; every other constructor
+    is `[]` on both sides (`Code.boundNames` does not see into scopes). -/
+theorem stmt_names_inlineStmtStep
+    (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts)
+    (hrec : ∀ (sh : List String) (b : Block EVM.Op),
+      Code.boundNames (.stmts (rec sh b).blks) = Code.boundNames (.stmts b)) :
+    ∀ (sh : List String) (s : Stmt EVM.Op),
+      Stmt.names (Inline.inlineStmtStep rec consts sh s).1 = Stmt.names s := by
+  intro sh s
+  cases s with
+  | block b => exact hrec sh b
+  | letDecl xs e => rfl
+  | funDef n ps rs body => rfl
+  | assign xs e => rfl
+  | cond c body => rfl
+  | «switch» c cs d => rfl
+  | forLoop init c post body => rfl
+  | exprStmt e => rfl
+  | «break» => rfl
+  | «continue» => rfl
+  | «leave» => rfl
+
+/-- The non-recursive top-level name map: `Code.boundNames` of a statement is `Stmt.topNames`. -/
+def Stmt.topNames {Op : Type} : Stmt Op → List Ident
+  | Stmt.letDecl xs _ => xs
+  | _ => []
+
+/-- `Code.boundNames` of a statement list is the flattening of `Stmt.topNames`. -/
+theorem boundNames_stmts (X : List (Stmt EVM.Op)) :
+    Code.boundNames (.stmts X) = X.flatMap Stmt.topNames := by
+  induction X with
+  | nil => simp [Code.boundNames]
+  | cons s X ih =>
+      cases s <;> simp [Code.boundNames, Stmt.topNames, ih]
+
+/-- The single-statement form of the same identity. -/
+theorem boundNames_stmt_eq_topNames (s : Stmt EVM.Op) :
+    Code.boundNames (.stmt s) = Stmt.topNames s := by
+  cases s <;> simp [Code.boundNames, Stmt.topNames]
+
+/-- **THE STATEMENT-LEVEL INVARIANT, IN `Code.boundNames` FORM.** -/
+theorem boundNames_inlineStmtStep
+    (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts) :
+    ∀ (sh : List String) (s : Stmt EVM.Op),
+      Code.boundNames (.stmt (Inline.inlineStmtStep rec consts sh s).1) =
+        Code.boundNames (.stmt s) := by
+  intro sh s
+  rw [boundNames_stmt_eq_topNames, boundNames_stmt_eq_topNames]
+  cases s with
+  | block b => rfl
+  | letDecl xs e => rfl
+  | funDef n ps rs body => rfl
+  | assign xs e => rfl
+  | cond c body => rfl
+  | «switch» c cs d => rfl
+  | forLoop init c post body => rfl
+  | exprStmt e => rfl
+  | «break» => rfl
+  | «continue» => rfl
+  | «leave» => rfl
+
+/-- **THE FOLD INVARIANT, CARRYING THE ACCUMULATOR AND ITS SHADOW LIST.** Mirrors
+    `Statements.noFunDef_inline`: `stepAcc` appends exactly one statement per input statement, and
+    the statement-level invariant says the appended statement has the same top-level names. -/
+theorem foldl_names (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts)
+    (hstmt : ∀ (sh : List String) (s : Stmt EVM.Op),
+      Stmt.names (Inline.inlineStmtStep rec consts sh s).1 = Stmt.names s) :
+    ∀ (X : List (Stmt EVM.Op)) (acc : Inline.Acc),
+      (X.foldl (Inline.stepAcc rec consts) acc).blks.flatMap Stmt.names =
+        acc.blks.flatMap Stmt.names ++ X.flatMap Stmt.names := by
+  intro X
+  induction X with
+  | nil =>
+      intro acc
+      rw [List.foldl_nil, List.flatMap_nil, List.append_nil]
+  | cons s X ih =>
+      intro acc
+      rw [List.foldl_cons, ih (Inline.stepAcc rec consts acc s), Inline.stepAcc_blks,
+        List.flatMap_append, List.flatMap_cons, List.flatMap_cons]
+      simp only [List.flatMap_nil, List.append_nil, List.append_assoc, hstmt acc.sh s]
+
+/-- The `Stmt.topNames` fold: the same induction without the block-recursive case. -/
+theorem foldl_topNames (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts)
+    (hstmt : ∀ (sh : List String) (s : Stmt EVM.Op),
+      Stmt.topNames (Inline.inlineStmtStep rec consts sh s).1 = Stmt.topNames s) :
+    ∀ (X : List (Stmt EVM.Op)) (acc : Inline.Acc),
+      (X.foldl (Inline.stepAcc rec consts) acc).blks.flatMap Stmt.topNames =
+        acc.blks.flatMap Stmt.topNames ++ X.flatMap Stmt.topNames := by
+  intro X
+  induction X with
+  | nil =>
+      intro acc
+      rw [List.foldl_nil, List.flatMap_nil, List.append_nil]
+  | cons s X ih =>
+      intro acc
+      rw [List.foldl_cons, ih (Inline.stepAcc rec consts acc s), Inline.stepAcc_blks,
+        List.flatMap_append, List.flatMap_cons, List.flatMap_cons]
+      simp only [List.flatMap_nil, List.append_nil, List.append_assoc, hstmt acc.sh s]
+
+/-- `Stmt.topNames` is invariant under one statement's inlining, at every shadow list. -/
+theorem stmt_topNames_inlineStmtStep
+    (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts) :
+    ∀ (sh : List String) (s : Stmt EVM.Op),
+      Stmt.topNames (Inline.inlineStmtStep rec consts sh s).1 = Stmt.topNames s := by
+  intro sh s
+  cases s with
+  | block b => rfl
+  | letDecl xs e => rfl
+  | funDef n ps rs body => rfl
+  | assign xs e => rfl
+  | cond c body => rfl
+  | «switch» c cs d => rfl
+  | forLoop init c post body => rfl
+  | exprStmt e => rfl
+  | «break» => rfl
+  | «continue» => rfl
+  | «leave» => rfl
+
+/-- **THE BLOCK/FOLD INVARIANT.** One `inlineStep` (any continuation, any shadow list) preserves
+    the `Code.boundNames` of the block, because the fold appends one statement per input
+    statement and each appended statement has the same top-level names. -/
+theorem boundNames_inlineStep (rec : List String → List (Stmt EVM.Op) → Inline.SRes)
+    (consts : Inline.Consts) (sh : List String) (X : List (Stmt EVM.Op)) :
+    Code.boundNames (.stmts (Inline.inlineStep rec consts sh X).blks) =
+      Code.boundNames (.stmts X) := by
+  rw [Inline.inlineStep_eq_foldl]
+  rw [boundNames_stmts, boundNames_stmts]
+  rw [foldl_topNames rec consts
+    (fun sh s => stmt_topNames_inlineStmtStep rec consts sh s) X (Inline.initAcc sh)]
+  simp [Inline.initAcc]
+
+/-- **THE DISPLAYED INVARIANT AT THE CONTRACT TRANSFORM.** Constant substitution changes no
+    top-level `let` binder, at every table and every block. -/
+theorem boundNames_inlineContractConstants (consts : Inline.Consts)
+    (X : List (Stmt EVM.Op)) :
+    Code.boundNames (.stmts (Inline.inlineContractConstants consts X)) =
+      Code.boundNames (.stmts X) := by
+  show Code.boundNames (.stmts (Inline.inlineScan Inline.inlineFuel consts [] X).blks) =
+    Code.boundNames (.stmts X)
+  have h : Inline.inlineFuel = 63 + 1 := rfl
+  rw [h]
+  exact boundNames_inlineStep (Inline.inlineScan 63 consts) consts [] X
+
+/-- The emitter's inner scope BEFORE constant inlining: the body of `emitLagrangeAt`'s `yblock`. -/
+def lagInnerRaw (k n m : Nat) : Block EVM.Op :=
+  match GenAst.emitLagrangeAt k n m with
+  | [_, Stmt.block body, _] => body
+  | _ => []
+
+/-- `lagInner` is the inliner at work on exactly `lagInnerRaw`, at the shadow list of the outer
+    prologue's `let` (`lagrange_precompile_failed`) and at the body's own nesting fuel. -/
+theorem lagInner_eq_inlineStep (consts : Inline.Consts) (k n m : Nat) :
+    lagInner consts k n m =
+      (Inline.inlineStep (Inline.inlineScan 62 consts) consts
+        ["lagrange_precompile_failed"] (lagInnerRaw k n m)).blks := by
+  kernel_rfl
+
+/-- The pre-inline inner scope has exactly the 14 template `let`s. -/
+theorem lagInnerRaw_boundNames (k n m : Nat) :
+    Code.boundNames (.stmts (lagInnerRaw k n m)) = lagInnerNames := by
+  rw [boundNames_stmts]
+  kernel_rfl
+
+/-- **THE INVARIANT APPLIED TO THE LAGRANGE INNER SCOPE.** -/
+theorem lagInner_boundNames (consts : Inline.Consts) (k n m : Nat) :
+    Code.boundNames (.stmts (lagInner consts k n m)) =
+      Code.boundNames (.stmts (lagInnerRaw k n m)) := by
+  rw [lagInner_eq_inlineStep]
+  exact boundNames_inlineStep (Inline.inlineScan 62 consts) consts
+    ["lagrange_precompile_failed"] (lagInnerRaw k n m)
+
+/-- **THE INLINED INNER SCOPE'S TOP-LEVEL NAMES.** -/
+theorem lagInner_boundNames_eq (consts : Inline.Consts) (k n m : Nat) :
+    Code.boundNames (.stmts (lagInner consts k n m)) = lagInnerNames := by
+  rw [lagInner_boundNames, lagInnerRaw_boundNames]
+
+/-- **NON-MEMBERSHIP 1/2.** `success` is not a top-level `let` of the inner scope, so the
+    block's `restore` keeps the caller's binding (and statement 10's assigned value). -/
+theorem success_notMem_lagInner (consts : Inline.Consts) (k n m : Nat) :
+    "success" ∉ Code.boundNames (.stmts (lagInner consts k n m)) := by
+  rw [lagInner_boundNames_eq]
+  decide
+
+/-- **NON-MEMBERSHIP 2/2.** Same for the MF-4 precompile-failure flag the outer guard reads. -/
+theorem lagrange_precompile_failed_notMem_lagInner (consts : Inline.Consts) (k n m : Nat) :
+    "lagrange_precompile_failed" ∉ Code.boundNames (.stmts (lagInner consts k n m)) := by
+  rw [lagInner_boundNames_eq]
+  decide
+
+-- Downstream `lag_poison` reads the two facts above; keep the closed 14-name list opaque so that
+-- later `decide`/`simp` does not try to unfold `lagInner` at a general table.
+attribute [local irreducible] lagInner
+
 
 end Midfall.LoweringV3.LagrangeBlock
