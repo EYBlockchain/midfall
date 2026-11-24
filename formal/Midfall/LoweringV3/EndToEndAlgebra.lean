@@ -5040,13 +5040,14 @@ theorem end_to_end_of_A6_KZG (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
     (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hcd36 : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 36)
     (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
       Midfall.LoweringV2.SoundSide R keccak256 cd ∧
         Midfall.LoweringV2.CompleteSide R keccak256 cd)
     (hKZG : KzgMultiPrepareWidths R) :
-    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hcd36 hside :=
   end_to_end_of_prepareLogSlots R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
-    inst π hn hside (PrepareLogSlots_of_parseTrace R hR hKZG)
+    inst π hn hcd36 hside (PrepareLogSlots_of_parseTrace R hR hKZG)
 
 /-- **END-TO-END FROM THE NAMED D1 QUERY MAP.** The same `EndToEndV3` statement as
     `end_to_end_of_A6_KZG`, with `LinearizeQueryMap` as the only extra premise. This is
@@ -5061,12 +5062,13 @@ theorem end_to_end_of_validV3 (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
     (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hcd36 : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 36)
     (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
       Midfall.LoweringV2.SoundSide R keccak256 cd ∧
         Midfall.LoweringV2.CompleteSide R keccak256 cd)
     (hMap : LinearizeQueryMap R) :
-    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
-  end_to_end_of_A6_KZG R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hcd36 hside :=
+  end_to_end_of_A6_KZG R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hcd36 hside
     (KzgMultiPrepareWidths_of_linearizeQueryMap R hMap)
 
 /-- **END-TO-END FROM THE PER-PAIR DATUM.** The same `EndToEndV3` statement as
@@ -5085,6 +5087,7 @@ theorem end_to_end_of_validV3_of_upstreamDatum
     (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
     (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hcd36 : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 36)
     (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
       Midfall.LoweringV2.SoundSide R keccak256 cd ∧
         Midfall.LoweringV2.CompleteSide R keccak256 cd)
@@ -5107,8 +5110,8 @@ theorem end_to_end_of_validV3_of_upstreamDatum
         Generator.constructIntermediateSetsImpl generatorOrder = .ok generatorSets ∧
         Generator.constructIntermediateSetsImpl upstreamQueries = .ok setsG ∧
         generatorSets.pointSets = setsG.pointSets) :
-    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
-  end_to_end_of_validV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hcd36 hside :=
+  end_to_end_of_validV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hcd36 hside
     (LinearizeQueryMap_of_upstreamDatum R hR hUp)
 
 /-- **END-TO-END FROM THE A6 STATIC SCHEDULE.** The A6 half is stated exactly as
@@ -5125,6 +5128,7 @@ theorem end_to_end_of_tpEvents (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
     (hpc : Midfall.Assumptions.Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
     (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hcd36 : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 36)
     (hside : ∀ cd, Midfall.LoweringV3.calldataOfV3 R π inst = .ok cd →
       Midfall.LoweringV2.SoundSide R keccak256 cd ∧
         Midfall.LoweringV2.CompleteSide R keccak256 cd)
@@ -5136,9 +5140,9 @@ theorem end_to_end_of_tpEvents (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
           if r.1 = g1CompressedWidth then Midfall.Lowering.WireSlot.g1
           else Midfall.Lowering.WireSlot.fr) =
           R.tpEvents.filterMap Midfall.LoweringV3.TranscriptRows.TEv.slot?) :
-    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside :=
+    EndToEndV3 R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hcd36 hside :=
   end_to_end_of_prepareLogSlots R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec
-    inst π hn hside (PrepareLogSlots_of_tpEvents R hR hEv)
+    inst π hn hcd36 hside (PrepareLogSlots_of_tpEvents R hR hEv)
 
 /-! ### Gates for the two named residuals -/
 
@@ -6351,6 +6355,44 @@ theorem tp_agrees_of_valid_closed_cdSize (R : Midfall.LoweringV2.Render p G₁ G
       (TranscriptRows.numInstances_lt_of_cd_size hdec hcd) hmirror hAlg
       ms instW inst hdec x hx
   exact TranscriptRows.tp_agrees_of_xcriptG1 R hR hcodec H vkAddr cd V st hpost' hAlg hG1
+
+namespace TranscriptRows
+
+/-- **THE FIXED `tp_agrees` ROW, CLOSED.** This is the exact statement that used to be
+    `TranscriptRows.tp_agrees`, now read from `TpPost`'s `Frame.cdSize36` (D-GATE19)
+    and `EndToEndAlgebra.tp_agrees_of_valid_closed_cdSize`. The row's statement is
+    unchanged: no `hnum`, no phase-order parameter, no `XcriptG1` premise. The
+    calldata bound is the entry predicate `cd.size < 2^36` carried by `Frame`. -/
+theorem tp_agrees (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
+    (vkAddr : U256) (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (h : TpPost R H vkAddr cd V st) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st := by
+  have hpost := h
+  obtain ⟨hframe, -, -, -, -, -⟩ := h
+  exact tp_agrees_of_valid_closed_cdSize R hR hcodec H vkAddr cd V st hpost hframe.cdSize36
+
+/-- **THE GENERIC TRANSCRIPT-PARSER SIMULATION ROW, PROVED from the three leaves.**
+    This is the exact `TranscriptRows.tp_blockSim`, moved beside the now-closed
+    `tp_agrees`; the statement is unchanged. -/
+theorem tp_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1)
+    (_hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
+    (vkAddr : U256) (cd : Bytes) (g : ExternalGas) :
+    BlockSim R Partial.transcriptParser H vkAddr (permissive (callsOf product)) g cd := by
+  refine ⟨?_, ?_⟩
+  · intro V st hpre V' st' o hrun
+    rcases TranscriptRows.tp_computes R hR hcodec H vkAddr cd _ g V st hpre V' st' o hrun with
+      hrev | ⟨ho, hpost⟩
+    · exact Or.inl hrev
+    · exact Or.inr (Or.inl ⟨ho, tp_agrees R hR hcodec H vkAddr cd V' st' hpost⟩)
+  · intro V st hpre V' st' o hrun
+    exact Or.inl (TranscriptRows.tp_poison R hR H vkAddr cd _ g V st hpre V' st' o hrun)
+
+end TranscriptRows
+
+#assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees
+  [propext, Classical.choice, Quot.sound] native []
 
 #assert_axioms Midfall.LoweringV3.xcript_evals_count
   [propext, Classical.choice, Quot.sound]

@@ -279,17 +279,24 @@ column-indexed (`scatterIndexed`), so the phase-to-column order is a separate de
 key-side clause. It is not a row, bundle or `ValidV3` field; `advicePhaseTotal_not_columnOrder`
 is the falsifier showing it is not derivable from the old fields. `AdvicePhasesColumnOrder`
 is now a theorem of `WellFormed` (`advicePhaseColumnOrder_of_wellFormed`), so the closed
-`tp` consumer takes only the calldata bound.
+`tp` consumer takes only the entry calldata bound.
 
-**D-GATE19 (decision, 2026-11-24)**: the calldata predicate needed for `hnum`
-(`R.cfg.numInstances < 2^31`) is `cd.size < 2^36` (`numInstances_lt_of_cd_size`: `Decoded`
-fixes `cd.size = proofEnd + 32 + 32 * numInstances`). It is exposed at the consumer
-`tp_agrees_of_valid_closed_cdSize`, NOT added to `EntryFrameV3`/`Frame`/`TpPost` or `ValidV3`:
-`tp_agrees` has no entry-frame parameter, and adding the bound to `Frame` would be a bundle
-field. `EntryFrameV3.cdSize` remains the existing `< 2^256` length bound; adding `< 2^36`
-there would not reach `TpPost`. The exact minimal alternative is therefore the single
-consumer predicate `cd.size < 2^36` (or, if the entry frame must carry it, a `Frame.cdSize36`
-field, which is the bundle change this decision declines).
+**D-GATE19 (signed, 2026-11-24): the genuine entry/calldata bound.** The predicate
+`cdSize36 : cd.size < 2^36` is added to `EntryFrame` and `EntryFrameV3` (the entry witness
+that feeds `pfx_stageInv_start`), not to a row, bundle or `ValidV3` field. `Decoded` fixes
+`cd.size = proofEnd + 32 + 32 * numInstances` (`numInstances_lt_of_cd_size`), so this is
+exactly the `numInstances < 2^31` premise the transcript schedule needs. `pfx_stageInv_start`
+reads `hentry.cdSize36` into the initial `Frame.cdSize36`; `Frame` carries it across every
+later boundary, and the fixed `TranscriptRows.tp_agrees` is now CLOSED by
+`tp_agrees_of_valid_closed_cdSize` with `hframe.cdSize36` (statement unchanged). `EndToEndV3`
+carries the named calldata premise `hcd36 : proofEnd + 32 + 32 * numInstances < 2^36` for
+the encoder's output, because its backward direction constructs an `EntryFrameV3`.
+`EntryFrame.cdSize` / `EntryFrameV3.cdSize` (`< 2^256`) remain as the word-length repair;
+`cdSize36` is stronger and implies them. With this, the fixed `TranscriptRows.tp_agrees` is
+proved (statement unchanged; its old `sorry` is gone). `block_live_case_transcriptParser`
+remains OPEN for the separate cross-lane reason recorded at `BlockLive.lean:99`: its reduction
+needs an unconditional `BlockProgS R .transcriptParser ...`, while the landed
+`tp_blockProgS` carries `LeanAccepts`/`CompleteSide`, which `BlockLive` does not assume.
 
 **D-GATE15 (signed, 2026-11-23)**: `WellFormed` gains the `readAlgebra` totality bundle: fixed
 insert bound (`fixedQueries.size ≤ numFixedColumns` + simple-selector coverage), rotation-not-`i32::MIN`,

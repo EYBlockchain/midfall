@@ -71,10 +71,16 @@ structure Frame (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : B
       (`Calldata.lean:341`), so `cd ++ (2^256 zero bytes)` has the same `calldatasize`, the same
       `calldataload`/`calldatacopy` and therefore the same `Frame` as far as the program can tell,
       but is rejected by the Lean verifier. `Frame.cdSize_falsifier` in
-      `Midfall/LoweringV3/Composition.lean` exhibits it. The bound is a fact about every EVM frame
-      and every row reads it off `EntryFrameV3.cdSize`
-      (`LoweringV3/Statements.lean:1227`), so no row has to prove it. -/
+      `Midfall/LoweringV3/Composition.lean` exhibits it. The word-length bound is a fact about
+      every EVM frame and every row reads it off `EntryFrameV3.cdSize`; the stronger D-GATE19
+      bound `cdSize36` is read off `EntryFrameV3.cdSize36`, so no row has to prove either. -/
   cdSize : cd.size < 2 ^ 256
+  /-- **D-GATE19: the calldata bound that reaches every row and the fixed `tp_agrees`.**
+      `Decoded` fixes `cd.size = proofEnd + 32 + 32 * numInstances`, so this is exactly
+      `numInstances < 2^31`; it is the predicate the transcript schedule needs. It is
+      supplied at the initial boundary from `EntryFrame.cdSize36` and preserved by every
+      later boundary because `Frame` carries it. -/
+  cdSize36 : cd.size < 2 ^ 36
 
 /-- A clean boundary: `Inv` at checkpoint `k` for the Lean snapshot, the frame, `success = 1`. -/
 def Clean (R : Render p G₁ G₂ Gₜ) (k : Checkpoint) (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash)
@@ -928,9 +934,9 @@ theorem lowering_equivalence_of_blocks (R : Render p G₁ G₂ Gₜ) (product : 
 theorem entryFrame_inhabited (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash)
     (cd : Bytes) (hsel : bytesTake cd 0 4 = some fnSigVerifyProof) (hcv : W.callvalue = 0)
     (ht : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t)
-    (hcd : cd.size < 2 ^ 256) :
-    EntryFrameInhabited R W Lyt H cd hsel hcv ht hcd := by
-  refine ⟨initState W Lyt H cd (fun _ => 0), ⟨fun _ => 0, 0, rfl⟩, ?_, ?_, hcv, hsel, hcd⟩
+    (hcd : cd.size < 2 ^ 256) (hcd36 : cd.size < 2 ^ 36) :
+    EntryFrameInhabited R W Lyt H cd hsel hcv ht hcd hcd36 := by
+  refine ⟨initState W Lyt H cd (fun _ => 0), ⟨fun _ => 0, 0, rfl⟩, ?_, ?_, hcv, hsel, hcd, hcd36⟩
   · exact fun a _ => rfl
   · obtain ⟨t, ht₁, ht₂⟩ := ht
     refine ⟨t, ht₁, ?_⟩

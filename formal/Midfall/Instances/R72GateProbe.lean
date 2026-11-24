@@ -130,6 +130,7 @@ theorem gate_weak (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (vkAd
   obtain ⟨st₀, hent⟩ := entryFrame_inhabited R (probeW R.plan.vk.runtimeBytes.data.toList vkAddr)
     probeLyt keccak256 Midfall.Generator.fnSigVerifyProof probe_hsel rfl ht
     (by decide : Midfall.Generator.fnSigVerifyProof.size < 2 ^ 256)
+    (by decide : Midfall.Generator.fnSigVerifyProof.size < 2 ^ 36)
   refine ⟨probeW R.plan.vk.runtimeBytes.data.toList vkAddr, probeLyt, keccak256, vkAddr,
     Midfall.Generator.fnSigVerifyProof, st₀, ?_, hent, hpc, ?_, ?_⟩
   · exact ⟨rfl, probeW_wf _ _, probeW_code _ _, rfl, hsize, hdisj⟩

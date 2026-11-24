@@ -12,13 +12,14 @@
 -- 'XcriptSlots', 'TpPost'), the two children ROW.TP.1 ('inline_g1WalkLoop') and ROW.TP.6
 -- ('tp_events_slots') - BOTH PROVED - the W12 witness/falsifier pair each remaining hole needs,
 -- and the row glue 'tp_blockSim' which is PROVED from the three SEM/ALG leaves by the evidence's
--- own twelve-line argument. 'tp_blockProgS' is the tenth leaf and is stated, not proved.
+-- own twelve-line argument. D-GATE19 closes the fixed 'tp_agrees' row: it is proved in
+-- 'EndToEndAlgebra' (namespace 'TranscriptRows') from 'TpPost' and 'Frame.cdSize36'. The moved
+-- 'tp_blockSim' lives beside it there, because that proof spends 'tp_agrees'. 'tp_blockProgS'
+-- is the tenth leaf and is still stated, not proved.
 --
--- THE ROWS ARE NOT WIRED IN. 'Midfall/LoweringV3/Rows.lean' still carries its two bare tp
--- 'sorry's, so this file moves NO root leaf, NO root cone and NO register ROOT row. When the
--- named leaves close, the two rows in Rows.lean become one-line applications of
--- 'TranscriptRows.tp_blockSim' / 'TranscriptRows.tp_blockProgS' - the consumer-first landing the
--- card asks for.
+-- THE ROWS ARE NOT ALL WIRED IN. 'Midfall/LoweringV3/Rows.lean' carries the tp rows; its
+-- 'tp_blockSim' is a one-line application of 'TranscriptRows.tp_blockSim' (now imported from
+-- 'EndToEndAlgebra'), while 'tp_blockProgS' remains the open progress leaf.
 --
 -- PORT CHANGES, and nothing else (the same three the ROW.Q port made):
 --   (a) THE VALIDITY HYPOTHESIS. The evidence writes '(hR : R.Valid) (hpins : SimPins R)'.
@@ -45,15 +46,16 @@
 --     'cdSlice ByteArray.empty', so the post is not vacuous).
 --   * tp_computes - falsifier 'tp_computes_falsifier_empty_block' (the empty block's normal exit
 --     does not satisfy 'TpPost': 'success = 1' is not free).
---   * tp_agrees - falsifier 'tp_agrees_falsifier_no_success' ('StageInv .transcript' demands
---     'success = 1', so the implication has content).
+--   * tp_agrees - PROVED in 'EndToEndAlgebra' from 'Frame.cdSize36' (D-GATE19); the falsifier
+--     'tp_agrees_falsifier_no_success' ('StageInv .transcript' demands 'success = 1') keeps the
+--     implication's content.
 --   * tp_poison - falsifier 'tp_poison_falsifier_empty_block' (the empty block ends normally, so
 --     "every run reverts" is not free).
 --   * tp_blockProgS - falsifier 'tp_blockProgS_falsifier_reverting_block_is_not_total' (a block
 --     that only reverts has no normal run, so totality is not the soundness row).
---   * tp_blockSim is PROVED; its falsifier 'tp_blockSim_falsifier_return_is_not_the_post' shows
---     the post refuses a 'ret' (a halt that is not a revert and not 'exitSimAt'), the v1 defect
---     class at the row.
+--   * tp_blockSim is PROVED (moved to 'EndToEndAlgebra', where it spends the closed 'tp_agrees');
+--     its falsifier 'tp_blockSim_falsifier_return_is_not_the_post' shows the post refuses a 'ret'
+--     (a halt that is not a revert and not 'exitSimAt'), the v1 defect class at the row.
 --
 -- NO FIXTURE (D-P71). Every statement is quantified over the render, the program, the table, the
 -- layout and the calldata. 'poseidonRender' appears nowhere.
@@ -11637,46 +11639,6 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     StageInv R H vkAddr cd Checkpoint.transcript V st :=
   tp_agrees_of_xcriptG1 R hR hcodec H vkAddr cd V st hpost h hG1
 
-/-- **THE ALG LEAF.** `TpPost` is the staged boundary at `.transcript`: `Agree` follows from
-    `xcript_total` (the Lean prefix exists), `MirrorAt` with `SimPins.eipRt` (the commitment
-    windows hold `toEip` of the decoded points) and `XcriptSlots`. LEAF ROW.TP.8. No Yul.
-    Evidence :798-805, statement verbatim with the same hypothesis move.
-
-    THE REDUCTION IS LANDED: `tp_agrees_of_xcript` proves this row from `XcriptAlgebraRun` (the
-    named SIM.10 parser-side clause, §3b) plus the `Inv .transcript` assembly, and
-    `tp_agrees_of_agree` isolates the latter. THE SCHEDULE LAYER IS NOW LANDED:
-    `xcriptSchedule_of_planReadCounts` derives the fine read schedule from the coarse
-    decoded split and `PlanReadCounts` (the two plan-count/VK-schedule equations), and
-    `xcriptAlgebraRun_of_planReadCounts` spends it. The key-side instance-query bound is
-    now `WellFormed.instanceQueriesBound` (D-GATE15(c)), so the old `hinstQ` premise is
-    gone, and `PlanReadCounts` itself is PROVED downstream in
-    `EndToEndAlgebra.planReadCounts_of_valid` (`planPrefixG1_eq` + `planNumEvals_eq`).
-    THE FIXED STATEMENT'S RESIDUAL is now exactly the calldata bound `hnum`:
-    `AdvicePhasesColumnOrder` is supplied by D-GATE18's
-    `WellFormed.advicePhaseColumnOrder` (`advicePhaseColumnOrder_of_wellFormed`), and
-    `XcriptG1` itself is CLOSED by `EndToEndAlgebra.xcriptG1` (from
-    `xcriptG1_provenance`, `xcriptG1_tail_provenance`, the four `MirrorAt` windows and
-    Calldata's value/provenance lemmas) and consumed by
-    `EndToEndAlgebra.tp_agrees_of_valid_closed` (`ValidV3` + `hnum`). `Decoded` gives
-    `cd.size = proofEnd + 32 + 32 * numInstances` (`numInstances_lt_of_cd_size`), so
-    the single calldata predicate `cd.size < 2^36` supplies `hnum`; it is exposed by
-    `EndToEndAlgebra.tp_agrees_of_valid_closed_cdSize` (D-GATE19). No `< 2^36` bound is
-    in `EntryFrameV3`/`Frame` (`EntryFrameV3.cdSize` is `< 2^256`;
-    `SupportedInput.sizeBound` is `< 2^64` on the generator input, not on `cd`). The
-    proof of the fixed statement itself cannot be imported here: `EndToEndAlgebra`
-    imports this file, and its statement has no `hnum` parameter.
-    THE `Inv .transcript` HALF IS LANDED as `invAt_transcript_of_xcriptG1`, and
-    `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
-    decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
-    producer is the value half of A11's `runsAll_readAlgebra` plus `MirrorAt`/`eipRoundtrip`;
-    ROW.TP.6's `MirrorAt` half is `tp_events_slots` above. -/
-theorem tp_agrees (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
-    (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash)
-    (vkAddr : U256) (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
-    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) (h : TpPost R H vkAddr cd V st) :
-    StageInv R H vkAddr cd Checkpoint.transcript V st := by
-  sorry
-
 /-- **THE POISONED HALF.** No statement raises `success`; the last statement reverts on
     `success = 0`. LEAF ROW.TP.9. Evidence :807-814, statement verbatim.
 
@@ -11689,25 +11651,6 @@ theorem tp_poison (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (H : Hash) (vkA
       (fun V st => Poisoned R H vkAddr cd V st)
       (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
   sorry
-
-/-- **THE GENERIC ROW, PROVED from the three leaves.** Evidence :816-827, proof VERBATIM (the
-    twelve-line argument the evidence marks PROVED). Nothing is added: the row is the two
-    `StmtsContractAll` conjuncts of `BlockSim`, the soundness one split into revert / `TpPost` /
-    (never offered) poisoned, the poisoned one discharged by `tp_poison`. At
-    `q = .transcriptParser` the boundary is `.transcript` definitionally, so `tp_agrees` hands
-    over exactly `exitSimAt`'s second disjunct. -/
-theorem tp_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
-    (hcodec : G1CodecHeadlineLaws R.E.g1)
-    (_hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
-    (vkAddr : U256) (cd : Bytes) (g : ExternalGas) :
-    BlockSim R Partial.transcriptParser H vkAddr (permissive (callsOf product)) g cd := by
-  refine ⟨?_, ?_⟩
-  · intro V st hpre V' st' o hrun
-    rcases tp_computes R hR hcodec H vkAddr cd _ g V st hpre V' st' o hrun with hrev | ⟨ho, hpost⟩
-    · exact Or.inl hrev
-    · exact Or.inr (Or.inl ⟨ho, tp_agrees R hR hcodec H vkAddr cd V' st' hpost⟩)
-  · intro V st hpre V' st' o hrun
-    exact Or.inl (tp_poison R hR H vkAddr cd _ g V st hpre V' st' o hrun)
 
 /-- **THE GENERIC PROGRESS ROW.** LEAF ROW.TP.10. Evidence :829-835, statement verbatim with the
     same hypothesis move: `R.Valid` -> `ValidV3 R`, `SimPins R` -> `G1CodecHeadlineLaws R.E.g1`
@@ -11895,10 +11838,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 /-! The rows quantify over the render and name no fixture: `R : Render p G₁ G₂ Gₜ` is a binder of
     every statement, the only partial named is `Partial.transcriptParser`, and the schedule, the
     layout and the table are binders. `poseidonRender` does not appear in this file. -/
-#check @Midfall.LoweringV3.TranscriptRows.tp_blockSim
 #check @Midfall.LoweringV3.TranscriptRows.tp_blockProgS
 #check @Midfall.LoweringV3.TranscriptRows.tp_computes
-#check @Midfall.LoweringV3.TranscriptRows.tp_agrees
 #check @Midfall.LoweringV3.TranscriptRows.tp_poison
 #check @Midfall.LoweringV3.TranscriptRows.xcript_total_of_algebraRun
 #check @Midfall.LoweringV3.TranscriptRows.leanStage_transcript_exists_of_algebraRun
@@ -11910,7 +11851,6 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #check @Midfall.LoweringV3.TranscriptRows.invAt_transcript_of_xcriptG1
 #check @Midfall.LoweringV3.TranscriptRows.inline_g1WalkLoop
 
-#cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockSim
 #cone_sorries Midfall.LoweringV3.TranscriptRows.tp_blockProgS
 
 #assert_axioms Midfall.LoweringV3.TranscriptRows.coordLt_pBase [propext, Classical.choice, Quot.sound] native []

@@ -577,14 +577,17 @@ theorem fail_lookupV3 (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : Ext
   column-indexed rows. It is a decidable key-side clause, not a row/bundle/`ValidV3`
   field.
 
-  D-GATE19's minimal calldata predicate is `cd.size < 2^36` (with
-  `Decoded`'s `cd.size = proofEnd + 32 + 32 * numInstances`, this is exactly
-  `numInstances < 2^31`). It is kept at the consumer
-  (`tp_agrees_of_valid_closed_cdSize`), not added to `EntryFrameV3`: `tp_agrees`
-  has no entry-frame parameter, and `EntryFrameV3.cdSize` remains the existing
-  `< 2^256` length bound. Adding `< 2^36` there would not reach `TpPost`; the
-  exact alternative is the single consumer predicate, or a `Frame.cdSize36`
-  bundle field (declined here). -/
+  D-GATE19 is SIGNED as the genuine entry/calldata predicate
+  `cdSize36 : cd.size < 2^36` on `EntryFrame`/`EntryFrameV3` (with `Decoded`'s
+  `cd.size = proofEnd + 32 + 32 * numInstances`, this is exactly
+  `numInstances < 2^31`). It is an entry witness, not a row/bundle/`ValidV3`
+  field. `pfx_stageInv_start` reads `hentry.cdSize36` into the initial
+  `Frame.cdSize36`, and `Frame` carries it across every later boundary. The fixed
+  `TranscriptRows.tp_agrees` is therefore CLOSED by
+  `tp_agrees_of_valid_closed_cdSize` with `hframe.cdSize36` (statement unchanged).
+  `EndToEndV3` carries the named calldata premise
+  `hcd36 : proofEnd + 32 + 32 * numInstances < 2^36` for the encoder's output,
+  because its backward direction constructs an `EntryFrameV3`. -/
 
 /-! ## §B. The plan's circuit meta and data (b)
 
@@ -3749,10 +3752,10 @@ theorem exitShape_of_exitDiscipline {b : Block EVM.Op} (init : Block EVM.Op)
   `cd.size` in `Nat` (`Calldata.lean:341`), so `cd ++ (2^256 zero bytes)` runs exactly like `cd`
   and is rejected by Lean: conjunct 1 is false.
 
-  NEW: `cdSize : cd.size < 2 ^ 256`. THE WEAKEST bound that repairs the statement, and a fact
-  about every EVM frame (CALLDATASIZE is a word). A tighter "realistic" bound (2^32, the gas
-  limit) would shrink the set of covered frames and buy no proof step: every calldata offset the
-  program computes is a constant of the render, bounded by `ValidV3.cdBound`. -/
+  NEW: `cdSize : cd.size < 2 ^ 256` (D-P64/ST.4) plus **D-GATE19's `cdSize36 : cd.size < 2 ^ 36`**.
+  `cdSize` is the word-length repair; `cdSize36` is the genuine entry/calldata premise that
+  `Decoded` turns into `numInstances < 2^31`, and it is the field `pfx_stageInv_start` reads into
+  the initial `Frame.cdSize36`. It is an entry witness, not a row/bundle/`ValidV3` field. -/
 
 /-- **TRUSTED.** As `LoweringV2.EntryFrame`, plus the calldata length bound. -/
 structure EntryFrameV3 (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash)
@@ -3765,21 +3768,25 @@ structure EntryFrameV3 (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.La
   selector : bytesTake cd 0 4 = some fnSigVerifyProof
   /-- ADDED: the calldata length is a word. -/
   cdSize : cd.size < 2 ^ 256
+  /-- **D-GATE19: the genuine entry calldata bound.** See `EntryFrame.cdSize36`;
+      this is the entry witness that feeds `pfx_stageInv_start` and hence the
+      initial `Frame.cdSize36`. -/
+  cdSize36 : cd.size < 2 ^ 36
 
 /-- The V3 frame is a V2 frame: nothing proved from `EntryFrame` is lost. PROVED. -/
 theorem EntryFrameV3.toV2 {R : Render p G₁ G₂ Gₜ} {W : ExecEnv} {Lyt : EVM.Layout} {H : Hash}
     {cd : Bytes} {st : EvmState} (h : EntryFrameV3 R W Lyt H cd st) :
     EntryFrame R W Lyt H cd st :=
-  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize⟩
+  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize, h.cdSize36⟩
 
 /-- **INHABITATION**, the V3 form of `Blocks.lean:624 entryFrame_inhabited`: one more premise
     (`hcd`), the same witness. PROVED. -/
 theorem entryFrame_inhabitedV3 (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash)
     (cd : Bytes) (hsel : bytesTake cd 0 4 = some fnSigVerifyProof) (hcv : W.callvalue = 0)
     (ht : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t)
-    (hcd : cd.size < 2 ^ 256) :
+    (hcd : cd.size < 2 ^ 256) (hcd36 : cd.size < 2 ^ 36) :
     ∃ st₀, EntryFrameV3 R W Lyt H cd st₀ := by
-  refine ⟨initState W Lyt H cd (fun _ => 0), ⟨fun _ => 0, 0, rfl⟩, ?_, ?_, hcv, hsel, hcd⟩
+  refine ⟨initState W Lyt H cd (fun _ => 0), ⟨fun _ => 0, 0, rfl⟩, ?_, ?_, hcv, hsel, hcd, hcd36⟩
   · exact fun a _ => rfl
   · obtain ⟨t, ht₁, ht₂⟩ := ht
     refine ⟨t, ht₁, ?_⟩
@@ -4044,13 +4051,18 @@ set_option linter.unusedVariables false in
 /-- **END TO END, V3** (replaces `Statements.lean:347-361`). Differences: `ValidV3`,
     `LoweringEquivalenceV3`, `calldataOfV3`, `EntryFrameV3`, and ONE codec hypothesis
     `G1CodecLawsV3` in place of the two frozen ones (`G1CodecLaws` and `compressedRoundtrip`,
-    the second of which is a field of the first). -/
+    the second of which is a field of the first). `hcd36` is D-GATE19's named
+    entry/calldata premise: the encoder's calldata is inside the genuine `< 2^36`
+    entry bound (`Decoded` makes this exactly `numInstances < 2^31`), so the
+    backward direction can build an `EntryFrameV3` with `cdSize36`. It is an
+    interface premise, not a row/bundle/`ValidV3` field. -/
 def EndToEndV3 (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hEq : LoweringEquivalenceV3 R product)
     (W : ExecEnv) (Lyt : EVM.Layout) (vkAddr : U256)
     (hdep : DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
+    (hcd36 : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 36)
     (hside : ∀ cd, calldataOfV3 R π inst = .ok cd →
       SoundSide R keccak256 cd ∧ CompleteSide R keccak256 cd) : Prop :=
   verifyNative (Gₜ := Gₜ) R.E Features.solidity R.params R.vk inst π = .ok () ↔

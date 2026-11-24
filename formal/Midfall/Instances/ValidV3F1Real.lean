@@ -742,6 +742,7 @@ theorem f1PointRenderCCN_entryFrameV3 (n : Nat) :
   · rfl
   · exact ⟨4096, f1PointRenderCCN_transcriptMptr n, by decide⟩
   · decide
+  · decide
 
 /-- **`EntryFrameV3` AT THE F1 RENDER AT THE TRACKED CALLDATA** - the frame the gate's `cd`
     actually uses. -/
@@ -753,6 +754,8 @@ theorem f1PointRenderCCN_entryFrameV3_fixture (n : Nat) :
   · exact Midfall.Instances.GeneratorDone.poseidonFixtureCalldata_selector
   · rfl
   · exact ⟨4096, f1PointRenderCCN_transcriptMptr n, by decide⟩
+  · have h := Midfall.Instances.GeneratorDone.poseidonFixtureCalldata_size
+    omega
   · have h := Midfall.Instances.GeneratorDone.poseidonFixtureCalldata_size
     omega
 
