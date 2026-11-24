@@ -5483,6 +5483,90 @@ open Midfall.Tools.Done in
 
 end Composition
 
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+set_option maxHeartbeats 2000000 in
+theorem xcript_advice_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (QAdv : List G₁)
+    (hAdv : QAdv.length =
+      (R.vk.cs.phases.map (fun ph => (TranscriptRows.phaseCols R.vk.cs ph).length)).sum) :
+    QAdv.length =
+      Midfall.Lowering.sumNat (R.plan.proofLayout.advicePhases.map (fun s => s.itemCount)) := by
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hL, _hprot, _hLook, _hChunks,
+    _hPerm, _hTrash, _hQuot, _hAdv, _hChall, _hUP, _hUser, _hInst, _hTrunc, _hLookM,
+    _hPermM, _hTrashM, _hLH⟩ := TranscriptRows.tp_planFacts hR
+  subst hmeta
+  subst hlay
+  have hfacts := TranscriptRows.tp_fromProtocol hL
+  have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
+  have hcounts := protocol_parseCounts (p := p) R.vk hf
+    (plan_protocol_fromConstraintSystem R hR)
+  have hphase := advicePhaseCountFit_of_wellFormed R.vk hf
+  have hsum := hfacts.adviceSum
+  have hAdv' : (R.vk.cs.phases.map (fun ph => (TranscriptRows.phaseCols R.vk.cs ph).length)).sum =
+      adviceReadCount R.vk.cs 1 := by
+    simp [adviceReadCount, TranscriptRows.phaseCols, advicePhaseCols, Nat.one_mul]
+  rw [hAdv, hAdv', hphase]
+  exact (hsum.trans hcounts.2.2.2.2.2).symm
+
+set_option maxHeartbeats 2000000 in
+theorem xcript_quotient_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (Qg : List G₁)
+    (hQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else R.vk.domain.getQuotientPolyDegree)) :
+    Qg.length = R.plan.proofLayout.quotientLimbs.itemCount := by
+  obtain ⟨rawMeta, meta_, L, userPhases, hraw, hmeta, hlay, hL, _hprot, _hLook, _hChunks,
+    _hPerm, _hTrash, _hQuot, _hAdv, _hChall, _hUP, _hUser, _hInst, _hTrunc, _hLookM,
+    _hPermM, _hTrashM, _hLH⟩ := TranscriptRows.tp_planFacts hR
+  subst hmeta
+  subst hlay
+  have hfacts := TranscriptRows.tp_fromProtocol hL
+  have hf : R.vk.WellFormed Features.solidity := hR.supported.wf
+  have hcounts := protocol_parseCounts (p := p) R.vk hf
+    (plan_protocol_fromConstraintSystem R hR)
+  rw [hQ, hfacts.quotient, hcounts.2.2.2.2.1]
+  rfl
+
+set_option maxHeartbeats 2000000 in
+theorem xcript_qs_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Render p G₁ G₂ Gₜ) (qs : List (Fr p)) (hQs : qs.length = R.nSets) :
+    qs.length = R.plan.proofLayout.qEvals.itemCount := by
+  rw [hQs]
+  rfl
+
+
+theorem xcript_prefix_count {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (Qg : List G₁)
+    (hQ : Qg.length = (if Features.solidity.outerSingleHCommitment then 1
+      else R.vk.domain.getQuotientPolyDegree)) :
+    (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+        R.plan.proofLayout).prefixG1Count =
+      R.plan.proofLayout.nonQuotientG1Count + Qg.length := by
+  rw [Midfall.Lowering.sum_commitmentReadGroups R.plan.proofLayout,
+    ProofCalldataLayout.commitmentG1Count, xcript_quotient_count R hR Qg hQ]
+
+#assert_axioms Midfall.LoweringV3.xcript_advice_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.xcript_quotient_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.xcript_prefix_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.xcript_qs_count [propext, Classical.choice, Quot.sound] native []
+
 #check @Midfall.LoweringV3.planReadCounts_of_valid
 #check @Midfall.LoweringV3.xcriptAlgebraRun_of_valid
 #check @Midfall.LoweringV3.tp_agrees_of_valid
@@ -5501,6 +5585,7 @@ end Composition
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Midfall.LoweringV3.tp_agrees_of_valid
   [propext, Classical.choice, Quot.sound]
+
 
 end Midfall.LoweringV3
 
