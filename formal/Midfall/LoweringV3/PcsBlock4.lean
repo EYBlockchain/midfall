@@ -6439,6 +6439,32 @@ theorem pcsRotLets_contract {funs : FunEnv (Bridge.Dialect c g)}
       · exact absurd (b1_exec_ylet_mload_add_var h1).1 hne
 
 
+def PcsBlock4Pre (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256)
+    (rotVals : Nat → U256) (pointSets : List (List Int)) (distinct : List Int)
+    (pSet : Nat → Nat → U256) (scratch : Nat) :
+    VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+  fun V st =>
+    VEnv.get V "X2_MPTR" = some x2p ∧
+    VEnv.get V "X3_MPTR" = some x3p ∧
+    VEnv.get V "Q_EVAL_CPTR_MPTR" = some cptrp ∧
+    VEnv.get V "ROT_POINTS_MPTR" = some rotp ∧
+    VEnv.get V "F_EVAL_MPTR" = some fp ∧
+    VEnv.get V "r" = some rv ∧
+    VEnv.get V "Q_EVAL_SET_MPTR" = some qep ∧
+    loadWord st.memory x2p.toNat = x2v ∧
+    loadWord st.memory x3p.toNat = x3v ∧
+    loadWord st.memory cptrp.toNat = cptr ∧
+    (∀ p ∈ Midfall.Generator.enumIdx distinct,
+      p.1 * Midfall.Generator.wordBytes < 2 ^ 256) ∧
+    (∀ p ∈ Midfall.Generator.enumIdx distinct,
+      rotp.toNat + p.1 * Midfall.Generator.wordBytes < 2 ^ 256) ∧
+    (∀ p ∈ Midfall.Generator.enumIdx distinct,
+      loadWord st.memory
+        (rotp.toNat + p.1 * Midfall.Generator.wordBytes) = rotVals p.1) ∧
+    PcsQEvalCanon qep pointSets st ∧
+    PcsBlock4SetFacts rv x2v x3v cptr qep scratch pointSets distinct pSet ∧
+    (fp.toNat + 32 ≤ scratch ∨ scratch + 192 ≤ fp.toNat)
+
 theorem pcsBlock4_walk_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
     {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
