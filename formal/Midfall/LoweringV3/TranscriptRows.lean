@@ -5436,6 +5436,60 @@ theorem runsAllP_lookupMultiplicities_fold_both (E : VerifierEnv p G₁ G₂ G�
       · rw [hrowsz, hsz, List.length_cons]
         omega
 
+theorem runsAllP_parseTraceLookupMultiplicities_one_both (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (Qs : List G₁) (hlen : Qs.length = vk.cs.lookups.size) :
+    RunsAllP E (parseTraceLookupMultiplicities E vk 1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun rows => (rows.toList.map (fun row => (row.toList.map
+        (fun p => p.2.numChunks + 1)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 1)).sum ∧
+        (rows.toList.map (fun row => row.toList.length)).sum = vk.cs.lookups.size) := by
+  unfold parseTraceLookupMultiplicities
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil, bind_assoc, pure_bind]
+  let inner : TranscriptM (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p))) :=
+    List.foldlM (init := #[]) (fun acc' l => do
+      let chunked ← StateT.lift (l.chunkByDegree vk.csDegree)
+      let m ← Logup.readMultiplicities chunked (hashableG1 E.g1)
+      pure (acc'.push (m, chunked))) vk.cs.lookups.toList
+  let Post : Array (Array (Logup.CommittedMultiplicities G₁ ×
+      LogupChunkedArgument (Fr p))) → Prop :=
+    fun rows => (rows.toList.map (fun row => (row.toList.map
+        (fun p => p.2.numChunks + 1)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 1)).sum ∧
+        (rows.toList.map (fun row => row.toList.length)).sum = vk.cs.lookups.size
+  have hinner : RunsAllP E inner (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 1)).sum ∧
+        row.size = vk.cs.lookups.size) := by
+    simpa [inner, ledgerPairs] using
+      runsAllP_lookupMultiplicities_fold_both E vk.csDegree vk.cs.lookups.toList #[] Qs hs hlen
+  let f1 : Array (Logup.CommittedMultiplicities G₁ × LogupChunkedArgument (Fr p)) →
+      TranscriptM (Array (Array (Logup.CommittedMultiplicities G₁ ×
+        LogupChunkedArgument (Fr p)))) :=
+    fun row => pure (#[].push row)
+  have hstep : RunsAllP E (inner >>= f1) (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) Post := by
+    have hb := RunsAllP.bind E (m := inner) (f := f1)
+      (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+      hinner (fun row hrow => by
+        refine RunsAllP.pure E (#[].push row) Post ?_
+        dsimp only [Post]
+        refine ⟨?_, ?_⟩
+        · simpa using hrow.1
+        · simpa [hrow.2])
+    rw [List.append_nil] at hb
+    exact hb
+  have hb : RunsAllP E ((inner >>= f1) >>= fun init => pure init)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) Post := by
+    have hb2 := RunsAllP.bind E (m := inner >>= f1) (f := fun init => (pure init : TranscriptM _))
+      (ms₁ := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (ms₂ := [])
+      hstep (fun acc hacc => RunsAllP.pure E acc Post hacc)
+    rw [List.append_nil] at hb2
+    exact hb2
+  simpa only [inner, f1, Post, bind_assoc, pure_bind] using hb
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -8123,6 +8177,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.congr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_count [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_both [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTraceWireBody [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceTail [propext, Classical.choice, Quot.sound] native []
