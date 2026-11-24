@@ -5283,6 +5283,54 @@ theorem runsAllP_lookupCommitments_rows_count (E : VerifierEnv p G₁ G₂ Gₜ)
       rw [hout', hacc', List.map_cons, List.sum_cons]
       omega
 
+theorem sum_rows_flatMap (rows : List (List (Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p)))) (f : Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p) → Nat) :
+    (rows.map (fun row => (row.map f).sum)).sum = ((rows.flatMap (fun row => row)).map f).sum := by
+  induction rows with
+  | nil => rfl
+  | cons row rows ih =>
+      simp only [List.map_cons, List.sum_cons, List.flatMap_cons, List.map_append,
+        List.sum_append, ih]
+
+theorem rowEvalSum_eq (row : Array (Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p))) :
+    rowEvalSum row = (row.toList.map (fun p => p.2.numChunks + 1)).sum +
+      2 * row.toList.length := by
+  unfold rowEvalSum
+  have h := sum_map_add_three (row.toList.map (fun p => p.2.numChunks))
+  simpa only [List.map_map, Function.comp_def, List.length_map] using h
+
+theorem sum_rows_rowEvalSum_eq (rows : List (Array (Logup.CommittedMultiplicities G₁ ×
+    LogupChunkedArgument (Fr p)))) :
+    (rows.map rowEvalSum).sum =
+      (rows.map (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum +
+      2 * (rows.map (fun row => row.toList.length)).sum := by
+  induction rows with
+  | nil => simp
+  | cons row rows ih =>
+      rw [List.map_cons, List.sum_cons, ih, rowEvalSum_eq]
+      rw [List.map_cons, List.sum_cons, List.map_cons, List.sum_cons]
+      omega
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem lookupChunkSum_add_three (l : List (LogupBatchedArgument (Fr p))) (deg : Nat) :
+    (l.map (fun x => lookupChunkNum deg x + 3)).sum =
+      (l.map (fun x => lookupChunkNum deg x + 1)).sum + 2 * l.length := by
+  have h := sum_map_add_three (l.map (fun x => lookupChunkNum deg x))
+  simpa only [List.map_map, Function.comp_def, List.length_map] using h
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -7999,6 +8047,10 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.rowsEvalSum [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.rowsEvalSum_push [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupCommitments_rows_count [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.sum_rows_flatMap [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.rowEvalSum_eq [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.sum_rows_rowEvalSum_eq [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.lookupChunkSum_add_three [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
