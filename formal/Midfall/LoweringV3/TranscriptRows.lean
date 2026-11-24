@@ -9415,6 +9415,20 @@ theorem instInit_halt_false {c : ExternalCalls} {g : ExternalGas}
       | letHalt he1 => cases he1
 
 
+theorem t_set_overwrite2 {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V : VEnv D} {x y : Ident} {a b a' b' : D.Value} (hxy : x ≠ y) :
+    VEnv.set (VEnv.set (VEnv.set (VEnv.set V x a) y b) x a') y b'
+      = VEnv.set (VEnv.set V x a') y b' := by
+  rw [← t_venv_set_comm (x := x) (y := y) (a := a') (b := b) (h := hxy)]
+  rw [t_venv_set_set]
+  rw [t_venv_set_set]
+
+theorem g1InstanceWords_take_all (cd : Bytes) (start N : Nat) :
+    List.take N (g1InstanceWords cd start N) = g1InstanceWords cd start N := by
+  apply List.take_of_length_le
+  rw [g1InstanceWords_length]
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -10039,5 +10053,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instStep_stmt [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instInit_run [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instInit_halt_false [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.t_set_overwrite2 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_take_all [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
