@@ -4109,6 +4109,210 @@ theorem batchInvertCallSegment_zero
 
 #assert_axioms batchInvertCallSegment_zero [propext, Classical.choice, Quot.sound]
 
+/-! ## 6c. THE POISONED SLICE WITHOUT A CLEAN-PRE BRIDGE
+
+`LagBlockPoisonContract` takes `Poisoned` at the slice entry, which carries only `Frame` and
+`success = 0`; it does NOT carry the four header words or `lagrange_precompile_failed = 0`. The
+prologue supplies the latter, and the inner scope is run at the state-dependent configuration
+`lagCfgZero C` whose four word fields are the actual memory loads. Statement 10 is the
+zero-success segment, so no `hcanon`/window input is read. The result is the unconditional poison
+contract from the standard table lookups, PG-LAG-FITS and the two count bounds. -/
+
+def lagCfgZero {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) (rw xw omw w0 nInv : U256) : LagCfg consts cd k n m :=
+  { D := C.D, s := C.s, aX := C.aX, aO := C.aO, aL := C.aL, aN := C.aN, aI := C.aI,
+    aXN := C.aXN, aXN1 := C.aXN1, aLL := C.aLL, aLB := C.aLB, aL0 := C.aL0, aIE := C.aIE,
+    rw := rw, succ := 0, xw := xw, omw := omw, w0 := w0, nInv := nInv }
+
+theorem lagWindowFits_lagCfgZero {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) (hfits : LagWindowFits C)
+    (rw xw omw w0 nInv : U256) :
+    LagWindowFits (lagCfgZero C rw xw omw w0 nInv) := by
+  refine ⟨hfits.aX, hfits.aO, hfits.aL, hfits.aN, hfits.aIb, hfits.denomEnd,
+    hfits.LD, hfits.Lne, hfits.Ls, hfits.Nne, hfits.Ns, ?_, ?_, ?_, ?_⟩
+  · simpa [lagCfgZero] using hfits.Nslot
+  · simpa [lagCfgZero] using hfits.slotFits
+  · simpa [lagCfgZero] using hfits.slotD
+  · simpa [lagCfgZero] using hfits.pair
+
+theorem hoist_lagInner_empty {c : ExternalCalls} {g : ExternalGas}
+    (consts : Inline.Consts) (k n m : Nat) :
+    hoist (Bridge.Dialect c g) (lagInner consts k n m) = [] := by
+  kernel_rfl
+
+theorem stagger {c : ExternalCalls} {g : ExternalGas} {consts : Inline.Consts}
+    {cd : Bytes} {k n m : Nat} (C : LagCfg consts cd k n m)
+    {funs : FunEnv (Bridge.Dialect c g)}
+    (hinner : LagInnerContract C (hoist (Bridge.Dialect c g) (lagInner consts k n m) :: funs))
+    (hsucc0 : C.succ = 0)
+    {cenv : FunEnv (Bridge.Dialect c g)} {errPR : Nat}
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hsuccNone : consts.lookup "success" = none)
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      ([Stmt.block (lagInner consts k n m)] ++ lagGuard consts)
+      (LagPre C)
+      (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
+  have hblock := lag_block_poison_contract C hinner hsucc0
+  have hguard := lag_guard_poison_contract (consts := consts) (funs := funs)
+    hPR hsuccNone hfail
+  have hblockList : StmtsContractAll (D := Bridge.Dialect c g) funs
+      [Stmt.block (lagInner consts k n m)] (LagPre C)
+      (fun _ _ V' _ o => o = .normal ∧ VEnv.get V' "success" = some 0 ∧
+        VEnv.get V' "lagrange_precompile_failed" = some 0) := by
+    intro V st hpre V' st' o hrun
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1, hnil⟩ | ⟨h1, hne⟩
+    · cases hnil
+      exact hblock V st hpre _ _ _ h1
+    · exact hblock V st hpre V' st' o h1
+  exact StmtsContractAll.append_normal hblockList (fun _ _ _ => hguard)
+
+set_option maxHeartbeats 8000000 in
+/-- **THE POISONED LAGRANGE SLICE, WITHOUT A CLEAN-PRE BRIDGE.** The inner scope runs at the
+    state-dependent configuration `C'` whose four word fields are the actual memory loads and
+    whose `succ` is zero; `LagPre C'` therefore holds after the prologue from `Poisoned` alone.
+    Statement 10 is the zero-success segment (`batchInvertCallSegment_zero`), so the A5 canonical
+    word and window fits are not read; everything else is the landed T3.9.f composition at `C'`. -/
+theorem lagBlockPoisonContract_of_fits_zero (R : Render p G₁ G₂ Gₜ)
+    (product : PairingProduct) (hR : ValidV3 R) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (g : ExternalGas)
+    (C : LagCfg R.consts cd R.pv.k R.pv.numInstances R.pv.numNegLagranges)
+    (hr : R.consts.lookup "r" = none)
+    (hX : R.consts.lookup "X_MPTR" = some C.aX)
+    (hO : R.consts.lookup "OMEGA_MPTR" = some C.aO)
+    (hL : R.consts.lookup "OMEGA_INV_TO_L_MPTR" = some C.aL)
+    (hN : R.consts.lookup "N_INV_MPTR" = some C.aN)
+    (hI : R.consts.lookup "INSTANCE_CPTR" = some C.aI)
+    (hD : R.consts.lookup "LAGRANGE_DENOMS_MPTR" = some C.D)
+    (hS : R.consts.lookup "BATCH_INV_SCRATCH_MPTR" = some C.s)
+    (hXN : R.consts.lookup "X_N_MPTR" = some C.aXN)
+    (hXN1 : R.consts.lookup "X_N_MINUS_1_INV_MPTR" = some C.aXN1)
+    (hLL : R.consts.lookup "L_LAST_MPTR" = some C.aLL)
+    (hLB : R.consts.lookup "L_BLIND_MPTR" = some C.aLB)
+    (hL0 : R.consts.lookup "L_0_MPTR" = some C.aL0)
+    (hIE : R.consts.lookup "INSTANCE_EVAL_MPTR" = some C.aIE)
+    (hfits : LagWindowFits C)
+    (hm : 2 ≤ R.pv.numNegLagranges) (hn : 1 ≤ R.pv.numInstances)
+    (hk : R.pv.k < 2 ^ 256) :
+    LagBlockPoisonContract R product g H vkAddr cd := by
+  intro V st hpois V' st' o hrun
+  obtain ⟨hframe, hsucc0V⟩ := hpois
+  obtain ⟨rv, hrvLookup, hrget⟩ := hframe.r
+  have hrvp : rv = p := by
+    have h := frModulus_of_valid hR
+    rw [hrvLookup] at h
+    exact Option.some.inj h
+  have hrvBls : rv = Midfall.Yul.blsR := by
+    rw [hrvp, hR.env.modulus]
+    rfl
+  let C' : LagCfg R.consts cd R.pv.k R.pv.numInstances R.pv.numNegLagranges :=
+    lagCfgZero C (BitVec.ofNat 256 Midfall.Yul.blsR)
+      (loadWord st.memory C.aX) (loadWord st.memory C.aO)
+      (loadWord st.memory C.aL) (loadWord st.memory C.aN)
+  have hfits' : LagWindowFits C' := by
+    simpa [C'] using lagWindowFits_lagCfgZero C hfits
+      (BitVec.ofNat 256 Midfall.Yul.blsR)
+      (loadWord st.memory C.aX) (loadWord st.memory C.aO)
+      (loadWord st.memory C.aL) (loadWord st.memory C.aN)
+  have hX' : R.consts.lookup "X_MPTR" = some C'.aX := by simpa [C', lagCfgZero] using hX
+  have hO' : R.consts.lookup "OMEGA_MPTR" = some C'.aO := by simpa [C', lagCfgZero] using hO
+  have hL' : R.consts.lookup "OMEGA_INV_TO_L_MPTR" = some C'.aL := by
+    simpa [C', lagCfgZero] using hL
+  have hN' : R.consts.lookup "N_INV_MPTR" = some C'.aN := by simpa [C', lagCfgZero] using hN
+  have hI' : R.consts.lookup "INSTANCE_CPTR" = some C'.aI := by simpa [C', lagCfgZero] using hI
+  have hD' : R.consts.lookup "LAGRANGE_DENOMS_MPTR" = some C'.D := by
+    simpa [C', lagCfgZero] using hD
+  have hS' : R.consts.lookup "BATCH_INV_SCRATCH_MPTR" = some C'.s := by
+    simpa [C', lagCfgZero] using hS
+  have hXN' : R.consts.lookup "X_N_MPTR" = some C'.aXN := by
+    simpa [C', lagCfgZero] using hXN
+  have hXN1' : R.consts.lookup "X_N_MINUS_1_INV_MPTR" = some C'.aXN1 := by
+    simpa [C', lagCfgZero] using hXN1
+  have hLL' : R.consts.lookup "L_LAST_MPTR" = some C'.aLL := by
+    simpa [C', lagCfgZero] using hLL
+  have hLB' : R.consts.lookup "L_BLIND_MPTR" = some C'.aLB := by
+    simpa [C', lagCfgZero] using hLB
+  have hL0' : R.consts.lookup "L_0_MPTR" = some C'.aL0 := by
+    simpa [C', lagCfgZero] using hL0
+  have hIE' : R.consts.lookup "INSTANCE_EVAL_MPTR" = some C'.aIE := by
+    simpa [C', lagCfgZero] using hIE
+  have hlookHoist : lookupFun
+      (hoist (Bridge.Dialect (permissive (callsOf product)) g)
+        (lagInner R.consts R.pv.k R.pv.numInstances R.pv.numNegLagranges) ::
+       R.scope (permissive (callsOf product)) g)
+      "batch_invert" =
+      some (batchInvertDecl R (permissive (callsOf product)) g,
+        R.scope (permissive (callsOf product)) g) := by
+    rw [hoist_lagInner_empty]
+    exact batchInvert_lookup R
+  have hcall : BatchInvertCallSegment R.consts product g R.pv.k R.pv.numInstances
+      R.pv.numNegLagranges C'.D C'.s
+      (hoist (Bridge.Dialect (permissive (callsOf product)) g)
+        (lagInner R.consts R.pv.k R.pv.numInstances R.pv.numNegLagranges) ::
+       R.scope (permissive (callsOf product)) g) C'.succ C'.rw :=
+    batchInvertCallSegment_zero (consts := R.consts) (product := product) (g := g)
+      (k := R.pv.k) (n := R.pv.numInstances) (m := R.pv.numNegLagranges)
+      (D := C'.D) (aS := C'.s) (succ := C'.succ) (rw := C'.rw)
+      (decl := batchInvertDecl R (permissive (callsOf product)) g)
+      (cenv := R.scope (permissive (callsOf product)) g)
+      hlookHoist rfl rfl rfl
+      (Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R) hr
+      hD' hS' rfl rfl
+  have hinner : LagInnerContract C'
+      (hoist (Bridge.Dialect (permissive (callsOf product)) g)
+        (lagInner R.consts R.pv.k R.pv.numInstances R.pv.numNegLagranges) ::
+       R.scope (permissive (callsOf product)) g) :=
+    lag_inner_contract_post_of_fits (C := C') (product := product) (g := g)
+      (funs := hoist (Bridge.Dialect (permissive (callsOf product)) g)
+        (lagInner R.consts R.pv.k R.pv.numInstances R.pv.numNegLagranges) ::
+       R.scope (permissive (callsOf product)) g)
+      hr hX' hO' hL' hN' hI' hD' hXN' hXN1' hLL' hLB' hL0' hIE'
+      hfits' hm hn hk hcall
+  have hPR : R.consts.lookup "ERR_PROOF_REJECTED" = some 0xc3b0d8cd :=
+    Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 hR "ERR_PROOF_REJECTED" 0xc3b0d8cd (by
+      cases h1 : R.model.expectedVkCodehash <;> cases h2 : R.model.quotientExternal <;>
+        cases h3 : R.model.expectedQuotientCodehash <;>
+          cases h4 : R.model.expectedHasAccumulator <;>
+            simp [Midfall.LoweringV3.expectedConsts, h1, h2, h3, h4, List.lookup])
+  have htail : StmtsContractAll
+      (D := Bridge.Dialect (permissive (callsOf product)) g)
+      (R.scope (permissive (callsOf product)) g)
+      ([Stmt.block (lagInner R.consts R.pv.k R.pv.numInstances R.pv.numNegLagranges)] ++
+        lagGuard R.consts)
+      (LagPre C')
+      (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') :=
+    stagger (c := permissive (callsOf product)) (g := g) C' hinner rfl
+      hPR
+      (Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R)
+      (Midfall.LoweringV2.Blocks.TraceReturn.fail_lookup R)
+  rw [LagrangeRows.lag_slice, LagrangeBlock.lag_slice_decomp] at hrun
+  -- split the prologue from the inner block and guard; the prologue is the only `normal` case
+  rw [List.append_assoc] at hrun
+  rcases Step.stmts_append_inv (D := Bridge.Dialect (permissive (callsOf product)) g) hrun with
+    ⟨V1, st1, hproRun, htailRun⟩ | ⟨hproRun, hne⟩
+  · obtain ⟨ho, hst1, hV1⟩ := lag_prologue_run hproRun
+    have hpreC' : LagPre C' V1 st1 := by
+      rw [hst1, hV1]
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, hframe.calldata⟩
+      · rw [venv_get_cons_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+          (x := "lagrange_precompile_failed") (y := "r") (by decide)]
+        rw [hrget, hrvBls]
+        rfl
+      · rw [venv_get_cons_ne (D := Bridge.Dialect (permissive (callsOf product)) g)
+          (x := "lagrange_precompile_failed") (y := "success") (by decide)]
+        simpa [C', lagCfgZero] using hsucc0V
+      · exact venv_get_cons_self V "lagrange_precompile_failed" 0
+      · rfl
+      · rfl
+      · rfl
+      · rfl
+    exact htail V1 st1 hpreC' V' st' o htailRun
+  · obtain ⟨ho, -, -⟩ := lag_prologue_run hproRun
+    exact absurd ho hne
+
+#assert_axioms lagBlockPoisonContract_of_fits_zero [propext, Classical.choice, Quot.sound]
+
 -- Downstream `lag_poison` reads the two facts above; keep the closed 14-name list opaque so that
 -- later `decide`/`simp` does not try to unfold `lagInner` at a general table.
 attribute [local irreducible] lagInner
