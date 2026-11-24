@@ -149,6 +149,31 @@ theorem StmtsContractAll.cons_split {funs : FunEnv D} {s : Stmt D.Op} {ss : Bloc
     · exact absurd heq hne
     · exact hpost
 
+/-- **THE HEAD/TAIL CUT WITH A PRE-RELATIVE MID.** `cons_split`'s `mid` is a fixed predicate, so
+    it cannot relate the head's result to the OUTER pre environment/state; a loop body needs
+    exactly that (`Vm = set V buf_len …`, `stm.env = st.env`). Here `Mid` takes the outer
+    `(V, st)` and the head's result `(Vm, stm)`, the head's normal arm witnesses them, and the
+    tail contract is run at the witness with the outer pre facts in scope. -/
+theorem StmtsContractAll.head_tail_ex {funs : FunEnv D} {s : Stmt D.Op} {ss : Block D.Op}
+    {pre : VEnv D → D.State → Prop}
+    {Mid : VEnv D → D.State → VEnv D → D.State → Prop}
+    {post : VEnv D → D.State → VEnv D → D.State → Outcome → Prop}
+    (head : StmtContractAll funs s pre (fun V st V' st' o =>
+      (o = .normal ∧ Mid V st V' st') ∨ (o ≠ .normal ∧ post V st V' st' o)))
+    (tail : ∀ (V₀ : VEnv D) (st₀ : D.State) (Vm : VEnv D) (stm : D.State),
+      pre V₀ st₀ → Mid V₀ st₀ Vm stm →
+      StmtsContractAll funs ss (fun V' st' => V' = Vm ∧ st' = stm)
+        (fun _ _ V' st' o => post V₀ st₀ V' st' o)) :
+    StmtsContractAll funs (s :: ss) pre post := by
+  intro V st hpre V' st' o hrun
+  rcases Step.stmts_cons_inv (D := D) hrun with ⟨V₁, st₁, h₁, h₂⟩ | ⟨h₁, hne⟩
+  · rcases head V st hpre V₁ st₁ .normal h₁ with ⟨_, hmid⟩ | ⟨hne', _⟩
+    · exact tail V st V₁ st₁ hpre hmid V₁ st₁ ⟨rfl, rfl⟩ V' st' o h₂
+    · exact absurd rfl hne'
+  · rcases head V st hpre V' st' o h₁ with ⟨heq, _⟩ | ⟨_, hpost⟩
+    · exact absurd heq hne
+    · exact hpost
+
 /-- Sequencing over ++: the head slice either continues normally into mid or stops
     with post already established, and the tail slice continues from mid. design0
     lists this as provable-now with a sketch hole; it follows from
