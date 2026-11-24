@@ -3039,7 +3039,27 @@ theorem v3_payload (hg : Generates gi o) (hs : SupportedInput gi) :
 theorem v3_pins_of_valid {R : Render p G₁ G₂ Gₜ} (h : Midfall.LoweringV3.ValidV3 R) :
     (∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t) ∧
       Midfall.LoweringV2.vkPins R ∧ Midfall.LoweringV2.vkProgressPins R := by
-  sorry -- CERT.6 (corollary of the one text, not of generation)
+  have hcode : Midfall.LoweringV2.vkCodehashArm R.model :=
+    Midfall.LoweringV3.MemoryPairs.vkCodehashArm_of_generated h.generated h.supported.separateVk
+  refine ⟨Midfall.LoweringV3.transcriptMptr_of_valid h, ?_, ?_⟩
+  · refine
+      { vkMptr := ?_
+        payloadLen := ?_
+        numInst := ?_
+        disjoint := ?_ }
+    · refine ⟨ptrAddr R.pv.memory.vkMptr, ?_, rfl⟩
+      exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 h "VK_MPTR"
+        (cAddr R.pv.memory.vkMptr) (Midfall.LoweringV2.expectedConsts_lookup_VK_MPTR _ _)
+    · refine ⟨R.pv.vk.len, ?_, rfl⟩
+      exact Midfall.LoweringV3.VkWindow.consts_lookup_of_validV3 h "EXPECTED_VK_PAYLOAD_LENGTH"
+        R.pv.vk.len (Midfall.LoweringV2.expectedConsts_lookup_EXPECTED_VK_PAYLOAD_LENGTH _ _ hcode)
+    · exact Midfall.LoweringV3.MemoryPairs.vkPins_numInst_of_generated h.generated h.inputs.1
+    · exact Midfall.LoweringV3.MemoryPairs.vkPins_disjoint_of_generated h.generated
+  · refine { vkLen := ?_, vkHash := ?_ }
+    · refine ⟨R.plan.vk.runtimeBytes.size, ?_, rfl⟩
+      exact Midfall.LoweringV3.VkClean.consts_lookup_EXPECTED_VK_LENGTH_V3 h hcode
+    · refine ⟨(keccak256 R.plan.vk.runtimeBytes).toNat, ?_, rfl⟩
+      exact Midfall.LoweringV3.VkClean.consts_lookup_EXPECTED_VK_CODEHASH_WORD_V3 h hcode
 
 /-! ### D-CERT1: the eight currently-uncovered `programOk` conjuncts -/
 
