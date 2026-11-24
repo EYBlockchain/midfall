@@ -1469,6 +1469,21 @@ theorem RunsAllP.bind (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
   · rw [hpos2, ByteArray.size_append, wireMsgs_size, List.map_append, List.sum_append]
     omega
 
+/-- `RunsAllP.bind` with an empty second message list, stated at the first list. -/
+theorem RunsAllP.bind_nil (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    {m : TranscriptM α} {f : α → TranscriptM β} {ms : List (Msg (Fr p) G₁)}
+    {P : α → Prop} {Q : β → Prop}
+    (hm : RunsAllP E m ms P) (hf : ∀ a, P a → RunsAllP E (f a) [] Q) :
+    RunsAllP E (m >>= f) ms Q := by
+  simpa only [List.append_nil] using RunsAllP.bind E (ms₁ := ms) (ms₂ := []) hm hf
+
+/-- `RunsAll.bind` with an empty second message list, stated at the first list. -/
+theorem RunsAll.bind_nil (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    {m : TranscriptM α} {f : α → TranscriptM β} {ms : List (Msg (Fr p) G₁)}
+    (hm : RunsAll E m ms) (hf : ∀ a, RunsAll E (f a) []) :
+    RunsAll E (m >>= f) ms := by
+  simpa only [List.append_nil] using RunsAll.bind E (ms₁ := ms) (ms₂ := []) hm hf
+
 /-- Read a list of homogeneous G1 groups in order. -/
 def readG1Groups (E : VerifierEnv p G₁ G₂ Gₜ) : List Nat → TranscriptM Unit
   | [] => pure ()
@@ -4831,6 +4846,39 @@ theorem wireMsgs_g1_singleton (E : VerifierEnv p G₁ G₂ Gₜ) (Q : G₁) :
   rw [bytes_append_empty_local]
   rfl
 
+theorem runsAllP_parseTracePermutations_one (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (hdeg : 3 ≤ vk.csDegree) (Qs : List G₁)
+    (hlen : Qs.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2)) :
+    RunsAllP E (parseTracePermutations E vk 1)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun rows => (rows.toList.map (fun pc =>
+        3 * pc.permutationProductCommitments.size - 1)).sum =
+        3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1) := by
+  have hread := runsAllP_tmReadN_g1 E (Permutation.numChunksOf vk.cs.permutation.columns.size
+    (vk.csDegree - 2)) Qs hlen
+  have hpc : RunsAllP E
+      (Permutation.readProductCommitments vk.cs.permutation vk.csDegree (hashableG1 E.g1))
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+      (fun pc => pc.permutationProductCommitments.size =
+        Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2)) := by
+    unfold Permutation.readProductCommitments
+    simp only [show 2 < vk.csDegree from by omega, show vk.csDegree - 2 > 0 from by omega,
+      ↓reduceIte]
+    refine RunsAllP.bind_nil E (m := tmReadN (hashableG1 E.g1)
+      (Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2)))
+      (ms := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) hread ?_
+    intro arr harr
+    exact RunsAllP.pure E _ _ harr
+  rw [parseTracePermutations]
+  simp only [List.range_one, List.foldlM_cons, List.foldlM_nil, bind_assoc, pure_bind]
+  refine RunsAllP.bind_nil E (m := Permutation.readProductCommitments vk.cs.permutation
+    vk.csDegree (hashableG1 E.g1))
+    (ms := Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) hpc ?_
+  intro pc hpc'
+  refine RunsAllP.pure E _ _ ?_
+  simp [hpc']
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -7175,6 +7223,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebra [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.bind_nil [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAll.bind_nil [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTracePermutations_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
