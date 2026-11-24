@@ -12566,6 +12566,330 @@ theorem instSucc_stmt {c : ExternalCalls} {g : ExternalGas}
   | assignHalt he => exact (and_lt_no_halt he).elim
 
 
+theorem instBody_inner {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {decl : FDecl (Bridge.Dialect c g)}
+    {cenv : FunEnv (Bridge.Dialect c g)}
+    (hlook : lookupFun funs "common_word" = some (decl, cenv))
+    (hbody : decl.body = commonWordBody)
+    (hparams : decl.params = ["buf_len", "word"])
+    (hrets : decl.rets = ["ret"])
+    (cd : Bytes) (cptr : U256) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (buf s rv : U256)
+    (hcp : VEnv.get V "instance_cptr" = some cptr)
+    (hcd : st.env.calldata = cd.data.toList)
+    (hbound : cptr.toNat + 32 ≤ cd.data.toList.length)
+    (hbuf : VEnv.get V "buf_len" = some buf)
+    (hs : VEnv.get V "success" = some s)
+    (hr : VEnv.get V "r" = some rv) :
+    let word := cdWord cd cptr.toNat
+    let s1 := s &&& b2w (word.ult rv)
+    let V1 := ("inst_be", word) :: V
+    let V2 := ("inst_be", word) :: VEnv.set V "success" s1
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ]
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun _ _ V' st' o => o = .normal ∧
+        V' = VEnv.set V2 "buf_len" (buf + BitVec.ofNat 256 32) ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ x, st'.memory x = storeWord st.memory buf.toNat word x)) := by
+  intro word s1 V1 V2
+  let Mid1 : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+    fun _ _ V' st' => V' = V1 ∧ st' = st
+  let Mid2 : VEnv (Bridge.Dialect c g) → EvmState → VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+    fun _ _ V' st' => V' = V2 ∧ st' = st
+  refine StmtsContractAll.head_tail_ex (Mid := Mid1) ?head ?tail
+  · intro V0 st0 hpre V' st' o hrun
+    have h := instLet_stmt (funs := funs) (V := V) (st := st) (cd := cd) (cptr := cptr)
+      hcp hcd hbound V0 st0 hpre V' st' o hrun
+    rcases h with ⟨ho, hV, hst⟩
+    exact Or.inl ⟨ho, hV, hst⟩
+  · intro V0 st0 Vm stm hpre hmid
+    obtain ⟨hVm, hstm⟩ := hmid
+    refine StmtsContractAll.head_tail_ex (Mid := Mid2) ?head2 ?tail2
+    · intro V0' st0' hpre' V' st' o hrun'
+      have hVm' : Vm = ("inst_be", word) :: V := hVm
+      have hstm' : stm = st := hstm
+      have hsV : VEnv.get Vm "success" = some s := by
+        rw [hVm', t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+        exact hs
+      have hrV : VEnv.get Vm "r" = some rv := by
+        rw [hVm', t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+        exact hr
+      have hwV : VEnv.get Vm "inst_be" = some word := by
+        rw [hVm']
+        simp [VEnv.get, List.find?]
+      have h := instSucc_stmt (funs := funs) (V := Vm) (st := stm)
+        (s := s) (rv := rv) (word := word) hsV hrV hwV V0' st0' hpre' V' st' o hrun'
+      rcases h with ⟨ho, hV', hst'⟩
+      refine Or.inl ⟨ho, ?_, ?_⟩
+      · rw [hV', hVm']
+        rw [t_venv_set_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+      · rw [hst', hstm]
+    · intro V0'' st0'' Vm' stm' hpre'' hmid''
+      obtain ⟨hVm', hstm'⟩ := hmid''
+      have hbufV2 : VEnv.get (D := Bridge.Dialect c g) V2 "buf_len" = some buf := by
+        dsimp only [V2]
+        change VEnv.get (("inst_be", word) :: VEnv.set V "success" s1) "buf_len" = some buf
+        rw [t_venv_get_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+        rw [t_venv_get_set_ne (D := Bridge.Dialect c g) (x := "success") (h := by decide)]
+        exact (hbuf : VEnv.get (D := Bridge.Dialect c g) V "buf_len" = some buf)
+      have hwordV2 : VEnv.get (D := Bridge.Dialect c g) V2 "inst_be" = some word := by
+        dsimp only [V2]
+        simp [VEnv.get, List.find?]
+      have hcw := commonWord_stmt_var_contract (funs := funs) (decl := decl) (cenv := cenv)
+        (name := "inst_be") (V := V2) (st := st) (buf := buf) (word := word)
+        hlook hbody hparams hrets hbufV2 hwordV2
+      have hsingle := stmtsContractAll_single hcw
+      intro V0 st0 hpre3
+      apply hsingle V0 st0
+      rw [hVm', hstm'] at hpre3
+      exact hpre3
+
+
+theorem t_restore_cons_any {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V0 V : VEnv D) (x : Ident) (E : D.Value) (h : V.length = V0.length) :
+    restore V0 ((x, E) :: V) = V := by
+  rw [restore, List.length_cons, h]
+  simp
+
+set_option maxHeartbeats 4000000 in
+theorem instBody_block {c : ExternalCalls} {g : ExternalGas}
+    {funs : FunEnv (Bridge.Dialect c g)} {decl : FDecl (Bridge.Dialect c g)}
+    {cenv : FunEnv (Bridge.Dialect c g)}
+    (hlook : lookupFun funs "common_word" = some (decl, cenv))
+    (hbody : decl.body = commonWordBody)
+    (hparams : decl.params = ["buf_len", "word"])
+    (hrets : decl.rets = ["ret"])
+    (cd : Bytes) (cptr : U256) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (buf s rv : U256)
+    (hcp : VEnv.get V "instance_cptr" = some cptr)
+    (hcd : st.env.calldata = cd.data.toList)
+    (hbound : cptr.toNat + 32 ≤ cd.data.toList.length)
+    (hbuf : VEnv.get V "buf_len" = some buf)
+    (hs : VEnv.get V "success" = some s)
+    (hr : VEnv.get V "r" = some rv) :
+    let word := cdWord cd cptr.toNat
+    let s1 := s &&& b2w (word.ult rv)
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.block
+        [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+        , Stmt.assign ["success"] (Expr.builtin Op.and
+            [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+        , Stmt.assign ["buf_len"] (Expr.call "common_word"
+            [Expr.var "buf_len", Expr.var "inst_be"]) ])
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun _ _ V' st' o => o = .normal ∧
+        V' = VEnv.set (VEnv.set V "success" s1) "buf_len" (buf + BitVec.ofNat 256 32) ∧
+        st'.env = st.env ∧ st'.halted = st.halted ∧
+        (∀ x, st'.memory x = storeWord st.memory buf.toNat word x)) := by
+  intro word s1
+  refine StmtsContractAll.block (D := Bridge.Dialect c g) (funs := funs)
+    (body := [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ])
+    (pre := fun V0 st0 => V0 = V ∧ st0 = st)
+    (post := fun _ _ V' st' o => o = .normal ∧
+      V' = VEnv.set (VEnv.set V "success" s1) "buf_len" (buf + BitVec.ofNat 256 32) ∧
+      st'.env = st.env ∧ st'.halted = st.halted ∧
+      (∀ x, st'.memory x = storeWord st.memory buf.toNat word x)) ?_
+  intro V0 st0 hpre V' st' o hrun
+  have hlook' : lookupFun (hoist (Bridge.Dialect c g)
+      [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ] :: funs) "common_word" =
+      some (decl, cenv) := by
+    rw [show hoist (Bridge.Dialect c g)
+      [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ] = [] from rfl, lookupFun_nil_scope]
+    exact hlook
+  have hinner := instBody_inner (funs := hoist (Bridge.Dialect c g)
+      [ Stmt.letDecl ["inst_be"] (some (Expr.builtin Op.calldataload [Expr.var "instance_cptr"]))
+      , Stmt.assign ["success"] (Expr.builtin Op.and
+          [Expr.var "success", Expr.builtin Op.lt [Expr.var "inst_be", Expr.var "r"]])
+      , Stmt.assign ["buf_len"] (Expr.call "common_word"
+          [Expr.var "buf_len", Expr.var "inst_be"]) ] :: funs)
+    hlook' hbody hparams hrets cd cptr V st buf s rv hcp hcd hbound hbuf hs hr
+  have h := hinner V0 st0 hpre V' st' o hrun
+  rcases h with ⟨ho, hV', henv, hhalt, hmem⟩
+  obtain ⟨hV0, hst0⟩ := hpre
+  refine ⟨ho, ?_, ?_, ?_, ?_⟩
+  · rw [hV']
+    dsimp only [s1]
+    rw [show (("inst_be", cdWord cd cptr.toNat) :: VEnv.set V "success"
+        (s &&& b2w ((cdWord cd cptr.toNat).ult rv))) =
+        ("inst_be", cdWord cd cptr.toNat) :: VEnv.set V "success"
+          (s &&& b2w ((cdWord cd cptr.toNat).ult rv)) from rfl]
+    rw [t_venv_set_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+    rw [t_restore_cons_any (D := Bridge.Dialect c g) (V := VEnv.set (VEnv.set V "success"
+      (s &&& b2w ((cdWord cd cptr.toNat).ult rv))) "buf_len" (buf + BitVec.ofNat 256 32))
+      (h := by rw [hV0, t_venv_set_length (D := Bridge.Dialect c g),
+        t_venv_set_length (D := Bridge.Dialect c g)])]
+  · exact henv
+  · exact hhalt
+  · exact hmem
+
+
+theorem t_restore_cons2_any {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (V0 W : VEnv D) (x y : Ident) (E C : D.Value) (h : W.length = V0.length) :
+    restore V0 ((x, E) :: (y, C) :: W) = W := by
+  rw [restore, List.length_cons, List.length_cons, h]
+  rw [show List.length V0 + 1 + 1 - List.length V0 = 2 by omega]
+  rfl
+
+theorem g1SuccessFold_append (rv s : U256) (xs ys : List U256) :
+    g1SuccessFold rv s (xs ++ ys) =
+      g1SuccessFold rv (g1SuccessFold rv s xs) ys := by
+  simp [g1SuccessFold, List.foldl_append]
+
+theorem g1AppendWords_append (mem : Nat → UInt8) (buf j : Nat) (xs ys : List U256) :
+    g1AppendWords mem buf (xs ++ ys) j =
+      g1AppendWords (g1AppendWords mem buf xs j) buf ys (j + xs.length) := by
+  induction xs generalizing mem j with
+  | nil => simp [g1AppendWords]
+  | cons w ws ih =>
+      simp only [List.cons_append, g1AppendWords_cons, List.length_cons]
+      rw [ih]
+      congr 1
+      omega
+
+theorem g1InstanceWords_take_succ (cd : Bytes) (start N k : Nat) (hk : k < N) :
+    List.take (k + 1) (g1InstanceWords cd start N) =
+      List.take k (g1InstanceWords cd start N) ++ [cdWord cd (start + 32 * k)] := by
+  rw [List.take_add_one]
+  rw [g1InstanceWords_get? cd start N k hk]
+  rfl
+
+
+theorem instStep_stmt {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g))
+    (st : EvmState) (cptr : U256)
+    (hcp : VEnv.get V "instance_cptr" = some cptr) :
+    StmtContractAll (D := Bridge.Dialect c g) funs
+      (Stmt.assign ["instance_cptr"] (Expr.builtin Op.add
+        [Expr.var "instance_cptr", Expr.lit (Literal.number 32)]))
+      (fun V0 st0 => V0 = V ∧ st0 = st)
+      (fun V0 st0 V' st' o => o = .normal ∧
+        V' = VEnv.set V "instance_cptr" (cptr + BitVec.ofNat 256 32) ∧ st' = st) := by
+  intro V0 st0 hpre V' st' o hrun
+  obtain ⟨hV0, hst0⟩ := hpre
+  cases hrun with
+  | assignVal he hlen =>
+      obtain ⟨cv, hvals⟩ := g1Walk_list_length_one hlen
+      subst hvals
+      obtain ⟨a, hget, hcv, hst1⟩ := g1Walk_eval_add_var_lit_inv (c := c) (g := g) (funs := funs) (V := V0) (st := st0) (x := "instance_cptr") (k := 32) he
+      rw [hV0] at hget
+      have ha : a = cptr := Option.some.inj (hget.symm.trans hcp)
+      subst ha
+      refine ⟨rfl, ?_, ?_⟩
+      · rw [hV0]
+        rw [hcv]
+        exact t_setMany_one (D := Bridge.Dialect c g) V "instance_cptr" _
+      · rw [hst1, hst0]
+  | assignHalt he => exact (g1Walk_eval_add_var_lit_halt_false he).elim
+
+
+theorem instInit_run {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (start N : Nat) (V : VEnv (Bridge.Dialect c g))
+    (st stinit : EvmState) (Vinit : VEnv (Bridge.Dialect c g))
+    (hbound : start + N * 32 < 2 ^ 256)
+    (h : Step (Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g)
+        [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number start)))
+        , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (N * 32))])) ] :: funs)
+      V st
+      (.stmts
+        [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number start)))
+        , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (N * 32))])) ])
+      (.sres Vinit stinit .normal)) :
+    ∃ e, Vinit = ("instance_cptr_end", e) ::
+        ("instance_cptr", BitVec.ofNat 256 start) :: V ∧
+      e = BitVec.ofNat 256 (start + N * 32) ∧ stinit = st := by
+  cases h with
+  | seqCons h1 h2 =>
+      cases h2 with
+      | seqCons h2a h2b =>
+          cases h2b with
+          | seqNil =>
+              cases h1 with
+              | letVal he1 hlen1 =>
+                  obtain ⟨v1, hv1⟩ := g1Walk_list_length_one hlen1
+                  subst hv1
+                  obtain ⟨hv1', hst1⟩ := g1Walk_eval_lit_inv he1
+                  subst hv1'
+                  subst hst1
+                  cases h2a with
+                  | letVal he2 hlen2 =>
+                      obtain ⟨v2, hv2⟩ := g1Walk_list_length_one hlen2
+                      subst hv2
+                      obtain ⟨a, hget, hval, hst2⟩ :=
+                        g1Walk_eval_add_var_lit_inv (x := "instance_cptr") (k := N * 32) he2
+                      simp only [VEnv.get, List.find?] at hget
+                      injection hget with ha
+                      subst ha
+                      subst hval
+                      refine ⟨BitVec.ofNat 256 start + BitVec.ofNat 256 (N * 32), ?_, ?_, ?_⟩
+                      · simp only [List.zip_cons_cons, List.zip_nil_left, List.cons_append, List.nil_append]
+                      · exact (BitVec.ofNat_add (n := 256) start (N * 32)).symm
+                      · exact hst2
+      | seqStop hstop hne => exact absurd rfl hne
+  | seqStop hstop hne => exact absurd rfl hne
+
+theorem instInit_halt_false {c : ExternalCalls} {g : ExternalGas}
+    (funs : FunEnv (Bridge.Dialect c g)) (start N : Nat) (V : VEnv (Bridge.Dialect c g))
+    (st stinit : EvmState) (Vinit : VEnv (Bridge.Dialect c g))
+    (h : Step (Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g)
+        [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number start)))
+        , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (N * 32))])) ] :: funs)
+      V st
+      (.stmts
+        [ Stmt.letDecl ["instance_cptr"] (some (Expr.lit (Literal.number start)))
+        , Stmt.letDecl ["instance_cptr_end"] (some (Expr.builtin Op.add
+            [Expr.var "instance_cptr", Expr.lit (Literal.number (N * 32))])) ])
+      (.sres Vinit stinit .halt)) : False := by
+  cases h with
+  | seqCons h1 h2 =>
+      cases h1 with
+      | letVal he1 _ =>
+          cases h2 with
+          | seqCons h2a h2b =>
+              cases h2b
+          | seqStop h2a hne =>
+              cases h2a with
+              | letHalt he2 => exact (g1Walk_eval_add_var_lit_halt_false (x := "instance_cptr") (k := N * 32) he2)
+  | seqStop h1 hne =>
+      cases h1 with
+      | letHalt he1 => cases he1
+
+
+theorem t_set_overwrite2 {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {V : VEnv D} {x y : Ident} {a b a' b' : D.Value} (hxy : x ≠ y) :
+    VEnv.set (VEnv.set (VEnv.set (VEnv.set V x a) y b) x a') y b'
+      = VEnv.set (VEnv.set V x a') y b' := by
+  rw [← t_venv_set_comm (x := x) (y := y) (a := a') (b := b) (h := hxy)]
+  rw [t_venv_set_set]
+  rw [t_venv_set_set]
+
+theorem g1InstanceWords_take_all (cd : Bytes) (start N : Nat) :
+    List.take N (g1InstanceWords cd start N) = g1InstanceWords cd start N := by
+  apply List.take_of_length_le
+  rw [g1InstanceWords_length]
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -13326,5 +13650,17 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instLet_stmt [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.and_lt_no_halt [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instSucc_stmt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instBody_inner [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons_any [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instBody_block [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.t_restore_cons2_any [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1SuccessFold_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1AppendWords_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_take_succ [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instStep_stmt [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instInit_run [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instInit_halt_false [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.t_set_overwrite2 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_take_all [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
