@@ -18,6 +18,7 @@
 -- window fits.
 import Midfall.LoweringV3.BatchInvert
 import Midfall.LoweringV3.ScalarInvSummary
+import Midfall.LoweringV3.FpBody
 
 set_option autoImplicit false
 
@@ -3177,6 +3178,141 @@ theorem lagrange_precompile_failed_notMem_lagInner (consts : Inline.Consts) (k n
     "lagrange_precompile_failed" ∉ Code.boundNames (.stmts (lagInner consts k n m)) := by
   rw [lagInner_boundNames_eq]
   decide
+
+/-! ## 5e. T3.9.h: THE POISONED INNER BLOCK, THE GUARD, AND `lag_poison`
+
+`LagInnerContractZero` (5) already says that at `C.succ = 0` every run of the inner body is
+`.normal` with `success = 0`. The block statement's `restore` is the remaining environment step:
+`Step.sres_names` gives the body-added prefix `extra`, the two non-membership facts above put
+`success`/`lagrange_precompile_failed` outside it, and `venv_get_restore_of_names` reads both
+values back in the caller's environment. The prologue's `let` supplies the flag `0` the outer
+guard needs, and `lag_outer_guard_run` turns that guard into the revert.
+
+This is the inner-scope half of T3.9.h. The Render-level `LagBlockPoisonContract` additionally
+needs a `LagCfg` for the concrete site values and the window fits (`PG-LAG-FITS`), which are not
+part of this unit; `lag_poison` states the part that follows from a `LagInnerContract` alone. -/
+
+/-- The inner body, at the body's own function scope: every run is normal, leaves `success = 0`
+    and `lagrange_precompile_failed = 0`, AND the caller's `restore` keeps both values. -/
+theorem lag_body_poison_contract {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m)
+    {funs : FunEnv (Bridge.Dialect c g)}
+    (hinner : LagInnerContract C (hoist (Bridge.Dialect c g) (lagInner consts k n m) :: funs))
+    (hsucc0 : C.succ = 0) :
+    StmtsContractAll (D := Bridge.Dialect c g)
+      (hoist (Bridge.Dialect c g) (lagInner consts k n m) :: funs)
+      (lagInner consts k n m) (LagPre C)
+      (fun V _ Vb _ o => o = .normal ∧
+        VEnv.get (restore V Vb) "success" = some 0 ∧
+        VEnv.get (restore V Vb) "lagrange_precompile_failed" = some 0) := by
+  intro V st hpre Vb stb o hbody
+  have hzero := lag_inner_contract_zero hinner hsucc0
+  obtain ⟨ho, hip, hsuccB⟩ := hzero V st hpre Vb stb o hbody
+  obtain ⟨ret, pf, hsuccV, hpfV, -, -, -, hszero, -⟩ := hip
+  have hret0 : ret = 0 := (hszero hsucc0).1
+  have hpf0 : pf = 0 := (hszero hsucc0).2
+  have hsuccB' : VEnv.get Vb "success" = some (0 : U256) := by
+    rw [hsuccV, hret0]
+  have hpfB : VEnv.get Vb "lagrange_precompile_failed" = some (0 : U256) := by
+    rw [hpfV, hpf0]
+  obtain ⟨extra, hnames, hbound⟩ := Step.sres_names hbody rfl
+  have hsuccExtra : "success" ∉ extra := fun hx =>
+    success_notMem_lagInner consts k n m (hbound "success" hx)
+  have hpfExtra : "lagrange_precompile_failed" ∉ extra := fun hx =>
+    lagrange_precompile_failed_notMem_lagInner consts k n m
+      (hbound "lagrange_precompile_failed" hx)
+  exact ⟨ho,
+    Midfall.LoweringV2.Blocks.EcPairing.venv_get_restore_of_names hnames hsuccExtra hsuccB',
+    Midfall.LoweringV2.Blocks.EcPairing.venv_get_restore_of_names hnames hpfExtra hpfB⟩
+
+/-- The block statement's poison contract, caller-side: `StmtsContractAll.block` moves the body
+    contract across the `restore`. -/
+theorem lag_block_poison_contract {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m)
+    {funs : FunEnv (Bridge.Dialect c g)}
+    (hinner : LagInnerContract C (hoist (Bridge.Dialect c g) (lagInner consts k n m) :: funs))
+    (hsucc0 : C.succ = 0) :
+    StmtContractAll (D := Bridge.Dialect c g) funs (Stmt.block (lagInner consts k n m))
+      (LagPre C)
+      (fun _ _ V' _ o => o = .normal ∧
+        VEnv.get V' "success" = some 0 ∧
+        VEnv.get V' "lagrange_precompile_failed" = some 0) :=
+  StmtsContractAll.block (D := Bridge.Dialect c g)
+    (post := fun _ _ V' _ o => o = .normal ∧
+      VEnv.get V' "success" = some 0 ∧
+      VEnv.get V' "lagrange_precompile_failed" = some 0)
+    (lag_body_poison_contract C hinner hsucc0)
+
+/-- The prologue's `let` runs normally, leaves the state alone, and keeps `LagPre`. -/
+theorem lag_prologue_poison_contract {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m) (funs : FunEnv (Bridge.Dialect c g)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs lagPrologue (LagPre C)
+      (fun _ _ V' st' o => o = .normal ∧ LagPre C V' st') := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨ho, hst, hV⟩ := lag_prologue_run hrun
+  obtain ⟨hr, hs, hpf, hx, hO, hL, hN, hcd⟩ := hpre
+  refine ⟨ho, ?_⟩
+  rw [hV, hst]
+  refine ⟨?_, ?_, ?_, hx, hO, hL, hN, hcd⟩
+  · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "lagrange_precompile_failed")
+      (y := "r") (by decide)]; exact hr
+  · rw [venv_get_cons_ne (D := Bridge.Dialect c g) (V := V) (x := "lagrange_precompile_failed")
+      (y := "success") (by decide)]; exact hs
+  · exact venv_get_cons_self V "lagrange_precompile_failed" 0
+
+/-- The outer MF-4 guard reverts from `success = 0` and `lagrange_precompile_failed = 0`. -/
+theorem lag_guard_poison_contract {consts : Inline.Consts}
+    {funs : FunEnv (Bridge.Dialect c g)}
+    {cenv : FunEnv (Bridge.Dialect c g)} {errPR : Nat}
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hsuccNone : consts.lookup "success" = none)
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (lagGuard consts)
+      (fun V _ => VEnv.get V "success" = some (0 : U256) ∧
+        VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
+      (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
+  intro V st hpre V' st' o hrun
+  exact lag_outer_guard_run hPR hsuccNone hfail hpre.1 hpre.2 hrun
+
+/-- **T3.9.h `lag_poison` (the inner-scope half).** Every run of
+    `lagPrologue ++ [inner block] ++ lagGuard` from `LagPre C` halts reverted, given the inner
+    contract at `C.succ = 0`. The two name facts are `success_notMem_lagInner` /
+    `lagrange_precompile_failed_notMem_lagInner`; the block contract above is their only use. -/
+theorem lag_poison {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
+    (C : LagCfg consts cd k n m)
+    {funs : FunEnv (Bridge.Dialect c g)}
+    (hinner : LagInnerContract C (hoist (Bridge.Dialect c g) (lagInner consts k n m) :: funs))
+    (hsucc0 : C.succ = 0)
+    {cenv : FunEnv (Bridge.Dialect c g)} {errPR : Nat}
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hsuccNone : consts.lookup "success" = none)
+    (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv)) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs
+      (lagPrologue ++ [Stmt.block (lagInner consts k n m)] ++ lagGuard consts)
+      (LagPre C)
+      (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') := by
+  have hpro := lag_prologue_poison_contract (C := C) funs
+  have hblock := lag_block_poison_contract C hinner hsucc0
+  have hguard := lag_guard_poison_contract (consts := consts) (funs := funs)
+    hPR hsuccNone hfail
+  have hblockList : StmtsContractAll (D := Bridge.Dialect c g) funs
+      [Stmt.block (lagInner consts k n m)] (LagPre C)
+      (fun _ _ V' _ o => o = .normal ∧ VEnv.get V' "success" = some 0 ∧
+        VEnv.get V' "lagrange_precompile_failed" = some 0) := by
+    intro V st hpre V' st' o hrun
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V1, st1, h1, hnil⟩ | ⟨h1, hne⟩
+    · cases hnil
+      exact hblock V st hpre _ _ _ h1
+    · exact hblock V st hpre V' st' o h1
+  have hbg : StmtsContractAll (D := Bridge.Dialect c g) funs
+      ([Stmt.block (lagInner consts k n m)] ++ lagGuard consts) (LagPre C)
+      (fun _ _ _ st' o => o = .halt ∧ Midfall.LoweringV2.Reverted st') :=
+    StmtsContractAll.append_normal hblockList (fun _ _ _ => hguard)
+  rw [List.append_assoc]
+  exact StmtsContractAll.append_normal hpro (fun _ _ _ => hbg)
+
+#assert_axioms lag_poison [propext, Classical.choice, Quot.sound]
 
 -- Downstream `lag_poison` reads the two facts above; keep the closed 14-name list opaque so that
 -- later `decide`/`simp` does not try to unfold `lagInner` at a general table.

@@ -35,6 +35,7 @@ import Midfall.LoweringV3.FpConsts
 import Midfall.LoweringV3.FpClean
 import Midfall.LoweringV3.FpG2Width
 import Midfall.LoweringV3.FpFit
+import Midfall.LoweringV3.LagrangeBlock
 import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.Tools.ConeSorries
@@ -144,24 +145,54 @@ The lagrange rows cannot yet be assembled from the tree. The blockers are NOT on
    4/5/6 (`omega`, `mptr`, `mptr_end`), 8/9 (`x_n_minus_1`, `mptr_end` store), 11/12 (`mptr`
    reset, `l_i_common`), 14/15 (`l_blind`, `l_i_cptr`), 17 (`instance_eval`), 19/20/21
    (`x_n_minus_1_inv`, `l_last`, `l_0`), and 22-27 (the six slot stores). Statement 10 (the
-   `batch_invert` call) is the ONLY uncovered inner statement. The row still needs the
-   whole-block composition whose post is
-   `∃ W, LagRel … W ∧ <the six slots hold W's words> ∧ <memory outside the denominator/scratch/slot
-   windows unchanged>`; that composition is the T3.9.f card and cannot be stated honestly until
-   the call segment's post exists.
-2. **T3.9.h `lag_poison` is absent.** Its proof needs the whole-block normal-run composition and
-   the poison arm of the `batch_invert` call (A5). The fixed prelude itself is no longer the
-   blocker: statements 0-9 bind `mptr`/`mptr_end` and write the denominator window inside the
-   inner block, so the loop preconditions are reached by the landed segment contracts.
-3. **A5 `batch_invert_summary` is absent.** It supplies statement 10's `success = 0` / `ret = 0`
-   call fact (and the `ret = 1` arm for progress), hence both the whole-block post and
-   `lag_poison`.
+   `batch_invert` call) is the only inner statement not yet discharged; A5's
+   `batch_invert_summary` now exists (`ModexpGeneral.lean:4331`), so what remains there is the
+   caller-side `Step.callOk`/`ysetN` bridge, not a missing summary.
+2. **T3.9.h `lag_poison`'s inner half is now landed** as `LagrangeBlock.lag_poison` (with
+   `lag_body_poison_contract` / `lag_block_poison_contract` / `lag_guard_poison_contract`): the
+   body's `restore` keeps `success`/`lagrange_precompile_failed` (the two non-membership facts
+   in 5d), and the guard reverts from `(0, 0)`. It is conditional on a `LagInnerContract` at
+   `C.succ = 0`, which is exactly the remaining whole-block composition. The Render-level
+   assembly `lagBlockPoisonContract_of_inner` below reduces `LagBlockPoisonContract` to the two
+   named bridges `hpre : Poisoned → LagPre C` and `hinner : LagInnerContract C …`.
+3. **PG-LAG-FITS remains caller-side.** `LagCfg`'s address fits and window disjointness are not
+   projections of `ValidV3` (the layout's `MemoryMap.WellFormed` has no upper bound), so the
+   `LagInnerContract` still has to come from the T3.9.f composition under those fits. The clean
+   post also awaits T3.9.g (`lag_agrees`).
 
 Therefore `lag_blockSim`/`lag_blockProgS` remain the existing registered leaves; no row hypothesis
 has been added and no new `sorry` is introduced here. When 1–3 land, the rows are pure glue.
 -/
 
 /-! ## 3. lagrange (owner T3.9, WP A4) -/
+
+/-- **THE RENDER-LEVEL `LagBlockPoisonContract` ASSEMBLY.** The inner and guard units are
+    `LagrangeBlock.lag_poison`; this theorem rewrites the real slice by
+    `lag_slice`/`lag_slice_decomp` and supplies the three render facts (`ERR_PROOF_REJECTED`,
+    `success` absent, the `fail` lookup). The two remaining bridges are explicit arguments, not
+    row hypotheses: `hpre` is `Poisoned → LagPre C` (the `LagCfg`/frame bridge) and `hinner` is
+    the whole-block contract at `C.succ = 0` (the T3.9.f composition under PG-LAG-FITS). -/
+theorem lagBlockPoisonContract_of_inner (R : Render p G₁ G₂ Gₜ)
+    (product : PairingProduct) (hR : ValidV3 R) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (g : ExternalGas)
+    (C : LagrangeBlock.LagCfg R.consts cd R.pv.k R.pv.numInstances R.pv.numNegLagranges)
+    (hpre : ∀ V st, Poisoned R H vkAddr cd
+      (c := permissive (callsOf product)) (g := g) V st → LagrangeBlock.LagPre C V st)
+    (hinner : LagrangeBlock.LagInnerContract C (hoist
+      (Bridge.Dialect (permissive (callsOf product)) g)
+      (LagrangeRows.lagInner R.consts R.pv.k R.pv.numInstances R.pv.numNegLagranges) ::
+      R.scope (permissive (callsOf product)) g))
+    (hsucc0 : C.succ = 0) :
+    LagrangeBlock.LagBlockPoisonContract R product g H vkAddr cd := by
+  intro V st hpois V' st' o hrun
+  rw [LagrangeRows.lag_slice, LagrangeBlock.lag_slice_decomp] at hrun
+  exact LagrangeBlock.lag_poison (C := C) hinner hsucc0
+    (consts_errProof_of_validV3 hR)
+    (Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R)
+    (Midfall.LoweringV2.Blocks.TraceReturn.fail_lookup R)
+    V st (hpre V st hpois) V' st' o hrun
+
+#assert_axioms lagBlockPoisonContract_of_inner [propext, Classical.choice, Quot.sound]
 
 /-- **LEAF (T3.9, WP A4): the lagrange simulation row.** Evidence `GeneratorRows.lean:621`; children
     are loops a-e, HLP.1.b, `lag_agrees`, `lag_poison`. -/

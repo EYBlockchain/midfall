@@ -53,7 +53,7 @@ def n2Ms : List (Msg (Fr 17) (Exp 17)) :=
     hypothesis nothing satisfies. Every field is a closed computation. -/
 theorem n2Vk_wellFormed : n2Vk.WellFormed Features.solidity :=
   ⟨rfl, by decide, ⟨rfl, rfl⟩, rfl, rfl, rfl, rfl, rfl, rfl, by decide, by decide,
-    by decide, by decide, by decide⟩
+    by decide, by decide, by decide, by decide⟩
 
 /-- Accept/reject as a Bool, so a verdict can be discharged by computation. -/
 def vb (r : Except Fault Unit) : Bool :=
