@@ -834,4 +834,76 @@ theorem noWriters_mainAsmRaw (pv : PlanView) (m : Model)
   refine NoWriters_append ?_ hacc
   exact NoWriters_append hguard hhelp
 
+
+/-! ### `NoWriters` per emitter group
+
+  The scan inspects constructors only (`Op.isWriter` on the builtin and literal values ignored), so
+  every emitter whose statement SHAPE is plan-independent is clean by `rfl`: the fuel is chosen
+  above the block's height and the kernel computes the scan to `true`. The two flag-guarded groups
+  are split on the flag. -/
+
+theorem noWriters_emitTraceReturn (pv : PlanView) : NoWriters (GenAst.emitTraceReturn pv) :=
+  ⟨1000, rfl⟩
+
+theorem noWriters_emitLagrange (pv : PlanView) : NoWriters (GenAst.emitLagrange pv) :=
+  ⟨1000, rfl⟩
+
+theorem noWriters_emitQuotientLin (pv : PlanView) : NoWriters (GenAst.emitQuotientLin pv) :=
+  ⟨1000, rfl⟩
+
+theorem noWriters_emitHelpers (pv : PlanView) : NoWriters (GenAst.emitHelpers pv) :=
+  ⟨4000, rfl⟩
+
+theorem noWriters_emitAccumulatorHelpers : NoWriters GenAst.emitAccumulatorHelpers :=
+  ⟨1000, rfl⟩
+
+theorem noWriters_emitQuotientHelpersAt (pow5 : Bool) :
+    NoWriters (GenAst.emitQuotientHelpersAt pow5) := by
+  cases pow5 <;> exact ⟨1000, rfl⟩
+
+theorem noWriters_mainGuardBlock : NoWriters mainGuardBlock := ⟨100, rfl⟩
+
+theorem noWriters_mainLocals : NoWriters mainLocals := ⟨100, rfl⟩
+
+theorem noWriters_abiGuardBlock (m : Model) : NoWriters (abiGuardBlock m) := ⟨100, rfl⟩
+
+theorem noWriters_wrapperLocals (m : Model) : NoWriters (wrapperLocals m 0 0) := by
+  cases h1 : m.embeddedVk <;> cases h2 : m.quotientExternal <;>
+    simp [wrapperLocals, h1, h2] <;> exact ⟨100, rfl⟩
+
+theorem noWriters_emitVkLoading (pv : PlanView) : NoWriters (GenAst.emitVkLoading pv) := by
+  cases h : pv.hasAccumulator <;>
+    first
+    | exact ⟨1000, rfl⟩
+    | exact ⟨1000, by simp [GenAst.emitVkLoading, GenAst.emitVkLoadingArms, h]; rfl⟩
+
+theorem noWriters_emitFinalPairing (pv : PlanView) : NoWriters (GenAst.emitFinalPairing pv) := by
+  cases h : pv.hasAccumulator <;>
+    first
+    | exact ⟨1000, rfl⟩
+    | exact ⟨1000, by
+        simp [GenAst.emitFinalPairing, GenAst.emitFinalPairingArms, GenAst.emitAccBatch,
+          GenAst.accMsmThenAdd, h]
+        rfl⟩
+
+/-- **`NoWriters` OF THE `quotientLin` SLICE**, from the parsed numerator's. -/
+theorem noWriters_qlinSlice (pv : PlanView) (c : PartialCtx)
+    (hnum : NoWriters (GenAst.emitQuotientNumerator c)) :
+    NoWriters (qlinSlice pv c) := by
+  rw [qlinSlice]
+  exact NoWriters_append (NoWriters_append (noWriters_emitQuotientHelpersAt c.quotientPow5Helper)
+    hnum) (noWriters_emitQuotientLin pv)
+
+/-- **`NoWriters` OF `mainAsmRaw`**, with exactly three residual hypotheses: the transcript parser
+    (a list-mapped group), the PCS slice (a list-mapped group), and the parsed numerator. -/
+theorem noWriters_mainAsmRaw_of (pv : PlanView) (m : Model)
+    (hparser : NoWriters (GenAst.emitTranscriptParser pv))
+    (hpcs : NoWriters (GenAst.emitPcsFromPlan pv))
+    (hnum : NoWriters (GenAst.emitQuotientNumerator (partialCtxOfVerifier m))) :
+    NoWriters (mainAsmRaw pv m) :=
+  noWriters_mainAsmRaw pv m noWriters_mainGuardBlock (noWriters_emitHelpers pv)
+    noWriters_emitAccumulatorHelpers noWriters_mainLocals (noWriters_emitVkLoading pv)
+    hparser (noWriters_emitLagrange pv) (noWriters_qlinSlice pv _ hnum) hpcs
+    (noWriters_emitFinalPairing pv) (noWriters_emitTraceReturn pv)
+
 end Midfall.Generator.CertScan
