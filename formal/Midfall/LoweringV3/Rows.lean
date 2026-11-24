@@ -1612,10 +1612,10 @@ theorem lagPre_of_inv_transcript_of_vk (R : Render p G₁ G₂ Gₜ) (hR : Valid
     (hpf : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
     (hinv : Midfall.Lowering.Inv (calls := c) (gas := g) R.E R.params Checkpoint.vk
       R.pv S V st)
-    (hx : loadWord st.memory (lagCfgOf R cd S).aX = (lagCfgOf R cd S).xw)
-    (hrot : R.plan.meta_.rotationLast.natAbs = R.pv.numNegLagranges) :
+    (hx : loadWord st.memory (lagCfgOf R cd S).aX = (lagCfgOf R cd S).xw) :
     LagrangeBlock.LagPre (lagCfgOf R cd S) V st :=
-  lagPre_of_inv_transcript_of_payload R hR cd S H vkAddr V st hframe hsucc hpf hx hrot
+  lagPre_of_inv_transcript_of_payload R hR cd S H vkAddr V st hframe hsucc hpf hx
+    (pg_omegainv_slot hR)
     (readBytes_of_bytesAt (inv_vk_payload hinv))
 
 

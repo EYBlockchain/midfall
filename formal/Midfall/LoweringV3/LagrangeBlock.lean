@@ -3711,9 +3711,10 @@ theorem helperBody_pf_notMem (consts : Inline.Consts) :
     assigned, not bound, so `venv_get_restore_of_names` keeps them. -/
 theorem batchInvertPost_of_bodyrun
     {consts : Inline.Consts} {product : PairingProduct} {g : ExternalGas}
+    {gas : Nat}
     {n m D aS : Nat} {cenv : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
     {succ : U256}
-    (hgas : consts.lookup "MODEXP_GAS" = some (0 : Nat))
+    (hgas : consts.lookup "MODEXP_GAS" = some gas)
     (hfit : D + 32 * (n + m) + 32 < 2 ^ 256)
     (hsp : 32 ≤ aS)
     (hscratch : aS + (32 * (n + m) + 32) + 192 < 2 ^ 256)
@@ -3744,7 +3745,7 @@ theorem batchInvertPost_of_bodyrun
          [("ret", (0 : U256)), ("precompile_failed", (0 : U256))]) Vb) st' := by
   have hsum := Midfall.LoweringV3.ModexpGeneral.batch_invert_summary consts product g
     (hoist (Bridge.Dialect (permissive (callsOf product)) g)
-      (BatchInvert.helperBody consts GenAst.emitBatchInvertAt) :: cenv) 0 hgas succ D
+      (BatchInvert.helperBody consts GenAst.emitBatchInvertAt) :: cenv) gas hgas succ D
     (D + 32 * (n + m) + 32) aS (by omega) (by omega) (by omega) (by omega)
     (by omega) (by omega) hsp
   obtain ⟨hor, hpost⟩ := hsum _ _
@@ -3773,6 +3774,7 @@ theorem batchInvertPost_of_bodyrun
     halting body contradicts the summary's `(normal ∨ leave)` post. -/
 theorem batchInvertCallSegment_of_summary
     {consts : Inline.Consts} {product : PairingProduct} {g : ExternalGas}
+    {gas : Nat}
     {k n m D aS : Nat} {funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
     {succ rw : U256}
     {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
@@ -3783,7 +3785,7 @@ theorem batchInvertCallSegment_of_summary
     (hrets : decl.rets = ["ret", "precompile_failed"])
     (hsuccNone : consts.lookup "success" = none)
     (hrNone : consts.lookup "r" = none)
-    (hgas : consts.lookup "MODEXP_GAS" = some (0 : Nat))
+    (hgas : consts.lookup "MODEXP_GAS" = some gas)
     (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
     (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
     (hrw : rw = BitVec.ofNat 256 Midfall.Yul.blsR)
@@ -4321,6 +4323,7 @@ theorem lagBlockPoisonContract_of_fits_zero (R : Render p G₁ G₂ Gₜ)
     scratch floor/end and the denom/scratch disjointness. -/
 theorem lagInnerContract_of_summary
     {consts : Inline.Consts} {product : PairingProduct} {g : ExternalGas}
+    {gas : Nat}
     {k n m : Nat} {cd : Bytes}
     {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
     {cenv : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
@@ -4346,7 +4349,7 @@ theorem lagInnerContract_of_summary
     (hbody : decl.body = BatchInvert.helperBody consts GenAst.emitBatchInvertAt)
     (hparams : decl.params = ["success", "mptr_start", "mptr_end", "scratch_mptr", "r"])
     (hrets : decl.rets = ["ret", "precompile_failed"])
-    (hgas : consts.lookup "MODEXP_GAS" = some (0 : Nat))
+    (hgas : consts.lookup "MODEXP_GAS" = some gas)
     (hsuccNone : consts.lookup "success" = none)
     (hrw : C.rw = BitVec.ofNat 256 Midfall.Yul.blsR)
     (hcanon : ∀ st : EvmState, (loadWord st.memory C.D).toNat < Midfall.Yul.blsR)
