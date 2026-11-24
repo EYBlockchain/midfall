@@ -6265,6 +6265,34 @@ theorem pcsEnumIdx_fst_nodup (distinct : List Int) :
   rw [List.map_fst_zip (by simp)]
   exact List.nodup_range
 
+theorem pcsRotPtRef_bridge (distinct : List Int) {point : Int} (hmem : point ∈ distinct) :
+    ∃ i : Nat, (i, point) ∈ Midfall.Generator.enumIdx distinct ∧
+      pcsRotPtRef distinct point = "rot_pt_" ++ toString i ∧
+      i = (distinct.findIdx? (fun r => r == point)).getD 0 := by
+  let p : Int → Bool := fun r => r == point
+  have hex : ∃ x ∈ distinct, p x := ⟨point, hmem, by simp [p]⟩
+  let i := distinct.findIdx p
+  have hfind : distinct.findIdx? p = some i := by
+    simpa [i] using List.findIdx?_eq_some_of_exists hex
+  have hspec := (List.findIdx?_eq_some_iff_getElem.mp hfind)
+  obtain ⟨hi, hp, _⟩ := hspec
+  have hpti : distinct[i] = point := by
+    have := (beq_iff_eq.mp hp)
+    exact this
+  refine ⟨i, ?_, ?_, ?_⟩
+  · rw [Midfall.Generator.enumIdx, List.mem_iff_getElem]
+    refine ⟨i, ?_, ?_⟩
+    · rw [List.length_zip]
+      simpa using hi
+    · rw [List.getElem_zip, List.getElem_range, hpti]
+  · unfold pcsRotPtRef
+    rw [hfind]
+    rfl
+  · unfold pcsRotPtRef at *
+    rw [hfind]
+    rfl
+
+
 theorem pcsRot_name_inj {i j : Nat}
     (h : "rot_pt_" ++ toString i = "rot_pt_" ++ toString j) : i = j := by
   apply Nat.repr_inj.mp
