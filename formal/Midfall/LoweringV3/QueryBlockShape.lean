@@ -783,6 +783,38 @@ theorem trashBlock_length (vk : VerifyingKey (Fr p) G₁) (x : Fr p) (proof : Na
   · intro a
     exact Trash.Evaluated.queries_length a.2 x proof a.1
 
+theorem lookupBlock_length (le : Array (Logup.Evaluated (Fr p) G₁))
+    (domain : EvaluationDomain (Fr p)) (x : Fr p) (proof : Nat) :
+    ((List.zip (List.range le.size) le.toList).flatMap fun (l, lq) =>
+      (lq.queries (p := p) domain x proof l).toList).length =
+      (le.toList.map fun lq =>
+        3 + min lq.committed.helperPolys.size lq.evaluated.helperEvals.size).sum := by
+  rw [List.flatMap, List.length_flatten]
+  let f : Logup.Evaluated (Fr p) G₁ → Nat := fun lq =>
+    3 + min lq.committed.helperPolys.size lq.evaluated.helperEvals.size
+  have hlen : ∀ a : Nat × Logup.Evaluated (Fr p) G₁,
+      (a.2.queries (p := p) domain x proof a.1).toList.length = f a.2 :=
+    fun a => Logup.Evaluated.queries_length a.2 domain x proof a.1
+  rw [List.map_map]
+  simp only [Function.comp_def]
+  rw [show (List.map (fun a : Nat × Logup.Evaluated (Fr p) G₁ =>
+        (a.2.queries (p := p) domain x proof a.1).toList.length)
+      (List.zip (List.range le.size) le.toList)) =
+      List.map (fun a : Nat × Logup.Evaluated (Fr p) G₁ => f a.2)
+        (List.zip (List.range le.size) le.toList) from by
+    apply List.map_congr_left
+    intro a _ha
+    exact hlen a]
+  have hmap : (List.map (fun a : Nat × Logup.Evaluated (Fr p) G₁ => f a.2)
+      (List.zip (List.range le.size) le.toList)) = le.toList.map f := by
+    rw [show (List.map (fun a : Nat × Logup.Evaluated (Fr p) G₁ => f a.2)
+        (List.zip (List.range le.size) le.toList)) =
+        List.map f ((List.zip (List.range le.size) le.toList).map Prod.snd) from by
+      rw [List.map_map]
+      rfl]
+    rw [List.map_snd_zip (by simp)]
+  rw [hmap]
+
 
 
 end Midfall.LoweringV3

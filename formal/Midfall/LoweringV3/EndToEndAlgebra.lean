@@ -4799,6 +4799,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms mapM_flatten_length_of_filter
   [propext, Classical.choice, Quot.sound]
+#assert_axioms lookupBlock_length
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms permZBlock_three
   [propext, Classical.choice, Quot.sound]
 #assert_axioms permZUpstream_three
