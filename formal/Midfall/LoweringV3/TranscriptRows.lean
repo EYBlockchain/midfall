@@ -5627,61 +5627,14 @@ theorem decodeCalldata_slots {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Ty
 
 
 
-theorem split_g1_replicate (ms : List (Msg (Fr p) G₁)) (n : Nat)
-    (rest : List Midfall.Lowering.WireSlot)
-    (h : ms.map Msg.slot = List.replicate n Midfall.Lowering.WireSlot.g1 ++ rest) :
-    ∃ (Qs : List G₁) (ms' : List (Msg (Fr p) G₁)),
-      ms = Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ ms' ∧
-      Qs.length = n ∧ ms'.map Msg.slot = rest := by
-  induction n generalizing ms with
-  | zero =>
-      exact ⟨[], ms, by simp, rfl, by simpa using h⟩
-  | succ n ih =>
-      cases ms with
-      | nil => simp at h
-      | cons m ms' =>
-          have hheq : Msg.slot m :: ms'.map Msg.slot =
-              Midfall.Lowering.WireSlot.g1 ::
-                (List.replicate n Midfall.Lowering.WireSlot.g1 ++ rest) := by
-            simpa only [List.map_cons, List.replicate_succ, List.cons_append] using h
-          have hslot : Msg.slot m = Midfall.Lowering.WireSlot.g1 := by
-            simpa using congrArg List.head? hheq
-          have htail : ms'.map Msg.slot =
-              List.replicate n Midfall.Lowering.WireSlot.g1 ++ rest := by
-            simpa using congrArg List.tail hheq
-          cases m with
-          | g1 Q =>
-              obtain ⟨Qs, ms'', rfl, hlen, hrest⟩ := ih ms' htail
-              exact ⟨Q :: Qs, ms'', by simp, by simp [hlen], hrest⟩
-          | fr s =>
-              simp [Msg.slot] at hslot
-theorem split_fr_replicate (ms : List (Msg (Fr p) G₁)) (n : Nat)
+theorem exists_split_fr_prefix (ms : List (Msg (Fr p) G₁)) (n : Nat)
     (rest : List Midfall.Lowering.WireSlot)
     (h : ms.map Msg.slot = List.replicate n Midfall.Lowering.WireSlot.fr ++ rest) :
-    ∃ (qs : List (Fr p)) (ms' : List (Msg (Fr p) G₁)),
-      ms = qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++ ms' ∧
-      qs.length = n ∧ ms'.map Msg.slot = rest := by
-  induction n generalizing ms with
-  | zero =>
-      exact ⟨[], ms, by simp, rfl, by simpa using h⟩
-  | succ n ih =>
-      cases ms with
-      | nil => simp at h
-      | cons m ms' =>
-          have hheq : Msg.slot m :: ms'.map Msg.slot =
-              Midfall.Lowering.WireSlot.fr ::
-                (List.replicate n Midfall.Lowering.WireSlot.fr ++ rest) := by
-            simpa only [List.map_cons, List.replicate_succ, List.cons_append] using h
-          have hslot : Msg.slot m = Midfall.Lowering.WireSlot.fr := by
-            simpa using congrArg List.head? hheq
-          have htail : ms'.map Msg.slot =
-              List.replicate n Midfall.Lowering.WireSlot.fr ++ rest := by
-            simpa using congrArg List.tail hheq
-          cases m with
-          | g1 Q => simp [Msg.slot] at hslot
-          | fr s =>
-              obtain ⟨qs, ms'', rfl, hlen, hrest⟩ := ih ms' htail
-              exact ⟨s :: qs, ms'', by simp, by simp [hlen], hrest⟩
+    ∃ (xs : List (Fr p)) (ms' : List (Msg (Fr p) G₁)),
+      xs.length = n ∧ ms = xs.map Msg.fr ++ ms' ∧ ms'.map Msg.slot = rest := by
+  obtain ⟨ms₁, ms₂, hsplit, hpre, hpost⟩ := exists_split_of_slot_prefix ms _ rest h
+  obtain ⟨xs, hms₁, hlen⟩ := eq_map_fr_of_slots ms₁ n hpre
+  exact ⟨xs, ms₂, hlen, by rw [hsplit, hms₁], hpost⟩
 
 theorem ms_split_plan (plan : Midfall.Generator.RepackedProofLayoutPlan)
     (ms : List (Msg (Fr p) G₁))
@@ -5695,35 +5648,34 @@ theorem ms_split_plan (plan : Midfall.Generator.RepackedProofLayoutPlan)
       QEv.length = plan.numEvals ∧ qs.length = plan.numPointSets := by
   rw [Midfall.Generator.RepackedProofLayoutPlan.slots] at h
   simp only [List.append_assoc] at h
-  obtain ⟨QPre, ms1, hms1, hlenPre, h1⟩ :=
-    split_g1_replicate ms plan.prefixG1Count
+  obtain ⟨QPre, ms1, hlenPre, hms1, h1⟩ :=
+    exists_split_g1_prefix ms plan.prefixG1Count
       (List.replicate plan.numEvals Midfall.Lowering.WireSlot.fr ++
         ([Midfall.Lowering.WireSlot.g1] ++
           (List.replicate plan.numPointSets Midfall.Lowering.WireSlot.fr ++
             [Midfall.Lowering.WireSlot.g1]))) h
-  obtain ⟨QEv, ms2, hms2, hlenEv, h2⟩ :=
-    split_fr_replicate ms1 plan.numEvals
+  obtain ⟨QEv, ms2, hlenEv, hms2, h2⟩ :=
+    exists_split_fr_prefix ms1 plan.numEvals
       ([Midfall.Lowering.WireSlot.g1] ++
         (List.replicate plan.numPointSets Midfall.Lowering.WireSlot.fr ++
           [Midfall.Lowering.WireSlot.g1])) h1
-  -- singleton g1
   have h3 : ms2.map Msg.slot =
       List.replicate 1 Midfall.Lowering.WireSlot.g1 ++
         (List.replicate plan.numPointSets Midfall.Lowering.WireSlot.fr ++
           [Midfall.Lowering.WireSlot.g1]) := by
     simpa using h2
-  obtain ⟨Qf, ms3, hms3, hlenF, h3'⟩ :=
-    split_g1_replicate ms2 1
+  obtain ⟨Qf, ms3, hlenF, hms3, h3'⟩ :=
+    exists_split_g1_prefix ms2 1
       (List.replicate plan.numPointSets Midfall.Lowering.WireSlot.fr ++
         [Midfall.Lowering.WireSlot.g1]) h3
   obtain ⟨fCom, hfCom⟩ := List.length_eq_one_iff.mp hlenF
   subst hfCom
   simp only [List.map_cons, List.map_nil] at hms3
-  obtain ⟨qs, ms4, hms4, hlenQs, h4⟩ :=
-    split_fr_replicate ms3 plan.numPointSets [Midfall.Lowering.WireSlot.g1] h3'
+  obtain ⟨qs, ms4, hlenQs, hms4, h4⟩ :=
+    exists_split_fr_prefix ms3 plan.numPointSets [Midfall.Lowering.WireSlot.g1] h3'
   have h5 : ms4.map Msg.slot = [Midfall.Lowering.WireSlot.g1] := by simpa using h4
-  obtain ⟨Qpi, ms5, hms5, hlenPi, h5'⟩ :=
-    split_g1_replicate ms4 1 [] h5
+  obtain ⟨Qpi, ms5, hlenPi, hms5, h5'⟩ :=
+    exists_split_g1_prefix ms4 1 [] h5
   obtain ⟨pi, hpi⟩ := List.length_eq_one_iff.mp hlenPi
   subst hpi
   simp only [List.map_cons, List.map_nil] at hms5
@@ -8426,8 +8378,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.scatterIndexed_zip_range [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_adviceScatter_values [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceAdviceBlock_values [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringV3.TranscriptRows.split_g1_replicate [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringV3.TranscriptRows.split_fr_replicate [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.exists_split_fr_prefix [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.ms_split_plan [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decoded_ms_split [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.advicePhaseTotal_not_columnOrder [propext, Classical.choice, Quot.sound] native []
