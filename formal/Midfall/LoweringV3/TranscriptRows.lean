@@ -9538,6 +9538,30 @@ theorem instLoop_exit {c : ExternalCalls} {g : ExternalGas}
     dsimp only [g1InstWords]
     rw [g1InstanceWords_take_all]
 
+theorem instLoop_Vp_eq {c : ExternalCalls} {g : ExternalGas}
+    (start N k : Nat) (V : VEnv (Bridge.Dialect c g)) (rv s : U256)
+    (words : List U256) (buf : U256) (s1 b1 : U256)
+    (hs1 : s1 = g1SuccessFold rv s (List.take (k + 1) words))
+    (hb1 : b1 = buf + BitVec.ofNat 256 (32 * (k + 1))) :
+    VEnv.set (VEnv.set (VEnv.set
+      (("instance_cptr_end", g1InstEndv start N) ::
+        ("instance_cptr", g1InstCptrv start k) :: g1InstV3 V rv s words buf k)
+      "success" s1) "buf_len" b1) "instance_cptr"
+      (g1InstCptrv start k + BitVec.ofNat 256 32) =
+    ("instance_cptr_end", g1InstEndv start N) ::
+      ("instance_cptr", g1InstCptrv start (k + 1)) ::
+      g1InstV3 V rv s words buf (k + 1) := by
+  dsimp only [g1InstV3, g1InstCptrv]
+  rw [t_venv_set_cons_ne (D := Bridge.Dialect c g) (h := by decide)]
+  simp [VEnv.set]
+  constructor
+  · rw [← BitVec.ofNat_add]
+    rw [show start + 32 * k + 32 = start + 32 * (k + 1) from by omega]
+  · rw [t_set_overwrite2 (D := Bridge.Dialect c g) (x := "success") (y := "buf_len")
+      (hxy := by decide)]
+    rw [hs1, hb1]
+
+
 /-- **THE SEM LEAF.** From a staged boundary at `.vk` every run reverts or exits normally in
     `TpPost`. LEAF ROW.TP.7 (glue of ROW.TP.2-5 along `tpEvents`). Evidence :788-796, statement
     verbatim with `hpins : SimPins R` -> `hcodec : G1CodecHeadlineLaws R.E.g1`.
@@ -10165,5 +10189,6 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.t_set_overwrite2 [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.g1InstanceWords_take_all [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instLoop_exit [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.instLoop_Vp_eq [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.TranscriptRows
