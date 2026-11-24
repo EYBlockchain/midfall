@@ -4852,6 +4852,95 @@ theorem runsAll_readAlgebra (E : VerifierEnv p G₁ G₂ Gₜ)
       intro trashcansEvaluatedList _
       exact RunsAllP.pure E _ _ trivial
 
+theorem readN_g1_wire_values (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∀ (n : Nat) (acc : Array G₁) (t : Midfall.Halo2.Transcript) (pref : Bytes)
+      (qs : List G₁) (rest : Bytes),
+      qs.length = n →
+      t.buffer = pref ++ (wireMsgs E (qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest) →
+      t.pos = pref.size →
+      p ≤ 2 ^ 256 →
+      (∀ Q, E.g1.ofCompressed? (E.g1.toCompressed Q) = some Q) →
+      (∀ Q, (E.g1.toCompressed Q).size = g1CompressedWidth) →
+      ∃ (arr : Array G₁) (t' : Midfall.Halo2.Transcript),
+        Midfall.Halo2.Transcript.readN.go (hashableG1 E.g1) t acc n = .ok (arr, t') ∧
+        arr.toList = acc.toList ++ qs ∧
+        t'.pos = pref.size + (qs.map fun Q => (msgWire E (Msg.g1 Q)).size).sum ∧
+        t'.buffer = t.buffer := by
+  intro n
+  induction n with
+  | zero =>
+      intro acc t pref qs rest hlen hbuf hpos hp henc hwidth
+      have hqs : qs = [] := List.eq_nil_of_length_eq_zero hlen
+      subst hqs
+      refine ⟨acc, t, ?_, ?_, ?_, rfl⟩
+      · simp only [Midfall.Halo2.Transcript.readN.go]
+      · simp
+      · simp [hpos]
+  | succ n ih =>
+      intro acc t pref qs rest hlen hbuf hpos hp henc hwidth
+      obtain ⟨Q, qs', rfl⟩ := List.exists_cons_of_length_pos (by rw [hlen]; simp)
+      have hsize : (msgWire E (Msg.g1 Q)).size = g1CompressedWidth := by
+        show (E.g1.toCompressed Q).size = g1CompressedWidth
+        exact hwidth Q
+      have hbuf' : t.buffer = pref ++ msgWire E (Msg.g1 Q) ++
+          (wireMsgs E (qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest) := by
+        rw [hbuf, List.map_cons, wireMsgs_cons]
+        simp only [ByteArray.append_assoc]
+      have hbt : bytesTake t.buffer t.pos g1CompressedWidth = some (E.g1.toCompressed Q) := by
+        rw [hbuf', hpos, ← Nat.add_zero (ByteArray.size pref), ByteArray.append_assoc]
+        simp only [msgWire]
+        rw [bytesTake_append_right pref (E.g1.toCompressed Q ++
+          (wireMsgs E (qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest)) 0 g1CompressedWidth (by
+            rw [ByteArray.size_append, hwidth]; omega)]
+        rw [bytesTake_append_left (E.g1.toCompressed Q)
+          (wireMsgs E (qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest) 0 g1CompressedWidth (by rw [hwidth]; omega)]
+        rw [← hwidth Q, bytesTake_whole]
+      obtain ⟨t1, hread, hpos1, hbuf1⟩ :=
+        transcript_read_ok (hashableG1 E.g1) t (E.g1.toCompressed Q) Q hbt
+          (by rw [hashableG1_readRepr?]; exact henc Q)
+      have hpos1' : t1.pos = (pref ++ msgWire E (Msg.g1 Q)).size := by
+        rw [hpos1, hpos, hashableG1_width, ByteArray.size_append, hsize]
+      have hbuf1' : t1.buffer = (pref ++ msgWire E (Msg.g1 Q)) ++
+          wireMsgs E (qs'.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) ++ rest := by
+        rw [hbuf1, hbuf']
+        simp only [ByteArray.append_assoc]
+      obtain ⟨arr, t2, hrun2, hval, hpos2, hbuf2⟩ :=
+        ih (acc.push Q) t1 (pref ++ msgWire E (Msg.g1 Q)) qs' rest
+          (by simpa using hlen) (by simpa only [ByteArray.append_assoc] using hbuf1') hpos1' hp henc hwidth
+      refine ⟨arr, t2, ?_, ?_, ?_, hbuf2.trans hbuf1⟩
+      · simp only [Midfall.Halo2.Transcript.readN.go]
+        rw [hread]
+        exact hrun2
+      · rw [hval, Array.toList_push, List.append_assoc]
+        rfl
+      · rw [hpos2, ByteArray.size_append, List.map_cons, List.sum_cons]
+        omega
+
+end Midfall.LoweringV3.TranscriptRows
+
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem runsAllP_tmReadN_g1_values (E : VerifierEnv p G₁ G₂ Gₜ) (n : Nat) (Qs : List G₁)
+    (hlen : Qs.length = n) :
+    RunsAllP E (tmReadN (hashableG1 E.g1) n)
+      (Qs.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁))) (fun arr => arr.toList = Qs) := by
+  intro t pref rest hbuf hpos hp henc hwidth
+  obtain ⟨arr, t', hrun, hval, hpos', hbuf'⟩ :=
+    readN_g1_wire_values E n #[] t pref Qs rest hlen (by simpa only [ByteArray.append_assoc] using hbuf) hpos hp henc hwidth
+  refine ⟨arr, t', ?_, hbuf', ?_, ?_⟩
+  · rw [tmReadN_run_eq]
+    simpa only [Midfall.Halo2.Transcript.readN] using hrun
+  · simpa only [List.map_map, Function.comp_def] using hpos'
+  · simpa using hval
+
 theorem wireMsgs_map_fr (E : VerifierEnv p G₁ G₂ Gₜ) :
     ∀ (qs : List (Fr p)),
       wireMsgs E (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) = wireOf (p := p) qs
@@ -7805,6 +7894,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupsEvaluated [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashcansEvaluated [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_readAlgebra [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.readN_g1_wire_values [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_tmReadN_g1_values [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_map_fr [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wireMsgs_g1_singleton [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.bind_nil [propext, Classical.choice, Quot.sound] native []
