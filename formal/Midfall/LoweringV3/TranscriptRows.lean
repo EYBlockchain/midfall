@@ -6070,6 +6070,101 @@ theorem runsAllP_parseTraceTail (E : VerifierEnv p G₁ G₂ Gₜ)
   intro y _
   exact RunsAllP.pure E _ _ ⟨hperm, hlook, htrash⟩
 
+theorem runsAllP_parseTraceTail_advice (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (adviceCommitments : Array (Array G₁)) (challenges : Array (Fr p))
+    (QMult QPerm QLook QTrash : List G₁)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E
+      (do let theta ← tmSqueezeChallenge
+          let lookupMultiplicities ← parseTraceLookupMultiplicities E vk 1
+          let beta ← tmSqueezeChallenge
+          let gamma ← tmSqueezeChallenge
+          let permutations ← parseTracePermutations E vk 1
+          let lookups ← parseTraceLookupCommitments E lookupMultiplicities
+          let trashChallenge ← tmSqueezeChallenge
+          let trashcans ← parseTraceTrashcans E vk 1
+          let y ← tmSqueezeChallenge
+          pure ({ adviceCommitments := adviceCommitments, lookups := lookups, trashcans := trashcans, permutations := permutations, challenges := challenges, beta := beta, gamma := gamma, theta := theta, trashChallenge := trashChallenge, y := y } : VerifierTrace (Fr p) G₁))
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+      (fun tr =>
+        tr.adviceCommitments = adviceCommitments ∧
+        (tr.permutations.toList.map (fun pc =>
+          3 * pc.permutationProductCommitments.size - 1)).sum =
+          3 * Permutation.numChunksOf vk.cs.permutation.columns.size (vk.csDegree - 2) - 1 ∧
+        (tr.lookups.toList.map (fun row => (row.toList.map
+          (fun c => c.helperPolys.size + 3)).sum)).sum =
+          (vk.cs.lookups.toList.map (fun l => lookupChunkNum vk.csDegree l + 3)).sum ∧
+        (tr.trashcans.toList.map (fun row => row.size)).sum = vk.cs.trashcans.size) := by
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAllP.squeeze E) ?_
+  intro theta _
+  refine RunsAllP.bind E (m := parseTraceLookupMultiplicities E vk 1)
+    (ms₁ := QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (runsAllP_parseTraceLookupMultiplicities_one_both E vk hs QMult hlenMult) ?_
+  intro rows hrows
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (RunsAllP.squeeze E) ?_
+  intro beta _
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))
+    (RunsAllP.squeeze E) ?_
+  intro gamma _
+  refine RunsAllP.bind E (m := parseTracePermutations E vk 1)
+    (ms₁ := QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))
+    (runsAllP_parseTracePermutations_one E vk hdeg QPerm hlenPerm) ?_
+  intro permutations hperm
+  have hlenLook' : QLook.length = (rows.toList.map
+      (fun row => (row.toList.map (fun p => p.2.numChunks + 1)).sum)).sum := by
+    rw [hlenLook]
+    exact hrows.1.symm
+  refine RunsAllP.bind E (m := parseTraceLookupCommitments E rows)
+    (ms₁ := QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])
+    (runsAllP_parseTraceLookupCommitments_count E vk rows QLook hlenLook' hrows.1 hrows.2) ?_
+  intro lookups hlook
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])
+    (RunsAllP.squeeze E) ?_
+  intro trashChallenge _
+  refine RunsAllP.bind E (m := parseTraceTrashcans E vk 1)
+    (ms₁ := QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := ([] : List (Msg (Fr p) G₁)))
+    (runsAllP_parseTraceTrashcans_one E vk QTrash hlenTrash) ?_
+  intro trashcans htrash
+  refine RunsAllP.bind E (m := tmSqueezeChallenge)
+    (ms₁ := ([] : List (Msg (Fr p) G₁))) (ms₂ := ([] : List (Msg (Fr p) G₁)))
+    (RunsAllP.squeeze E) ?_
+  intro y _
+  exact RunsAllP.pure E _ _ ⟨rfl, hperm, hlook, htrash⟩
+
 theorem runsAllP_parseTraceWireBody_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
     (hf : vk.WellFormed Features.solidity) (hsp : vk.cs.numChallenges = 0)
@@ -6168,6 +6263,126 @@ theorem runsAllP_parseTraceWireBody_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
   exact runsAllP_parseTraceTail E vk hdeg hs adviceCommitments challenges
     QMult QPerm QLook QTrash hlenMult hlenPerm hlenLook hlenTrash
 
+theorem runsAllP_parseTraceWireBody_advice (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity) (hsp : vk.cs.numChallenges = 0)
+    (horder : AdvicePhasesColumnOrder vk)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E (parseTraceWireBody E vk inst)
+      (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+      (fun tr => tr.adviceCommitments.getD 0 #[] = QAdv.toArray) := by
+  unfold parseTraceWireBody
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (runsAll_hashInto E vk)) ?_
+  intro _ _
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (by
+      simpa only [Array.forIn_toList] using
+        runsAll_absorb_committed E (committedShape (G₁ := G₁)))) ?_
+  intro _ _
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ []))))))
+    (RunsAll.toRunsAllP E (by
+      simpa only [Array.forIn_toList] using
+        runsAll_absorb_instance E (instanceShape inst))) ?_
+  intro _ _
+  -- advice phase values
+  have hph := runsAllP_parseTraceAdvicePhases_values E vk hsp vk.cs.phases [] QAdv
+    (by simpa using hlenAdv)
+  refine RunsAllP.bind E (m := parseTraceAdvicePhases E vk)
+    (ms₁ := QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    hph ?_
+  intro st hst
+  rw [hst, horder]
+  have hlenN : QAdv.length = vk.cs.numAdviceColumns := by
+    have hlen' : QAdv.length =
+        (vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph)).length := by
+      rw [length_flatMap_phaseCols, hlenAdv]
+    rw [hlen', horder, List.length_range]
+  -- advice scatter value
+  have hscat : RunsAllP E
+      (([(List.zip (List.range vk.cs.numAdviceColumns) QAdv)] :
+          List (List (Nat × G₁))).foldlM (init := (#[] : Array (Array G₁)))
+        fun acc pairs => do
+          let row ← StateT.lift (Midfall.Halo2.scatterIndexed vk.cs.numAdviceColumns pairs
+            "proofs/src/plonk/verifier.rs:118")
+          pure (acc.push row))
+      ([] : List (Msg (Fr p) G₁)) (fun acc => acc.toList = [QAdv.toArray]) :=
+    runsAllP_adviceScatter_values E vk QAdv hlenN
+  refine RunsAllP.bind E (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    hscat ?_
+  intro acc hacc
+  have hacc' : acc.getD 0 #[] = QAdv.toArray := by
+    have haccEq : acc = #[QAdv.toArray] := by
+      apply Array.toList_inj.mp
+      rw [hacc]
+    rw [haccEq]
+    rfl
+  -- challenges scatter (empty)
+  obtain ⟨xs, hxs⟩ := scatterIndexed_ok_of_cover 0 ([] : List (Nat × Fr p))
+    "proofs/src/plonk/verifier.rs:134" (fun i hi => by omega)
+  rw [hsp, hxs]
+  refine RunsAllP.bind E (m := StateT.lift (.ok xs : Except Fault (Array (Fr p))))
+    (ms₁ := ([] : List (Msg (Fr p) G₁)))
+    (ms₂ := (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+      (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+    (RunsAllP.lift_ok E xs (fun _ => True) trivial) ?_
+  intro challenges _
+  refine RunsAllP.mono E
+    (runsAllP_parseTraceTail_advice E vk hdeg hs acc challenges QMult QPerm QLook QTrash
+      hlenMult hlenPerm hlenLook hlenTrash) ?_
+  intro tr htr
+  rw [htr.1, hacc']
+
+
+end Midfall.LoweringV3.TranscriptRows
+namespace Midfall.LoweringV3.TranscriptRows
+open Midfall Midfall.Halo2 Midfall.Generator Midfall.Lowering Midfall.Assumptions
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge
+open Midfall.LoweringV2 Midfall.Lowering.GenAst Midfall.Lowering.Inline Midfall.Lowering.Stage
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+  [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
 theorem runsAllP_parseTrace_one_sizes (E : VerifierEnv p G₁ G₂ Gₜ)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
     (hf : vk.WellFormed Features.solidity)
@@ -6217,6 +6432,38 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
   [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
   [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+theorem runsAllP_parseTrace_advice (E : VerifierEnv p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
+    (hf : vk.WellFormed Features.solidity)
+    (hnc : 2 = vk.cs.numInstanceColumns)
+    (hsp : vk.cs.numChallenges = 0)
+    (horder : AdvicePhasesColumnOrder vk)
+    (hdeg : 3 ≤ vk.csDegree)
+    (hs : ∀ l ∈ vk.cs.lookups.toList, ∃ c, l.chunkByDegree vk.csDegree = .ok c)
+    (QAdv QMult QPerm QLook QTrash : List G₁)
+    (hlenAdv : QAdv.length = (vk.cs.phases.map (fun ph => (phaseCols vk.cs ph).length)).sum)
+    (hlenMult : QMult.length = vk.cs.lookups.size)
+    (hlenPerm : QPerm.length = Permutation.numChunksOf vk.cs.permutation.columns.size
+      (vk.csDegree - 2))
+    (hlenLook : QLook.length = (vk.cs.lookups.toList.map
+      (fun l => lookupChunkNum vk.csDegree l + 1)).sum)
+    (hlenTrash : QTrash.length = vk.cs.trashcans.size) :
+    RunsAllP E (parseTrace (p := p) E.g1 Features.solidity vk
+        (committedShape (G₁ := G₁)) (instanceShape inst))
+      (QAdv.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+        (QMult.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+          (QPerm.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+            (QLook.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++
+              (QTrash.map (fun Q => (Msg.g1 Q : Msg (Fr p) G₁)) ++ [])))))
+      (fun tr => tr.adviceCommitments.getD 0 #[] = QAdv.toArray) := by
+  unfold parseTrace
+  simp only [Features.solidity, ite_true]
+  rw [if_neg (by simp [committedShape])]
+  rw [if_neg (by simp [committedShape])]
+  rw [if_neg (by simp [committedShape, instanceShape, hnc])]
+  exact runsAllP_parseTraceWireBody_advice E vk inst hf hsp horder hdeg hs
+    QAdv QMult QPerm QLook QTrash hlenAdv hlenMult hlenPerm hlenLook hlenTrash
 
 theorem parseTrace_run_of_ms_sizes (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
@@ -9750,6 +9997,9 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_lookupMultiplicities_fold_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceLookupMultiplicities_one_both [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceTail [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceTail_advice [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceWireBody_advice [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTrace_advice [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTraceWireBody_sizes [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAllP_parseTrace_one_sizes [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTrace_run_of_ms_sizes [propext, Classical.choice, Quot.sound] native []
