@@ -5740,4 +5740,3 @@ theorem xcriptMirrorAt_windows (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
 
 
 end Midfall.LoweringV3
-

@@ -7228,6 +7228,93 @@ theorem decodeSlots_split {c : G1Codec G₁} {cd : Bytes} :
           · rw [if_neg hlt] at h
             simp at h
 
+theorem decodeSlots_fr_inv {c : G1Codec G₁} {cd : Bytes} (rest : List Midfall.Lowering.WireSlot)
+    (cur : Nat) (ms : List (Msg (Fr p) G₁)) (cur' : Nat)
+    (h : decodeSlots (p := p) c cd (Midfall.Lowering.WireSlot.fr :: rest) cur =
+      some (ms, cur')) :
+    ∃ (ms0 : List (Msg (Fr p) G₁)) (cur0 : Nat),
+      (cdWord cd cur).toNat < p ∧
+        decodeSlots (p := p) c cd rest (cur + 32) = some (ms0, cur0) ∧
+        ms = Msg.fr (Nat.cast (cdWord cd cur).toNat) :: ms0 ∧ cur' = cur0 := by
+  unfold decodeSlots at h
+  simp only [guard] at h
+  by_cases hlt : (cdWord cd cur).toNat < p
+  · rw [if_pos hlt] at h
+    simp only [pure_bind] at h
+    change (Option.bind (decodeSlots (p := p) c cd rest (cur + 32))
+      (fun x => some (Msg.fr (Nat.cast (cdWord cd cur).toNat) :: x.1, x.2))) =
+      some (ms, cur') at h
+    rw [Option.bind_eq_some_iff] at h
+    obtain ⟨⟨ms0, cur0⟩, hrec, h⟩ := h
+    injection h with hpair
+    injection hpair with hms hcur
+    exact ⟨ms0, cur0, hlt, hrec, hms.symm, hcur.symm⟩
+  · rw [if_neg hlt] at h
+    simp at h
+
+theorem decodeSlots_g1_at {c : G1Codec G₁} {cd : Bytes} :
+    ∀ (slots : List Midfall.Lowering.WireSlot) (cur : Nat)
+      (ms : List (Msg (Fr p) G₁)) (cur' : Nat),
+      decodeSlots (p := p) c cd slots cur = some (ms, cur') →
+      ∀ (i : Nat) (Q : G₁),
+        slots[i]? = some Midfall.Lowering.WireSlot.g1 →
+        ms[i]? = some (Msg.g1 Q) →
+        ∃ b : Bytes,
+          bytesTake cd (cur + eipWidthSum (slots.take i)) g1EipWidth = some b ∧
+            c.ofEip? b = some Q := by
+  intro slots
+  induction slots with
+  | nil =>
+      intro cur ms cur' h i Q hslot hms
+      simp at hslot
+  | cons sl rest ih =>
+      intro cur ms cur' h i Q hslot hms
+      cases sl with
+      | g1 =>
+          obtain ⟨b0, Q0, ms0, cur0, hg, hb, hq, hrec, hms_eq, hcur⟩ :=
+            decodeSlots_g1_inv rest cur ms cur' h
+          cases i with
+          | zero =>
+              have hQ : Q0 = Q := by
+                rw [hms_eq] at hms
+                simpa using hms
+              subst hQ
+              refine ⟨b0, ?_, hq⟩
+              simpa [eipWidthSum] using hb
+          | succ k =>
+              have hmsk : ms0[k]? = some (Msg.g1 Q) := by
+                rw [hms_eq] at hms
+                simpa using hms
+              have hslotk : rest[k]? = some Midfall.Lowering.WireSlot.g1 := by
+                simpa using hslot
+              obtain ⟨b, hb', hq'⟩ := ih (cur + g1EipWidth) ms0 cur0 hrec k Q hslotk hmsk
+              refine ⟨b, ?_, hq'⟩
+              rw [List.take_succ_cons, eipWidthSum_cons]
+              simp only [slotEipWidth]
+              rw [show cur + (g1EipWidth + eipWidthSum (List.take k rest)) =
+                  cur + g1EipWidth + eipWidthSum (List.take k rest) by omega]
+              exact hb'
+      | fr =>
+          obtain ⟨ms0, cur0, hlt, hrec, hms_eq, hcur⟩ :=
+            decodeSlots_fr_inv rest cur ms cur' h
+          cases i with
+          | zero =>
+              rw [hms_eq] at hms
+              simp [Msg.slot] at hslot
+          | succ k =>
+              have hmsk : ms0[k]? = some (Msg.g1 Q) := by
+                rw [hms_eq] at hms
+                simpa using hms
+              have hslotk : rest[k]? = some Midfall.Lowering.WireSlot.g1 := by
+                simpa using hslot
+              obtain ⟨b, hb', hq'⟩ := ih (cur + 32) ms0 cur0 hrec k Q hslotk hmsk
+              refine ⟨b, ?_, hq'⟩
+              rw [List.take_succ_cons, eipWidthSum_cons]
+              simp only [slotEipWidth]
+              rw [show cur + (32 + eipWidthSum (List.take k rest)) =
+                  cur + 32 + eipWidthSum (List.take k rest) by omega]
+              exact hb'
+
 theorem decodeSlots_g1_provenance {c : G1Codec G₁} {cd : Bytes} (n : Nat)
     (rest : List Midfall.Lowering.WireSlot) (cur : Nat)
     (Qs : List G₁) (ms' : List (Msg (Fr p) G₁)) (cur' : Nat)
@@ -8641,6 +8728,57 @@ theorem wordSection_start_end (cursor itemCount : Nat) :
         cursor + (ProofCalldataLayout.wordSection cursor itemCount).1.byteLen := by
   unfold ProofCalldataLayout.wordSection ProofSection.new ProofSection.end
   simp [ProofSection.byteLen, ProofSection.start]
+
+theorem eipWidthSum_replicate (n : Nat) (sl : Midfall.Lowering.WireSlot) :
+    eipWidthSum (List.replicate n sl) = n * slotEipWidth sl := by
+  induction n with
+  | zero => simp [eipWidthSum]
+  | succ n ih => rw [List.replicate_succ, eipWidthSum_cons, ih]; ring
+
+theorem eipWidthSum_take_g1_prefix (pre : Nat) (rest : List Midfall.Lowering.WireSlot)
+    (i : Nat) (hi : i ≤ pre) :
+    eipWidthSum ((List.replicate pre Midfall.Lowering.WireSlot.g1 ++ rest).take i) =
+      g1EipWidth * i := by
+  rw [List.take_append_of_le_length (by simpa using hi), List.take_replicate,
+    Nat.min_eq_left hi, eipWidthSum_replicate]
+  rw [show slotEipWidth Midfall.Lowering.WireSlot.g1 = g1EipWidth from rfl]
+  ring
+
+theorem eipWidthSum_take_eval (pre q : Nat) (rest : List Midfall.Lowering.WireSlot)
+    (qev : Nat) (hq : q ≤ qev) :
+    eipWidthSum ((List.replicate pre Midfall.Lowering.WireSlot.g1 ++
+      (List.replicate qev Midfall.Lowering.WireSlot.fr ++ rest)).take (pre + q)) =
+      g1EipWidth * pre + 32 * q := by
+  rw [List.take_append, List.take_of_length_le (by simp), List.length_replicate,
+    show pre + q - pre = q by omega, List.take_append_of_le_length (by simpa using hq),
+    List.take_replicate, Nat.min_eq_left hq]
+  rw [Midfall.Lowering.eipWidthSum_append, eipWidthSum_replicate, eipWidthSum_replicate]
+  simp only [slotEipWidth]
+  ring
+
+theorem eipWidthSum_take_pi (pre qev nSets : Nat) (rest : List Midfall.Lowering.WireSlot) :
+    eipWidthSum ((List.replicate pre Midfall.Lowering.WireSlot.g1 ++
+      (List.replicate qev Midfall.Lowering.WireSlot.fr ++
+        ([Midfall.Lowering.WireSlot.g1] ++
+          (List.replicate nSets Midfall.Lowering.WireSlot.fr ++
+            [Midfall.Lowering.WireSlot.g1])))).take (pre + qev + 1 + nSets)) =
+      g1EipWidth * pre + 32 * qev + g1EipWidth + 32 * nSets := by
+  rw [show pre + qev + 1 + nSets = pre + (qev + 1 + nSets) by omega]
+  rw [List.take_append, List.take_of_length_le (by simp), List.length_replicate,
+    show pre + (qev + 1 + nSets) - pre = qev + 1 + nSets by omega]
+  rw [List.take_append, List.take_of_length_le (by rw [List.length_replicate]; omega),
+    List.length_replicate, show qev + 1 + nSets - qev = 1 + nSets by omega]
+  rw [List.take_append, List.take_of_length_le (by simp),
+    show 1 + nSets - [Midfall.Lowering.WireSlot.g1].length = nSets by simp]
+  rw [List.take_append_of_le_length (by simp), List.take_replicate,
+    Nat.min_eq_left (Nat.le_refl nSets)]
+  rw [Midfall.Lowering.eipWidthSum_append, Midfall.Lowering.eipWidthSum_append,
+    Midfall.Lowering.eipWidthSum_append, eipWidthSum_replicate, eipWidthSum_replicate,
+    eipWidthSum_replicate]
+  rw [show eipWidthSum [Midfall.Lowering.WireSlot.g1] = g1EipWidth from rfl,
+    show slotEipWidth Midfall.Lowering.WireSlot.g1 = g1EipWidth from rfl,
+    show slotEipWidth Midfall.Lowering.WireSlot.fr = 32 from rfl]
+  ring
 
 theorem fromProtocol_starts (protocol : ProtocolPlan) (numEvals numPointSets : Nat)
     {L : ProofCalldataLayout}
@@ -12713,6 +12851,8 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_inv [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_append [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_split [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_fr_inv [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_at [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.decodeSlots_g1_provenance [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.takeCommitmentSection_cursor [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_take_cursor [propext, Classical.choice, Quot.sound] native []
@@ -12722,6 +12862,10 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.foldlM_lookups_sum_byteLen [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.takeCommitmentSection_start [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.wordSection_start_end [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.eipWidthSum_replicate [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.eipWidthSum_take_g1_prefix [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.eipWidthSum_take_eval [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.eipWidthSum_take_pi [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.fromProtocol_starts [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.fromProtocol_quotientComm [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.bytesAt_size_local [propext, Classical.choice, Quot.sound] native []
