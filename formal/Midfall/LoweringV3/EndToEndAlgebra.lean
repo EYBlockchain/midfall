@@ -6299,21 +6299,23 @@ theorem xcriptG1 (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (H : Hash) (cd
     exact TranscriptRows.holdsG1_of_mirrorsSection R.E hm.pi hsec.piLen hbP' (by simpa [hQP'] using hqP)
       hcodec.eipRoundtrip
 
-/-- **THE FIXED `tp_agrees` ROW, NOW WITH `XcriptG1` CLOSED.** `XcriptG1` is produced by
-    `xcriptG1` from the schedule run, the `MirrorAt` field of `TpPost`, and the
-    `AdvicePhasesColumnOrder` interface premise. The only remaining named input is
-    the calldata bound `hnum`; the fixed `tp_agrees` itself keeps its statement
-    (no `hnum`/`horder` parameters). -/
+/-- **THE FIXED `tp_agrees` ROW, NOW WITH `XcriptG1` AND THE PHASE ORDER CLOSED.**
+    `XcriptG1` is produced by `xcriptG1` from the schedule run and `TpPost`'s
+    `MirrorAt`; `AdvicePhasesColumnOrder` is D-GATE18's
+    `advicePhaseColumnOrder_of_wellFormed`. The only remaining named input is the
+    calldata bound `hnum`; the fixed `tp_agrees` itself keeps its statement (no
+    `hnum` parameter). -/
 theorem tp_agrees_of_valid_closed (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256) (cd : Bytes)
     {c : ExternalCalls} {g : ExternalGas}
     (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
     (hpost : TranscriptRows.TpPost R H vkAddr cd V st)
-    (horder : TranscriptRows.AdvicePhasesColumnOrder R.vk)
     (hnum : R.cfg.numInstances < 2 ^ 31) :
     StageInv R H vkAddr cd Checkpoint.transcript V st := by
   have hpost' := hpost
   obtain ⟨-, -, -, -, hmirror, -⟩ := hpost
+  have horder : TranscriptRows.AdvicePhasesColumnOrder R.vk :=
+    TranscriptRows.advicePhaseColumnOrder_of_wellFormed (vk := R.vk) hR.supported.wf
   have hAlg : TranscriptRows.XcriptAlgebraRun R H cd :=
     TranscriptRows.xcriptAlgebraRun_of_planReadCounts R hR hcodec H cd
       (planReadCounts_of_valid R hR) hnum
@@ -6321,6 +6323,34 @@ theorem tp_agrees_of_valid_closed (R : Midfall.LoweringV2.Render p G₁ G₂ G�
     xcriptG1 R H cd hR hcodec horder hnum hmirror hAlg
   exact Midfall.LoweringV3.TranscriptRows.tp_agrees_of_xcriptG1
     R hR hcodec H vkAddr cd V st hpost' hAlg hG1
+
+/-- **THE CONSUMER WITH THE CALADATA BOUND INSTEAD OF `hnum`.** D-GATE19's predicate,
+    at the consumer rather than in a row/bundle: `cd.size < 2^36` supplies
+    `R.cfg.numInstances < 2^31` for every decoding (`numInstances_lt_of_cd_size`).
+    This is the exact minimal alternative to adding a field to `Frame`/`EntryFrameV3`;
+    the fixed `tp_agrees` itself still has its original statement. -/
+theorem tp_agrees_of_valid_closed_cdSize (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1) (H : Hash) (vkAddr : U256)
+    (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (hpost : TranscriptRows.TpPost R H vkAddr cd V st)
+    (hcd : cd.size < 2 ^ 36) :
+    StageInv R H vkAddr cd Checkpoint.transcript V st := by
+  have hpost' := hpost
+  obtain ⟨-, -, -, -, hmirror, -⟩ := hpost
+  have horder : TranscriptRows.AdvicePhasesColumnOrder R.vk :=
+    TranscriptRows.advicePhaseColumnOrder_of_wellFormed (vk := R.vk) hR.supported.wf
+  have hAlg : TranscriptRows.XcriptAlgebraRun R H cd := by
+    intro ms instW inst hdec
+    exact TranscriptRows.xcriptAlgebraRun_of_planReadCounts R hR hcodec H cd
+      (planReadCounts_of_valid R hR) (TranscriptRows.numInstances_lt_of_cd_size hdec hcd)
+      ms instW inst hdec
+  have hG1 : TranscriptRows.XcriptG1 R H cd st := by
+    intro ms instW inst hdec x hx
+    exact xcriptG1 R H cd hR hcodec horder
+      (TranscriptRows.numInstances_lt_of_cd_size hdec hcd) hmirror hAlg
+      ms instW inst hdec x hx
+  exact TranscriptRows.tp_agrees_of_xcriptG1 R hR hcodec H vkAddr cd V st hpost' hAlg hG1
 
 #assert_axioms Midfall.LoweringV3.xcript_evals_count
   [propext, Classical.choice, Quot.sound]
@@ -6341,6 +6371,8 @@ theorem tp_agrees_of_valid_closed (R : Midfall.LoweringV2.Render p G₁ G₂ G�
 #assert_axioms Midfall.LoweringV3.xcriptG1
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Midfall.LoweringV3.tp_agrees_of_valid_closed
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms Midfall.LoweringV3.tp_agrees_of_valid_closed_cdSize
   [propext, Classical.choice, Quot.sound]
 
 

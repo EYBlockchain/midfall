@@ -1680,13 +1680,21 @@ def phaseCols {p : Nat} [Fact (Nat.Prime p)] (cs : Midfall.Halo2.ConstraintSyste
   (List.range cs.numAdviceColumns).filterMap fun i =>
     if (cs.adviceColumnPhase[i]?.map (fun q => q.val)) == some ph.val then some i else none
 
-/-- **THE PHASE-ORDER INTERFACE.** The phases, listed in `vk.cs.phases` order,
-    enumerate the advice columns in column order. This is what the advice
+/-- **THE PHASE-ORDER INTERFACE (D-GATE18).** The phases, listed in `vk.cs.phases`
+    order, enumerate the advice columns in column order. This is what the advice
     commitment array (`scatterIndexed`, column-indexed) and the calldata advice
     window (phase-indexed) need in order to agree; `WellFormed.advicePhaseTotal`
-    only fixes the LENGTH of `adviceColumnPhase`, so it does not derive this. -/
+    only fixes the LENGTH of `adviceColumnPhase`, so it does not derive this. The
+    key-side clause `WellFormed.advicePhaseColumnOrder` is the bridge. -/
 def AdvicePhasesColumnOrder (vk : VerifyingKey (Fr p) G₁) : Prop :=
   vk.cs.phases.flatMap (fun ph => phaseCols vk.cs ph) = List.range vk.cs.numAdviceColumns
+
+/-- **D-GATE18 projection.** The key-side phase-order clause is exactly
+    `AdvicePhasesColumnOrder`; this is the bridge the parser/advice consumer uses. -/
+theorem advicePhaseColumnOrder_of_wellFormed {vk : VerifyingKey (Fr p) G₁}
+    (hf : vk.WellFormed Features.solidity) : AdvicePhasesColumnOrder vk := by
+  simpa [AdvicePhasesColumnOrder, phaseCols] using hf.advicePhaseColumnOrder
+
 
 section AdvicePhaseOrderFalsifier
 local instance : Fact (Nat.Prime 17) := ⟨by decide⟩
@@ -12747,19 +12755,20 @@ theorem tp_agrees_of_xcript (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     now `WellFormed.instanceQueriesBound` (D-GATE15(c)), so the old `hinstQ` premise is
     gone, and `PlanReadCounts` itself is PROVED downstream in
     `EndToEndAlgebra.planReadCounts_of_valid` (`planPrefixG1_eq` + `planNumEvals_eq`).
-    THE FIXED STATEMENT'S RESIDUAL is now exactly the calldata bound `hnum` and the
-    interface premise `AdvicePhasesColumnOrder R.vk`; `XcriptG1` itself is CLOSED by
-    `EndToEndAlgebra.xcriptG1` (from `xcriptG1_provenance`, `xcriptG1_tail_provenance`,
-    the four `MirrorAt` windows and Calldata's value/provenance lemmas) and consumed by
-    `EndToEndAlgebra.tp_agrees_of_valid_closed` (`ValidV3` + `hnum` + `horder`).
-    `Decoded` gives `cd.size = proofEnd + 32 + 32 * numInstances`
-    (`numInstances_lt_of_cd_size`), so a calldata-size bound `cd.size < 2^36` would
-    supply `hnum`; no such bound is in the tree (`EntryFrameV3.cdSize` is `< 2^256`;
-    `SupportedInput.sizeBound` is `< 2^64` on the generator input, not on `cd`).
-    `AdvicePhasesColumnOrder` is not a theorem of `WellFormed`
-    (`advicePhaseTotal_not_columnOrder`). The proof of the fixed statement itself cannot
-    be imported here: `EndToEndAlgebra` imports this file, and its statement has no
-    `hnum`/`horder` parameters.
+    THE FIXED STATEMENT'S RESIDUAL is now exactly the calldata bound `hnum`:
+    `AdvicePhasesColumnOrder` is supplied by D-GATE18's
+    `WellFormed.advicePhaseColumnOrder` (`advicePhaseColumnOrder_of_wellFormed`), and
+    `XcriptG1` itself is CLOSED by `EndToEndAlgebra.xcriptG1` (from
+    `xcriptG1_provenance`, `xcriptG1_tail_provenance`, the four `MirrorAt` windows and
+    Calldata's value/provenance lemmas) and consumed by
+    `EndToEndAlgebra.tp_agrees_of_valid_closed` (`ValidV3` + `hnum`). `Decoded` gives
+    `cd.size = proofEnd + 32 + 32 * numInstances` (`numInstances_lt_of_cd_size`), so
+    the single calldata predicate `cd.size < 2^36` supplies `hnum`; it is exposed by
+    `EndToEndAlgebra.tp_agrees_of_valid_closed_cdSize` (D-GATE19). No `< 2^36` bound is
+    in `EntryFrameV3`/`Frame` (`EntryFrameV3.cdSize` is `< 2^256`;
+    `SupportedInput.sizeBound` is `< 2^64` on the generator input, not on `cd`). The
+    proof of the fixed statement itself cannot be imported here: `EndToEndAlgebra`
+    imports this file, and its statement has no `hnum` parameter.
     THE `Inv .transcript` HALF IS LANDED as `invAt_transcript_of_xcriptG1`, and
     `tp_agrees_of_xcriptG1` replaces `hinv` by the exact commitment datum `XcriptG1` (the
     decode→`toEip` assembly: advice/quotient-limb `holdsG1s`, `fCom`/`pi` `holdsG1`). Its
@@ -13186,6 +13195,7 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.planNumEvals [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.plan_numPointSets_eq_nSets [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.instanceQueries_index_eq_one [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.advicePhaseColumnOrder_of_wellFormed [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcriptSchedule_of_planReadCounts [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.xcriptAlgebraRun_of_planReadCounts [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.tp_agrees_of_planReadCounts [propext, Classical.choice, Quot.sound] native []

@@ -567,6 +567,25 @@ theorem fail_lookupV3 (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : Ext
     clause is FALSE (8 against 3, `Deploy.wellFormedPermCounts_ok`) and the repaired one is TRUE (8
     against 8): R.7 repairs the frozen predicate, at which point `permCommMatchRepaired` is
     `supported.wf.permutationCommitmentsMatch` and leaves this file. -/
+/-! ### D-GATE18 / D-GATE19 (2026-11-24)
+
+  D-GATE18 adds `advicePhaseColumnOrder` to `VerifyingKey.WellFormed`: the phases,
+  in `vk.cs.phases` order, enumerate the advice columns in column order.
+  `advicePhaseTotal` fixes only the vector length, and the falsifier
+  `advicePhaseTotal_not_columnOrder` shows the order is not derivable; it is the
+  bridge between the parser's phase-indexed advice block and `scatterIndexed`'s
+  column-indexed rows. It is a decidable key-side clause, not a row/bundle/`ValidV3`
+  field.
+
+  D-GATE19's minimal calldata predicate is `cd.size < 2^36` (with
+  `Decoded`'s `cd.size = proofEnd + 32 + 32 * numInstances`, this is exactly
+  `numInstances < 2^31`). It is kept at the consumer
+  (`tp_agrees_of_valid_closed_cdSize`), not added to `EntryFrameV3`: `tp_agrees`
+  has no entry-frame parameter, and `EntryFrameV3.cdSize` remains the existing
+  `< 2^256` length bound. Adding `< 2^36` there would not reach `TpPost`; the
+  exact alternative is the single consumer predicate, or a `Frame.cdSize36`
+  bundle field (declined here). -/
+
 /-! ## §B. The plan's circuit meta and data (b)
 
   OLD (`Statements.lean:186-190`):
