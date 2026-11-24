@@ -856,6 +856,13 @@ structure LagWindowFits {consts : Inline.Consts} {cd : Bytes} {k n m : Nat}
   pair : ∀ q ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
     ∀ q' ∈ lagSlots C.aXN C.aXN1 C.aLL C.aLB C.aL0 C.aIE,
       q + 32 ≤ q' ∨ q' + 32 ≤ q
+  /-- The batch-inversion scratch floor (`lagScratchFits`). -/
+  scratchFloor : 32 ≤ C.s
+  /-- The batch-inversion scratch window fits a word. -/
+  scratchEnd : C.s + (32 * (n + m) + 32) + 192 < 2 ^ 256
+  /-- The scratch window and the denominator window are disjoint. -/
+  scratchDisj : C.D + 32 * (n + m) + 32 ≤ C.s ∨
+    C.s + (32 * (n + m) + 32) + 192 ≤ C.D
 
 /-- **WHERE `denomEnd` COMES FROM.** The two counts D-GATE11's input predicate bounds
     (`CountBound.instances : numInstances < 2^32`, `MetaCountsBound.rotationLast` for `m`) and
@@ -4131,11 +4138,15 @@ theorem lagWindowFits_lagCfgZero {consts : Inline.Consts} {cd : Bytes} {k n m : 
     (rw xw omw w0 nInv : U256) :
     LagWindowFits (lagCfgZero C rw xw omw w0 nInv) := by
   refine ⟨hfits.aX, hfits.aO, hfits.aL, hfits.aN, hfits.aIb, hfits.denomEnd,
-    hfits.LD, hfits.Lne, hfits.Ls, hfits.Nne, hfits.Ns, ?_, ?_, ?_, ?_⟩
+    hfits.LD, hfits.Lne, hfits.Ls, hfits.Nne, hfits.Ns, ?_, ?_, ?_, ?_,
+    ?_, ?_, ?_⟩
   · simpa [lagCfgZero] using hfits.Nslot
   · simpa [lagCfgZero] using hfits.slotFits
   · simpa [lagCfgZero] using hfits.slotD
   · simpa [lagCfgZero] using hfits.pair
+  · simpa [lagCfgZero] using hfits.scratchFloor
+  · simpa [lagCfgZero] using hfits.scratchEnd
+  · simpa [lagCfgZero] using hfits.scratchDisj
 
 theorem hoist_lagInner_empty {c : ExternalCalls} {g : ExternalGas}
     (consts : Inline.Consts) (k n m : Nat) :
@@ -4352,11 +4363,7 @@ theorem lagInnerContract_of_summary
     (hgas : consts.lookup "MODEXP_GAS" = some gas)
     (hsuccNone : consts.lookup "success" = none)
     (hrw : C.rw = BitVec.ofNat 256 Midfall.Yul.blsR)
-    (hcanon : ∀ st : EvmState, (loadWord st.memory C.D).toNat < Midfall.Yul.blsR)
-    (hsp : 32 ≤ C.s)
-    (hscratch : C.s + (32 * (n + m) + 32) + 192 < 2 ^ 256)
-    (hdisj : C.D + 32 * (n + m) + 32 ≤ C.s ∨
-      C.s + (32 * (n + m) + 32) + 192 ≤ C.D) :
+    (hcanon : ∀ st : EvmState, (loadWord st.memory C.D).toNat < Midfall.Yul.blsR) :
     LagInnerContract C funs := by
   have hfit : C.D + 32 * (n + m) + 32 < 2 ^ 256 := by
     have := hfits.denomEnd
@@ -4366,7 +4373,8 @@ theorem lagInnerContract_of_summary
       (k := k) (n := n) (m := m) (D := C.D) (aS := C.s)
       (funs := funs) (succ := C.succ) (rw := C.rw)
       (decl := decl) (cenv := cenv)
-      hlook hbody hparams hrets hsuccNone hr hgas hD hS hrw hfit hsp hscratch hdisj hcanon
+      hlook hbody hparams hrets hsuccNone hr hgas hD hS hrw hfit
+      hfits.scratchFloor hfits.scratchEnd hfits.scratchDisj hcanon
   exact lag_inner_contract_post_of_fits (C := C) (product := product) (g := g)
     (funs := funs) hr hX hO hL hN hI hD hXN hXN1 hLL hLB hL0 hIE hfits hm hn hk hcall
 

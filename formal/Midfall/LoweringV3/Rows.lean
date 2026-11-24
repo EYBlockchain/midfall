@@ -1646,6 +1646,102 @@ theorem snapshotLagrangeStep_exists_of_valid (R : Render p G₁ G₂ Gₜ) (hR :
 
 #assert_axioms snapshotLagrangeStep_exists_of_valid [propext, Classical.choice, Quot.sound]
 
+open Midfall.LoweringV3.LagrangeRows Midfall.LoweringV3.LagrangeBlock
+
+omit [Fact (Nat.Prime p)] in
+theorem holdsFr_of_loadWord {st : EvmState} {a : Nat} {x : Fr p}
+    (h : loadWord st.memory a = frWord x) : holdsFr st a x = true := by
+  simp [holdsFr, wordAt, h]
+
+/-- The five `.lagrange` `InvAt` slot clauses from `LagInnerPost`'s progress arm. The two
+    parser-side data are named: `hxn` (the algebra's square) and `hinst`/`hInstEval` (the
+    decoded instance row and its evaluation linkage). -/
+theorem lagInnerPost_lagrange_slots
+    {product : PairingProduct} {g : ExternalGas}
+    (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
+    (hm : 2 ≤ R.pv.numNegLagranges) (hn : 1 ≤ R.pv.numInstances)
+    (cd : Bytes) (S : Snapshot p G₁ G₂ Gₜ)
+    (s2 : SnapAlgebra p G₁) (l : SnapLagrange p G₁)
+    (hl : snapshotLagrangeStep (G₁ := G₁) R.vk s2 = .ok l)
+    (hS_alg : S.alg = s2.alg)
+    (hS_lag : S.lagrange = l.lagrange)
+    (hS_inst : S.instanceEval = l.instanceEval)
+    (hxn : s2.alg.xn = s2.alg.x ^ (2 ^ R.pv.k))
+    (hinstWord : ∀ j, cdWord cd (R.pv.proofLayout.proofEnd + 32 + 32 * j) =
+      frWord ((s2.alg.instanceEvals.getD 0 #[]).getD j 0))
+    (hInstEval : ∀ W : LagWords,
+      LagRel (BitVec.ofNat 256 p) (Midfall.Halo2.frWord s2.alg.x)
+        (Midfall.Halo2.frWord R.vk.domain.omega)
+        (Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges))
+        (Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹)) R.pv.k
+        R.pv.numInstances R.pv.numNegLagranges
+        (fun j => Midfall.Halo2.frWord ((s2.alg.instanceEvals.getD 0 #[]).getD j 0)) W →
+      ∀ e, l.instanceEval = some e → W.instEval = Midfall.Halo2.frWord e)
+    {V : VEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    {st st' : EvmState}
+    (hpost : LagInnerPost (lagCfgOf R cd S) V st st')
+    (hsucc1 : VEnv.get V "success" = some (1 : U256)) :
+    holdsFr st' (ptrAddr R.pv.memory.xNMptr) S.alg.xn = true ∧
+    holdsFr st' (ptrAddr R.pv.memory.lLastMptr) S.lagrange.lLast = true ∧
+    holdsFr st' (ptrAddr R.pv.memory.lBlindMptr) S.lagrange.lBlind = true ∧
+    holdsFr st' (ptrAddr R.pv.memory.l0Mptr) S.lagrange.l0 = true ∧
+    (match S.instanceEval with
+     | none => True
+     | some e => holdsFr st' (ptrAddr R.pv.memory.instanceEvalMptr) e = true) := by
+  obtain ⟨ret, pf, hsucc', hpf', -, -, -, -, hinv⟩ := hpost
+  have hret1 : ret = 1 := Option.some.inj (hsucc'.symm.trans hsucc1)
+  subst hret1
+  obtain ⟨W, hW, hxnSlot, -, hllSlot, hlbSlot, hl0Slot, hieSlot⟩ :=
+    hinv (by decide : (1 : U256) ≠ 0)
+  have hW' : LagRel (BitVec.ofNat 256 p) (Midfall.Halo2.frWord s2.alg.x)
+      (Midfall.Halo2.frWord R.vk.domain.omega)
+      (Midfall.Halo2.frWord (R.vk.domain.omegaInv ^ R.pv.numNegLagranges))
+      (Midfall.Halo2.frWord (((2 ^ R.vk.domain.k : ℕ) : Fr p)⁻¹)) R.pv.k
+      R.pv.numInstances R.pv.numNegLagranges
+      (fun j => Midfall.Halo2.frWord ((s2.alg.instanceEvals.getD 0 #[]).getD j 0)) W := by
+    simpa [lagCfgOf, hS_alg, hinstWord] using hW
+  obtain ⟨bf, hbf⟩ := blindingFactors_ok_of_valid R hR
+  obtain ⟨Lw, hval, hBlindW⟩ :=
+    lag_agrees_hval R hR hm hn s2 l hl hxn (s2.alg.instanceEvals.getD 0 #[]) W rfl hW' bf hbf
+  obtain ⟨hxnVal, hllVal, hlbVal, hl0Val, _⟩ :=
+    lag_agrees R hR hm hn s2 l hl hxn (s2.alg.instanceEvals.getD 0 #[]) W rfl hW' bf hbf Lw hval hBlindW
+      (hInstEval W hW')
+  have hxnSlot' : loadWord st'.memory (ptrAddr R.pv.memory.xNMptr) = W.xn := by
+    simpa [lagCfgOf] using hxnSlot
+  have hllSlot' : loadWord st'.memory (ptrAddr R.pv.memory.lLastMptr) = W.lLast := by
+    simpa [lagCfgOf] using hllSlot
+  have hlbSlot' : loadWord st'.memory (ptrAddr R.pv.memory.lBlindMptr) = W.lBlind := by
+    simpa [lagCfgOf] using hlbSlot
+  have hl0Slot' : loadWord st'.memory (ptrAddr R.pv.memory.l0Mptr) = W.l0 := by
+    simpa [lagCfgOf] using hl0Slot
+  have hieSlot' : loadWord st'.memory (ptrAddr R.pv.memory.instanceEvalMptr) = W.instEval := by
+    simpa [lagCfgOf] using hieSlot
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · simp [holdsFr, wordAt, hxnSlot', hxnVal, hS_alg]
+  · simp [holdsFr, wordAt, hllSlot', hllVal, hS_lag]
+  · simp [holdsFr, wordAt, hlbSlot', hlbVal, hS_lag]
+  · simp [holdsFr, wordAt, hl0Slot', hl0Val, hS_lag]
+  · cases h : S.instanceEval with
+    | none => trivial
+    | some e =>
+        have hle : l.instanceEval = some e := by rw [← hS_inst]; exact h
+        have hWe := hInstEval W hW' e hle
+        simp [holdsFr, wordAt, hieSlot', hWe]
+
+#assert_axioms lagInnerPost_lagrange_slots [propext, Classical.choice, Quot.sound]
+/-- The table's `MODEXP_GAS` is the model's scheduled modexp gas. -/
+theorem consts_lookup_MODEXP_GAS (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
+    R.consts.lookup "MODEXP_GAS" = some R.model.templateConstants.gas.modexp := by
+  show (Midfall.LoweringV2.constTableOf R.model).lookup "MODEXP_GAS" =
+    some R.model.templateConstants.gas.modexp
+  rw [Midfall.LoweringV3.lookup_expectedConsts_of_programOkB (programOkB_of_valid hR)]
+  cases h1 : R.model.expectedVkCodehash <;> cases h2 : R.model.quotientExternal <;>
+    cases h3 : R.model.expectedQuotientCodehash <;> cases h4 : R.model.expectedHasAccumulator <;>
+      simp [Midfall.LoweringV3.expectedConsts, h1, h2, h3, h4, List.lookup]
+
+#assert_axioms consts_lookup_MODEXP_GAS [propext, Classical.choice, Quot.sound]
+
+
 /-- The `.vk` payload pin, extracted from `Inv .vk`. -/
 theorem inv_vk_payload {calls : ExternalCalls} {gas : ExternalGas}
     {E : VerifierEnv p G₁ G₂ Gₜ} {params : ParamsVerifierKZG G₁ G₂}
