@@ -313,7 +313,12 @@ needs an unconditional `BlockProgS R .transcriptParser ...`, while the landed
 **D-GATE20 (A6 TP existence, in progress, 2026-11-24)**: the emitted parser's `common_word`
 helper now has a proved `ExecStmts` run (`TranscriptRows.commonWordBody_run` and
 `commonWord_call_run`), and the parser slice's first two statements are pinned by
-`tp_slice_head` / `tp_slice_two`. `tp_blockProgS` is factored as
+`tp_slice_head` / `tp_slice_two`. The singleton inliner equation
+`transcriptInit_inlined : inlineContractConstants consts emitTranscriptInit =
+[funDef "transcript_init" [] ["buf_len"] [assign "buf_len" (lit t)]]` is PROVED from
+`consts.lookup "TRANSCRIPT_MPTR" = some t`; the full `R.helpers` instance still needs the
+`inlineScan_append` prefix split at `emitFail ++ emitScalarInvAt`.
+`tp_blockProgS` is factored as
 `tp_blockProgS_of_exists_and_all`: its two remaining facts are the full emitted-AST
 `StmtsContract` existence walk and the normal all-runs contract. The model-level
 `parseTrace_run_of_ms_sizes` / `XcriptAlgebraRun` / `runsAll_readAlgebra` facts are
