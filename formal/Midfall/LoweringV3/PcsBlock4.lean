@@ -5081,4 +5081,88 @@ theorem pcsGenBody_contract {g : ExternalGas} (product : PairingProduct)
   · exact absurd (hpfxC V st hpre V' st' o hpfx).1 hne
 
 
+set_option maxHeartbeats 16000000 in
+theorem pcsSetBlock_contract {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (setIdx : Nat) (points : List Int) (distinctRotations : List Int)
+    (off scratch hbls gasN selN selP : Nat)
+    (p a : Nat → U256) (x3v rv x2v fev cptr qep : U256)
+    (hm : 1 < points.length)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch hbls gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hnbls : BitVec.ofNat 256 hbls = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some
+      ((failFDecl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)), cenv'))
+    (hnames : PcsGenNames points.length (pcsPointRefs points distinctRotations)
+      (pcsKs points distinctRotations))
+    (hainlt : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat < blsR)
+    (hain0 : ∀ i, i < (pcsBatchInputs points.length).length → (a i).toNat ≠ 0)
+    (hvalDx : ∀ i, i < points.length → a i = wAddmodAt x3v (rv - p i) rv)
+    (hvalLb : ∀ j, j < points.length →
+      a (points.length + j) = pcsLbasisVal rv (p j) p (pcsKs points distinctRotations j))
+    (hks_sub : ∀ g ∈ pcsPointRefs points distinctRotations,
+      ∀ k ∈ pcsKs points distinctRotations g.1, k ∈ pcsPointRefs points distinctRotations)
+    (hinv0Dist : ∀ j, 1 ≤ j → j < (pcsBatchInputs points.length).length →
+      pcsInvName points.length 0 ≠ pcsInvName points.length j)
+    (hinvEvalAll : ∀ i, pcsInvName points.length i ≠ "eval")
+    (hinvQSetAll : ∀ i, pcsInvName points.length i ≠ "Q_EVAL_SET_MPTR")
+    (hinvR0 : pcsInvName points.length 0 ≠ "r")
+    (htermF : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "f_eval")
+    (htermX2 : ∀ j, j < points.length → ("term_" ++ toString j) ≠ "x2")
+    (hdenInvAll : ∀ i, i < (pcsBatchInputs points.length).length →
+      "den_inv" ≠ pcsInvName points.length i)
+    (hrv : rv = BitVec.ofNat 256 blsR)
+    (hcptr : cptr.toNat + setIdx * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hqep : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes < 2 ^ 256)
+    (hdisj : qep.toNat + (off + points.length) * Midfall.Generator.wordBytes ≤ scratch ∨
+      scratch + 192 ≤ qep.toNat + off * Midfall.Generator.wordBytes) :
+    StmtContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (Stmt.block (GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off))
+      (PcsGPre (c := permissive (callsOf product)) (g := g)
+        x3v rv x2v fev cptr qep p (pcsPointRefs points distinctRotations)
+        (pcsBatchInputs points.length).length)
+      (fun V st V' st' o =>
+        PcsGPost (c := permissive (callsOf product)) (g := g)
+          rv x2v fev a points.length setIdx cptr.toNat off scratch qep V st V' st' o) := by
+  apply StmtsContractAll.block
+  intro V st hpre V' st' o hrun
+  have hbodyEq : GenAstPcs.pcsSetBlockAst setIdx points distinctRotations off =
+      pcsGenBody setIdx points distinctRotations off := by
+    rw [pcsSetBlockAst_eq_gen setIdx points distinctRotations off hm,
+      pcsSetBodyGen_eq setIdx points distinctRotations off hm]
+  have hhoistGen : hoist (Bridge.Dialect (permissive (callsOf product)) g)
+      (pcsGenBody setIdx points distinctRotations off) = [] := by
+    unfold hoist
+    rw [List.filterMap_eq_nil_iff]
+    intro s hs
+    rcases pcsGenBody_allLetSet setIdx points distinctRotations off s hs with ⟨x, e, h | h⟩
+    · subst s; simp [GenAst.ylet]
+    · subst s; simp [GenAst.yset]
+  rw [hbodyEq, hhoistGen] at hrun
+  have hlook' : lookupFun ([] :: funs) "scalar_inv" = some (decl, cenv) := by
+    simpa [lookupFun] using hlook
+  have hb := pcsGenBody_contract (g := g) (product := product)
+    (funs := [] :: funs)
+    (decl := decl) (cenv := cenv) (cenv' := cenv')
+    setIdx points distinctRotations off scratch hbls gasN selN selP p a
+    x3v rv x2v fev cptr qep hm hlook' hbody hparams hrets hnbls hscratch hscratch256
+    hfail hnames hainlt hain0 hvalDx hvalLb hks_sub hinv0Dist hinvEvalAll
+    hinvQSetAll hinvR0 htermF htermX2 hdenInvAll hrv hcptr hqep hdisj
+    V st hpre V' st' o hrun
+  rcases hb with ⟨ho, hfget, hfr, henv⟩ | hh
+  · refine Or.inl ⟨ho, ?_, hfr, henv⟩
+    have hnamesExec := pcsExec_names (funs := [] :: funs)
+      (ss := pcsGenBody setIdx points distinctRotations off)
+      (pcsGenBody_allLetSet setIdx points distinctRotations off) hrun ho
+    exact pcs_venv_get_restore_of_names hnamesExec
+      (pcsGenBody_fe_notmem_added setIdx points distinctRotations off) hfget
+  · exact Or.inr hh
+
+
 end Midfall.LoweringV3.PcsBlock4
