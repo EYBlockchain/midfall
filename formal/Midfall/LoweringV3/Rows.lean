@@ -155,10 +155,19 @@ The lagrange rows cannot yet be assembled from the tree. The blockers are NOT on
    `C.succ = 0`, which is exactly the remaining whole-block composition. The Render-level
    assembly `lagBlockPoisonContract_of_inner` below reduces `LagBlockPoisonContract` to the two
    named bridges `hpre : Poisoned → LagPre C` and `hinner : LagInnerContract C …`.
-3. **PG-LAG-FITS remains caller-side.** `LagCfg`'s address fits and window disjointness are not
-   projections of `ValidV3` (the layout's `MemoryMap.WellFormed` has no upper bound), so the
-   `LagInnerContract` still has to come from the T3.9.f composition under those fits. The clean
-   post also awaits T3.9.g (`lag_agrees`).
+3. **PG-LAG-FITS is now an exact named predicate.** `LagrangeBlock.LagWindowFits` carries the
+   denominator window end `D + 32(n+m+1) < 2^256`, the six slot fits, the four window
+   disjointness clauses and the six pairwise slot separations; `lag_inner_contract_post_of_fits`
+   derives `LagInnerContract` from it (all weaker arithmetic is `omega`). It is NOT a
+   `ValidV3` projection: `MetaCountsBound` (`Generator/Certified.lean:207`) bounds `m` through
+   `rotationLast < 2^32`, but nothing bounds `n = numInstances`; the generator's input predicate
+   `CountBound` (`Certified.lean:286`) has `instances < 2^32` and `metaCounts`, and with a
+   layout address below `2^200` it gives the denominator end
+   (`LagrangeBlock.lagDenomEnd_of_countBound`). `Render` does not retain `CountBound`, so this
+   remains an INPUT predicate, not a row/root hypothesis. The clean post also needs T3.9.g's
+   actual premises: `lag_agrees` is landed (`LagrangeRows.lean:3515`) but consumes
+   `hl : snapshotLagrangeStep = .ok l`, `hxn`, `hinst` and the `XcriptAlgebraRun`/`XcriptG1`
+   parser facts, none of which `ValidV3` supplies.
 
 Therefore `lag_blockSim`/`lag_blockProgS` remain the existing registered leaves; no row hypothesis
 has been added and no new `sorry` is introduced here. When 1–3 land, the rows are pure glue.
