@@ -6293,6 +6293,55 @@ theorem pcsRotPtRef_bridge (distinct : List Int) {point : Int} (hmem : point ∈
     rfl
 
 
+def pcsBlock4PSet (distinct : List Int) (rotVals : Nat → U256)
+    (pointSets : List (List Int)) (s j : Nat) : U256 :=
+  rotVals ((distinct.findIdx? (fun r => r == (pointSets.getD s []).getD j 0)).getD 0)
+
+theorem mem_enumIdx {points : List Int} {r : Nat × Int}
+    (hr : r ∈ Midfall.Generator.enumIdx points) :
+    r.1 < points.length ∧ r = (r.1, points.getD r.1 0) := by
+  obtain ⟨i, hi, hri⟩ := List.mem_iff_getElem.mp hr
+  have hi' : i < points.length := by
+    unfold Midfall.Generator.enumIdx at hi
+    rwa [List.length_zip, List.length_range, Nat.min_self] at hi
+  have hpair : (Midfall.Generator.enumIdx points)[i] = (i, points.getD i 0) := by
+    unfold Midfall.Generator.enumIdx
+    rw [List.getElem_zip (h := hi)]
+    rw [List.getElem_range]
+    congr 1
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi']
+    rfl
+  have hri' : r = (i, points.getD i 0) := by rw [← hri, hpair]
+  constructor
+  · rw [congrArg Prod.fst hri']; exact hi'
+  · rw [hri']
+
+theorem pcsBlock4PSet_rot {distinct : List Int} {rotVals : Nat → U256}
+    {pointSets : List (List Int)}
+    (hsubset : ∀ s, s < pointSets.length →
+      ∀ j, j < (pointSets.getD s []).length → (pointSets.getD s []).getD j 0 ∈ distinct)
+    {s : Nat} (hs : s < pointSets.length)
+    {q : Nat × String} (hq : q ∈ pcsPointRefs (pointSets.getD s []) distinct)
+    {V : VEnv (Bridge.Dialect c g)}
+    (hrot : ∀ p ∈ Midfall.Generator.enumIdx distinct,
+      VEnv.get V ("rot_pt_" ++ toString p.1) = some (rotVals p.1)) :
+    VEnv.get V q.2 = some (pcsBlock4PSet distinct rotVals pointSets s q.1) := by
+  obtain ⟨r, hr, hqr⟩ := List.mem_map.mp hq
+  cases hqr
+  obtain ⟨hlt, hr_eq⟩ := mem_enumIdx hr
+  have hlt' : r.1 < (pointSets.getD s []).length := by simpa using hlt
+  have hpoint : (pointSets.getD s []).getD r.1 0 = r.2 := by
+    rw [hr_eq]
+  have hmem : r.2 ∈ distinct := by
+    have h := hsubset s hs r.1 hlt'
+    rwa [hpoint] at h
+  obtain ⟨i, hi_mem, hname, hival⟩ := pcsRotPtRef_bridge distinct hmem
+  have hget := hrot (i, r.2) hi_mem
+  rw [← hname] at hget
+  convert hget using 2
+  unfold pcsBlock4PSet
+  rw [hpoint, hival]
+
 theorem pcsRot_name_inj {i j : Nat}
     (h : "rot_pt_" ++ toString i = "rot_pt_" ++ toString j) : i = j := by
   apply Nat.repr_inj.mp
@@ -6389,6 +6438,32 @@ theorem pcsRotLets_contract {funs : FunEnv (Bridge.Dialect c g)}
               intro h; exact hy p (by simp) h)]
       · exact absurd (b1_exec_ylet_mload_add_var h1).1 hne
 
+
+def PcsBlock4Pre (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256)
+    (rotVals : Nat → U256) (pointSets : List (List Int)) (distinct : List Int)
+    (pSet : Nat → Nat → U256) (scratch : Nat) :
+    VEnv (Bridge.Dialect c g) → EvmState → Prop :=
+  fun V st =>
+    VEnv.get V "X2_MPTR" = some x2p ∧
+    VEnv.get V "X3_MPTR" = some x3p ∧
+    VEnv.get V "Q_EVAL_CPTR_MPTR" = some cptrp ∧
+    VEnv.get V "ROT_POINTS_MPTR" = some rotp ∧
+    VEnv.get V "F_EVAL_MPTR" = some fp ∧
+    VEnv.get V "r" = some rv ∧
+    VEnv.get V "Q_EVAL_SET_MPTR" = some qep ∧
+    loadWord st.memory x2p.toNat = x2v ∧
+    loadWord st.memory x3p.toNat = x3v ∧
+    loadWord st.memory cptrp.toNat = cptr ∧
+    (∀ p ∈ Midfall.Generator.enumIdx distinct,
+      p.1 * Midfall.Generator.wordBytes < 2 ^ 256) ∧
+    (∀ p ∈ Midfall.Generator.enumIdx distinct,
+      rotp.toNat + p.1 * Midfall.Generator.wordBytes < 2 ^ 256) ∧
+    (∀ p ∈ Midfall.Generator.enumIdx distinct,
+      loadWord st.memory
+        (rotp.toNat + p.1 * Midfall.Generator.wordBytes) = rotVals p.1) ∧
+    PcsQEvalCanon qep pointSets st ∧
+    PcsBlock4SetFacts rv x2v x3v cptr qep scratch pointSets distinct pSet ∧
+    (fp.toNat + 32 ≤ scratch ∨ scratch + 192 ≤ fp.toNat)
 
 theorem pcsBlock4_walk_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
