@@ -4590,6 +4590,89 @@ theorem snapshotTraceRun_ok_of_ms (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
   simp only [StateT.run_bind, StateT.run_pure, hrun]
   rfl
 
+theorem runsAll_mapM_groups (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} :
+    ∀ (xs : List α) (g : α → TranscriptM β) (lens : α → Nat) (qs : List (Fr p)),
+      qs.length = (xs.map lens).sum →
+      (∀ a ∈ xs, ∀ qs₁ : List (Fr p), qs₁.length = lens a →
+        RunsAll E (g a) (qs₁.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))) →
+      RunsAll E (xs.mapM g) (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+  intro xs
+  induction xs with
+  | nil =>
+      intro g lens qs hlen hg
+      have h0 : qs = [] := List.eq_nil_of_length_eq_zero (by simpa using hlen)
+      subst h0
+      simpa only [List.mapM_nil, List.map_nil] using RunsAll.pure E ([] : List β)
+  | cons a as ih =>
+      intro g lens qs hlen hg
+      have hsum : qs.length = lens a + (as.map lens).sum := by
+        simpa only [List.map_cons, List.sum_cons] using hlen
+      have hle : lens a ≤ qs.length := by omega
+      have hlen1 : (qs.take (lens a)).length = lens a := by rw [List.length_take]; omega
+      have hlen2 : (qs.drop (lens a)).length = (as.map lens).sum := by
+        rw [List.length_drop, hsum]; omega
+      have hsplit : qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁)) =
+          (qs.take (lens a)).map (fun q => (Msg.fr q : Msg (Fr p) G₁)) ++
+            (qs.drop (lens a)).map (fun q => (Msg.fr q : Msg (Fr p) G₁)) := by
+        rw [← List.map_append, List.take_append_drop]
+      rw [List.mapM_cons, hsplit]
+      refine RunsAll.bind E
+        (ms₁ := (qs.take (lens a)).map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (ms₂ := (qs.drop (lens a)).map (fun q => (Msg.fr q : Msg (Fr p) G₁)))
+        (hg a (by simp) (qs.take (lens a)) hlen1) ?_
+      intro head
+      have hb := RunsAll.bind E
+        (ms₁ := (qs.drop (lens a)).map (fun q => (Msg.fr q : Msg (Fr p) G₁))) (ms₂ := [])
+        (ih g lens (qs.drop (lens a)) hlen2 (fun a' ha' => hg a' (by simp [ha'])))
+        (fun tail => RunsAll.pure E (head :: tail))
+      rw [List.append_nil] at hb
+      exact hb
+
+theorem runsAll_permutationsEvaluated (E : VerifierEnv p G₁ G₂ Gₜ)
+    (permutations : Array (Permutation.Committed G₁)) (Qp : List (Fr p))
+    (hlen : Qp.length = (permutations.toList.map
+      (fun pc => 3 * pc.permutationProductCommitments.size - 1)).sum) :
+    RunsAll E (permutations.toList.mapM (fun pc => Permutation.Committed.evaluate (p := p) pc))
+      (Qp.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) :=
+  runsAll_mapM_groups E permutations.toList (fun pc => Permutation.Committed.evaluate (p := p) pc)
+    (fun pc => 3 * pc.permutationProductCommitments.size - 1) Qp hlen
+    (fun pc _ qs hqs => runsAll_permutationEval E pc qs hqs)
+
+theorem runsAll_rowsEvaluated (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type}
+    (rows : Array (Array α)) (g : α → TranscriptM β) (lens : α → Nat) (qs : List (Fr p))
+    (hlen : qs.length = (rows.toList.map (fun row => (row.toList.map lens).sum)).sum)
+    (hg : ∀ a, ∀ qs₁ : List (Fr p), qs₁.length = lens a →
+      RunsAll E (g a) (qs₁.map (fun q => (Msg.fr q : Msg (Fr p) G₁)))) :
+    RunsAll E (rows.toList.mapM (fun row => row.toList.mapM g))
+      (qs.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) :=
+  runsAll_mapM_groups E rows.toList (fun row => row.toList.mapM g)
+    (fun row => (row.toList.map lens).sum) qs hlen
+    (fun row _ qs₁ hlen₁ => runsAll_mapM_groups E row.toList g lens qs₁ hlen₁ (fun a _ => hg a))
+
+theorem runsAll_lookupsEvaluated (E : VerifierEnv p G₁ G₂ Gₜ)
+    (lookups : Array (Array (Logup.Committed G₁))) (Ql : List (Fr p))
+    (hlen : Ql.length = (lookups.toList.map
+      (fun row => (row.toList.map (fun l => l.helperPolys.size + 3)).sum)).sum) :
+    RunsAll E (lookups.toList.mapM (fun row =>
+        row.toList.mapM (fun l => Logup.Committed.evaluate (p := p) l)))
+      (Ql.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) :=
+  runsAll_rowsEvaluated E lookups (fun l => Logup.Committed.evaluate (p := p) l)
+    (fun l => l.helperPolys.size + 3) Ql hlen
+    (fun l qs hqs => runsAll_logupEval E l qs hqs)
+
+theorem runsAll_trashcansEvaluated (E : VerifierEnv p G₁ G₂ Gₜ)
+    (trashcans : Array (Array (Trash.Committed G₁))) (Qt : List (Fr p))
+    (hlen : Qt.length = (trashcans.toList.map (fun row => row.size)).sum) :
+    RunsAll E (trashcans.toList.mapM (fun row =>
+        row.toList.mapM (fun t => Trash.Committed.evaluate (p := p) t)))
+      (Qt.map (fun q => (Msg.fr q : Msg (Fr p) G₁))) := by
+  apply runsAll_rowsEvaluated E trashcans (fun t => Trash.Committed.evaluate (p := p) t)
+    (fun _ => 1) Qt ?_ ?_
+  · simpa using hlen
+  · intro t qs hqs
+    obtain ⟨q, rfl⟩ := List.length_eq_one_iff.mp hqs
+    simpa using runsAll_trashEval E t q
+
 /-- **THE DECODED-SLOT LINKAGE.** `decodeCalldata`'s messages have exactly the layout's
     slots: the calldata side of the read-schedule shape, independent of D1's
     `prepare_logSlots`. -/
@@ -6926,6 +7009,11 @@ theorem tp_blockProgS_falsifier_reverting_block_is_not_total
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTrace_one [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.parseTrace_run_of_ms [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.snapshotTraceRun_ok_of_ms [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_mapM_groups [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_permutationsEvaluated [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_rowsEvaluated [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_lookupsEvaluated [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_trashcansEvaluated [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_parseTraceLookupMultiplicities_one_of_wf [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.runsAll_fmap [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.TranscriptRows.RunsAllP.toRunsAll [propext, Classical.choice, Quot.sound] native []
