@@ -2639,36 +2639,34 @@ theorem lag_guard_body_run {c : ExternalCalls} {g : ExternalGas} {consts : Inlin
 
 /-- The outer MF-4 guard: from `success = 0` and `lagrange_precompile_failed = 0` every run
     halts reverted (`ERR_PROOF_REJECTED`). -/
-theorem lag_outer_guard_run {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
-    [Group G₁] [Group G₂] [Group Gₜ] [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p]
-    [PrimeOrderWith Gₜ p] [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
-    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
-    {c : ExternalCalls} {g : ExternalGas} (R : Render p G₁ G₂ Gₜ)
+theorem lag_outer_guard_run {consts : Inline.Consts}
+    {c : ExternalCalls} {g : ExternalGas}
     {funs : FunEnv (Bridge.Dialect c g)} {cenv : FunEnv (Bridge.Dialect c g)}
     {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
     {errPR : Nat}
-    (hPR : R.consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hPR : consts.lookup "ERR_PROOF_REJECTED" = some errPR)
+    (hsuccNone : consts.lookup "success" = none)
     (hfail : lookupFun funs "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv))
     (hs : VEnv.get V "success" = some (0 : U256))
     (hp : VEnv.get V "lagrange_precompile_failed" = some (0 : U256))
-    (h : ExecStmts (Bridge.Dialect c g) funs V st (lagGuard R.consts) V' st' o) :
+    (h : ExecStmts (Bridge.Dialect c g) funs V st (lagGuard consts) V' st' o) :
     o = .halt ∧ Midfall.LoweringV2.Reverted st' := by
   have hfail' : lookupFun (hoist (Bridge.Dialect c g)
       [Stmt.cond (Expr.var "lagrange_precompile_failed")
-        [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
-       Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])]
+        [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+       Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])]
       :: funs) "fail" = some (Midfall.LoweringV2.Blocks.TraceReturn.failFDecl, cenv) := by
     have hh : hoist (Bridge.Dialect c g)
         [Stmt.cond (Expr.var "lagrange_precompile_failed")
-          [Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PRECOMPILE_FAILED"])],
-         Stmt.exprStmt (Expr.call "fail" [lagSite R.consts "ERR_PROOF_REJECTED"])] = [] := by
+          [Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PRECOMPILE_FAILED"])],
+         Stmt.exprStmt (Expr.call "fail" [lagSite consts "ERR_PROOF_REJECTED"])] = [] := by
       rfl
     rw [hh]
     exact hfail
   cases h with
   | seqCons h1 _ =>
       simp only [lagGuard, lagSite,
-        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+        hsuccNone] at h1
       cases h1 with
       | ifTrue hc hnz hbody =>
           have hh := lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
@@ -2681,7 +2679,7 @@ theorem lag_outer_guard_run {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Typ
           exact absurd hz' (by decide)
   | seqStop h1 hne =>
       simp only [lagGuard, lagSite,
-        Midfall.LoweringV2.Blocks.TraceReturn.consts_succ_none R] at h1
+        hsuccNone] at h1
       cases h1 with
       | ifTrue hc hnz hbody =>
           exact lag_guard_body_run (hPR := hPR) (hfail := hfail') hp hbody
@@ -2757,6 +2755,5 @@ theorem lag_inner_contract_zero {consts : Inline.Consts} {cd : Bytes} {k n m : N
   have hip' := hip
   obtain ⟨ret, pf, hsucc, -, -, -, -, hszero, -⟩ := hip'
   exact ⟨ho, hip, by rw [hsucc, (hszero hsucc0).1]⟩
-
 
 end Midfall.LoweringV3.LagrangeBlock
