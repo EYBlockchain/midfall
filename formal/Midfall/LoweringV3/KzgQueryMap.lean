@@ -1709,6 +1709,16 @@ noncomputable def KzgQueryMapData.ofList {F C : Type} [BEq F]
     exact hPointEq p.1.point p'.1.point
 
 
+/-- The list-level pairing fact: when the lengths agree, the two query lists
+    are the two projections of `pairQueries queriesV queriesG`. -/
+theorem exists_pairQueries {F C : Type} (queriesV : Array (VerifierQuery F C))
+    (queriesG : List Query) (h : queriesV.size = queriesG.length) :
+    ∃ L : List (VerifierQuery F C × Query),
+      queriesV.toList = L.map Prod.fst ∧ queriesG = L.map Prod.snd :=
+  ⟨pairQueries queriesV queriesG,
+    (pairQueries_fst queriesV queriesG h).symm,
+    (pairQueries_snd queriesV queriesG h).symm⟩
+
 /-- **THE PAIRED-LIST DATUM CONSTRUCTOR.** The concrete `L` is
     `pairQueries queriesV queriesG`; `pairQueries_fst`/`_snd` supply the two
     list projections whenever the lengths agree.  The remaining arguments are

@@ -404,6 +404,7 @@ theorem upstreamSources_zslice
     (h : Generator.assertPermutationQueryOrderIsUpstreamEquivalent meta_ data generatorOrder = .ok ()) :
     ∃ (upstreamSources : List PcsQuerySource) (upstreamQueries : List Query)
       (generatorSets upstreamSets : IntermediateSets),
+      upstreamSources = pre ++ Generator.permZUpstream k ++ post ∧
       upstreamSources.filter Generator.isPermutationZSource = Generator.permZUpstream k ∧
       upstreamSources.mapM (fun source => Generator.queryFromPlan source meta_ data) =
         .ok upstreamQueries ∧
@@ -431,9 +432,10 @@ theorem upstreamSources_zslice
       (Generator.upstreamBlock block) post hblockLen
     exact Except.ok.inj (hupstream.symm.trans hmap)
   refine ⟨upstreamSources, upstreamQueries, generatorSets, upstreamSets,
-    ?_, hupQ, hgen, hupSet, hpoint⟩
-  rw [hupstream', hblockUp]
-  rw [filter_append_of_zfree hpre hpost, permZUpstream_filter]
+    ?_, ?_, hupQ, hgen, hupSet, hpoint⟩
+  · rw [hupstream', hblockUp]
+  · rw [hupstream', hblockUp]
+    rw [filter_append_of_zfree hpre hpost, permZUpstream_filter]
 
 theorem append_zfree {a b : List PcsQuerySource}
     (ha : ∀ s ∈ a, Generator.isPermutationZSource s = false)
@@ -463,6 +465,12 @@ theorem upstreamSources_filter_pcsBlockList
     (h : Generator.assertPermutationQueryOrderIsUpstreamEquivalent meta_ data generatorOrder = .ok ()) :
     ∃ (upstreamSources : List PcsQuerySource) (upstreamQueries : List Query)
       (generatorSets upstreamSets : IntermediateSets),
+      upstreamSources = (Generator.pcsAdviceBlock cs ++
+          Generator.pcsCommittedInstanceBlock cs nb) ++
+        Generator.permZUpstream (Generator.pcsNumPermutationZs cs dg) ++
+        (Generator.pcsLookupBlock cs dg lc ++ Generator.pcsTrashBlock cs ++
+          Generator.pcsFixedBlock cs ++ Generator.pcsPermutationCommonBlock cs ++
+          [PcsQuerySource.linearization]) ∧
       upstreamSources.filter Generator.isPermutationZSource =
         Generator.permZUpstream (Generator.pcsNumPermutationZs cs dg) ∧
       upstreamSources.mapM (fun source => Generator.queryFromPlan source meta_ data) =

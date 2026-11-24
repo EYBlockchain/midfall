@@ -34,6 +34,7 @@ import Midfall.LoweringV3.QueryBlockShape
 import Midfall.LoweringV3.PcsOrder
 import Midfall.LoweringV3.UpstreamSets
 import Midfall.LoweringV3.QuotientFresh
+import Midfall.LoweringV3.RenderFresh
 import Midfall.LoweringV3.TranscriptRows
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
@@ -4431,6 +4432,42 @@ theorem readScheduleAgrees_of_validV3 (R : Midfall.LoweringV2.Render p G₁ G₂
           (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots :=
   readScheduleAgrees_of_prepareLogSlots R (PrepareLogSlots_of_validV3 R hR h)
 
+/-- **`KzgMultiPrepareWidths` FROM AN UPSTREAM QUERY DATUM.** The final
+    assembly point: for each `linearize` output, the generator supplies the
+    upstream repo nstruction `upstreamQueries`, the intermediate sets, and a
+    `KzgQueryMapData` between the verifier queries and that upstream list.  The
+    per-block `hpairP`/`hpairC`/`hclass` facts live inside the datum. -/
+theorem KzgMultiPrepareWidths_of_upstreamDatum
+    (R : Midfall.LoweringV2.Render p G₁ G₂ Gₜ)
+    (hUp : ∀ (inst : Array (Fr p)) (trace : VerifierTrace (Fr p) G₁)
+      (alg : Verifier.AlgebraRead (Fr p) G₁)
+      (queries : Array (VerifierQuery (Fr p) G₁)),
+      Verifier.linearize (p := p) (delta := R.E.delta) R.vk
+        (adviceCommitments := trace.adviceCommitments)
+        (committedInstances := if Features.solidity.committedInstances then
+          #[#[(1 : G₁)]] else arrayReplicate (#[#[inst.toList.toArray]]).size
+            (#[] : Array G₁))
+        (y := trace.y) (beta := trace.beta) (gamma := trace.gamma) (theta := trace.theta)
+        (trashChallenge := trace.trashChallenge) (challenges := trace.challenges) alg
+        = .ok queries →
+      ∃ (upstreamSources : List PcsQuerySource)
+        (upstreamQueries : List Midfall.Generator.Query)
+        (setsG : Midfall.Generator.IntermediateSets)
+        (qm : @KzgQueryMapData (Fr p) G₁ _
+          (kzgCommitBeq (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ)) queries upstreamQueries),
+        upstreamSources.mapM (fun source =>
+          Midfall.Generator.queryFromPlan source R.plan.meta_ R.plan.data) =
+            .ok upstreamQueries ∧
+        Midfall.Generator.constructIntermediateSetsImpl upstreamQueries = .ok setsG ∧
+        setsG.pointSets.length = (Midfall.Generator.RepackedProofLayoutPlan.fromProofLayout
+          R.plan.proofLayout).numPointSets) :
+    KzgMultiPrepareWidths R := by
+  refine KzgMultiPrepareWidths_of_queryMap R ?_
+  intro inst trace alg queries hlin
+  obtain ⟨upstreamSources, upstreamQueries, setsG, qm, _hsrc, hGok, hLen⟩ :=
+    hUp inst trace alg queries hlin
+  exact ⟨upstreamQueries, setsG, qm, hGok, hLen⟩
+
 /-- **`PrepareLogSlots` FROM EXACTLY THE TWO NAMED RESIDUALS.** The parseTrace
     block, the KZG scalar block, and the plan's eval count (`numEvals`, proved in
     this file) are the whole of the bridge; nothing else is assumed. -/
@@ -4618,6 +4655,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgMultiPrepareWidths_of_queryMap
   [propext, Classical.choice, Quot.sound]
+#assert_axioms KzgMultiPrepareWidths_of_upstreamDatum
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms constructIntermediateSets_pointSets_size_eq_of_queryMap
   [propext, Classical.choice, Quot.sound]
 #assert_axioms findIdx?_eq_of_equiv
@@ -4760,6 +4799,8 @@ open Midfall.Tools.Done in
   [propext, Classical.choice, Quot.sound]
 #assert_axioms upstreamSources_filter_pcsBlockList
   [propext, Classical.choice, Quot.sound]
+#assert_axioms exists_pairQueries
+  [propext, Classical.choice, Quot.sound]
 #assert_axioms KzgQueryMapData.ofPairQueries
   [propext, Classical.choice, Quot.sound]
 #assert_axioms Data.new_computedQuotientComm
@@ -4781,6 +4822,12 @@ open Midfall.Tools.Done in
 #assert_axioms listGetMut_mem
   [propext, Classical.choice, Quot.sound]
 #assert_axioms hashMapGet_mem
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_comm_numericOrG1_of_ne_linearization
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms queryFromPlan_comm_ne_quotient
+  [propext, Classical.choice, Quot.sound]
+#assert_axioms plan_data_commsNumericOrIdentity
   [propext, Classical.choice, Quot.sound]
 #assert_axioms kzgCommitBeq_linear_onePiece
   [propext, Classical.choice, Quot.sound]
