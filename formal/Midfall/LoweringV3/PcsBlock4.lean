@@ -6463,7 +6463,208 @@ def PcsBlock4Pre (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256)
         (rotp.toNat + p.1 * Midfall.Generator.wordBytes) = rotVals p.1) ∧
     PcsQEvalCanon qep pointSets st ∧
     PcsBlock4SetFacts rv x2v x3v cptr qep scratch pointSets distinct pSet ∧
+    (∀ s, s < pointSets.length →
+      ∀ i, i < (pcsBatchInputs (pointSets.getD s []).length).length →
+        VEnv.get V (pcsBpName i) = none) ∧
+    (∀ s, s < pointSets.length →
+      ∀ q ∈ pcsPointRefs (pointSets.getD s []) distinct,
+        VEnv.get V (pcsLbasisName q.1) = none) ∧
     (fp.toNat + 32 ≤ scratch ∨ scratch + 192 ≤ fp.toNat)
+
+/-- The block-4 pre-point-set value table: the `rot_pt_i` words. -/
+def pcsBlock4PSetOf (distinct : List Int) (rotVals : Nat → U256)
+    (pointSets : List (List Int)) : Nat → Nat → U256 :=
+  pcsBlock4PSet distinct rotVals pointSets
+
+/-- The `f_eval` Horner fold of block 4, at the block's initial state. -/
+def pcsBlock4Final (rv x2v x3v cptr qep : U256) (st0 : EvmState)
+    (pointSets : List (List Int)) (distinct : List Int) (pSet : Nat → Nat → U256) : U256 :=
+  pcsBlock4Fold rv x2v x3v
+    (fun s => wordFrom st0.env.calldata
+      (cptr.toNat + s * Midfall.Generator.wordBytes))
+    (fun s j => loadWord st0.memory
+      (qep.toNat + (pcsSetOff pointSets s + j) * Midfall.Generator.wordBytes))
+    pointSets distinct pSet pointSets.length 0
+
+def pcsBlock4FinalPSet (rv x2v x3v cptr qep : U256) (st0 : EvmState)
+    (pointSets : List (List Int)) (distinct : List Int) (rotVals : Nat → U256) : U256 :=
+  pcsBlock4Final rv x2v x3v cptr qep st0 pointSets distinct
+    (pcsBlock4PSetOf distinct rotVals pointSets)
+
+/-- Memory agrees outside BOTH windows `[lo₁, lo₁+len₁)` and `[lo₂, lo₂+len₂)`. The block's
+    write footprint is the scalar_inv scratch window and the `F_EVAL_MPTR` store word. -/
+def pcsMemSameOutside2 (st st' : EvmState) (lo₁ len₁ lo₂ len₂ : Nat) : Prop :=
+  ∀ a, (a < lo₁ ∨ lo₁ + len₁ ≤ a) → (a < lo₂ ∨ lo₂ + len₂ ≤ a) →
+    st'.memory a = st.memory a
+
+/-- The block-4 post: the `f_eval` word is the fold, memory agrees outside the scratch and
+    store windows, and the frame/environment survive. -/
+def PcsBlock4Post (fp final : U256) (scratch : Nat) (st0 : EvmState)
+    (_V : VEnv (Bridge.Dialect c g)) (_st : EvmState)
+    (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome) : Prop :=
+  (o = .normal ∧
+    VEnv.get V' "f_eval" = some final ∧
+    loadWord st'.memory fp.toNat = final ∧
+    pcsMemSameOutside2 st0 st' scratch 192 fp.toNat 32 ∧
+    st'.env = st0.env) ∨
+  (o = .halt ∧ Midfall.LoweringV2.Reverted st')
+
+/-- The state after the four header lets. -/
+structure PcsBlock4Mid1 (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256)
+    (rotVals : Nat → U256) (pointSets : List (List Int)) (distinct : List Int)
+    (scratch : Nat) (st0 : EvmState)
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop where
+  pre : PcsBlock4Pre x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+    (pcsBlock4PSetOf distinct rotVals pointSets) scratch V st
+  x2 : VEnv.get V "x2" = some x2v
+  x3 : VEnv.get V "x3" = some x3v
+  fev : VEnv.get V "f_eval" = some (0 : U256)
+  cptrV : VEnv.get V "Q_EVAL_CPTR" = some cptr
+  mem : MemSameOutside st0 st scratch 192
+  stateEnv : st.env = st0.env
+
+/-- The state after the `rot_pt_i` lets. -/
+structure PcsBlock4Mid2 (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256)
+    (rotVals : Nat → U256) (pointSets : List (List Int)) (distinct : List Int)
+    (scratch : Nat) (st0 : EvmState)
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop where
+  base : PcsBlock4Mid1 x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals
+    pointSets distinct scratch st0 V st
+  rot : ∀ p ∈ Midfall.Generator.enumIdx distinct,
+    VEnv.get V ("rot_pt_" ++ toString p.1) = some (rotVals p.1)
+
+/-- The store's pre: the walk has produced `final` and the frame is intact. -/
+structure PcsBlock4StorePre (fp final : U256) (scratch : Nat) (st0 : EvmState)
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop where
+  fp : VEnv.get V "F_EVAL_MPTR" = some fp
+  fev : VEnv.get V "f_eval" = some final
+  mem : MemSameOutside st0 st scratch 192
+  stateEnv : st.env = st0.env
+
+theorem pcsRot_name_ne_of_take (i : Nat) {s : String}
+    (h : s.toList.take 1 ≠ ['r']) : s ≠ "rot_pt_" ++ toString i := by
+  intro heq
+  have hc := congrArg (fun x : String => x.toList.take 1) heq
+  simp at hc
+  exact h (by simpa using hc)
+
+theorem pcsRot_name_ne_r (i : Nat) : ("rot_pt_" ++ toString i) ≠ "r" := by
+  intro heq
+  have hc := congrArg (fun s : String => s.toList.take 2) heq
+  simp at hc
+
+theorem pcsBlock4Pre_header {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256}
+    {rotVals : Nat → U256} {pointSets : List (List Int)} {distinct : List Int}
+    {scratch : Nat}
+    (h : PcsBlock4Pre x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals
+      pointSets distinct (pcsBlock4PSetOf distinct rotVals pointSets) scratch V st)
+    (hV : V' = ("Q_EVAL_CPTR", cptr) :: ("f_eval", (0 : U256)) :: ("x3", x3v) ::
+      ("x2", x2v) :: V)
+    (hmem : st'.memory = st.memory) :
+    PcsBlock4Pre x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals
+      pointSets distinct (pcsBlock4PSetOf distinct rotVals pointSets) scratch V' st' := by
+  obtain ⟨hx2p, hx3p, hcp, hrotp, hfp, hr, hqep, hv2, hv3, hvc, hb1, hb2, hl,
+    hcanon, hfacts, hbp, hlb, hdisj⟩ := h
+  rw [hV]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hb1, hb2, ?_, ?_, hfacts,
+    ?_, ?_, hdisj⟩
+  · simpa [VEnv.get, List.find?] using hx2p
+  · simpa [VEnv.get, List.find?] using hx3p
+  · simpa [VEnv.get, List.find?] using hcp
+  · simpa [VEnv.get, List.find?] using hrotp
+  · simpa [VEnv.get, List.find?] using hfp
+  · simpa [VEnv.get, List.find?] using hr
+  · simpa [VEnv.get, List.find?] using hqep
+  · simpa [hmem] using hv2
+  · simpa [hmem] using hv3
+  · simpa [hmem] using hvc
+  · intro q hq
+    rw [hmem]
+    exact hl q hq
+  · intro s hs j hj
+    rw [hmem]
+    exact hcanon s hs j hj
+  · intro s hs i hi
+    rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "Q_EVAL_CPTR")
+        (y := pcsBpName i) (by pcs_ne1),
+      venv_get_cons_ne (D := Bridge.Dialect c g) (x := "f_eval")
+        (y := pcsBpName i) (by pcs_ne1),
+      venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x3")
+        (y := pcsBpName i) (by pcs_ne1),
+      venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x2")
+        (y := pcsBpName i) (by pcs_ne1)]
+    exact hbp s hs i hi
+  · intro s hs q hq
+    rw [venv_get_cons_ne (D := Bridge.Dialect c g) (x := "Q_EVAL_CPTR")
+        (y := pcsLbasisName q.1) (by pcs_ne1),
+      venv_get_cons_ne (D := Bridge.Dialect c g) (x := "f_eval")
+        (y := pcsLbasisName q.1) (by pcs_ne1),
+      venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x3")
+        (y := pcsLbasisName q.1) (by pcs_ne1),
+      venv_get_cons_ne (D := Bridge.Dialect c g) (x := "x2")
+        (y := pcsLbasisName q.1) (by pcs_ne1)]
+    exact hlb s hs q hq
+
+theorem pcsBlock4Pre_rot {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256}
+    {rotVals : Nat → U256} {pointSets : List (List Int)} {distinct : List Int}
+    {scratch : Nat} {pairs : List (Nat × Int)}
+    (h : PcsBlock4Pre x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals
+      pointSets distinct (pcsBlock4PSetOf distinct rotVals pointSets) scratch V st)
+    (hframe : ∀ y, (∀ p ∈ pairs, y ≠ "rot_pt_" ++ toString p.1) →
+      VEnv.get V' y = VEnv.get V y)
+    (hmem : st'.memory = st.memory) :
+    PcsBlock4Pre x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals
+      pointSets distinct (pcsBlock4PSetOf distinct rotVals pointSets) scratch V' st' := by
+  obtain ⟨hx2p, hx3p, hcp, hrotp, hfp, hr, hqep, hv2, hv3, hvc, hb1, hb2, hl,
+    hcanon, hfacts, hbp, hlb, hdisj⟩ := h
+  have hX2 := hframe "X2_MPTR" (by
+    intro q hq h; exact pcsRot_name_ne_of_take q.1 (by decide) h)
+  have hX3 := hframe "X3_MPTR" (by
+    intro q hq h; exact pcsRot_name_ne_of_take q.1 (by decide) h)
+  have hCP := hframe "Q_EVAL_CPTR_MPTR" (by
+    intro q hq h; exact pcsRot_name_ne_of_take q.1 (by decide) h)
+  have hRP := hframe "ROT_POINTS_MPTR" (by
+    intro q hq h; exact pcsRot_name_ne_of_take q.1 (by decide) h)
+  have hFP := hframe "F_EVAL_MPTR" (by
+    intro q hq h; exact pcsRot_name_ne_of_take q.1 (by decide) h)
+  have hR := hframe "r" (by
+    intro q hq h; exact (pcsRot_name_ne_r q.1).symm h)
+  have hQ := hframe "Q_EVAL_SET_MPTR" (by
+    intro q hq h; exact pcsRot_name_ne_of_take q.1 (by decide) h)
+  have hBP : ∀ s, s < pointSets.length →
+      ∀ i, i < (pcsBatchInputs (pointSets.getD s []).length).length →
+        VEnv.get V' (pcsBpName i) = none := by
+    intro s hs i hi
+    rw [hframe (pcsBpName i) (by
+      intro q hq h; exact pcsRot_name_ne_of_take q.1 (by simp [pcsBpName]) h)]
+    exact hbp s hs i hi
+  have hLB : ∀ s, s < pointSets.length →
+      ∀ q ∈ pcsPointRefs (pointSets.getD s []) distinct,
+        VEnv.get V' (pcsLbasisName q.1) = none := by
+    intro s hs q hq
+    rw [hframe (pcsLbasisName q.1) (by
+      intro q' hq' h; exact pcsRot_name_ne_of_take q'.1 (by simp [pcsLbasisName]) h)]
+    exact hlb s hs q hq
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hb1, hb2, ?_, ?_, hfacts,
+    hBP, hLB, hdisj⟩
+  · rw [hX2]; exact hx2p
+  · rw [hX3]; exact hx3p
+  · rw [hCP]; exact hcp
+  · rw [hRP]; exact hrotp
+  · rw [hFP]; exact hfp
+  · rw [hR]; exact hr
+  · rw [hQ]; exact hqep
+  · simpa [hmem] using hv2
+  · simpa [hmem] using hv3
+  · simpa [hmem] using hvc
+  · intro q hq
+    rw [hmem]
+    exact hl q hq
+  · intro s hs j hj
+    rw [hmem]
+    exact hcanon s hs j hj
 
 theorem pcsBlock4_walk_contract {g : ExternalGas} (product : PairingProduct)
     (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
@@ -6651,5 +6852,318 @@ theorem pcsBlock4_walk_contract {g : ExternalGas} (product : PairingProduct)
         have htail := ih' V' st' hmid V'' st'' o hrun
         simpa [PcsBlock4WalkPost, pcsBlock4Fold, points, off, aSet, cval0, ev0, setFev, List.getD_eq_getElem?_getD] using htail
 
+
+/-- The four header lets, wrapped for the block-4 append chain. -/
+theorem pcsBlock4_header_wrapper {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256)
+    (rotVals : Nat → U256) (pointSets : List (List Int)) (distinct : List Int)
+    (scratch : Nat) (st0 : EvmState) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      [ GenAst.ylet "x2" (GenAst.yop EVM.Op.mload [GenAst.yvar "X2_MPTR"]),
+        GenAst.ylet "x3" (GenAst.yop EVM.Op.mload [GenAst.yvar "X3_MPTR"]),
+        GenAst.ylet "f_eval" (GenAst.ylit 0),
+        GenAst.ylet "Q_EVAL_CPTR" (GenAst.yop EVM.Op.mload [GenAst.yvar "Q_EVAL_CPTR_MPTR"]) ]
+      (fun V st =>
+        PcsBlock4Pre (c := permissive (callsOf product)) (g := g)
+          x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+          (pcsBlock4PSetOf distinct rotVals pointSets) scratch V st ∧
+        MemSameOutside st0 st scratch 192 ∧ st.env = st0.env)
+      (fun V st V' st' o =>
+        (o = .normal ∧
+          PcsBlock4Mid1 (c := permissive (callsOf product)) (g := g)
+            x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+            scratch st0 V' st') ∨
+        (o = .halt ∧
+          PcsBlock4Post (c := permissive (callsOf product)) (g := g)
+            fp (pcsBlock4FinalPSet rv x2v x3v cptr qep st0 pointSets distinct rotVals)
+            scratch st0 V st V' st' o)) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hpre, hmem, henv⟩ := hpre
+  obtain ⟨hx2p, hx3p, hcp, hrotp, hfp, hr, hqep, hv2, hv3, hvc, hb1, hb2, hl,
+    hcanon, hfacts, hbp, hlb, hdisj⟩ := hpre
+  obtain ⟨ho, hV, hm, he, _hhalt⟩ :=
+    pcsBlock4_header_contract (c := permissive (callsOf product)) (g := g) (funs := funs)
+      x2p x3p cptrp x2v x3v cptr V st ⟨hx2p, hx3p, hcp, hv2, hv3, hvc⟩
+      V' st' o hrun
+  refine Or.inl ⟨ho, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact pcsBlock4Pre_header ⟨hx2p, hx3p, hcp, hrotp, hfp, hr, hqep, hv2, hv3, hvc,
+      hb1, hb2, hl, hcanon, hfacts, hbp, hlb, hdisj⟩ hV hm
+  · simp [hV, VEnv.get, List.find?]
+  · simp [hV, VEnv.get, List.find?]
+  · simp [hV, VEnv.get, List.find?]
+  · simp [hV, VEnv.get]
+  · intro a ha
+    rw [hm]
+    exact hmem a ha
+  · rw [he]; exact henv
+
+/-- The `rot_pt_i` lets, wrapped for the block-4 append chain. -/
+theorem pcsBlock4_rot_wrapper {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256)
+    (rotVals : Nat → U256) (pointSets : List (List Int)) (distinct : List Int)
+    (scratch : Nat) (st0 : EvmState) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      ((Midfall.Generator.enumIdx distinct).map fun p =>
+        GenAst.ylet ("rot_pt_" ++ toString p.1)
+          (GenAst.yop EVM.Op.mload
+            [GenAst.yop EVM.Op.add [GenAst.yvar "ROT_POINTS_MPTR",
+              GenAst.ylit (p.1 * Midfall.Generator.wordBytes)]]))
+      (fun V st =>
+        PcsBlock4Mid1 (c := permissive (callsOf product)) (g := g)
+          x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+          scratch st0 V st)
+      (fun V st V' st' o =>
+        (o = .normal ∧
+          PcsBlock4Mid2 (c := permissive (callsOf product)) (g := g)
+            x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+            scratch st0 V' st') ∨
+        (o = .halt ∧
+          PcsBlock4Post (c := permissive (callsOf product)) (g := g)
+            fp (pcsBlock4FinalPSet rv x2v x3v cptr qep st0 pointSets distinct rotVals)
+            scratch st0 V st V' st' o)) := by
+  intro V st hmid V' st' o hrun
+  obtain ⟨hx2p, hx3p, hcp, hrotp, hfp, hr, hqep, hv2, hv3, hvc, hb1, hb2, hl,
+    hcanon, hfacts, hbp, hlb, hdisj⟩ := hmid.pre
+  obtain ⟨ho, hgets, hframe, hm, he, _hhalt⟩ :=
+    pcsRotLets_contract (c := permissive (callsOf product)) (g := g) (funs := funs)
+      (pairs := Midfall.Generator.enumIdx distinct) rotVals rotp
+      (pcsEnumIdx_fst_nodup distinct) V st ⟨hrotp, hb1, hb2, hl⟩ V' st' o hrun
+  refine Or.inl ⟨ho, ?_⟩
+  refine ⟨?_, ?_⟩
+  · refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · exact pcsBlock4Pre_rot ⟨hx2p, hx3p, hcp, hrotp, hfp, hr, hqep, hv2, hv3, hvc,
+        hb1, hb2, hl, hcanon, hfacts, hbp, hlb, hdisj⟩ hframe hm
+    · rw [hframe "x2" (by intro q _ h; exact pcsRot_name_ne_of_take q.1 (by decide) h)]
+      exact hmid.x2
+    · rw [hframe "x3" (by intro q _ h; exact pcsRot_name_ne_of_take q.1 (by decide) h)]
+      exact hmid.x3
+    · rw [hframe "f_eval" (by intro q _ h; exact pcsRot_name_ne_of_take q.1 (by decide) h)]
+      exact hmid.fev
+    · rw [hframe "Q_EVAL_CPTR" (by
+        intro q _ h; exact pcsRot_name_ne_of_take q.1 (by decide) h)]
+      exact hmid.cptrV
+    · intro a ha; rw [hm]; exact hmid.mem a ha
+    · rw [he]; exact hmid.stateEnv
+  · exact hgets
+
+/-- The reversed set walk, wrapped for the block-4 append chain. -/
+theorem pcsBlock4_walk_wrapper {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (pointSets : List (List Int)) (distinct : List Int)
+    (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256) (rotVals : Nat → U256)
+    (scratch hbls gasN selN selP : Nat) (st0 : EvmState)
+    (hsubset : ∀ s, s < pointSets.length →
+      ∀ j, j < (pointSets.getD s []).length → (pointSets.getD s []).getD j 0 ∈ distinct)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch hbls gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hnbls : BitVec.ofNat 256 hbls = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some
+      ((failFDecl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)), cenv'))
+    (hrv : rv = BitVec.ofNat 256 blsR) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (((List.range pointSets.length).reverse).flatMap fun s =>
+        [Stmt.block (GenAstPcs.pcsSetBlockAst s (pointSets.getD s []) distinct
+          (pcsSetOff pointSets s))])
+      (fun V st =>
+        PcsBlock4Mid2 (c := permissive (callsOf product)) (g := g)
+          x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+          scratch st0 V st)
+      (fun V st V' st' o =>
+        (o = .normal ∧
+          PcsBlock4StorePre (c := permissive (callsOf product)) (g := g)
+            fp (pcsBlock4FinalPSet rv x2v x3v cptr qep st0 pointSets distinct rotVals)
+            scratch st0 V' st') ∨
+        (o = .halt ∧
+          PcsBlock4Post (c := permissive (callsOf product)) (g := g)
+            fp (pcsBlock4FinalPSet rv x2v x3v cptr qep st0 pointSets distinct rotVals)
+            scratch st0 V st V' st' o)) := by
+  intro V st hmid V' st' o hrun
+  obtain ⟨hx2p, hx3p, hcp, hrotp, hfp, hr, hqep, hv2, hv3, hvc, hb1, hb2, hl,
+    hcanon, hfacts, hbp, hlb, hdisj⟩ := hmid.base.pre
+  have hwalk := pcsBlock4_walk_contract (g := g) (product := product) (funs := funs)
+    (decl := decl) (cenv := cenv) (cenv' := cenv')
+    pointSets distinct (pcsBlock4PSetOf distinct rotVals pointSets)
+    rv x2v x3v cptr qep fp scratch hbls gasN selN selP st0 pointSets.length 0
+    le_rfl hfacts
+    hlook hbody hparams hrets hnbls hscratch hscratch256 hfail hrv
+    V st ⟨⟨hmid.base.x3, hr, hmid.base.x2, hmid.base.cptrV, hqep, hfp,
+      (fun s hs q hq => by
+        have := pcsBlock4PSet_rot (hsubset := hsubset) (hs := hs) (hq := hq)
+          (hrot := hmid.rot)
+        simpa [pcsBlock4PSetOf] using this),
+      hbp, hlb⟩, hmid.base.fev, hcanon, hmid.base.mem, hmid.base.stateEnv⟩
+    V' st' o hrun
+  rcases hwalk with ⟨ho, hfev, hwe, hmem, henv⟩ | ⟨ho, hrev⟩
+  · refine Or.inl ⟨ho, ?_⟩
+    exact ⟨hwe.fp, by
+      simpa [pcsBlock4FinalPSet, pcsBlock4Final, pcsBlock4PSetOf] using hfev,
+      hmem, henv⟩
+  · exact Or.inr ⟨ho, Or.inr ⟨ho, hrev⟩⟩
+
+/-- The final `F_EVAL_MPTR` store, wrapped for the block-4 append chain. -/
+theorem pcsBlock4_store_wrapper {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    (fp final : U256) (scratch : Nat) (st0 : EvmState) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+        [GenAst.yvar "F_EVAL_MPTR", GenAst.yvar "f_eval"])]
+      (fun V st =>
+        PcsBlock4StorePre (c := permissive (callsOf product)) (g := g)
+          fp final scratch st0 V st)
+      (fun V st V' st' o =>
+        PcsBlock4Post (c := permissive (callsOf product)) (g := g)
+          fp final scratch st0 V st V' st' o) := by
+  intro V st hpre V' st' o hrun
+  obtain ⟨hfp, hfev, hmem, henv⟩ := hpre
+  obtain ⟨ho, hV, hstmem, hstenv, _hhalt⟩ :=
+    pcsBlock4_store_contract (c := permissive (callsOf product)) (g := g) (funs := funs)
+      fp final V st ⟨hfp, hfev⟩ V' st' o hrun
+  refine Or.inl ⟨ho, ?_, ?_, ?_, ?_⟩
+  · rw [hV]; exact hfev
+  · rw [hstmem]
+    exact Midfall.Yul.Word.loadWord_storeWord_same st.memory fp.toNat final
+  · intro a h1 h2
+    rw [hstmem]
+    have hout : storeWord st.memory fp.toNat final a = st.memory a := by
+      unfold storeWord
+      have hnot : ¬ (fp.toNat ≤ a ∧ a < fp.toNat + 32) := by
+        rcases h2 with h2 | h2 <;> omega
+      simp [hnot]
+    rw [hout]
+    exact hmem a h1
+  · rw [hstenv, henv]
+
+theorem pcsBlock4Ast_eq_four (pointSets : List (List Int)) (distinct : List Int) :
+    GenAstPcs.pcsBlock4Ast pointSets.length distinct pointSets =
+      ([ GenAst.ylet "x2" (GenAst.yop EVM.Op.mload [GenAst.yvar "X2_MPTR"]),
+         GenAst.ylet "x3" (GenAst.yop EVM.Op.mload [GenAst.yvar "X3_MPTR"]),
+         GenAst.ylet "f_eval" (GenAst.ylit 0),
+         GenAst.ylet "Q_EVAL_CPTR" (GenAst.yop EVM.Op.mload [GenAst.yvar "Q_EVAL_CPTR_MPTR"]) ]
+      ++ (Midfall.Generator.enumIdx distinct).map (fun p =>
+            GenAst.ylet ("rot_pt_" ++ toString p.1)
+              (GenAst.yop EVM.Op.mload
+                [GenAst.yop EVM.Op.add [GenAst.yvar "ROT_POINTS_MPTR",
+                  GenAst.ylit (p.1 * Midfall.Generator.wordBytes)]]))
+      ++ (((List.range pointSets.length).reverse).flatMap fun s =>
+            [Stmt.block (GenAstPcs.pcsSetBlockAst s (pointSets.getD s []) distinct
+              (pcsSetOff pointSets s))])
+      ++ [GenAst.yexpr (GenAst.yop EVM.Op.mstore
+            [GenAst.yvar "F_EVAL_MPTR", GenAst.yvar "f_eval"])]) := by
+  simp [GenAstPcs.pcsBlock4Ast, pcsSetOff, GenAst.yblock]
+
+/-- The block-4 contract at a FIXED initial state, so the walk's `MemSameOutside` frame can
+    be threaded through the append chain. -/
+theorem pcsBlock4_aux {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (pointSets : List (List Int)) (distinct : List Int)
+    (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256) (rotVals : Nat → U256)
+    (scratch hbls gasN selN selP : Nat) (st0 : EvmState)
+    (hsubset : ∀ s, s < pointSets.length →
+      ∀ j, j < (pointSets.getD s []).length → (pointSets.getD s []).getD j 0 ∈ distinct)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch hbls gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hnbls : BitVec.ofNat 256 hbls = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some
+      ((failFDecl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)), cenv'))
+    (hrv : rv = BitVec.ofNat 256 blsR) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (GenAstPcs.pcsBlock4Ast pointSets.length distinct pointSets)
+      (fun V st =>
+        PcsBlock4Pre (c := permissive (callsOf product)) (g := g)
+          x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+          (pcsBlock4PSetOf distinct rotVals pointSets) scratch V st ∧
+        MemSameOutside st0 st scratch 192 ∧ st.env = st0.env)
+      (fun V st V' st' o =>
+        PcsBlock4Post (c := permissive (callsOf product)) (g := g)
+          fp (pcsBlock4FinalPSet rv x2v x3v cptr qep st0 pointSets distinct rotVals)
+          scratch st0 V st V' st' o) := by
+  rw [pcsBlock4Ast_eq_four]
+  simp only [List.append_assoc]
+  refine pcsStmtsContractAll_append_halt (mid := fun V st =>
+    PcsBlock4Mid1 (c := permissive (callsOf product)) (g := g)
+      x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+      scratch st0 V st) ?_ ?_
+  · exact pcsBlock4_header_wrapper (g := g) (product := product) (funs := funs)
+      x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct scratch st0
+  · intro V st hpre
+    refine pcsStmtsContractAll_append_halt (mid := fun V st =>
+      PcsBlock4Mid2 (c := permissive (callsOf product)) (g := g)
+        x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+        scratch st0 V st) ?_ ?_
+    · exact pcsBlock4_rot_wrapper (g := g) (product := product) (funs := funs)
+        x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct scratch st0
+    · intro V st hpre
+      refine pcsStmtsContractAll_append_halt (mid := fun V st =>
+        PcsBlock4StorePre (c := permissive (callsOf product)) (g := g)
+          fp (pcsBlock4FinalPSet rv x2v x3v cptr qep st0 pointSets distinct rotVals)
+          scratch st0 V st) ?_ ?_
+      · exact pcsBlock4_walk_wrapper (g := g) (product := product) (funs := funs)
+          (decl := decl) (cenv := cenv) (cenv' := cenv')
+          pointSets distinct x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals
+          scratch hbls gasN selN selP st0 hsubset hlook hbody hparams hrets hnbls
+          hscratch hscratch256 hfail hrv
+      · intro V st hpre
+        exact pcsBlock4_store_wrapper (g := g) (product := product) (funs := funs)
+          fp (pcsBlock4FinalPSet rv x2v x3v cptr qep st0 pointSets distinct rotVals)
+          scratch st0
+
+/-- **BLOCK 4.** The header lets, the `rot_pt_i` lets, the reversed point-set walk and the
+    `F_EVAL_MPTR` store, composed by three `StmtsContractAll.append` steps. The post has the
+    Horner `f_eval` fold in memory at `F_EVAL_MPTR`, the `f_eval` variable, and the two-window
+    memory frame (scalar_inv scratch and the store word). -/
+theorem pcsBlock_contract {g : ExternalGas} (product : PairingProduct)
+    (funs : FunEnv (Bridge.Dialect (permissive (callsOf product)) g))
+    {decl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)}
+    {cenv cenv' : FunEnv (Bridge.Dialect (permissive (callsOf product)) g)}
+    (pointSets : List (List Int)) (distinct : List Int)
+    (x2p x3p cptrp rotp fp x2v x3v cptr rv qep : U256) (rotVals : Nat → U256)
+    (scratch hbls gasN selN selP : Nat)
+    (hsubset : ∀ s, s < pointSets.length →
+      ∀ j, j < (pointSets.getD s []).length → (pointSets.getD s []).getD j 0 ∈ distinct)
+    (hlook : lookupFun funs "scalar_inv" = some (decl, cenv))
+    (hbody : decl.body = scalarBodyLit scratch hbls gasN selN selP)
+    (hparams : decl.params = ["x"])
+    (hrets : decl.rets = ["inv"])
+    (hnbls : BitVec.ofNat 256 hbls = BitVec.ofNat 256 Midfall.Yul.blsR)
+    (hscratch : (sv scratch).toNat + 192 < 2 ^ 256)
+    (hscratch256 : scratch < 2 ^ 256)
+    (hfail : lookupFun cenv "fail" = some
+      ((failFDecl : FDecl (Bridge.Dialect (permissive (callsOf product)) g)), cenv'))
+    (hrv : rv = BitVec.ofNat 256 blsR) :
+    StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) g) funs
+      (GenAstPcs.pcsBlock4Ast pointSets.length distinct pointSets)
+      (PcsBlock4Pre (c := permissive (callsOf product)) (g := g)
+        x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals pointSets distinct
+        (pcsBlock4PSetOf distinct rotVals pointSets) scratch)
+      (fun V st V' st' o =>
+        PcsBlock4Post (c := permissive (callsOf product)) (g := g)
+          fp (pcsBlock4FinalPSet rv x2v x3v cptr qep st pointSets distinct rotVals)
+          scratch st V st V' st' o) := by
+  intro V st hpre V' st' o hrun
+  exact pcsBlock4_aux (g := g) (product := product) (funs := funs)
+    (decl := decl) (cenv := cenv) (cenv' := cenv')
+    pointSets distinct x2p x3p cptrp rotp fp x2v x3v cptr rv qep rotVals
+    scratch hbls gasN selN selP st hsubset hlook hbody hparams hrets hnbls
+    hscratch hscratch256 hfail hrv
+    V st ⟨hpre, (by intro a _; rfl), rfl⟩ V' st' o hrun
+
+
+#assert_axioms Midfall.LoweringV3.PcsBlock4.pcsBlock_contract
+  [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.PcsBlock4
