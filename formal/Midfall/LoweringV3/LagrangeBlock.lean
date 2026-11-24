@@ -128,6 +128,91 @@ theorem lagInner_10_form_var (consts : Inline.Consts) (k n m : Nat)
 
 #assert_axioms lagInner_10_form_var [propext, Classical.choice, Quot.sound]
 
+/-- A `vkSite` that resolves to a literal evaluates to that word. -/
+theorem eval_vkSite_lit {consts : Inline.Consts} {x : String} {v : Nat}
+    (h : consts.lookup x = some v) (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.expr (Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts))
+      (Res.eres (EResult.vals [(BitVec.ofNat 256 v : U256)] st)) := by
+  have hs : Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts = Expr.lit (.number v) := by
+    simp [Midfall.LoweringV2.Blocks.VkLoading.vkSite, h]
+  rw [hs]
+  exact Step.lit
+
+/-- A `vkSite` that does not resolve evaluates its variable. -/
+theorem eval_vkSite_var {consts : Inline.Consts} {x : String}
+    (h : consts.lookup x = none) (funs : FunEnv (Bridge.Dialect c g))
+    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) {v : U256}
+    (hget : VEnv.get V x = some v) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.expr (Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts))
+      (Res.eres (EResult.vals [v] st)) := by
+  have hs : Midfall.LoweringV2.Blocks.VkLoading.vkSite x consts = Expr.var x := by
+    simp [Midfall.LoweringV2.Blocks.VkLoading.vkSite, h]
+  rw [hs]
+  exact Step.var hget
+
+/-- **THE FIVE `batch_invert` ARGUMENTS, RIGHT-TO-LEFT.** The result list is in source order:
+    `[succ, ofNat D, mptr_end + 0x20, ofNat aS, rw]`. The `+ 0x20` step is the only arithmetic
+    one; `LagWindowFits.denomEnd` supplies its word-level fit in the caller. -/
+theorem eval_batchArgs {consts : Inline.Consts} {D aS : Nat}
+    (hD : consts.lookup "LAGRANGE_DENOMS_MPTR" = some D)
+    (hS : consts.lookup "BATCH_INV_SCRATCH_MPTR" = some aS)
+    (hsucc : consts.lookup "success" = none) (hr : consts.lookup "r" = none)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    {succ rw me : U256}
+    (hsuccV : VEnv.get V "success" = some succ)
+    (hrV : VEnv.get V "r" = some rw)
+    (hme : VEnv.get V "mptr_end" = some me) :
+    Step (Bridge.Dialect c g) funs V st
+      (Code.args
+        [Midfall.LoweringV2.Blocks.VkLoading.vkSite "success" consts,
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts,
+         Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)],
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts,
+         Midfall.LoweringV2.Blocks.VkLoading.vkSite "r" consts])
+      (Res.eres (EResult.vals [succ, BitVec.ofNat 256 D,
+        me + BitVec.ofNat 256 0x20, BitVec.ofNat 256 aS, rw] st)) := by
+  let e1 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "success" consts
+  let e2 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "LAGRANGE_DENOMS_MPTR" consts
+  let e3 := Expr.builtin EVM.Op.add [Expr.var "mptr_end", Expr.lit (.number 0x20)]
+  let e4 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "BATCH_INV_SCRATCH_MPTR" consts
+  let e5 := Midfall.LoweringV2.Blocks.VkLoading.vkSite "r" consts
+  let a1 : U256 := succ
+  let a2 : U256 := BitVec.ofNat 256 D
+  let a3 : U256 := me + BitVec.ofNat 256 0x20
+  let a4 : U256 := BitVec.ofNat 256 aS
+  let a5 : U256 := rw
+  have h5 := eval_vkSite_var (consts := consts) (x := "r") hr funs V st hrV
+  have h4 := eval_vkSite_lit (consts := consts) (x := "BATCH_INV_SCRATCH_MPTR") hS funs V st
+  have h3 := Midfall.LoweringV3.LagrangeRows.eval_add_var_lit_step
+    (funs := funs) (V := V) (st := st) (x := "mptr_end") (n := 0x20) (pv := me) hme
+  have h2 := eval_vkSite_lit (consts := consts) (x := "LAGRANGE_DENOMS_MPTR") hD funs V st
+  have h1 := eval_vkSite_var (consts := consts) (x := "success") hsucc funs V st hsuccV
+  have A5 : Step (Bridge.Dialect c g) funs V st (.args [e5]) (.eres (.vals [a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (v := a5)
+      (st1 := st) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g)) h5
+  have A4 : Step (Bridge.Dialect c g) funs V st (.args [e4, e5])
+      (.eres (.vals [a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e5]) (restvals := [a5]) (v := a4)
+      (st1 := st) (st2 := st) A5 h4
+  have A3 : Step (Bridge.Dialect c g) funs V st (.args [e3, e4, e5])
+      (.eres (.vals [a3, a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e4, e5]) (restvals := [a4, a5])
+      (v := a3) (st1 := st) (st2 := st) A4 h3
+  have A2 : Step (Bridge.Dialect c g) funs V st (.args [e2, e3, e4, e5])
+      (.eres (.vals [a2, a3, a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e3, e4, e5]) (restvals := [a3, a4, a5])
+      (v := a2) (st1 := st) (st2 := st) A3 h2
+  have A1 : Step (Bridge.Dialect c g) funs V st (.args [e1, e2, e3, e4, e5])
+      (.eres (.vals [a1, a2, a3, a4, a5] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [e2, e3, e4, e5])
+      (restvals := [a2, a3, a4, a5]) (v := a1) (st1 := st) (st2 := st) A2 h1
+  simpa [e1, e2, e3, e4, e5, a1, a2, a3, a4, a5] using A1
+
+#assert_axioms eval_batchArgs [propext, Classical.choice, Quot.sound]
+
 /-! ## 2. THE MEMORY-OUTSIDE WINDOW VOCABULARY -/
 
 /-- `st.memory` agrees with `m0` outside the denominator window `[D, D+lenS)`, the scratch window
