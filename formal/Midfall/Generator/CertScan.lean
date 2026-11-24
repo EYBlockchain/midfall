@@ -906,4 +906,25 @@ theorem noWriters_mainAsmRaw_of (pv : PlanView) (m : Model)
     hparser (noWriters_emitLagrange pv) (noWriters_qlinSlice pv _ hnum) hpcs
     (noWriters_emitFinalPairing pv) (noWriters_emitTraceReturn pv)
 
+/-! ## 5. WHY THE NUMERATOR RESIDUAL IS NOT A TREE LEMMA (reproduction record)
+
+  The three hypotheses of `noWriters_mainAsmRaw_of` are not interchangeable. The parser and PCS
+  groups are list-mapped and can be closed by induction over `userPhases` / `lookups` /
+  `computationsAst` (the two `ScanClean` development routes; not landed here). The numerator cannot
+  be closed that way at all. Measured on the F1 render (an `Instances/` probe, `native_decide`
+  territory, so recorded as a comment rather than imported here):
+
+    `partialCtxOfVerifier poseidonM` with one extra line in `quotientInlineComputations`
+      * `["sstore(0, 1)"]`              -> `noWritersFuel 200000 (mainAsmRaw …) = false`
+      * `["undeclared_fn(1)"]`          -> `callsResolved (mainAsmRaw …) = false`
+      * `["let FR_MODULUS := 1"]`       -> `noShadowProg (constTableOf …) (… mainAsmRaw …) = false`
+    while the unmutated model answers `true` to all three.
+
+  So the scans are functions of the MODEL'S TEXT, and `Generates` constrains the model only
+  equationally (`generateVerifierFromPlan … = .ok model`). There is no tree-emitter lemma that can
+  remove that dependence: the missing input is a fact about
+  `compactQuotientComputationBlocks` / `renderQuotientNumeratorBlock`, and the bridge from that text
+  to an AST is `YulParse.parseLines`, whose tokenizer is `String`-extern and irreducible in the
+  kernel. -/
+
 end Midfall.Generator.CertScan
